@@ -24,7 +24,7 @@ fn refine_simple_source_to_target() {
     assert_ne!(caid_a, caid_b, "A and B must have different CAIDs for refine test");
 
     let meta = CommitMeta { author: Some("test".into()), timestamp: 0, message: Some("refine test".into()) };
-    let result = u.refine(&oo, &base_dir, vec![caid_a.clone()], vec![caid_b.clone()], meta);
+    let result = u.refine(&oo, &base_dir, vec![caid_a.clone()], vec![caid_b.clone()], None, meta);
     assert!(result.is_ok(), "refine should succeed when new ⊑ old");
 
     // follow_refine should redirect A → B
@@ -46,7 +46,7 @@ fn refine_fails_monotonicity() {
 
     // refine(A → B) should fail: 1 & 2 = ⊥ ≠ 1
     let meta = CommitMeta { author: Some("test".into()), timestamp: 0, message: Some("should fail".into()) };
-    let result = u.refine(&oo, &base_dir, vec![caid_a], vec![caid_b], meta);
+    let result = u.refine(&oo, &base_dir, vec![caid_a], vec![caid_b], None, meta);
     assert!(result.is_err(), "refine should fail when new & old ≠ new");
 }
 
@@ -63,7 +63,7 @@ fn refine_cycle_detection() {
 
     // Refine A → B
     let meta1 = CommitMeta { author: Some("test".into()), timestamp: 0, message: None };
-    u.refine(&oo, &base_dir, vec![caid1.clone()], vec![caid2.clone()], meta1).unwrap();
+    u.refine(&oo, &base_dir, vec![caid1.clone()], vec![caid2.clone()], None, meta1).unwrap();
 
     // Manually inject reverse B → A into refine_map to create cycle
     {
@@ -122,7 +122,7 @@ fn refine_no_redirect_in_history_commits() {
 
     // Refine A → B
     let meta = CommitMeta { author: None, timestamp: 0, message: None };
-    u.refine(&oo, &base_dir, vec![caid_a.clone()], vec![caid_b.clone()], meta).unwrap();
+    u.refine(&oo, &base_dir, vec![caid_a.clone()], vec![caid_b.clone()], None, meta).unwrap();
 
     // History get_value should STILL return A's value (not redirected to B)
     let direct_a = oo.store.get_value(&caid_a).unwrap();
@@ -141,7 +141,7 @@ fn refine_info_stored_in_commit() {
     let caid_tgt = oo.store.put_value(&tgt).unwrap();
 
     let meta = CommitMeta { author: Some("alice".into()), timestamp: 1000, message: Some("test refine".into()) };
-    let ch = u.refine(&oo, &base_dir, vec![caid_src.clone()], vec![caid_tgt.clone()], meta).unwrap();
+    let ch = u.refine(&oo, &base_dir, vec![caid_src.clone()], vec![caid_tgt.clone()], None, meta).unwrap();
 
     // Load the commit and verify refine_info
     let commit = oo.store.get_commit(&ch).unwrap();
@@ -164,7 +164,7 @@ fn get_live_value_follows_refine() {
     let caid2 = oo.store.put_value(&v2).unwrap();
 
     let meta = CommitMeta { author: None, timestamp: 0, message: None };
-    u.refine(&oo, &base_dir, vec![caid1.clone()], vec![caid2.clone()], meta).unwrap();
+    u.refine(&oo, &base_dir, vec![caid1.clone()], vec![caid2.clone()], None, meta).unwrap();
 
     // get_live_value should follow refine and return v2, not v1
     let live = oo.get_live_value(&caid1).unwrap();

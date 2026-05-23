@@ -1,4 +1,4 @@
-use crate::value::{Value, ComboVal, ContentHash, BottomCause, CommitKind, RefineInfo, Commit, default_cache_id};
+use crate::value::{Value, ComboVal, ContentHash, BottomCause, CommitKind, RefineInfo, Commit, default_cache_id, AuthorityInfo};
 use crate::Ouroboros;
 use crate::EvalContext;
 use nlang_parser::ast::{Path, PathAnchor, Field, FieldKey, Prefix};
@@ -95,6 +95,7 @@ impl Universe {
         base_dir: &std::path::Path,
         source_caids: Vec<ContentHash>,
         target_caids: Vec<ContentHash>,
+        authority: Option<AuthorityInfo>,
         meta: crate::value::CommitMeta,
     ) -> Result<ContentHash> {
         // Step 1: verify geometric monotonicity (new & old = new)
@@ -106,7 +107,17 @@ impl Universe {
                         return Err(anyhow::anyhow!("new ⋢ old: refinement fails geometric monotonicity"));
                     }
                 }
-                // opaque CAIDs: skip verification, trust authority
+            }
+        }
+
+        // Step 1b: authority verification (Phase 8)
+        let bootstrap_exempt = true; // TODO Phase 9: set false when Epoch >= 0
+        let payload = crate::authority::compute_refine_payload(&source_caids, &target_caids);
+        let architect_reg = engine.architect_registry.read().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        match crate::authority::verify_refine_authority(authority.as_ref(), &payload, &architect_reg, bootstrap_exempt) {
+            crate::authority::AuthVerifyResult::Valid | crate::authority::AuthVerifyResult::Exempt => {}
+            crate::authority::AuthVerifyResult::Invalid(reason) => {
+                return Err(anyhow::anyhow!("authority verification failed: {}", reason));
             }
         }
 
@@ -123,7 +134,7 @@ impl Universe {
             refine_info: Some(RefineInfo {
                 source_caids: source_caids.clone(),
                 target_caids: target_caids.clone(),
-                authority_signer: None,
+                authority,
             }),
             cache_id: crate::value::default_cache_id(),
         };

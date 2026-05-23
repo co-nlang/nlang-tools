@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn};
-use crate::value::{Value, EffectTag, BottomCause, MasaRef, ContentHash};
+use crate::value::{Value, EffectTag, BottomCause, BottomDetail, MasaRef, ContentHash};
 use crate::observation::ObservationStrategy;
 use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
 use num_traits::ToPrimitive;
@@ -205,5 +205,49 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 Value::Combo(crate::value::ComboVal::new(fields, true, indexmap::IndexMap::new(), EffectTag::Pure, vec![]))
             }
         }
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 8: authority signing ─────────────────────────────
+
+    m.insert("engine.sign_refine".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let (src_strs, tgt_strs) = if let Value::Combo(ref c) = arg {
+            let extract_list = |key: &str, c: &crate::value::ComboVal, oo: &Ouroboros, ctx: &mut EvalContext| -> Vec<String> {
+                let mut result = Vec::new();
+                for i in 0u32.. {
+                    if let Some(Value::Combo(lc)) = c.get_field(key) {
+                        if let Some(v) = lc.get_field(&i.to_string()) {
+                            result.push(oo.force(v.clone(), ctx).to_string_plain());
+                        } else { break; }
+                    } else { break; }
+                }
+                result
+            };
+            (extract_list("source_caids", c, oo, ctx), extract_list("target_caids", c, oo, ctx))
+        } else { return BottomCause::Conflict.into(); };
+
+        let src_hashes: Vec<_> = src_strs.iter().filter_map(|s| ContentHash::parse(s).ok()).collect();
+        let tgt_hashes: Vec<_> = tgt_strs.iter().filter_map(|s| ContentHash::parse(s).ok()).collect();
+        let payload = crate::authority::compute_refine_payload(&src_hashes, &tgt_hashes);
+        match crate::authority::sign_refine(&payload, &oo.identity) {
+            Ok(auth) => {
+                let mut fields = indexmap::IndexMap::new();
+                fields.insert("signer_pubkey_hex".to_string(), Value::Atom(AtomKind::Str(auth.signer_pubkey_hex), EffectTag::Pure, None));
+                fields.insert("signature_hex".to_string(), Value::Atom(AtomKind::Str(auth.signature_hex), EffectTag::Pure, None));
+                if let Some(ts) = auth.timestamp {
+                    fields.insert("timestamp".to_string(), Value::Atom(AtomKind::Str(ts), EffectTag::Pure, None));
+                }
+                Value::Combo(crate::value::ComboVal::new(fields, true, indexmap::IndexMap::new(), EffectTag::IO, vec![]))
+            }
+            Err(e) => Value::Bottom(Box::new(BottomDetail { cause: BottomCause::Conflict, message: Some(format!("sign_refine: {}", e)), ..Default::default() }))
+        }
+    }) as Arc<BuiltinFn>);
+
+    m.insert("engine.add_architect".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let pubkey_hex = oo.force(arg, ctx).to_string_plain();
+        if pubkey_hex.len() != 64 { return BottomCause::Conflict.into(); }
+        if let Ok(mut reg) = oo.architect_registry.write() {
+            reg.insert(pubkey_hex);
+            Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
+        } else { BottomCause::Conflict.into() }
     }) as Arc<BuiltinFn>);
 }

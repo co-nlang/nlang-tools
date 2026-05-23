@@ -460,11 +460,18 @@ pub enum CommitKind { Refine, #[serde(other)] Standard }
 impl Default for CommitKind { fn default() -> Self { Self::Standard } }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthorityInfo {
+    pub signer_pubkey_hex: String,
+    pub signature_hex: String,
+    pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RefineInfo {
     pub source_caids: Vec<ContentHash>,
     pub target_caids: Vec<ContentHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authority_signer: Option<String>,
+    pub authority: Option<AuthorityInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

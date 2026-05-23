@@ -18,7 +18,8 @@ pub mod observation;
 pub mod genesis;
 pub mod ladd;
 pub mod oml;
-pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity};
+pub mod authority;
+pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, ObservationStrategy, handle_resource_exhausted};
@@ -92,6 +93,7 @@ pub struct Ouroboros {
     pub identity: crate::value::Identity,
     pub refine_map: RwLock<HashMap<String, Vec<String>>>,
     pub gbb_registry: RwLock<HashMap<String, crate::ladd::GBB>>,
+    pub architect_registry: RwLock<std::collections::HashSet<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +111,11 @@ impl Ouroboros {
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
         let store = ObjectStore::init(base_dir)?;
         let builtins = create_default_builtins();
-        let mut oo = Self { store, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity: crate::value::Identity::new_random(), refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()) };
+        let identity = crate::value::Identity::new_random();
+        let local_pk_hex = hex::encode(&identity.public_key);
+        let mut architects = std::collections::HashSet::new();
+        architects.insert(local_pk_hex);
+        let mut oo = Self { store, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
         Ok(oo)
     }
     
@@ -197,6 +203,20 @@ let mut refl_fields = IndexMap::new();
         state_inner.insert("strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));
         engine_fields.insert("state".to_string(), Value::Combo(ComboVal::new(state_inner, false, IndexMap::new(), EffectTag::Pure, vec![])));
         fields.insert("~%Engine".to_string(), Value::Combo(ComboVal::new(engine_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+
+        // ~%Official：建築師白名單
+        let local_pk_hex = hex::encode(&self.identity.public_key);
+        let mut official_fields = IndexMap::new();
+        official_fields.insert("architects".to_string(), Value::Atom(AtomKind::Str(local_pk_hex), EffectTag::Pure, None));
+        fn official_morph(builtin: &str, effect: EffectTag) -> Value {
+            Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str(builtin.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), effect, vec![]))
+        }
+        official_fields.insert("/sign_refine".to_string(), official_morph("engine.sign_refine", EffectTag::IO));
+        official_fields.insert("/add_architect".to_string(), official_morph("engine.add_architect", EffectTag::IO));
+        fields.insert("~%Official".to_string(), Value::Combo(ComboVal::new(official_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
         ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![])
     }
