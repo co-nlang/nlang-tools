@@ -247,6 +247,12 @@ pub struct ValRelation {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Holonomy {
+    Phase(f64),
+    NegI,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct BottomDetail {
     pub cause: BottomCause, 
     pub path: Option<String>, 
@@ -254,18 +260,29 @@ pub struct BottomDetail {
     pub expected: Option<Value>,
     pub found: Option<Value>,
     pub involved: Vec<ContentHash>,
+    pub obstruction_degree: Option<u8>,
+    pub holonomy: Option<Holonomy>,
 }
 
 impl BottomDetail {
+    /// Construct a BottomDetail with default None for obstruction fields
+    pub fn new(cause: BottomCause, path: Option<String>, message: Option<String>,
+               expected: Option<Value>, found: Option<Value>, involved: Vec<ContentHash>) -> Self {
+        BottomDetail { cause, path, message, expected, found, involved, obstruction_degree: None, holonomy: None }
+    }
+
     pub fn bits(&self) -> u64 {
         let mut b = 128u64;
         if let Some(ref p) = self.path { b += (p.len() as u64) * 8; }
         if let Some(ref m) = self.message { b += (m.len() as u64) * 8; }
         b += (self.involved.len() as u64) * 256;
+        if self.obstruction_degree.is_some() { b += 64; }
+        if self.holonomy.is_some() { b += 64; }
         b
     }
 
     pub fn as_cause_combo(&self) -> Value {
+        use num_bigint::BigInt;
         let mut fields = IndexMap::new();
         let type_tag = match self.cause {
             BottomCause::Conflict => "#conflict",
@@ -301,16 +318,53 @@ impl BottomDetail {
             involved_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
             fields.insert("%involved".to_string(), Value::Combo(ComboVal::new(involved_fields, false, IndexMap::new(), EffectTag::Pure, vec![])));
         }
+
+        // Phase NEW: cocycle format (SPEC_06 §1.3.2)
+        if let Some(degree) = self.obstruction_degree {
+            fields.insert("%degree".to_string(), Value::Atom(AtomKind::Int(BigInt::from(degree)), EffectTag::Pure, None));
+            let obs_tag = match degree { 1 => "h1_phase", 2 => "h2_sign", 3 => "h3_gerbe", 4 => "h4_sybil", _ => "unknown" };
+            fields.insert("%obstruction".to_string(), Value::Atom(AtomKind::Tag(obs_tag.to_string()), EffectTag::Pure, None));
+
+            // %cocycle: build from involved
+            if !self.involved.is_empty() {
+                let mut cyc = IndexMap::new();
+                cyc.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                for (i, h) in self.involved.iter().enumerate() {
+                    cyc.insert(i.to_string(), Value::Atom(AtomKind::Str(h.to_string()), EffectTag::Pure, None));
+                }
+                // H²: pad to 4 positions (spec requires 4-cycle)
+                if degree == 2 && self.involved.len() == 2 {
+                    cyc.insert("2".to_string(), Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None));
+                    cyc.insert("3".to_string(), Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None));
+                }
+                fields.insert("%cocycle".to_string(), Value::Combo(ComboVal::new(cyc, false, IndexMap::new(), EffectTag::Pure, vec![])));
+            }
+
+            // %holonomy
+            if let Some(ref h) = self.holonomy {
+                let hv = match h {
+                    Holonomy::Phase(theta) => Value::Atom(AtomKind::Float(*theta), EffectTag::Pure, None),
+                    Holonomy::NegI => Value::Atom(AtomKind::Tag("neg_I".to_string()), EffectTag::Pure, None),
+                };
+                fields.insert("%holonomy".to_string(), hv);
+            }
+
+            // %branches: H²
+            if degree == 2 {
+                fields.insert("%branches".to_string(), Value::Atom(AtomKind::Int(2u8.into()), EffectTag::Pure, None));
+            }
+        }
+
         Value::Combo(ComboVal::new(fields, true, IndexMap::new(), EffectTag::Pure, vec![]))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum BottomCause { Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum BottomCause { #[default] Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split }
 
 impl From<BottomCause> for Value {
     fn from(cause: BottomCause) -> Self {
-        Value::Bottom(Box::new(BottomDetail { cause, path: None, message: None, expected: None, found: None, involved: vec![] }))
+        Value::Bottom(Box::new(BottomDetail { cause, path: None, message: None, expected: None, found: None, involved: vec![], obstruction_degree: None, holonomy: None }))
     }
 }
 

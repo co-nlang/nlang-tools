@@ -165,7 +165,25 @@ let mut refl_fields = IndexMap::new();
         let complex_morphisms = vec![("/conj", "complex.conj"), ("/phase", "complex.phase"), ("/real", "complex.real"), ("/imag", "complex.imag")];
         for (n, b) in complex_morphisms { complex_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%Complex".to_string(), Value::Combo(ComboVal::new(complex_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
-        
+
+        // ~%Engine: observe, save, /%differential.{1,2,3}
+        fn engine_morph(name: &str, builtin: &str, effect: EffectTag) -> Value {
+            Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str(builtin.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), effect, vec![]))
+        }
+        let mut engine_fields = IndexMap::new();
+        engine_fields.insert("/observe".to_string(), engine_morph("/observe", "engine.observe", EffectTag::IO));
+        engine_fields.insert("/save".to_string(), engine_morph("/save", "engine.save", EffectTag::IO));
+        for i in 1u8..=3 {
+            engine_fields.insert(format!("/%differential.{}", i), engine_morph(&format!("/%differential.{}", i), "engine.differential", EffectTag::Pure));
+        }
+        let mut state_inner = IndexMap::new();
+        state_inner.insert("differential".to_string(), Value::Atom(AtomKind::Tag("d1_converging".to_string()), EffectTag::Pure, None));
+        engine_fields.insert("state".to_string(), Value::Combo(ComboVal::new(state_inner, false, IndexMap::new(), EffectTag::Pure, vec![])));
+        fields.insert("~%Engine".to_string(), Value::Combo(ComboVal::new(engine_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+
         ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![])
     }
 

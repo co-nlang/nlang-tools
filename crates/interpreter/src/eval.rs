@@ -395,7 +395,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 expected: None,
                 found: Some(if self.is_order_anchor(&ca) { ca.clone() } else { cb.clone() }),
                 involved: vec![],
-            }));
+             ..Default::default() }));
         }
         
         match (ca, cb) {
@@ -464,7 +464,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 expected: None,
                 found: None,
                 involved: vec![],
-            }));
+             ..Default::default() }));
         }
         if result.is_infinite() {
             if result.is_sign_positive() {

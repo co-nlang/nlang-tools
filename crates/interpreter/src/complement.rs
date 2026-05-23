@@ -32,7 +32,7 @@ impl Ouroboros {
                 expected: None,
                 found: Some(forced),
                 involved: vec![],
-            })),
+             ..Default::default() })),
             
             Value::Combo(cv) => self.complement_combo(cv, ctx),
             
@@ -68,7 +68,7 @@ impl Ouroboros {
                 expected: None,
                 found: Some(forced),
                 involved: vec![],
-            })),
+             ..Default::default() })),
         }
     }
     

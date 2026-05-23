@@ -54,7 +54,7 @@ fn make_h1_split_bottom(a: &ComboVal, b: &ComboVal, theta: f64) -> Value {
             Value::Combo(a.clone()).content_hash(),
             Value::Combo(b.clone()).content_hash(),
         ],
-    }))
+     ..Default::default() }))
 }
 
 fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
@@ -68,7 +68,7 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
             Value::Combo(a.clone()).content_hash(),
             Value::Combo(b.clone()).content_hash(),
         ],
-    }))
+     ..Default::default() }))
 }
 
 impl Ouroboros {
@@ -158,8 +158,8 @@ impl Ouroboros {
                 message: Some(format!("Incompatible types: {:?} vs {:?}", a, b)),
                 expected: Some(a.clone()),
                 found: Some(b.clone()),
-                involved: vec![a.content_hash(), b.content_hash()]
-            })),
+                involved: vec![a.content_hash(), b.content_hash()],
+             ..Default::default() })),
         }
     }
 
@@ -197,8 +197,8 @@ impl Ouroboros {
                     message: Some(format!("Key '{}' missing in closed Cocoon", key)), 
                     expected: None, 
                     found: Some(vb.clone()), 
-                    involved: vec![] 
-                })); 
+                    involved: vec![],
+                 ..Default::default() }));
             }
             if b.closed && !b.contains_key(&key) && !va.is_top() { 
                 return Value::Bottom(Box::new(BottomDetail { 
@@ -207,8 +207,8 @@ impl Ouroboros {
                     message: Some(format!("Key '{}' missing in incoming closed Cocoon", key)), 
                     expected: Some(va.clone()), 
                     found: None, 
-                    involved: vec![] 
-                })); 
+                    involved: vec![],
+                 ..Default::default() }));
             }
             let merged = self.unify_internal(va, vb, ctx); 
             if let Value::Bottom(mut detail) = merged { 

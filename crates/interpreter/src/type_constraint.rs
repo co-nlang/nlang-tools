@@ -134,7 +134,7 @@ pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
             expected: None,
             found: Some(value),
             involved: vec![],
-        })),
+         ..Default::default() })),
         ValidationResult::Unknown(_) => value,
     }
 }

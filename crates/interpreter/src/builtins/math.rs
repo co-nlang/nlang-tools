@@ -195,7 +195,7 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             expected: None,
             found: None,
             involved: vec![],
-        }))
+         ..Default::default() }))
     }
 
     fn to_f64(v: &Value) -> Option<f64> {

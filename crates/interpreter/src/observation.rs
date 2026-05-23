@@ -81,7 +81,7 @@ pub fn handle_resource_exhausted(
                 expected: None,
                 found: partial_result,
                 involved: vec![],
-            }))
+             ..Default::default() }))
         }
         ObservationStrategy::Blur => {
             let blur_hash = compute_blur_caid(&cause, horizon_salt);
