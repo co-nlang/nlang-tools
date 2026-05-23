@@ -346,6 +346,8 @@ let mut refl_fields = IndexMap::new();
                         BottomCause::PrivateAccessViolation => "private_access_violation",
                         BottomCause::NumericalError => "numerical_error",
                         BottomCause::ArithmeticOnAnchor => "arithmetic_on_anchor",
+                        BottomCause::H1Split => "h1_split",
+                        BottomCause::H2Split => "h2_split",
                     };
                     return Value::Atom(AtomKind::Tag(type_tag.to_string()), EffectTag::Pure, None).with_effect(accumulated_effect);
                 }

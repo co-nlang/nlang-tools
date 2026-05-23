@@ -1,10 +1,75 @@
 use std::collections::HashSet;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext};
-use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag};
+use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef};
 use crate::type_constraint::{TypeConstraint, type_constraint_meet, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
 use nlang_parser::ast::AtomKind;
+
+const EPSILON_COHERENT: f64 = 0.1;
+
+enum MergeDecision {
+    Merge,
+    H1Split { theta: f64 },
+    H2Split,
+}
+
+fn phase_merge_decision(a: &ComboVal, b: &ComboVal) -> MergeDecision {
+    // Step 1: MASA compatibility check (H²)
+    let h2_incompatible = match (&a.masa_ref, &b.masa_ref) {
+        (MasaRef::Top, _) | (_, MasaRef::Top) => false,
+        (MasaRef::Digest(da), MasaRef::Digest(db)) => da != db,
+    };
+    if h2_incompatible {
+        return MergeDecision::H2Split;
+    }
+
+    // Step 2: geometric phase difference (Phase 1b: architecture only)
+    // TODO Phase 4: replace with arccos(Tr(P_A · P_B)) eigenvalue computation
+    // Returning 0.0 so all Combos merge (architecture-only deployment)
+    let theta = 0.0;
+
+    // Step 3: three-way decision
+    if theta < EPSILON_COHERENT {
+        MergeDecision::Merge
+    } else {
+        MergeDecision::H1Split { theta }
+    }
+}
+
+#[allow(dead_code)]
+fn approximate_phase_diff(_sketch_a: &str, _sketch_b: &str) -> f64 {
+    // TODO Phase 4: replace with real eigenvalue-based computation
+    0.0
+}
+
+fn make_h1_split_bottom(a: &ComboVal, b: &ComboVal, theta: f64) -> Value {
+    Value::Bottom(Box::new(BottomDetail {
+        cause: BottomCause::H1Split,
+        path: None,
+        message: Some(format!("H¹ phase obstruction: θ={:.4} rad ≥ ε_coherent={}", theta, EPSILON_COHERENT)),
+        expected: None,
+        found: None,
+        involved: vec![
+            Value::Combo(a.clone()).content_hash(),
+            Value::Combo(b.clone()).content_hash(),
+        ],
+    }))
+}
+
+fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
+    Value::Bottom(Box::new(BottomDetail {
+        cause: BottomCause::H2Split,
+        path: None,
+        message: Some(format!("H² MASA obstruction: incompatible contexts {} vs {}", a.masa_ref, b.masa_ref)),
+        expected: None,
+        found: None,
+        involved: vec![
+            Value::Combo(a.clone()).content_hash(),
+            Value::Combo(b.clone()).content_hash(),
+        ],
+    }))
+}
 
 impl Ouroboros {
     pub fn unify(&self, a: Value, b: Value) -> Value {
@@ -96,6 +161,13 @@ impl Ouroboros {
     }
 
     fn unify_combo(&self, a: ComboVal, b: ComboVal, ctx: &mut EvalContext) -> Value {
+        // Phase 1b: phase-aware merge entry
+        match phase_merge_decision(&a, &b) {
+            MergeDecision::H2Split => return make_h2_split_bottom(&a, &b),
+            MergeDecision::H1Split { theta } => return make_h1_split_bottom(&a, &b, theta),
+            MergeDecision::Merge => {}
+        }
+
         if is_type_constraint_combo(&a) && is_type_constraint_combo(&b) {
             let ta = get_type_constraint_name(&a);
             let tb = get_type_constraint_name(&b);

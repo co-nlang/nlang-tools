@@ -277,6 +277,8 @@ impl BottomDetail {
             BottomCause::PrivateAccessViolation => "#private_access_violation",
             BottomCause::NumericalError => "#numerical_error",
             BottomCause::ArithmeticOnAnchor => "#arithmetic_on_anchor",
+            BottomCause::H1Split => "#h1_split",
+            BottomCause::H2Split => "#h2_split",
         };
         fields.insert("%type".to_string(), Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None));
         if let Some(ref p) = self.path {
@@ -304,7 +306,7 @@ impl BottomDetail {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum BottomCause { Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor }
+pub enum BottomCause { Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split }
 
 impl From<BottomCause> for Value {
     fn from(cause: BottomCause) -> Self {
