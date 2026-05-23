@@ -94,30 +94,47 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         Value::Atom(AtomKind::Str(arg.content_hash().to_string()), EffectTag::Pure, None)
     }) as Arc<BuiltinFn>);
 
-    // Phase 4: LADD advertise
+    // Phase 4 / Phase 5: LADD advertise
     m.insert("disc.advertise".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, _ctx: &mut EvalContext| {
         let hash = arg.content_hash();
-        let bn_bytes = crate::bn_serial::serialize_bn(&arg);
-        let mass = (bn_bytes.len() as f64 / 256.0).min(1.0);
+        // Phase 5 mass: field count (closer to Tr(P) semantics)
+        let mass = if let Value::Combo(ref cv) = arg {
+            (cv.system.len() + cv.meta.len() + cv.types.len()
+             + cv.rules.len() + cv.data.len() + cv.local.len()) as f64
+        } else { 1.0 };
+        // Phase 5 mass capped to avoid runaway weights
+        let mass = mass.min(100.0);
         let sketch_bytes = base64_decode_sketch(&hash.lattice_sketch);
         let masa_ref = hash.masa_ref.clone();
-        let gbb = crate::ladd::GBB { node_caid: hash.clone(), mass, sketch_bytes, masa_ref };
+        // Phase 5 nerve_structure from refine_map (approximation)
+        let nerve_structure: Vec<crate::ladd::NerveEntry> = {
+            oo.refine_map.read().map_or_else(|_| vec![], |m| {
+                m.iter().map(|(src, targets)| crate::ladd::NerveEntry {
+                    masa_caid: src.clone(),
+                    overlapping_masa_caids: targets.clone(),
+                }).collect()
+            })
+        };
+        let gbb = crate::ladd::GBB { node_caid: hash.clone(), mass, sketch_bytes, masa_ref, nerve_structure };
         if let Ok(mut reg) = oo.gbb_registry.write() {
             reg.insert(hash.to_string(), gbb);
         }
         Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
     }) as Arc<BuiltinFn>);
 
-    // Phase 4: LADD find (gravitational routing + horizon oscillation)
+    // Phase 4 / Phase 5: LADD find
     m.insert("disc.find".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         // 1. Build query GBB
         let query_hash = arg.content_hash();
-        let query_bn = crate::bn_serial::serialize_bn(&arg);
-        let query_mass = (query_bn.len() as f64 / 256.0).min(1.0);
+        let query_mass = if let Value::Combo(ref cv) = arg {
+            (cv.system.len() + cv.meta.len() + cv.types.len()
+             + cv.rules.len() + cv.data.len() + cv.local.len()) as f64
+        } else { 1.0 };
         let query_sketch = base64_decode_sketch(&query_hash.lattice_sketch);
         let query_gbb = crate::ladd::GBB {
-            node_caid: query_hash.clone(), mass: query_mass,
+            node_caid: query_hash.clone(), mass: query_mass.min(100.0),
             sketch_bytes: query_sketch, masa_ref: query_hash.masa_ref.clone(),
+            nerve_structure: vec![],
         };
 
         // 2. MASA filter + gravitational weighting
@@ -126,6 +143,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let reg = match oo.gbb_registry.read() { Ok(r) => r, Err(_) => return BottomCause::Conflict.into() };
             reg.values()
                 .filter(|peer_gbb| crate::ladd::masa_compatible(&query_gbb, peer_gbb))
+                .filter(|peer_gbb| crate::ladd::nerve_overlap(&query_gbb, peer_gbb))
                 .map(|peer_gbb| {
                     let w = crate::ladd::gravitational_weight(&query_gbb, peer_gbb, EPSILON);
                     (w, peer_gbb.node_caid.to_string())

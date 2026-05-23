@@ -690,7 +690,7 @@ impl Value {
     pub fn content_hash(&self) -> ContentHash {
         let bn_bytes = crate::bn_serial::serialize_bn(self);
         let digest = crate::bn_serial::content_digest(self);
-        let sketch = crate::lattice_sketch::compute_sketch_approximate(&bn_bytes);
+        let sketch = crate::lattice_sketch::compute_sketch_v2(self);
         let masa_ref = match self {
             Value::Combo(c) => c.masa_ref.clone(),
             _ => MasaRef::Top,

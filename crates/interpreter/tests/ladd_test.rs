@@ -12,7 +12,7 @@ fn dummy_caid() -> ContentHash {
 }
 
 fn gbb_with_sketch(sketch: &[u8], masa: MasaRef) -> GBB {
-    GBB { node_caid: dummy_caid(), mass: 0.5, sketch_bytes: sketch.to_vec(), masa_ref: masa }
+    GBB { node_caid: dummy_caid(), mass: 0.5, sketch_bytes: sketch.to_vec(), masa_ref: masa, nerve_structure: vec![] }
 }
 
 #[test]

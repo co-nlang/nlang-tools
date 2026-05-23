@@ -1,16 +1,24 @@
 use crate::value::{ContentHash, MasaRef};
+use std::collections::HashSet;
 
-/// Geometric Bounding Box — a node's approximate geometric description (APP_05 §2.2).
+/// Čech nerve position entry (APP_05 §4.3).
+#[derive(Debug, Clone)]
+pub struct NerveEntry {
+    pub masa_caid: String,
+    pub overlapping_masa_caids: Vec<String>,
+}
+
+/// Geometric Bounding Box (APP_05 §2.2).
 #[derive(Debug, Clone)]
 pub struct GBB {
     pub node_caid: ContentHash,
     pub mass: f64,
     pub sketch_bytes: Vec<u8>,
     pub masa_ref: MasaRef,
+    pub nerve_structure: Vec<NerveEntry>,
 }
 
 /// Approximate spectral distance via sketch Hamming distance.
-/// Phase 5: replace with real Chordal Distance sqrt(Tr(P_A+P_B-2·P_A⊓P_B)).
 pub fn d_l_approx(a: &GBB, b: &GBB) -> f64 {
     if a.sketch_bytes.is_empty() || b.sketch_bytes.is_empty() {
         return 1.0;
@@ -37,4 +45,17 @@ pub fn masa_compatible(query: &GBB, peer: &GBB) -> bool {
         (MasaRef::Top, _) | (_, MasaRef::Top) => true,
         (MasaRef::Digest(a), MasaRef::Digest(b)) => a == b,
     }
+}
+
+/// Nerve overlap check (APP_05 §4.3). Empty → passes (no pruning info).
+pub fn nerve_overlap(query: &GBB, peer: &GBB) -> bool {
+    if query.nerve_structure.is_empty() || peer.nerve_structure.is_empty() {
+        return true;
+    }
+    let query_masas: HashSet<&str> =
+        query.nerve_structure.iter().map(|e| e.masa_caid.as_str()).collect();
+    peer.nerve_structure.iter().any(|pe| {
+        query_masas.contains(pe.masa_caid.as_str())
+        || pe.overlapping_masa_caids.iter().any(|m| query_masas.contains(m.as_str()))
+    })
 }
