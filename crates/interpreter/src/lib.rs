@@ -5,6 +5,8 @@ use indexmap::IndexMap;
 use nlang_parser::ast::{Path, PathAnchor, AtomKind};
 use num_bigint::BigInt;
 pub mod value;
+pub mod bn_serial;
+pub mod lattice_sketch;
 pub mod storage;
 pub mod complement;
 pub mod builtins;
@@ -13,7 +15,7 @@ pub mod eval;
 pub mod type_constraint;
 pub mod dispatch;
 pub mod observation;
-pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, BottomDetail, BottomCause, CommitMeta, Commit};
+pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, ObservationStrategy, handle_resource_exhausted};
@@ -45,7 +47,7 @@ impl EvalContext {
     pub fn new(root: ComboVal) -> Self {
         let mut hasher = sha2::Sha256::new();
         hasher.update(b"default");
-        let salt = ContentHash { algorithm: crate::value::HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() };
+        let salt = ContentHash::v1(hasher.finalize().to_vec());
         Self { 
             root, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_math_op: false, context_value: None, 

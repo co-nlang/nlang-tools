@@ -52,6 +52,7 @@ pub struct ComboVal {
     pub closed: bool,
     pub effect: EffectTag,
     pub relations: Vec<ValRelation>,
+    pub masa_ref: MasaRef,
     #[serde(skip, default = "default_cache_id")]
     pub cache_id: Arc<RwLock<Option<ContentHash>>>,
     #[serde(skip, default)]
@@ -72,6 +73,7 @@ impl Default for ComboVal {
             closed: false,
             effect: EffectTag::Pure,
             relations: vec![],
+            masa_ref: MasaRef::Top,
             cache_id: default_cache_id(),
             legacy_fields: IndexMap::new(),
             legacy_local: IndexMap::new(),
@@ -314,20 +316,83 @@ impl From<BottomCause> for Value {
 pub enum HashAlgorithm { Sha256 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ContentHash { pub algorithm: HashAlgorithm, pub digest: Vec<u8> }
+pub enum CaidVersion { V1, V2 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MasaRef {
+    Top,
+    Digest(Vec<u8>),
+}
+
+impl fmt::Display for MasaRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MasaRef::Top => write!(f, "_"),
+            MasaRef::Digest(d) => write!(f, "{}", hex::encode(d)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ContentHash {
+    pub algorithm: HashAlgorithm,
+    pub version: CaidVersion,
+    pub masa_ref: MasaRef,
+    pub lattice_sketch: String,
+    pub digest: Vec<u8>,
+}
 
 impl fmt::Display for ContentHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "hash:sha256:{}", hex::encode(&self.digest))
+        let algo = "sha256";
+        let digest_hex = hex::encode(&self.digest);
+        match self.version {
+            CaidVersion::V1 => write!(f, "hash:{}:v1:{}", algo, digest_hex),
+            CaidVersion::V2 => write!(f, "hash:{}:v2:{}:{}:{}", algo, self.masa_ref, self.lattice_sketch, digest_hex),
+        }
     }
 }
 
 impl ContentHash {
+    /// Convenience constructor for internal hashing (v1 format, Top MASA)
+    pub fn v1(digest: Vec<u8>) -> Self {
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V1,
+            masa_ref: MasaRef::Top,
+            lattice_sketch: String::new(),
+            digest,
+        }
+    }
+
     pub fn parse(s: &str) -> anyhow::Result<Self> {
         let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 3 || parts[0] != "hash" || parts[1] != "sha256" { return Err(anyhow::anyhow!("Invalid CAID format")); }
-        let digest = hex::decode(parts[2])?;
-        Ok(ContentHash { algorithm: HashAlgorithm::Sha256, digest })
+        if parts.len() < 4 || parts[0] != "hash" || parts[1] != "sha256" {
+            return Err(anyhow::anyhow!("Invalid CAID format"));
+        }
+        match parts[2] {
+            "v1" => Ok(ContentHash {
+                algorithm: HashAlgorithm::Sha256,
+                version: CaidVersion::V1,
+                masa_ref: MasaRef::Top,
+                lattice_sketch: String::new(),
+                digest: hex::decode(parts[3])?,
+            }),
+            "v2" => {
+                if parts.len() < 6 {
+                    return Err(anyhow::anyhow!("Invalid v2 CAID: needs 6 colon-delimited parts"));
+                }
+                let masa_ref = if parts[3] == "_" { MasaRef::Top } else { MasaRef::Digest(hex::decode(parts[3])?) };
+                Ok(ContentHash {
+                    algorithm: HashAlgorithm::Sha256,
+                    version: CaidVersion::V2,
+                    masa_ref,
+                    lattice_sketch: parts[4].to_string(),
+                    digest: hex::decode(parts[5])?,
+                })
+            }
+            _ => Err(anyhow::anyhow!("Unknown CAID version: {}", parts[2])),
+        }
     }
 }
 
@@ -347,7 +412,7 @@ impl Default for Commit {
     fn default() -> Self {
         Self {
             parent: None,
-            root: ContentHash { algorithm: HashAlgorithm::Sha256, digest: vec![0; 32] },
+            root: ContentHash::v1(vec![0; 32]),
             meta: CommitMeta { author: None, timestamp: 0, message: None },
             cache_id: default_cache_id(),
         }
@@ -544,17 +609,35 @@ impl Value {
         let mut hasher = Sha256::new(); 
         if self.effect() > EffectTag::Pure { hasher.update(b"HORIZON_SALT_V1"); hasher.update(&salt.digest); }
         self.hash_recursive_with_salt(&mut hasher, salt);
-        ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() }
+        ContentHash::v1(hasher.finalize().to_vec())
     }
     
     pub fn content_hash(&self) -> ContentHash {
-        match self {
-            Value::Combo(c) => c.content_hash(),
-            _ => {
-                let mut hasher = Sha256::new();
-                self.hash_recursive_with_salt(&mut hasher, &ContentHash { algorithm: HashAlgorithm::Sha256, digest: vec![] });
-                ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() }
-            }
+        let bn_bytes = crate::bn_serial::serialize_bn(self);
+        let digest = crate::bn_serial::content_digest(self);
+        let sketch = crate::lattice_sketch::compute_sketch_approximate(&bn_bytes);
+        let masa_ref = match self {
+            Value::Combo(c) => c.masa_ref.clone(),
+            _ => MasaRef::Top,
+        };
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V2,
+            masa_ref,
+            lattice_sketch: sketch,
+            digest: digest.to_vec(),
+        }
+    }
+
+    /// v1 format for genesis commit only
+    pub fn content_hash_v1(&self) -> ContentHash {
+        let digest = crate::bn_serial::content_digest(self);
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V1,
+            masa_ref: MasaRef::Top,
+            lattice_sketch: String::new(),
+            digest: digest.to_vec(),
         }
     }
 
@@ -627,44 +710,29 @@ impl Value {
 
 impl ComboVal {
     pub fn content_hash(&self) -> ContentHash {
-        if let Ok(cache) = self.cache_id.read() {
-            if let Some(h) = &*cache { return h.clone(); }
-        }
-        let mut hasher = Sha256::new();
-        hasher.update([0x02]);
-        hasher.update([if self.closed { 1 } else { 0 }]);
-        hasher.update([self.effect as u8]);
-        let fields = self.fields();
-        let mut keys: Vec<_> = fields.keys().collect(); keys.sort();
-        for k in keys {
-            hasher.update(k.as_bytes());
-            hasher.update(&fields.get(k).unwrap().content_hash().digest);
-        }
-        let local = self.local_fields();
-        let mut lkeys: Vec<_> = local.keys().collect();
-        lkeys.sort();
-        for k in lkeys {
-            hasher.update(b"local:");
-            hasher.update(k.as_bytes());
-            hasher.update(&local.get(k).unwrap().content_hash().digest);
-        }
-        let res = ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() };
-        if let Ok(mut cache) = self.cache_id.write() { *cache = Some(res.clone()); }
-        res
+        let v = Value::Combo(self.clone());
+        v.content_hash()
     }
 }
 
 impl Commit {
     pub fn content_hash(&self) -> ContentHash {
-        if let Ok(cache) = self.cache_id.read() {
-            if let Some(h) = &*cache { return h.clone(); }
+        // Serialize commit to BN/ for determinism, then hash once
+        let mut buf = Vec::new();
+        if let Some(p) = &self.parent {
+            buf.extend_from_slice(&p.digest);
         }
-        let mut hasher = Sha256::new();
-        if let Some(p) = &self.parent { hasher.update(&p.digest); }
-        hasher.update(&self.root.digest);
-        hasher.update(format!("{:?}", self.meta).as_bytes());
-        let res = ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() };
-        if let Ok(mut cache) = self.cache_id.write() { *cache = Some(res.clone()); }
-        res
+        buf.extend_from_slice(&self.root.digest);
+        let meta_bytes = format!("{:?}", self.meta);
+        crate::bn_serial::encode_unsigned_leb128(meta_bytes.len() as u64, &mut buf);
+        buf.extend_from_slice(meta_bytes.as_bytes());
+        let digest = Sha256::digest(&buf).to_vec();
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V1,
+            masa_ref: MasaRef::Top,
+            lattice_sketch: String::new(),
+            digest,
+        }
     }
 }

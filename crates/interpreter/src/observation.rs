@@ -115,8 +115,5 @@ fn compute_blur_caid(cause: &crate::ResourceExhausted, salt: &ContentHash) -> Co
     };
     hasher.update(cause_bytes);
     
-    ContentHash {
-        algorithm: crate::value::HashAlgorithm::Sha256,
-        digest: hasher.finalize().to_vec(),
-    }
+    ContentHash::v1(hasher.finalize().to_vec())
 }

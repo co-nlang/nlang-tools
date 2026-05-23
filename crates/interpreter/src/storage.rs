@@ -62,7 +62,7 @@ impl ObjectStore {
         let mut hasher = sha2::Sha256::new();
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         hasher.update(now.to_le_bytes());
-        ContentHash { algorithm: HashAlgorithm::Sha256, digest: sha2::Digest::finalize(hasher).to_vec() }
+        ContentHash::v1(sha2::Digest::finalize(hasher).to_vec())
     }
 
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
