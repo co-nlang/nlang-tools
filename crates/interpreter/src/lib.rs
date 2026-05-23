@@ -185,8 +185,12 @@ let mut refl_fields = IndexMap::new();
         for i in 1u8..=3 {
             engine_fields.insert(format!("/%differential.{}", i), engine_morph(&format!("/%differential.{}", i), "engine.differential", EffectTag::Pure));
         }
+        engine_fields.insert("/project_down".to_string(), engine_morph("/project_down", "engine.project_down", EffectTag::State));
+        engine_fields.insert("/project_up".to_string(), engine_morph("/project_up", "engine.project_up", EffectTag::State));
+        engine_fields.insert("/set_strategy".to_string(), engine_morph("/set_strategy", "engine.set_strategy", EffectTag::State));
         let mut state_inner = IndexMap::new();
         state_inner.insert("differential".to_string(), Value::Atom(AtomKind::Tag("d1_converging".to_string()), EffectTag::Pure, None));
+        state_inner.insert("strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));
         engine_fields.insert("state".to_string(), Value::Combo(ComboVal::new(state_inner, false, IndexMap::new(), EffectTag::Pure, vec![])));
         fields.insert("~%Engine".to_string(), Value::Combo(ComboVal::new(engine_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
