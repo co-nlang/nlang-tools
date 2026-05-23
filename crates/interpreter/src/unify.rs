@@ -142,12 +142,15 @@ impl Ouroboros {
             (Value::Combo(ac), Value::Combo(bc)) => self.unify_combo(ac, bc, ctx),
             (Value::Union(mut branches), other) | (other, Value::Union(mut branches)) => { 
                 branches.sort_by_key(|b| self.tropical_weight(b));
-                let results: Vec<Value> = branches.into_iter().map(|branch| self.unify_internal(branch, other.clone(), ctx)).filter(|v| !matches!(v, Value::Bottom(_))).collect(); 
+                let max_branches = ctx.max_branches;
+                let results: Vec<Value> = branches.into_iter().map(|branch| {
+                    self.unify_internal(branch, other.clone(), ctx)
+                }).filter(|v| !matches!(v, Value::Bottom(_))).take(max_branches).collect();
                 match results.len() { 
                     0 => BottomCause::Conflict.into(), 
                     1 => results.into_iter().next().unwrap(), 
-                    _ => Value::Union(results)
-                } 
+                    _ => Value::Union(results),
+                }
             }
             (a, b) => Value::Bottom(Box::new(BottomDetail { 
                 cause: BottomCause::Conflict, 

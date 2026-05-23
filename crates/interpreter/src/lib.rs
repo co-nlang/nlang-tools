@@ -42,6 +42,11 @@ pub struct EvalContext {
     pub depth: u32,
     pub horizon_salt: ContentHash,
     pub strategy: ObservationStrategy,
+    // Phase 2: genesis defaults
+    pub max_branches: usize,
+    pub max_unification_depth: usize,
+    pub max_pattern_nodes: usize,
+    pub max_lifting_depth: usize,
 }
 
 impl EvalContext {
@@ -53,14 +58,15 @@ impl EvalContext {
             root, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_math_op: false, context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, 
-            horizon_salt: salt, strategy: ObservationStrategy::Blur 
+            horizon_salt: salt, strategy: ObservationStrategy::Blur,
+            max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
         }
     }
     pub fn with_fuel(mut self, fuel: u64) -> Self { self.fuel = fuel; self }
     pub fn with_strategy(mut self, strategy: ObservationStrategy) -> Self { self.strategy = strategy; self }
     pub fn check_resources(&mut self, cost: u64) -> Result<(), ResourceExhausted> { 
         if self.fuel < cost { Err(ResourceExhausted::FuelExhausted) } 
-        else if self.depth > 100 { Err(ResourceExhausted::StackOverflow) } 
+        else if self.depth > self.max_unification_depth as u32 { Err(ResourceExhausted::StackOverflow) } 
         else { self.fuel -= cost; Ok(()) } 
     }
 }
@@ -116,9 +122,10 @@ impl Ouroboros {
         
         let mut math_builtins = IndexMap::new();
         math_builtins.insert("/add".to_string(), add_morph);
-        let math_morphisms = vec![("/sub", "math.sub"), ("/mul", "math.mul"), ("/div", "math.div"), ("/rem", "math.rem"), ("/abs", "math.abs"), ("/bits", "math.bits"), ("/pow", "math.pow"), ("/sqrt", "math.sqrt"), ("/bitAnd", "math.bitAnd"), ("/bitOr", "math.bitOr"), ("/bitXor", "math.bitXor"), ("/bitNot", "math.bitNot"), ("/shl", "math.shl"), ("/shr", "math.shr")];
+        let math_morphisms = vec![("/sub", "math.sub"), ("/mul", "math.mul"), ("/div", "math.div"), ("/rem", "math.rem"), ("/abs", "math.abs"), ("/bits", "math.bits"), ("/pow", "math.pow"), ("/sqrt", "math.sqrt"), ("/bitAnd", "math.bitAnd"), ("/bitOr", "math.bitOr"), ("/bitXor", "math.bitXor"), ("/bitNot", "math.bitNot"), ("/shl", "math.shl"), ("/shr", "math.shr"), ("/exp", "math.exp"), ("/ln", "math.ln"), ("/sin", "math.sin"), ("/cos", "math.cos"), ("/eml", "math.eml")];
         for (n, b) in math_morphisms { math_builtins.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         math_builtins.insert("/random".to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str("math.random".to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::NonDet, vec![])));
+        math_builtins.insert("one".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
         fields.insert("~%Math".to_string(), Value::Combo(ComboVal::new(math_builtins, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
         let mut cond_fields = IndexMap::new();
