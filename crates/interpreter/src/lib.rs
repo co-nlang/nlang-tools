@@ -16,6 +16,7 @@ pub mod type_constraint;
 pub mod dispatch;
 pub mod observation;
 pub mod genesis;
+pub mod ladd;
 pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
@@ -87,6 +88,7 @@ pub struct Ouroboros {
     pub peers: RwLock<HashMap<String, Peer>>,
     pub identity: crate::value::Identity,
     pub refine_map: RwLock<HashMap<String, Vec<String>>>,
+    pub gbb_registry: RwLock<HashMap<String, crate::ladd::GBB>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +106,7 @@ impl Ouroboros {
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
         let store = ObjectStore::init(base_dir)?;
         let builtins = create_default_builtins();
-        let mut oo = Self { store, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity: crate::value::Identity::new_random(), refine_map: RwLock::new(HashMap::new()) };
+        let mut oo = Self { store, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity: crate::value::Identity::new_random(), refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()) };
         Ok(oo)
     }
     
@@ -156,7 +158,7 @@ impl Ouroboros {
         fields.insert("~%Time".to_string(), Value::Combo(ComboVal::new(time_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
         let mut disc_fields = IndexMap::new();
-        let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save")];
+        let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
         for (n, b) in disc_morphisms { disc_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![]))); }
         fields.insert("~%Discovery".to_string(), Value::Combo(ComboVal::new(disc_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         

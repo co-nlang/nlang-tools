@@ -1,9 +1,22 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn, Peer};
-use crate::value::{Value, EffectTag, BottomCause, ContentHash};
+use crate::value::{Value, EffectTag, BottomCause, BottomDetail, ContentHash};
 use crate::storage::ObjectStore;
 use nlang_parser::ast::AtomKind;
+
+fn base64_decode_sketch(s: &str) -> Vec<u8> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+    STANDARD_NO_PAD.decode(s).unwrap_or_default()
+}
+
+fn bottom_not_found() -> Value {
+    Value::Bottom(Box::new(BottomDetail {
+        cause: BottomCause::Conflict,
+        message: Some("#not_found: no compatible peer".to_string()),
+        ..Default::default()
+    }))
+}
 
 pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("disc.connect".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
@@ -79,5 +92,74 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     
     m.insert("disc.identify".to_string(), Arc::new(|arg: Value, _oo: &Ouroboros, _ctx: &mut EvalContext| {
         Value::Atom(AtomKind::Str(arg.content_hash().to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    // Phase 4: LADD advertise
+    m.insert("disc.advertise".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, _ctx: &mut EvalContext| {
+        let hash = arg.content_hash();
+        let bn_bytes = crate::bn_serial::serialize_bn(&arg);
+        let mass = (bn_bytes.len() as f64 / 256.0).min(1.0);
+        let sketch_bytes = base64_decode_sketch(&hash.lattice_sketch);
+        let masa_ref = hash.masa_ref.clone();
+        let gbb = crate::ladd::GBB { node_caid: hash.clone(), mass, sketch_bytes, masa_ref };
+        if let Ok(mut reg) = oo.gbb_registry.write() {
+            reg.insert(hash.to_string(), gbb);
+        }
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
+    }) as Arc<BuiltinFn>);
+
+    // Phase 4: LADD find (gravitational routing + horizon oscillation)
+    m.insert("disc.find".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        // 1. Build query GBB
+        let query_hash = arg.content_hash();
+        let query_bn = crate::bn_serial::serialize_bn(&arg);
+        let query_mass = (query_bn.len() as f64 / 256.0).min(1.0);
+        let query_sketch = base64_decode_sketch(&query_hash.lattice_sketch);
+        let query_gbb = crate::ladd::GBB {
+            node_caid: query_hash.clone(), mass: query_mass,
+            sketch_bytes: query_sketch, masa_ref: query_hash.masa_ref.clone(),
+        };
+
+        // 2. MASA filter + gravitational weighting
+        const EPSILON: f64 = 1e-6;
+        let mut candidates: Vec<(f64, String)> = {
+            let reg = match oo.gbb_registry.read() { Ok(r) => r, Err(_) => return BottomCause::Conflict.into() };
+            reg.values()
+                .filter(|peer_gbb| crate::ladd::masa_compatible(&query_gbb, peer_gbb))
+                .map(|peer_gbb| {
+                    let w = crate::ladd::gravitational_weight(&query_gbb, peer_gbb, EPSILON);
+                    (w, peer_gbb.node_caid.to_string())
+                })
+                .collect()
+        };
+
+        if candidates.is_empty() { return bottom_not_found(); }
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // 3. Horizon oscillation: 10% random jump
+        let chosen_caid_str = if ctx.horizon_salt.digest.first() == Some(&0) {
+            let idx = (ctx.horizon_salt.digest.get(1).copied().unwrap_or(0) as usize) % candidates.len();
+            candidates[idx].1.clone()
+        } else {
+            candidates[0].1.clone()
+        };
+
+        // 4. Fetch target
+        let target_caid_str = if let Value::Combo(ref c) = arg {
+            if let Some(v) = c.get_field("target") { oo.force(v.clone(), ctx).to_string_plain() }
+            else { chosen_caid_str.clone() }
+        } else { chosen_caid_str.clone() };
+
+        if let Ok(hash) = crate::value::ContentHash::parse(&target_caid_str) {
+            if let Ok(val) = oo.store.get_value(&hash) { return val; }
+            let peers_copy: Vec<_> = oo.peers.read().map(|p| p.values().cloned().collect()).unwrap_or_default();
+            for peer in peers_copy {
+                match peer {
+                    crate::Peer::Local(store) => { if let Ok(val) = store.get_value(&hash) { return val; } }
+                    crate::Peer::Remote(addr) => { if let Ok(val) = oo.remote_fetch(&addr, &hash) { return val; } }
+                }
+            }
+        }
+        bottom_not_found()
     }) as Arc<BuiltinFn>);
 }
