@@ -54,7 +54,9 @@ fn make_h1_split_bottom(a: &ComboVal, b: &ComboVal, theta: f64) -> Value {
             Value::Combo(a.clone()).content_hash(),
             Value::Combo(b.clone()).content_hash(),
         ],
-     ..Default::default() }))
+        obstruction_degree: Some(1),
+        holonomy: Some(crate::value::Holonomy::Phase(theta)),
+    }))
 }
 
 fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
@@ -68,7 +70,9 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
             Value::Combo(a.clone()).content_hash(),
             Value::Combo(b.clone()).content_hash(),
         ],
-     ..Default::default() }))
+        obstruction_degree: Some(2),
+        holonomy: Some(crate::value::Holonomy::NegI),
+    }))
 }
 
 impl Ouroboros {

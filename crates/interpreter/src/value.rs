@@ -15,7 +15,7 @@ impl fmt::Display for EffectTag {
     }
 }
 
-fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
+pub fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
     Arc::new(RwLock::new(None))
 }
 
@@ -455,11 +455,27 @@ impl ContentHash {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommitMeta { pub author: Option<String>, pub timestamp: u64, pub message: Option<String> }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitKind { Refine, #[serde(other)] Standard }
+impl Default for CommitKind { fn default() -> Self { Self::Standard } }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RefineInfo {
+    pub source_caids: Vec<ContentHash>,
+    pub target_caids: Vec<ContentHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_signer: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commit {
     pub parent: Option<ContentHash>,
     pub root: ContentHash,
     pub meta: CommitMeta,
+    #[serde(default)]
+    pub kind: CommitKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_info: Option<RefineInfo>,
     #[serde(skip, default = "default_cache_id")]
     pub cache_id: Arc<RwLock<Option<ContentHash>>>,
 }
@@ -470,6 +486,8 @@ impl Default for Commit {
             parent: None,
             root: ContentHash::v1(vec![0; 32]),
             meta: CommitMeta { author: None, timestamp: 0, message: None },
+            kind: CommitKind::Standard,
+            refine_info: None,
             cache_id: default_cache_id(),
         }
     }
@@ -478,12 +496,13 @@ impl Default for Commit {
 impl PartialEq for Commit {
     fn eq(&self, other: &Self) -> bool {
         self.parent == other.parent && self.root == other.root && self.meta == other.meta
+            && self.kind == other.kind && self.refine_info == other.refine_info
     }
 }
 
 impl Commit {
     pub fn new(parent: Option<ContentHash>, root: ContentHash, meta: CommitMeta) -> Self {
-        Self { parent, root, meta, cache_id: default_cache_id() }
+        Self { parent, root, meta, kind: CommitKind::Standard, refine_info: None, cache_id: default_cache_id() }
     }
 }
 
@@ -773,22 +792,20 @@ impl ComboVal {
 
 impl Commit {
     pub fn content_hash(&self) -> ContentHash {
-        // Serialize commit to BN/ for determinism, then hash once
         let mut buf = Vec::new();
         if let Some(p) = &self.parent {
             buf.extend_from_slice(&p.digest);
         }
         buf.extend_from_slice(&self.root.digest);
+        buf.push(match self.kind { CommitKind::Standard => 0, CommitKind::Refine => 1 });
+        if let Some(ref ri) = self.refine_info {
+            for src in &ri.source_caids { buf.extend_from_slice(&src.digest); }
+            for tgt in &ri.target_caids { buf.extend_from_slice(&tgt.digest); }
+        }
         let meta_bytes = format!("{:?}", self.meta);
         crate::bn_serial::encode_unsigned_leb128(meta_bytes.len() as u64, &mut buf);
         buf.extend_from_slice(meta_bytes.as_bytes());
         let digest = Sha256::digest(&buf).to_vec();
-        ContentHash {
-            algorithm: HashAlgorithm::Sha256,
-            version: CaidVersion::V1,
-            masa_ref: MasaRef::Top,
-            lattice_sketch: String::new(),
-            digest,
-        }
+        ContentHash::v1(digest)
     }
 }

@@ -1,4 +1,4 @@
-use crate::value::{Value, ComboVal, ContentHash, BottomCause};
+use crate::value::{Value, ComboVal, ContentHash, BottomCause, CommitKind, RefineInfo, Commit, default_cache_id};
 use crate::Ouroboros;
 use crate::EvalContext;
 use nlang_parser::ast::{Path, PathAnchor, Field, FieldKey, Prefix};
@@ -79,5 +79,65 @@ impl Universe {
             Ok(commit_hash) 
         } _ => Err(anyhow::anyhow!("Commit failed")), }
     }
-    pub fn observe(&self, engine: &Ouroboros, path: &Path) -> Value { let current = engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone())); if let Value::Combo(r) = current { let mut ctx = EvalContext::new(r); engine.resolve_path(path, &mut ctx) } else { BottomCause::Conflict.into() } }
+    pub fn observe(&self, engine: &Ouroboros, path: &Path) -> Value {
+        let current = engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone()));
+        if let Value::Combo(r) = current {
+            let mut ctx = EvalContext::new(r);
+            ctx.refine_map_active = true;
+            engine.resolve_path(path, &mut ctx)
+        } else { BottomCause::Conflict.into() }
+    }
+
+    /// Create a #refine Commit with geometric monotonicity verification.
+    pub fn refine(
+        &mut self,
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        source_caids: Vec<ContentHash>,
+        target_caids: Vec<ContentHash>,
+        meta: crate::value::CommitMeta,
+    ) -> Result<ContentHash> {
+        // Step 1: verify geometric monotonicity (new & old = new)
+        for src in &source_caids {
+            for tgt in &target_caids {
+                if let (Ok(src_val), Ok(tgt_val)) = (engine.store.get_value(src), engine.store.get_value(tgt)) {
+                    let meet = engine.unify(tgt_val.clone(), src_val.clone());
+                    if meet.content_hash() != tgt_val.content_hash() {
+                        return Err(anyhow::anyhow!("new ⋢ old: refinement fails geometric monotonicity"));
+                    }
+                }
+                // opaque CAIDs: skip verification, trust authority
+            }
+        }
+
+        // Step 2: build Refine Commit
+        let current_root_hash = match &self.head {
+            Some(h) => engine.store.get_commit(h)?.root.clone(),
+            None => engine.store.put_value(&Value::Combo(self.root.clone()))?,
+        };
+        let commit = Commit {
+            parent: self.head.clone(),
+            root: current_root_hash,
+            meta,
+            kind: CommitKind::Refine,
+            refine_info: Some(RefineInfo {
+                source_caids: source_caids.clone(),
+                target_caids: target_caids.clone(),
+                authority_signer: None,
+            }),
+            cache_id: crate::value::default_cache_id(),
+        };
+        let commit_hash = engine.store.put_commit(&commit)?;
+        engine.store.set_head(base_dir, &commit_hash)?;
+        self.head = Some(commit_hash.clone());
+
+        // Step 3: update RefineMap
+        let mut map = engine.refine_map.write().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        for src in &source_caids {
+            let targets: Vec<String> = target_caids.iter().map(|t| t.to_string()).collect();
+            map.entry(src.to_string()).or_default().extend(targets);
+        }
+
+        Ok(commit_hash)
+    }
 }

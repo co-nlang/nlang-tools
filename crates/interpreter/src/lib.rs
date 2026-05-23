@@ -16,7 +16,7 @@ pub mod type_constraint;
 pub mod dispatch;
 pub mod observation;
 pub mod genesis;
-pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit};
+pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, ObservationStrategy, handle_resource_exhausted};
@@ -42,11 +42,11 @@ pub struct EvalContext {
     pub depth: u32,
     pub horizon_salt: ContentHash,
     pub strategy: ObservationStrategy,
-    // Phase 2: genesis defaults
     pub max_branches: usize,
     pub max_unification_depth: usize,
     pub max_pattern_nodes: usize,
     pub max_lifting_depth: usize,
+    pub refine_map_active: bool,
 }
 
 impl EvalContext {
@@ -60,6 +60,7 @@ impl EvalContext {
             fuel: 10000, timeout_deadline: None, depth: 0, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
+            refine_map_active: false,
         }
     }
     pub fn with_fuel(mut self, fuel: u64) -> Self { self.fuel = fuel; self }
@@ -85,6 +86,7 @@ pub struct Ouroboros {
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
     pub identity: crate::value::Identity,
+    pub refine_map: RwLock<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,9 +103,11 @@ impl Ouroboros {
 
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
         let store = ObjectStore::init(base_dir)?;
-        Ok(Self { store, unify_memo: RwLock::new(HashMap::new()), builtin_registry: create_default_builtins(), peers: RwLock::new(HashMap::new()), identity: crate::value::Identity::new_random() })
+        let builtins = create_default_builtins();
+        let mut oo = Self { store, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity: crate::value::Identity::new_random(), refine_map: RwLock::new(HashMap::new()) };
+        Ok(oo)
     }
-
+    
     fn is_list(&self, v: &Value, ctx: &mut EvalContext) -> bool {
         let fv = self.force(v.clone(), ctx);
         match fv.collapse() {
@@ -401,6 +405,30 @@ let mut refl_fields = IndexMap::new();
             target.insert_field(key, Value::Combo(sub));
         }
         Ok(())
+    }
+
+    const MAX_REFINE_HOPS: usize = 16;
+
+    pub fn follow_refine(&self, caid: &ContentHash) -> Result<ContentHash, BottomCause> {
+        let mut current = caid.to_string();
+        let mut visited = std::collections::HashSet::new();
+        for _ in 0..Self::MAX_REFINE_HOPS {
+            if !visited.insert(current.clone()) {
+                return Err(BottomCause::Divergent);
+            }
+            let map = self.refine_map.read().map_err(|_| BottomCause::Conflict)?;
+            match map.get(&current) {
+                None => break,
+                Some(targets) if targets.is_empty() => break,
+                Some(targets) => { current = targets[0].clone(); }
+            }
+        }
+        ContentHash::parse(&current).map_err(|_| BottomCause::InvalidPath)
+    }
+
+    pub fn get_live_value(&self, caid: &ContentHash) -> Result<Value> {
+        let resolved = self.follow_refine(caid).map_err(|_| anyhow::anyhow!("Refinement cycle detected"))?;
+        self.store.get_value(&resolved)
     }
 
     pub fn sub_context(&self, ctx: &EvalContext) -> EvalContext {
