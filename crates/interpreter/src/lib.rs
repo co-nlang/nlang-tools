@@ -17,6 +17,7 @@ pub mod dispatch;
 pub mod observation;
 pub mod genesis;
 pub mod ladd;
+pub mod oml;
 pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
@@ -48,6 +49,7 @@ pub struct EvalContext {
     pub max_pattern_nodes: usize,
     pub max_lifting_depth: usize,
     pub refine_map_active: bool,
+    pub had_nondistrib_event: bool,
 }
 
 impl EvalContext {
@@ -62,6 +64,7 @@ impl EvalContext {
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
             refine_map_active: false,
+            had_nondistrib_event: false,
         }
     }
     pub fn with_fuel(mut self, fuel: u64) -> Self { self.fuel = fuel; self }
@@ -188,6 +191,7 @@ let mut refl_fields = IndexMap::new();
         engine_fields.insert("/project_down".to_string(), engine_morph("/project_down", "engine.project_down", EffectTag::State));
         engine_fields.insert("/project_up".to_string(), engine_morph("/project_up", "engine.project_up", EffectTag::State));
         engine_fields.insert("/set_strategy".to_string(), engine_morph("/set_strategy", "engine.set_strategy", EffectTag::State));
+        engine_fields.insert("/check_oml".to_string(), engine_morph("/check_oml", "engine.check_oml", EffectTag::Pure));
         let mut state_inner = IndexMap::new();
         state_inner.insert("differential".to_string(), Value::Atom(AtomKind::Tag("d1_converging".to_string()), EffectTag::Pure, None));
         state_inner.insert("strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));

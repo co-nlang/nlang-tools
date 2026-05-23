@@ -147,9 +147,21 @@ impl Ouroboros {
             (Value::Union(mut branches), other) | (other, Value::Union(mut branches)) => { 
                 branches.sort_by_key(|b| self.tropical_weight(b));
                 let max_branches = ctx.max_branches;
-                let results: Vec<Value> = branches.into_iter().map(|branch| {
-                    self.unify_internal(branch, other.clone(), ctx)
-                }).filter(|v| !matches!(v, Value::Bottom(_))).take(max_branches).collect();
+                let mut results: Vec<Value> = Vec::new();
+                for branch in branches.into_iter().take(max_branches * 2) {
+                    let r = self.unify_internal(branch, other.clone(), ctx);
+                    match &r {
+                        Value::Bottom(detail) => {
+                            if matches!(detail.cause, BottomCause::H1Split | BottomCause::H2Split) {
+                                ctx.had_nondistrib_event = true;
+                            }
+                        }
+                        _ => {
+                            results.push(r);
+                            if results.len() >= max_branches { break; }
+                        }
+                    }
+                }
                 match results.len() { 
                     0 => BottomCause::Conflict.into(), 
                     1 => results.into_iter().next().unwrap(), 

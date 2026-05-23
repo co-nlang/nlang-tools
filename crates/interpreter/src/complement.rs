@@ -97,11 +97,8 @@ impl Ouroboros {
                 return Value::Atom(AtomKind::Top, cv.effect, None);
             }
             
-            let mut acc = all_complements[0].clone();
-            for c in all_complements.into_iter().skip(1) {
-                acc = self.unify_internal(acc, c, ctx);
-            }
-            acc
+            // De Morgan: !(A & B) = !A | !B for open Combos
+            Value::Union(all_complements)
         }
     }
 }

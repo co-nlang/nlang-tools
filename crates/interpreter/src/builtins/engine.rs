@@ -176,4 +176,34 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         };
         Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::State, None)
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 7: check_oml ────────────────────────────────────
+
+    m.insert("engine.check_oml".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let (a, b) = if let Value::Combo(ref c) = arg {
+            let a = c.get_field("a").cloned().unwrap_or(Value::Top);
+            let b = c.get_field("b").cloned().unwrap_or(Value::Top);
+            (oo.force(a, ctx), oo.force(b, ctx))
+        } else { return BottomCause::Conflict.into(); };
+
+        let result = crate::oml::verify_oml(a, b, oo, ctx);
+        match result {
+            crate::oml::OMLResult::Vacuous =>
+                Value::Atom(AtomKind::Tag("oml_vacuous".to_string()), EffectTag::Pure, None),
+            crate::oml::OMLResult::Valid =>
+                Value::Atom(AtomKind::Tag("oml_valid".to_string()), EffectTag::Pure, None),
+            crate::oml::OMLResult::Approximate =>
+                Value::Atom(AtomKind::Tag("oml_approximate".to_string()), EffectTag::Pure, None),
+            crate::oml::OMLResult::Violation { rhs, expected } => {
+                let mut fields = indexmap::IndexMap::new();
+                fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("oml_violation".to_string()), EffectTag::Pure, None));
+                fields.insert("rhs".to_string(), rhs);
+                fields.insert("expected".to_string(), expected);
+                if ctx.had_nondistrib_event {
+                    fields.insert("%nondistributive".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+                }
+                Value::Combo(crate::value::ComboVal::new(fields, true, indexmap::IndexMap::new(), EffectTag::Pure, vec![]))
+            }
+        }
+    }) as Arc<BuiltinFn>);
 }
