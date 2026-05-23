@@ -15,6 +15,7 @@ pub mod eval;
 pub mod type_constraint;
 pub mod dispatch;
 pub mod observation;
+pub mod genesis;
 pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
