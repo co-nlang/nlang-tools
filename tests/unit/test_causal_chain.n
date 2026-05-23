@@ -1,0 +1,14 @@
+;; 測試 %cause 因果鏈協議
+
+;; 1. 基本衝突診斷
+test_type: (1 & "a").%type == #conflict
+test_expected: (1 & "a").%cause.%expected == 1
+test_found: (1 & "a").%cause.%found == "a"
+
+;; 2. 嵌套路徑診斷
+test_nested_path: ({ a: { b: 1 } } & { a: { b: 2 } }).a.b.%cause.%path == "a.b"
+test_nested_type: ({ a: { b: 1 } } & { a: { b: 2 } }).a.b.%type == #conflict
+
+;; 3. 封閉繭診斷 (MissingKey)
+test_missing_key_type: ({{ x: 1 }} & { y: 2 }).y.%type == #missing_key
+test_missing_key_path: ({{ x: 1 }} & { y: 2 }).y.%cause.%path == "y"

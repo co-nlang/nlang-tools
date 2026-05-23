@@ -1,0 +1,2 @@
+secret_cat: #貓
+~%repl./commit { message: "A cat is born" }

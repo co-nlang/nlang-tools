@@ -1,0 +1,28 @@
+;; 測試跨節點聯邦 Fetch (LADD Routing)
+
+;; 1. 建立兩個 Peer 存儲目錄
+;; 在實際環境中這會是不同的機器，這裡我們用本地目錄模擬。
+~setup: {
+    ~dir_a: "/tmp/nlang_peer_a"
+    ~dir_b: "/tmp/nlang_peer_b"
+    
+    ;; 準備數據
+    ~data_a: { id: "X", part_a: "from A" }
+    ~data_b: { id: "X", part_b: "from B" }
+    
+    ;; 保存數據到不同的 Peer (這裡需要一些外部手段，或者我們在解釋器中支援切換 Store)
+    ;; 由於當前 engine 只綁定一個 Store，我們只能測試合併邏輯。
+}
+
+;; 2. 模擬多源獲取與引力合併
+;; 我們手動建構來自不同 Peer 的結果
+~res_a: { id: "X", info: "Short" }
+~res_b: { id: "X", info: "A much longer and more detailed info string" }
+
+;; ~res_b 的 bits 應該大於 ~res_a
+test_gravity_winner: (~res_a | ~res_b) & _ == ~res_b
+
+;; 3. 測試屬性合併 (幾何格論核心)
+~partial_1: { name: "Alice" }
+~partial_2: { age: 30 }
+test_geometric_merge: (~partial_1 & ~partial_2) == { name: "Alice", age: 30 }

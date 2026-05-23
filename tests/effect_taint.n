@@ -1,0 +1,8 @@
+test_effect: combined.%effect == #io
+
+currentTime: ~%Time./now #trigger
+user: {
+    name: "Alice"
+    last_login: currentTime
+}
+combined: { a: 1 } & user

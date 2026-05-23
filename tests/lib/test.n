@@ -1,0 +1,32 @@
+;; n/ Test Library
+;; 測試輔助函數和斷言
+
+;; 基本斷言
+/assert_true: x -> x == #true
+/assert_false: x -> x == #false
+/assert_eq: x y -> x == y
+/assert_ne: x y -> x != y
+
+;; 型別斷言
+/assert_int: x -> x & @int
+/assert_str: x -> x & @str
+/assert_combo: x -> x & @combo
+
+;; 數值比較
+/assert_gt: x y -> x > y
+/assert_lt: x y -> x < y
+/assert_gte: x y -> x >= y
+/assert_lte: x y -> x <= y
+
+;; 集合斷言
+;; /assert_contains: combo key -> key ∈ combo ;; Not implemented yet
+/assert_empty: x -> x == {}
+
+;; 底部斷言（預期失敗）
+/assert_bottom: x -> x == _|_
+/assert_not_bottom: x -> x != _|_
+
+;; 測試元數據
+~test.name: "n/ Test Library"
+~test.version: "0.1.0"
+~test.description: "Core testing utilities for n/ language"

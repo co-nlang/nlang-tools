@@ -1,0 +1,21 @@
+;; 測試聯邦引力與 LADD 路由基礎
+
+~v1: { a: 1 }
+~v2: { a: 1, b: 2 }
+~u: ~v1 | ~v2
+
+;; 1. 引力塌陷 (Gravity Collapse)
+test_gravity_collapse: (~u & { a: 1 }) == { a: 1, b: 2 }
+
+;; 2. 衝突解決
+~c1: #active
+~c2: #done
+~uc: ~c1 | ~c2
+;; 這裡我們顯式與 Top 合併以觸發 Union 內部的 Gravity 選擇
+test_conflict_gravity: (~uc & _) == #active
+
+;; 3. 聯邦 Fetch 基礎 (單節點模擬)
+;; 注意：這部分依賴於當前節點 Store 中已有的 CAID。
+~id: (~%Discovery./identify_and_store { hello: "world" })
+test_identify: ~id != ""
+test_fetch_local: (~%Discovery./fetch ~id) == { hello: "world" }

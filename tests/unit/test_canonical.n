@@ -1,0 +1,14 @@
+;; 測試語義規範化與 MBU 計費
+
+;; 1. 語義規範化 (欄位重排)
+~messy: {
+    z: 3,
+    a: 1,
+    b: 2
+}
+test_canonical_order: ~messy == { a: 1, b: 2, z: 3 }
+
+;; 2. MBU 計費與燃料耗盡
+/recursive: x -> /recursive (x + 1)
+~exhausted: (/recursive 1).%type
+test_fuel_exhaustion: ~exhausted == #divergent

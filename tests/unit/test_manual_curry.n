@@ -1,0 +1,6 @@
+;; @observe: res
+;; @expect: 30
+;; 測試手動柯里化與閉包層級
+/add_manual: x -> (y -> x + y)
+~add10: /add_manual 10
+res: ~add10 20

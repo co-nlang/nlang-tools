@@ -1,0 +1,156 @@
+// n.pest - RECONSTRUCTION 14 (Fixing missing rules)
+WHITESPACE = _{ " " | "\t" | "\n" | "\r\n" | "\r" }
+COMMENT = _{ ";;" ~ (!("\n" | "\r\n" | "\r") ~ ANY)* }
+
+program = { SOI ~ WHITESPACE* ~ (field ~ field_sep?)* ~ EOI }
+field_sep = _{ "," | ";" | WHITESPACE+ }
+
+ident = @{ (XID_START | "_") ~ (XID_CONTINUE | "_" | "-")* }
+numeric = @{ ASCII_DIGIT+ }
+
+prefix_type    = @{ "@" }
+prefix_logic   = @{ "/" }
+prefix_meta    = @{ "%" }
+prefix_system  = @{ "~%" }
+prefix_local   = @{ "~" }
+
+prefix = @{ (prefix_system | prefix_local | prefix_meta | prefix_type | prefix_logic)+ }
+
+numeric_key = @{ numeric }
+
+named_key = @{
+    ( prefix ~ ident )
+    | ident
+    | numeric_key
+}
+
+quoted_key = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+field_key = { anon_set | path | named_key | quoted_key | tag | interp_str } 
+field = { (field_key ~ ":" ~ expr) | spread_expr }
+
+expr = { morphism_expr }
+morphism_expr = { ternary_expr ~ (!field_start ~ morphism_op ~ ternary_expr)* }
+morphism_op = { "->" }
+ternary_expr  = { pipe_expr ~ (!field_start ~ "?" ~ expr ~ ":" ~ expr)? }
+pipe_expr = { join_expr ~ (!field_start ~ pipe_op ~ join_expr)* }
+pipe_op = { "|>" }
+join_expr = { meet_expr ~ (!field_start ~ join_op ~ meet_expr)* }
+join_op = { "|" | "\\" }
+meet_expr = { cmp_expr ~ (!field_start ~ meet_op ~ cmp_expr)* }
+meet_op = { "&" }
+cmp_expr = { add_expr ~ (!field_start ~ cmp_op ~ add_expr)? }
+cmp_op = { "<=" | ">=" | "==" | "!=" | "<" | ">" }
+add_expr = { mul_expr ~ (!field_start ~ add_op ~ mul_expr)* }
+add_op = { "+" | "-" }
+mul_expr = { apply_expr ~ (!field_start ~ mul_op ~ apply_expr)* }
+mul_op = @{ "*" | ("/" ~ !ident) | ("%" ~ !ident) }
+apply_expr = { unary_expr ~ (!field_start ~ !add_op ~ !mul_op ~ !cmp_op ~ unary_expr)* }
+unary_expr = { (unary_op ~ unary_expr) | spread_expr | type_ann_expr }
+unary_op = { "!" | "-" }
+spread_expr = { "..." ~ type_ann_expr }
+type_ann_expr = { postfix_expr ~ (!field_start ~ type_ann_op ~ postfix_expr)* }
+type_ann_op = { "@" }
+
+
+field_start = _{ field_key ~ ":" }
+
+postfix_expr = { primary ~ postfix_op* }
+postfix_op = { ("." ~ named_key) | ("[" ~ expr ~ "]") }
+
+primary = {
+    range
+    | complex_lit
+    | context
+    | structural
+    | "(" ~ expr ~ ")"
+    | combo
+    | cocoon
+    | anon_set
+    | list
+    | interp_str
+    | float_lit
+    | int_lit
+    | str_lit
+    | tag
+    | bottom
+    | top
+    | unit
+    | path
+}
+
+range = {
+    (range_start ~ ".." ~ (!field_start ~ range_end)? ~ (".." ~ !field_start ~ range_step)?)
+    | (".." ~ (!field_start ~ range_end)? ~ (".." ~ !field_start ~ range_step)?)
+}
+range_start = { range_bound }
+range_end = { range_bound }
+range_step = { range_bound }
+range_bound = { atom | path }
+
+context = { "$" }
+structural = { "<" ~ expr ~ ">" }
+combo = { "{" ~ WHITESPACE* ~ ( (field | order_relation) ~ field_sep? )* ~ "}" }
+cocoon = { "{{" ~ WHITESPACE* ~ ( (field | order_relation) ~ field_sep? )* ~ "}}" }
+order_relation = { atom ~ (cmp_op ~ atom)+ }
+anon_set = { "@{" ~ expr ~ "}" }
+
+atom = {
+    bottom
+    | tag_start
+    | tag_end
+    | top
+    | unit
+    | float_lit
+    | int_lit
+    | regex_lit
+    | path_lit
+    | bytes_lit
+    | uri_lit
+    | time_lit
+    | multiline_str
+    | str_lit
+    | tag
+}
+
+int_lit = @{ "-"? ~ numeric }
+float_lit = @{
+    "-"? ~ numeric ~ "." ~ numeric
+    ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )?
+}
+complex_lit = @{ 
+    ( "-"? ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? )
+    ~ ("+" | "-") ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i"
+    | "-"? ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i"
+    | "-"? ~ "i"
+}
+
+bottom = { "_|_" }
+tag_start = { "#_|_" }
+tag_end = { "#_" }
+top = { "_" }
+unit = { "(" ~ ")" }
+regex_lit  = @{ "r\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+path_lit   = @{ "p\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+bytes_lit  = @{ "b\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+uri_lit    = @{ "u\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+time_lit   = @{ "t\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+multiline_str = @{
+    "\"\"\"" ~ (!"\"\"\"" ~ ANY)* ~ "\"\"\""
+}
+str_lit = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+tag = @{ "#" ~ !("_|_" | "_" ~ !ident) ~ ident }
+
+interp_str = ${ "`" ~ interp_part* ~ "`" }
+interp_part = { interp_expr | interp_literal }
+interp_expr    = !{ "${" ~ expr ~ "}" }
+interp_literal = @{ (!("`" | "${") ~ ANY)+ }
+
+path = { (anchor_root | anchor_parent | anchor_current )? ~ path_segments }
+path_segments = { (named_key | tag_start | tag_end | tag) ~ ( "." ~ (named_key | tag_start | tag_end | tag | meta_key) )* }
+anchor_root = { "_." }
+anchor_current = { "^." }
+anchor_parent = @{ "^"+ ~ "." }
+meta_key = @{ "%" ~ ident }
+
+list = { "[" ~ WHITESPACE* ~ (expr ~ ("," ~ expr)*)? ~ "]" }

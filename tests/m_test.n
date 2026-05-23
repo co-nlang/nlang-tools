@@ -1,0 +1,2 @@
+/status: { #adult: "Adult" }
+s1: /status #adult

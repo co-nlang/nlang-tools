@@ -1,0 +1,5 @@
+;; @observe: res
+;; @expect: "Hello n/!"
+;; 測試字串內插 - 簡化版
+name: "n/"
+res: "Hello " + name + "!"

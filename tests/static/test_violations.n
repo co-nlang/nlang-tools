@@ -1,0 +1,18 @@
+;; 靜態分析違規測試
+;; 這些測試用於驗證靜態分析器是否能正確檢測違規
+
+;; 這些應該被檢測為隨機性注入（在靜態分析中）
+;; test_random: ~%Math./random
+
+;; 這些應該被檢測為環境依賴（在靜態分析中）
+;; test_time: ~%Time./now
+
+;; 這些應該被檢測為型別衝突（在靜態分析中）
+;; test_type_error: "hello" + 1
+
+;; 這些應該被檢測為潛在無限遞迴（在靜態分析中）
+;; test_infinite: x -> x x
+
+;; 正常測試（不應該報錯）
+test_normal_pass: #true
+test_normal_value: 42

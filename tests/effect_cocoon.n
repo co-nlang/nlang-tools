@@ -1,0 +1,7 @@
+side_effect_cocoon: {{
+    time: ~%Time./now #trigger
+}}
+
+ref_cocoon: side_effect_cocoon
+
+unboxed: { ...side_effect_cocoon }

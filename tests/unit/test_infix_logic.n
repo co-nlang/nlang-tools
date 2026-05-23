@@ -1,0 +1,4 @@
+;; @observe: res
+;; @expect: 30
+;; 測試中置邏輯語法
+res: 10 /add 20

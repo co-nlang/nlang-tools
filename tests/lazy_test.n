@@ -1,0 +1,7 @@
+obj: {
+    valid: 1 + 1
+    ;; invalid: 1 & 2 ;; Conflict test
+}
+
+res_valid: obj.valid
+;; res_invalid: obj.invalid

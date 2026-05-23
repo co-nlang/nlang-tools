@@ -1,0 +1,22 @@
+;; 測試幾何反射 (~%Reflection)
+
+~data: { a: 1, b: "hello", %meta: #true }
+~closed_data: {{ x: 10 }}
+
+;; 1. 鍵值探測
+test_keys: (~data |> ~%Reflection./keys) == ["a", "b"]
+test_has_a: (~%Reflection./has "a" ~data) == #true
+test_has_z: (~%Reflection./has "z" ~data) == #false
+
+;; 2. 繭探測
+test_is_cocoon_false: (~data |> ~%Reflection./is_cocoon) == #false
+test_is_cocoon_true: (~closed_data |> ~%Reflection./is_cocoon) == #true
+
+;; 3. 型別探測
+test_type_int: (42 |> ~%Reflection./type_of) == #int
+test_type_str: ("n/" |> ~%Reflection./type_of) == #str
+test_type_combo: (~data |> ~%Reflection./type_of) == #combo
+test_type_list: ([1, 2] |> ~%Reflection./type_of) == #list
+test_type_logic: ((x -> x) |> ~%Reflection./type_of) == #logic
+test_type_bottom: (_|_ |> ~%Reflection./type_of) == #bottom
+test_type_top: (_ |> ~%Reflection./type_of) == #top

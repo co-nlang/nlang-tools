@@ -1,0 +1,9 @@
+;; @observe: res
+;; @expect: 30
+;; 測試 %eval_mode: #eager 因果凍結
+~offset: 10
+~c: {
+    %eval_mode: #eager
+    val: 20 + ~offset
+}
+res: ~c.val

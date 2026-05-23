@@ -1,0 +1,16 @@
+;; 測試權威身分與簽章
+my_id: ~%Identity./me ()
+
+raw_cat: #貓
+signed_cat: ~%Identity./sign raw_cat
+
+;; 驗證真實簽章
+verification: ~%Identity./verify signed_cat
+
+;; 測試偽造 (竄改內容)
+fake_cat: {
+  %target: #狗
+  %pubkey: my_id
+  %signature: signed_cat.%signature
+}
+fake_verification: ~%Identity./verify fake_cat

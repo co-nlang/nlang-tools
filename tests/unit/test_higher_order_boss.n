@@ -1,0 +1,8 @@
+;; @observe: res
+;; @expect: [11, 12, 13]
+;; 大魔王測試：高階態射與外部作用域捕獲
+~offset: 10
+~list: [1, 2, 3]
+
+;; 期望：每個元素都加 10
+res: ~list |> ~%List./map (x -> x + ~offset)

@@ -1,0 +1,1 @@
+res: ~%Time./now #trigger

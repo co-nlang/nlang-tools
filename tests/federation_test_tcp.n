@@ -1,0 +1,7 @@
+;; 測試虛擬宇宙聯邦 (TCP NDP)
+conn_res: ~%Discovery./connect { 0: "NodeA", 1: "tcp://127.0.0.1:8080" }
+
+target_caid: "hash:sha256:c9c31fa9579ebcfd2fcc2816e86173189e413492efcfb8fae5847308301de5d9"
+fetched_val: ~%Discovery./fetch { 0: "NodeA", 1: target_caid }
+
+test_federation_tcp: fetched_val == #貓

@@ -1,0 +1,6 @@
+num: 999
+cat: #貓
+str: "Hello"
+combo: {
+  inner: 123
+}

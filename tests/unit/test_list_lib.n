@@ -1,0 +1,5 @@
+;; @observe: res
+;; @expect: 3
+;; 測試列表長度
+~l: [10, 20, 30]
+res: ~%List./len ~l

@@ -1,0 +1,15 @@
+;; 測試 Sprint 1 成果
+
+;; 1. 原子同構展開
+val_with_meta: 42 & { %unit: "kg" }
+;; 預期結果應包含 { %val: 42, %unit: "kg" }
+
+;; 2. 三位一體同構 (態射即 Combo)
+/add_one: x -> x + 1
+add_one_kind: </add_one>.%kind
+;; 預期為 #logic
+
+;; 3. 幾何可達性 (私有隔離)
+~secret_data: { ~key: "hidden", public: "visible" }
+hidden_fail: ~secret_data.~key
+;; 預期為 _|_ %cause: #private_access_violation

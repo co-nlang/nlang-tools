@@ -1,0 +1,7 @@
+;; @observe: res
+;; @expect: 42
+~data: {
+    meta: { id: 42 },
+    tags: ["n-slash", "lattice"]
+}
+res: ~data.meta.id

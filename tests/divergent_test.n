@@ -1,0 +1,7 @@
+a: b
+b: a
+res_loop: a
+
+/f: x -> /f (x + 1)
+;; 目前 apply_morphism 還沒實作指紋檢測，所以 res_div 會觸發 Fuel 耗盡
+;; 但 res_loop 應該已經能提早識別

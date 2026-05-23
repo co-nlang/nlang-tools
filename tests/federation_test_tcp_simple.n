@@ -1,0 +1,1 @@
+final_val: ~%Discovery./fetch { 0: "tcp://127.0.0.1:9000", 1: "hash:sha256:66f9e98e3cfa40493587a2102de1099be30c2cfac6ac8855883d18aecd2fd7b1" }

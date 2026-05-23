@@ -1,0 +1,199 @@
+use std::sync::Arc;
+use std::collections::HashMap;
+use indexmap::IndexMap;
+use crate::{Ouroboros, EvalContext, BuiltinFn};
+use crate::value::{Value, ComboVal, EffectTag};
+use nlang_parser::ast::AtomKind;
+use num_bigint::BigInt;
+
+pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
+    m.insert("list.len".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let target = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let flist = oo.force(target, ctx);
+        if let Value::Combo(ref cv) = flist.collapse() {
+            let count = cv.fields().keys().filter(|k| k.parse::<usize>().is_ok()).count();
+            return Value::Atom(AtomKind::Int(BigInt::from(count)), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.at".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg { 
+            if let (Some(vidx), Some(vlist)) = (c.get_field("0"), c.get_field("1")) {
+                let fidx = oo.force(vidx.clone(), ctx).collapse().clone();
+                let flist = oo.force(vlist.clone(), ctx).collapse().clone();
+                if let (Value::Atom(AtomKind::Int(idx), _, _), Value::Combo(lc)) = (fidx, flist) {
+                    if let Some(v) = lc.get_field(&idx.to_string()) { return v.clone(); }
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.concat".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg { 
+            if let (Some(v0), Some(v1)) = (c.get_field("0"), c.get_field("1")) {
+                let f0 = oo.force(v0.clone(), ctx).collapse().clone();
+                let f1 = oo.force(v1.clone(), ctx).collapse().clone();
+                if let (Value::Combo(c0), Value::Combo(c1)) = (f0, f1) {
+                    let mut res = IndexMap::new();
+                    let mut count = 0;
+                    for (_k, v) in &c0.fields() { if _k.parse::<usize>().is_ok() { res.insert(count.to_string(), v.clone()); count += 1; } }
+                    for (_k, v) in &c1.fields() { if _k.parse::<usize>().is_ok() { res.insert(count.to_string(), v.clone()); count += 1; } }
+                    res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c0.effect.max(c1.effect), vec![]));
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.reverse".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx).collapse().clone();
+        if let Value::Combo(c) = fv {
+            let mut items = Vec::new();
+            let mut i = 0;
+            while let Some(v) = c.get_field(&i.to_string()) { items.push(v.clone()); i += 1; }
+            items.reverse();
+            let mut res = IndexMap::new();
+            for (idx, v) in items.into_iter().enumerate() { res.insert(idx.to_string(), v); }
+            res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+            return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c.effect, vec![]));
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.slice".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vstart), Some(vend), Some(vl)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
+                let fs = oo.force(vstart.clone(), ctx).collapse().clone();
+                let fe = oo.force(vend.clone(), ctx).collapse().clone();
+                let fl = oo.force(vl.clone(), ctx).collapse().clone();
+                if let (Value::Atom(AtomKind::Int(s), _, _), Value::Atom(AtomKind::Int(e), _, _), Value::Combo(lc)) = (fs, fe, fl) {
+                    let mut res = IndexMap::new();
+                    let mut count = 0;
+                    let mut i = s.clone();
+                    while i < e {
+                        if let Some(v) = lc.get_field(&i.to_string()) {
+                            res.insert(count.to_string(), v.clone());
+                            count += 1;
+                        }
+                        i += 1;
+                    }
+                    res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), lc.effect, vec![]));
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.zip".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vl1), Some(vl2)) = (c.get_field("0"), c.get_field("1")) {
+                let fl1 = oo.force(vl1.clone(), ctx).collapse().clone();
+                let fl2 = oo.force(vl2.clone(), ctx).collapse().clone();
+                if let (Value::Combo(c1), Value::Combo(c2)) = (fl1, fl2) {
+                    let mut res = IndexMap::new();
+                    let mut i = 0;
+                    while let (Some(v1), Some(v2)) = (c1.get_field(&i.to_string()), c2.get_field(&i.to_string())) {
+                        let mut tuple = IndexMap::new();
+                        tuple.insert("0".to_string(), v1.clone());
+                        tuple.insert("1".to_string(), v2.clone());
+                        res.insert(i.to_string(), Value::Combo(ComboVal::new(tuple, true, IndexMap::new(), v1.effect().max(v2.effect()), vec![])));
+                        i += 1;
+                    }
+                    res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c1.effect.max(c2.effect), vec![]));
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.sort".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx).collapse().clone();
+        if let Value::Combo(c) = fv {
+            let mut items = Vec::new();
+            let mut i = 0;
+            while let Some(v) = c.get_field(&i.to_string()) { items.push(oo.force(v.clone(), ctx)); i += 1; }
+            items.sort_by(|a, b| {
+                let sa = a.to_string_plain();
+                let sb = b.to_string_plain();
+                sa.cmp(&sb)
+            });
+            let mut res = IndexMap::new();
+            for (idx, v) in items.into_iter().enumerate() { res.insert(idx.to_string(), v); }
+            res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+            return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c.effect, vec![]));
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.map".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg { 
+            if let (Some(v0), Some(v1)) = (c.get_field("0"), c.get_field("1")) {
+                let f0 = oo.force(v0.clone(), ctx); let f1 = oo.force(v1.clone(), ctx);
+                let (lv, fv) = if oo.is_list(&f0, ctx) { (f0.clone(), f1.clone()) } 
+                               else if oo.is_list(&f1, ctx) { (f1.clone(), f0.clone()) }
+                               else { return Value::Top; };
+                
+                if let (Value::Combo(lc), f) = (lv.collapse().clone(), fv) {
+                    let mut res = IndexMap::new(); let mut max_e = f.effect();
+                    for (k, v) in &lc.fields() { if k.parse::<usize>().is_ok() { let item = oo.force(v.clone(), ctx); let mapped = oo.apply_morphism(f.clone(), item, ctx); let solidified = oo.force_recursive(mapped, ctx); max_e = max_e.max(solidified.effect()); res.insert(k.clone(), solidified); } }
+                    for (k, v) in &lc.fields() { if !k.parse::<usize>().is_ok() { res.insert(k.clone(), v.clone()); } }
+                    let mut out = lc.clone();
+                    for (k, v) in res { out.insert_field(&k, v); }
+                    out.effect = max_e; return Value::Combo(out);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.fold".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg { 
+            if let (Some(v0), Some(v1)) = (c.get_field("0"), c.get_field("1")) {
+                let f0 = oo.force(v0.clone(), ctx); let f1 = oo.force(v1.clone(), ctx);
+                let (lv, fv) = if oo.is_list(&f0, ctx) { (f0.clone(), f1.clone()) } 
+                               else if oo.is_list(&f1, ctx) { (f1.clone(), f0.clone()) }
+                               else { (f0.clone(), f1.clone()) };
+
+                if let (Value::Combo(lc), Value::Combo(fc)) = (lv.collapse().clone(), fv.clone()) { 
+                    let mut acc = fc.get_field("%val").cloned().unwrap_or(Value::Top); 
+                    acc = oo.force(acc, ctx);
+                    let f = fc.get_field("%f").cloned().unwrap_or(Value::Top); 
+                    if f.is_top() { return acc; }
+                    for (k, v) in &lc.fields() {
+                        if k.parse::<usize>().is_ok() {
+                            let item = oo.force(v.clone(), ctx); 
+                            let f_acc = oo.apply_morphism(f.clone(), acc, ctx);
+                            let res = oo.apply_morphism(f_acc, item, ctx);
+                            acc = oo.force_recursive(res, ctx);
+                        }
+                    }
+                    return acc;
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+    
+    m.insert("list.filter".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg { 
+            if let (Some(v0), Some(v1)) = (c.get_field("0"), c.get_field("1")) {
+                let f0 = oo.force(v0.clone(), ctx); let f1 = oo.force(v1.clone(), ctx);
+                let (lv, fv) = if oo.is_list(&f0, ctx) { (f0.clone(), f1.clone()) } else { (f1.clone(), f0.clone()) };
+                if let (Value::Combo(lc), f) = (lv.collapse().clone(), fv) {
+                    let mut res = IndexMap::new(); let mut count = 0;
+                    for (k, v) in &lc.fields() { if k.parse::<usize>().is_ok() { let item = oo.force(v.clone(), ctx); let pred = oo.apply_morphism(f.clone(), item.clone(), ctx); if pred.to_string_plain().trim_start_matches('#') == "true" { res.insert(count.to_string(), item); count += 1; } } }
+                    res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), lc.effect.max(f.effect()), vec![]));
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+}

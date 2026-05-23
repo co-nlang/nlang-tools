@@ -1,0 +1,24 @@
+;; 集成測試 - 管道和 morphism
+
+;; 基本管道
+test_pipe_basic: 5 |> /add 3
+test_pipe_chain: 1 |> /add 2 |> /add 3
+
+;; Morphism 定義和應用
+test_morphism_basic: (x -> x * 2) 5
+test_morphism_pipe: 3 |> (x -> x * 2)
+
+;; 複合管道
+test_complex_pipeline: 
+  { value: 5 } 
+  |> (obj -> obj.value)
+  |> (x -> x * 2)
+  |> (x -> x + 1)
+
+;; 帶參數的 morphism
+test_morphism_with_param: (n -> x -> x + n) 3 5
+
+;; 管道與 Meet 結合
+test_pipe_with_meet: 
+  { x: 1 } 
+  |> /set_y 2

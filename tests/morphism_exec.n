@@ -1,0 +1,13 @@
+/add_one: x -> x + 1
+res: /add_one 10
+;; 預期 res 為 11
+
+/status: {
+    #adult: "Adult"
+    #minor: "Minor"
+    it: "Unknown"
+}
+
+s1: /status #adult
+s2: /status #minor
+s3: /status #something

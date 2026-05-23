@@ -1,0 +1,4 @@
+factor: 10
+/multiply: x -> x * factor
+~factor: 99
+res: /multiply 5

@@ -1,0 +1,8 @@
+~Heading: { #_|_ < #h1 < #h2 < #h3 < #_ }
+
+test_rank_h1: ~Heading.#h1.%rank == 1
+test_rank_h2: ~Heading.#h2.%rank == 2
+test_compare_h1_h2: ~Heading.#h1 < ~Heading.#h2
+test_compare_h3_h1: (~Heading.#h3 < ~Heading.#h1) == #false
+test_anchor_start: ~Heading.#_|_ < ~Heading.#h1
+test_anchor_end: ~Heading.#h3 < ~Heading.#_

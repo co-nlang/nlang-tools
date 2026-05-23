@@ -1,0 +1,13 @@
+;; @observe: rendered
+;; @expect: "# n/ Language Specification - 格論公設\n\n本章節定義核心哲學。\n\n## 1. 宇宙哲學\n\n"
+
+/render: b -> 
+    (b.type == #h1) ? ("# " + b.text + "\n\n") : (
+    (b.type == #h2) ? ("## " + b.text + "\n\n") : (
+    (b.type == #p)  ? (b.text + "\n\n") : ""))
+
+~b1: { type: #h1, text: "n/ Language Specification - 格論公設" }
+~b2: { type: #p,  text: "本章節定義核心哲學。" }
+~b3: { type: #h2, text: "1. 宇宙哲學" }
+
+rendered: (/render ~b1) + (/render ~b2) + (/render ~b3)

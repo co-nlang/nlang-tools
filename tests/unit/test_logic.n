@@ -1,0 +1,3 @@
+;; @observe: res
+;; @expect: "Yes"
+res: (#true ? "Yes" : "No")

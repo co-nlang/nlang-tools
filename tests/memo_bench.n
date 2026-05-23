@@ -1,0 +1,11 @@
+complex: {
+    a: 1
+    b: 2
+    c: { d: 3, e: 4 }
+}
+
+r1: complex & complex
+r2: complex & complex
+r3: complex & complex
+r4: complex & complex
+r5: complex & complex

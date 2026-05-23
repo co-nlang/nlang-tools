@@ -1,0 +1,23 @@
+;; 測試位元熵計算 (~%Math./bits)
+
+~a: 42
+~b: "hello"
+~c: { x: 1, y: 2 }
+
+;; 1. 基本原子熵
+test_int_bits: (~a |> ~%Math./bits) == 64
+test_str_bits: (~b |> ~%Math./bits) == 40  ;; "hello" = 5 chars * 8 bits
+
+;; 2. 結構熵 (Combo)
+;; {x:1, y:2} = 64 (overhead) + (1 * 8 + 64) [x:1] + (1 * 8 + 64) [y:2] = 64 + 72 + 72 = 208
+test_combo_bits: (~c |> ~%Math./bits) == 208
+
+;; 3. 增量驗證
+~d: { ...~c, z: 3 }
+;; ~d = 208 + (1 * 8 + 64) [z:3] = 208 + 72 = 280
+test_entropy_growth: (~d |> ~%Math./bits) > (~c |> ~%Math./bits)
+test_entropy_exact: (~d |> ~%Math./bits) == 280
+
+;; 4. 格論邊界
+~top_bits: (_ |> ~%Math./bits)
+test_top_bits: ~top_bits == 0

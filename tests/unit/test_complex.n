@@ -1,0 +1,4 @@
+;; @observe: res
+;; @expect: 3+4i
+;; 測試複數解析
+res: 3+4i

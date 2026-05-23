@@ -1,0 +1,25 @@
+;; 測試熱帶幾何剪枝與啟發式搜尋 (Phase 5)
+
+;; 定義一個複雜的聯集，包含「輕量級」與「重量級」的分支
+heavy_branch: { 
+    a: 2,
+    x: { y: { z: { w: { v: { u: 10 } } } } }
+}
+
+light_branch: { 
+    a: 1, 
+    b: 2 
+}
+
+;; 這個聯集在統一化時會被 Tropical Weight 排序
+;; light_branch (厚度為 2) 會排在 heavy_branch (厚度為 7) 前面
+union_val: heavy_branch | light_branch
+
+;; 預期結果：當我們將一個包含 { a: 1 } 的目標與 union_val 合併時，
+;; 引擎會優先嘗試 light_branch 並成功。
+;; heavy_branch 由於 a: 2 會產生衝突，最終結果應收斂為 light_branch 的擴展。
+target: { a: 1 }
+
+res: target & union_val
+
+test_tropical: res.b == 2

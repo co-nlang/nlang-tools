@@ -1,0 +1,5 @@
+id_int:  <1>.%id
+id_str:  <"hello">.%id
+id_tag:  <#true>.%id
+id_empty: <{}>.%id
+id_cocoon: <{{}}>.%id

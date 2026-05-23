@@ -1,0 +1,11 @@
+;; 1. 型別約束 (等價於 &)
+type_ok: 100 @ 100
+type_fail: 100 @ 200
+
+;; 2. 元資訊
+list_len: [10, 20, 30].%len
+str_len: "Ouroboros".%len
+
+;; 3. 前綴原子
+my_regex: r"^[0-9]+$"
+my_path: p"_.user.id"

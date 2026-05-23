@@ -1,0 +1,45 @@
+;; @observe: test_res
+;; @expect: test_res == #true
+
+;; 1. 定義帶錨點的偏序空間
+~Heading: { #_|_ < #h1 < #h2 < #h3 < #_ }
+
+;; 2. 初始編號狀態
+~initial_state: {
+    counts: { "#h1": 0, "#h2": 0, "#h3": 0 },
+    last_level: ~Heading.#_|_
+}
+
+;; 3. 狀態推演邏輯 (核心：利用 %rank 集合的包含關係 <= )
+/process_block: state -> b ->
+    ;; 若新區塊的層級比上一個高 (例如 #h1 <= #h2)
+    (b.type <= state.last_level) ?
+        ;; 同層或更高層 (例如 h2 回到 h1)
+        {
+            counts: { 
+                "#h1": (b.type == ~Heading.#h1) ? state.counts["#h1"] + 1 : state.counts["#h1"],
+                "#h2": (b.type == ~Heading.#h1) ? 0 : (b.type == ~Heading.#h2) ? state.counts["#h2"] + 1 : state.counts["#h2"],
+                "#h3": (b.type == ~Heading.#h3) ? state.counts["#h3"] + 1 : 0
+            },
+            last_level: b.type
+        }
+        :
+        ;; 進入更深層級 (例如從 h1 到 h2)
+        {
+            counts: { 
+                "#h1": (b.type == ~Heading.#h1) ? state.counts["#h1"] + 1 : state.counts["#h1"],
+                "#h2": (b.type == ~Heading.#h2) ? state.counts["#h2"] + 1 : state.counts["#h2"],
+                "#h3": (b.type == ~Heading.#h3) ? state.counts["#h3"] + 1 : state.counts["#h3"]
+            },
+            last_level: b.type
+        }
+
+;; 4. 模擬執行
+~blocks: [
+    { type: ~Heading.#h1, title: "n/" },
+    { type: ~Heading.#h2, title: "Foundations" },
+    { type: ~Heading.#h1, title: "LADD" }
+]
+
+~final_state: ~blocks |> ~%List./fold { %val: ~initial_state, %f: /process_block }
+test_res: ~final_state.counts["#h1"] == 2

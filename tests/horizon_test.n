@@ -1,0 +1,13 @@
+;; 1. 純粹節點：其 %id 應全球唯一且穩定
+pure_val: 123
+pure_id: pure_val.%id
+
+;; 2. 副作用節點 (Cocoon 封印中)：其外部身分應依然穩定（因為 Cocoon 本身是 Pure 的）
+side_effect_cocoon: {{
+    time: ~%Time./now #trigger
+}}
+cocoon_id: side_effect_cocoon.%id
+
+;; 3. 解封後的副作用節點：其 %id 應隨視界種子變化
+unboxed: { ...side_effect_cocoon }
+unboxed_id: unboxed.%id

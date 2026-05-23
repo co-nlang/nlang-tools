@@ -1,0 +1,6 @@
+;; @observe: res
+;; @expect: 100
+;; 測試邏輯前綴與私有路徑
+/val: 100
+~tmp: /val
+res: ~tmp

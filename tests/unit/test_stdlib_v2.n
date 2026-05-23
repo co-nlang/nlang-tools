@@ -1,0 +1,33 @@
+;; 測試標準庫 Phase 2 (Sprint 12)
+
+;; 1. 浮點數運算
+test_float_add: 1.5 + 2.5 == 4.0
+test_float_mixed: 10 + 0.5 == 10.5
+test_float_mul: 2.0 * 3.14 == 6.28
+test_float_div: 10.0 / 4.0 == 2.5
+
+;; 2. 字串進階操作
+~s: " Hello World "
+test_str_trim: (~s |> ~%String./trim) == "Hello World"
+test_str_replace: ("apple orange apple" |> ~%String./replace "apple" "banana") == "banana orange banana"
+test_str_case: ("nSlash" |> ~%String./to_upper) == "NSLASH"
+test_str_starts: ("LADD" |> ~%String./starts_with "LA") == #true
+test_str_contains: ("Distributed Universe" |> ~%String./contains "Uni") == #true
+
+;; 3. 列表進階操作
+~list: [3, 1, 4, 2]
+test_list_sort: (~list |> ~%List./sort) == [1, 2, 3, 4]
+test_list_reverse: ([1, 2, 3] |> ~%List./reverse) == [3, 2, 1]
+test_list_slice: ([0, 1, 2, 3, 4, 5] |> ~%List./slice 1 4) == [1, 2, 3]
+test_list_at: ([10, 20, 30] |> ~%List./at 1) == 20
+
+;; 4. List Zip
+~l1: ["a", "b"]
+~l2: [1, 2]
+~zipped: ~%List./zip ~l1 ~l2
+test_zip_0: ~zipped.0.0 == "a"
+test_zip_1: ~zipped.1.1 == 2
+
+;; 5. Math 進階
+test_math_abs: (~%Math./abs (-42)) == 42
+test_math_pow: (~%Math./pow 2 10) == 1024

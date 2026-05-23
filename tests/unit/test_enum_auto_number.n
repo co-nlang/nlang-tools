@@ -1,0 +1,51 @@
+;; @observe: test_result_len
+;; @observe: test_result_h2
+;; @expect: #true
+;; @expect: #true
+
+;; 1. 定義標題等級 Enum (偏序)
+~Heading: {
+    #_|_ < #h1 < #h2 < #h3 < #_
+}
+
+;; 2. 初始狀態
+~initial_state: {
+    counts: { "#h1": 0, "#h2": 0, "#h3": 0 },
+    last_level: ~Heading.#_|_
+}
+
+;; 3. 處理單個區塊的態射
+/process_block: state -> b ->
+    (b.type <= state.last_level)
+    ?
+    ;; 同層或往上 (例如從 h2 回到 h1，或從 h1 到 h1)
+    {
+        counts: { 
+            "#h1": (b.type == ~Heading.#h1) ? state.counts["#h1"] + 1 : state.counts["#h1"],
+            "#h2": (b.type == ~Heading.#h1) ? 0 : (b.type == ~Heading.#h2) ? state.counts["#h2"] + 1 : state.counts["#h2"],
+            "#h3": (b.type == ~Heading.#h3) ? state.counts["#h3"] + 1 : 0
+        }
+        last_level: b.type
+    }
+    :
+    ;; 往下 (例如從 #_|_ 到 h1，或從 h1 到 h2)
+    {
+        counts: { 
+            "#h1": (b.type == ~Heading.#h1) ? state.counts["#h1"] + 1 : state.counts["#h1"],
+            "#h2": (b.type == ~Heading.#h2) ? state.counts["#h2"] + 1 : state.counts["#h2"],
+            "#h3": (b.type == ~Heading.#h3) ? state.counts["#h3"] + 1 : state.counts["#h3"]
+        },
+        last_level: b.type
+    }
+
+;; 4. 模擬執行
+~blocks: [
+    { type: ~Heading.#h1, title: "n/" },
+    { type: ~Heading.#h2, title: "Foundations" },
+    { type: ~Heading.#h1, title: "LADD" }
+]
+
+~final_result: ~blocks |> ~%List./fold { %val: ~initial_state, %f: /process_block }
+
+test_result_len: ~final_result.counts["#h1"] == 2
+test_result_h2: ~final_result.counts["#h2"] == 0

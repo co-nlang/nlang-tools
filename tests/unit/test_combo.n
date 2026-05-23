@@ -1,0 +1,23 @@
+;; Combo 和 Cocoon 單元測試
+
+;; 基本 Combo
+test_basic_combo: { a: 1, b: 2 }
+test_combo_access: { x: 10, y: 20 }
+
+;; Combo Meet
+test_combo_meet: { a: 1 } & { b: 2 }
+;; test_combo_meet_override: { a: 1 } & { a: 2 } ;; Intentional conflict
+
+;; Cocoon（封閉 Combo）
+test_cocoon_basic: {{ x: 1, y: 2 }}
+;; test_cocoon_closed: {{ a: 1 }} & { b: 2 } ;; Intentional conflict
+
+;; 嵌套 Combo
+test_nested_combo: { outer: { inner: 42 } }
+test_deep_nest: { a: { b: { c: 3 } } }
+
+;; 空 Combo
+test_empty_combo: {}
+
+;; Combo with different types
+test_combo_mixed: { name: "Alice", age: 30 }
