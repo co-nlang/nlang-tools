@@ -5,6 +5,7 @@ use crate::{Ouroboros, EvalContext, BuiltinFn};
 use crate::value::{Value, ComboVal, EffectTag};
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 
 pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("list.len".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
@@ -192,6 +193,50 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
                     return Value::Combo(ComboVal::new(res, false, IndexMap::new(), lc.effect.max(f.effect()), vec![]));
                 }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 17: list.flat_map ───────────────────────────────────
+
+    fn extract_list_items(list: &Value) -> Vec<Value> {
+        let mut items = Vec::new();
+        if let Value::Combo(ref lc) = list {
+            let len = lc.get_field("%len")
+                .and_then(|v| if let Value::Atom(AtomKind::Int(n), _, _) = v { n.to_usize() } else { None })
+                .unwrap_or_else(|| lc.fields().keys().filter_map(|k| k.parse::<usize>().ok()).count());
+            for i in 0..len {
+                if let Some(v) = lc.get_field(&i.to_string()) { items.push(v.clone()); }
+            }
+        }
+        items
+    }
+
+    fn build_list_value(items: Vec<Value>) -> Value {
+        let mut out = ComboVal::default();
+        for (i, v) in items.iter().enumerate() {
+            out.insert_field(&i.to_string(), v.clone());
+        }
+        out.insert_field("%kind", Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+        out.insert_field("%len", Value::Atom(AtomKind::Int(BigInt::from(items.len())), EffectTag::Pure, None));
+        Value::Combo(out)
+    }
+
+    m.insert("list.flat_map".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let f = f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                let mut result: Vec<Value> = Vec::new();
+                for item in items {
+                    let sub = oo.apply_morphism(f.clone(), item, ctx);
+                    let sub_forced = oo.force(sub, ctx);
+                    let sub_items = extract_list_items(&sub_forced);
+                    result.extend(sub_items);
+                }
+                return build_list_value(result);
             }
         }
         Value::Top

@@ -118,14 +118,28 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         let sketch_bytes = base64_decode_sketch(&hash.lattice_sketch);
         let masa_ref = hash.masa_ref.clone();
         // Phase 11: nerve_structure from field key MASA computation
+        // Phase 17: also store field_keys for dynamic intersection + compute overlapping
         let nerve_structure: Vec<crate::ladd::NerveEntry> = if let Value::Combo(ref cv) = arg {
             let keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
             if keys.is_empty() {
                 vec![]
             } else {
+                let my_masa = field_key_masa_id(cv);
+                let my_key_set: std::collections::HashSet<&str> = keys.iter().map(|s| s.as_str()).collect();
+                let overlapping: Vec<String> = if let Ok(reg) = oo.gbb_registry.read() {
+                    reg.values()
+                        .flat_map(|g| g.nerve_structure.iter())
+                        .filter(|ne| ne.masa_caid != my_masa)
+                        .filter(|ne| ne.field_keys.iter().any(|k| my_key_set.contains(k.as_str())))
+                        .map(|ne| ne.masa_caid.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .collect()
+                } else { vec![] };
                 vec![crate::ladd::NerveEntry {
-                    masa_caid: field_key_masa_id(cv),
-                    overlapping_masa_caids: vec![],
+                    masa_caid: my_masa,
+                    overlapping_masa_caids: overlapping,
+                    field_keys: keys,
                 }]
             }
         } else {
@@ -150,7 +164,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         let query_nerve = if let Value::Combo(ref cv) = arg {
             let keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
             if keys.is_empty() { vec![] }
-            else { vec![crate::ladd::NerveEntry { masa_caid: field_key_masa_id(cv), overlapping_masa_caids: vec![] }] }
+            else { vec![crate::ladd::NerveEntry { masa_caid: field_key_masa_id(cv), overlapping_masa_caids: vec![], field_keys: keys }] }
         } else { vec![] };
         let query_gbb = crate::ladd::GBB {
             node_caid: query_hash.clone(), mass: query_mass.min(100.0),

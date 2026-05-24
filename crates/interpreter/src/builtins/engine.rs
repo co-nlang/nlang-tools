@@ -379,4 +379,70 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Option combinators (Phase 17) ─────────────────────────────
+
+    m.insert("option.or".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(default_v), Some(opt_v)) = (c.get_field("0"), c.get_field("1")) {
+                let default_v = default_v.clone();
+                let opt = oo.force(opt_v.clone(), ctx);
+                return match opt.collapse() {
+                    Value::Atom(AtomKind::Tag(ref t), _, _) if t.trim_start_matches('#') == "none" => {
+                        default_v
+                    }
+                    other => other.clone(),
+                };
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("option.unwrap_or".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(default_v), Some(opt_v)) = (c.get_field("0"), c.get_field("1")) {
+                let default_v = default_v.clone();
+                let opt = oo.force(opt_v.clone(), ctx);
+                let was_none = match &opt {
+                    Value::Atom(AtomKind::Tag(ref t), _, _) => t.trim_start_matches('#') == "none",
+                    _ => false,
+                };
+                let inner = match &opt {
+                    Value::Combo(ref cv) => cv.get_field("%val").cloned(),
+                    _ => None,
+                };
+                if was_none { return default_v; }
+                if let Some(v) = inner { return v; }
+                return default_v;
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("option.filter".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(pred_f), Some(opt_v)) = (c.get_field("0"), c.get_field("1")) {
+                let pred_f = pred_f.clone();
+                let opt = oo.force(opt_v.clone(), ctx);
+                let is_none = match &opt {
+                    Value::Atom(AtomKind::Tag(ref t), _, _) => t.trim_start_matches('#') == "none",
+                    _ => false,
+                };
+                if is_none {
+                    return Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None);
+                }
+                let inner = match &opt {
+                    Value::Combo(ref cv) => cv.get_field("%val").cloned(),
+                    _ => None,
+                };
+                if let Some(val) = inner {
+                    let result = oo.apply_morphism(pred_f, val, ctx);
+                    if matches!(result.collapse(), Value::Atom(AtomKind::Tag(ref t), _, _) if t.trim_start_matches('#') == "true") {
+                        return opt;
+                    }
+                }
+            }
+        }
+        Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
 }

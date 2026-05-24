@@ -1,11 +1,11 @@
 # nlang 功能路線圖
 
-> 最後更新：2026-05-24（Phase 14 完成後）  
+> 最後更新：2026-05-24（Phase 16 完成後）  
 > 開發模式：由 "project brain" AI 出規劃，執行 AI 實作，逐 Phase 交接
 
 ---
 
-## 1. 已完成功能（Phase 1–14）
+## 1. 已完成功能（Phase 1–16）
 
 ### 核心格論
 
@@ -51,6 +51,14 @@
 | `~%Config` genesis 預設值 | 13 | `lib.rs:root_with_system` |
 | `Ouroboros::eval_context()` | 14 | `lib.rs` |
 | `cond.match` 真實模式匹配 | 14 | `builtins/cond.rs` |
+| Cycle detection in #refine（BFS） | 15 | `universe.rs` step 1d |
+| `%timeout` → `timeout_deadline` 動態設定 | 15 | `lib.rs:eval_context`, `eval.rs:check_resources` |
+| `option.map` / `result.map` / `result.map_err` | 15 | `builtins/engine.rs` |
+| `@option %fmap` / `@result %fmap %map_err` | 15 | `type_constraint.rs`, `genesis.rs` |
+| `option.and_then` / `result.and_then` | 16 | `builtins/engine.rs` |
+| `d_l_approx` cosine similarity（arccos/π） | 16 | `ladd.rs` |
+| `refl.is_blur/is_bottom/is_some/is_none/is_ok/is_err/to_str/bottom_cause` | 16 | `builtins/reflection.rs` |
+| `refl.type_of` 修正（Blur → "blur"） | 16 | `builtins/reflection.rs` |
 
 ### LADD / OODP
 
@@ -68,13 +76,11 @@
 
 | 功能 | 說明 | 規格章節 |
 |:-----|:-----|:---------|
-| `%timeout` → `timeout_deadline` | `eval_context()` 讀取 `%timeout` 設置截止時刻 | SPEC_09 §6 |
-| `%fmap`/`%fold` Functor 介面 | List/Option/Result 上的代數元欄位 | SPEC_09 §1 |
-| Cycle detection in #refine | Commit DAG 循環阻斷 | SPEC_13 §5.2 |
+| `option.or` / `option.unwrap_or` / `option.filter` | Option 組合子完整化 | SPEC_09 §1 |
+| `list.flat_map` | List Monad bind | SPEC_09 §1 |
+| `NerveEntry.field_keys` + overlapping_masa_caids 動態計算 | Čech nerve 精確交集過濾 | Phase 11 deferred |
+| `approximate_phase_diff` 量子距離 | `unify.rs` 0.0 stub → 真實 arccos（**高風險**，會改變 H¹Split 觸發條件） | Phase 4 殘留 |
 | Equivalence map 合成 | `~%Engine.equivalence_map` 動態視圖 | SPEC_17 §1.3 |
-| 量子距離 `approximate_phase_diff` | `unify.rs` Phase 4 TODO：sketch cosine similarity → arccos → θ | Phase 4 殘留 |
-| `/find` 引力導航完整路徑 | disc.find 走完整引力權重篩選 | SPEC_13 §6.2 |
-| `nerve_structure` overlapping_masa_caids | 動態計算 MASA 交集 | Phase 11 deferred |
 
 ### P3：長期目標
 
@@ -91,15 +97,12 @@
 ## 3. 技術依賴圖（剩餘部分）
 
 ```
-量子距離(arccos) ──→ H¹ Split 真實觸發 ──→ LADD 精確路由
-                                              │
-                   /find 完整路徑 ───────────→ LADD 引力導航
+option.or/unwrap_or/filter ──→ Option Monad 完整
+list.flat_map ──────────────→ List Monad bind
 
-%timeout 動態設定 ──→ eval_context() 完整
+NerveEntry.field_keys ──→ nerve_overlap 精確交集 ──→ LADD 路由品質
 
-%fmap/%fold ──→ Functor 代數介面
-
-Cycle detection ──→ #refine 安全強化
+量子距離 approximate_phase_diff（高風險）──→ H¹ Split 真實觸發 ──→ LADD 精確路由
 
 Equivalence map ──→ SPEC_17 自我演化 (長期)
 ```
@@ -130,6 +133,6 @@ Equivalence map ──→ SPEC_17 自我演化 (長期)
 
 ## 5. 開發速度參考
 
-截至 Phase 14，單次 Phase 平均涵蓋 2–4 個功能模組，每 Phase 新增 3–13 個測試。  
-整體 test suite 從 Phase 1（~10 tests）成長到 Phase 14（173 tests）。  
-主要架構突破：Phase 9（Blur 第一類），Phase 11（MASA field-key），Phase 13（跨架構穩定性）。
+截至 Phase 16，單次 Phase 平均涵蓋 2–4 個功能模組，每 Phase 新增 5–15 個測試。  
+整體 test suite 從 Phase 1（~10 tests）成長到 Phase 16（198 tests）。  
+主要架構突破：Phase 9（Blur 第一類），Phase 11（MASA field-key），Phase 13（跨架構穩定性），Phase 15（Functor 代數介面 + cycle detection）。

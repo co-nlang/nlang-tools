@@ -20,22 +20,22 @@ fn test_nerve_overlap_both_empty() {
 
 #[test]
 fn test_nerve_overlap_no_common() {
-    let a = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![] }]);
-    let b = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m2".into(), overlapping_masa_caids: vec![] }]);
+    let a = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![], field_keys: vec![] }]);
+    let b = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m2".into(), overlapping_masa_caids: vec![], field_keys: vec![] }]);
     assert!(!nerve_overlap(&a, &b), "different MASA → false");
 }
 
 #[test]
 fn test_nerve_overlap_direct_match() {
-    let a = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![] }]);
-    let b = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![] }]);
+    let a = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![], field_keys: vec![] }]);
+    let b = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![], field_keys: vec![] }]);
     assert!(nerve_overlap(&a, &b), "same masa_caid → true");
 }
 
 #[test]
 fn test_nerve_overlap_via_overlapping() {
-    let a = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![] }]);
-    let b = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m2".into(), overlapping_masa_caids: vec!["m1".into()] }]);
+    let a = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![], field_keys: vec![] }]);
+    let b = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m2".into(), overlapping_masa_caids: vec!["m1".into()], field_keys: vec![] }]);
     assert!(nerve_overlap(&a, &b), "overlapping includes query's masa → true");
 }
 
@@ -50,8 +50,8 @@ fn test_d_l_approx_after_phase5() {
 
 #[test]
 fn test_masa_and_nerve_combined() {
-    let q = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![] }]);
-    let p = gbb(MasaRef::Digest(vec![1]), vec![NerveEntry { masa_caid: "m2".into(), overlapping_masa_caids: vec![] }]);
+    let q = gbb(MasaRef::Top, vec![NerveEntry { masa_caid: "m1".into(), overlapping_masa_caids: vec![], field_keys: vec![] }]);
+    let p = gbb(MasaRef::Digest(vec![1]), vec![NerveEntry { masa_caid: "m2".into(), overlapping_masa_caids: vec![], field_keys: vec![] }]);
     assert!(masa_compatible(&q, &p), "Top × Digest → compatible");
     assert!(!nerve_overlap(&q, &p), "different nerve → incompatible");
 }
@@ -150,4 +150,56 @@ fn nerve_non_combo_empty_structure() {
     let reg = oo.gbb_registry.read().unwrap();
     let nerve_lens: Vec<_> = reg.values().map(|gbb| gbb.nerve_structure.len()).collect();
     assert!(nerve_lens.iter().all(|&l| l == 0), "non-Combo → empty nerve_structure");
+}
+
+fn make_gbb_with_nerve(nerve: Vec<NerveEntry>) -> GBB {
+    GBB {
+        node_caid: dummy_caid(),
+        mass: 1.0,
+        sketch_bytes: vec![0x42],
+        masa_ref: MasaRef::Top,
+        nerve_structure: nerve,
+    }
+}
+
+// ── Phase 17: NerveEntry.field_keys tests ──
+
+#[test]
+fn test_nerve_overlap_same_masa() {
+    let ne_a = NerveEntry { masa_caid: "masa:fk:abc".into(), overlapping_masa_caids: vec![], field_keys: vec!["x".into(), "y".into()] };
+    let ne_b = NerveEntry { masa_caid: "masa:fk:abc".into(), overlapping_masa_caids: vec![], field_keys: vec!["x".into(), "y".into()] };
+    let gbb_a = make_gbb_with_nerve(vec![ne_a]);
+    let gbb_b = make_gbb_with_nerve(vec![ne_b]);
+    assert!(nerve_overlap(&gbb_a, &gbb_b));
+}
+
+#[test]
+fn test_nerve_overlap_partial_field_keys() {
+    let ne_a = NerveEntry { masa_caid: "masa:fk:aaa".into(), overlapping_masa_caids: vec![], field_keys: vec!["x".into(), "y".into()] };
+    let ne_b = NerveEntry { masa_caid: "masa:fk:bbb".into(), overlapping_masa_caids: vec![], field_keys: vec!["x".into(), "z".into()] };
+    let gbb_a = make_gbb_with_nerve(vec![ne_a]);
+    let gbb_b = make_gbb_with_nerve(vec![ne_b]);
+    assert!(nerve_overlap(&gbb_a, &gbb_b));
+}
+
+#[test]
+fn test_nerve_overlap_disjoint_field_keys() {
+    let ne_a = NerveEntry { masa_caid: "masa:fk:aaa".into(), overlapping_masa_caids: vec![], field_keys: vec!["x".into(), "y".into()] };
+    let ne_b = NerveEntry { masa_caid: "masa:fk:bbb".into(), overlapping_masa_caids: vec![], field_keys: vec!["z".into(), "w".into()] };
+    let gbb_a = make_gbb_with_nerve(vec![ne_a]);
+    let gbb_b = make_gbb_with_nerve(vec![ne_b]);
+    assert!(!nerve_overlap(&gbb_a, &gbb_b));
+}
+
+#[test]
+fn test_nerve_overlap_precomputed_overlapping() {
+    let ne_a = NerveEntry { masa_caid: "masa:fk:aaa".into(), overlapping_masa_caids: vec![], field_keys: vec![] };
+    let ne_b = NerveEntry {
+        masa_caid: "masa:fk:bbb".into(),
+        overlapping_masa_caids: vec!["masa:fk:aaa".into()],
+        field_keys: vec![],
+    };
+    let gbb_a = make_gbb_with_nerve(vec![ne_a]);
+    let gbb_b = make_gbb_with_nerve(vec![ne_b]);
+    assert!(nerve_overlap(&gbb_a, &gbb_b));
 }

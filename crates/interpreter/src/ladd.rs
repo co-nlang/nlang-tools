@@ -6,6 +6,7 @@ use std::collections::HashSet;
 pub struct NerveEntry {
     pub masa_caid: String,
     pub overlapping_masa_caids: Vec<String>,
+    pub field_keys: Vec<String>,
 }
 
 /// Geometric Bounding Box (APP_05 §2.2).
@@ -58,8 +59,15 @@ pub fn nerve_overlap(query: &GBB, peer: &GBB) -> bool {
     }
     let query_masas: HashSet<&str> =
         query.nerve_structure.iter().map(|e| e.masa_caid.as_str()).collect();
+    let query_keys: HashSet<&str> = query.nerve_structure.iter()
+        .flat_map(|e| e.field_keys.iter().map(|k| k.as_str()))
+        .collect();
+
     peer.nerve_structure.iter().any(|pe| {
         query_masas.contains(pe.masa_caid.as_str())
         || pe.overlapping_masa_caids.iter().any(|m| query_masas.contains(m.as_str()))
+        || (!query_keys.is_empty()
+            && !pe.field_keys.is_empty()
+            && pe.field_keys.iter().any(|k| query_keys.contains(k.as_str())))
     })
 }
