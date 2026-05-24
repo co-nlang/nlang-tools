@@ -372,6 +372,49 @@ impl Ouroboros {
         }
         fields.insert("~%Io".to_string(), Value::Combo(ComboVal::new(io_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
+        let mut env_fields = IndexMap::new();
+        let env_morphisms = vec![
+            ("/get",  "env.get"),
+            ("/args", "env.args"),
+            ("/cwd",  "env.cwd"),
+        ];
+        for (n, b) in env_morphisms {
+            env_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(),  Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::IO, vec![])));
+        }
+        fields.insert("~%Env".to_string(), Value::Combo(ComboVal::new(env_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+
+        let mut process_fields = IndexMap::new();
+        let process_morphisms = vec![
+            ("/exit", "process.exit"),
+            ("/pid",  "process.pid"),
+        ];
+        for (n, b) in process_morphisms {
+            process_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(),  Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::IO, vec![])));
+        }
+        fields.insert("~%Process".to_string(), Value::Combo(ComboVal::new(process_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+        
+        let mut path_fields = IndexMap::new();
+        let path_morphisms = vec![
+            ("/join",        "path.join"),
+            ("/dirname",     "path.dirname"),
+            ("/basename",    "path.basename"),
+            ("/extension",   "path.extension"),
+            ("/is_absolute", "path.is_absolute"),
+        ];
+        for (n, b) in path_morphisms {
+            path_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(),  Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])));
+        }
+        fields.insert("~%Path".to_string(), Value::Combo(ComboVal::new(path_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+        
         let mut disc_fields = IndexMap::new();
         let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
         for (n, b) in disc_morphisms { disc_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![]))); }

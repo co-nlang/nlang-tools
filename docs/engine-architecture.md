@@ -1,6 +1,6 @@
 # nlang 引擎架構概覽
 
-> 最後更新：2026-05-24（Phase 14 完成後）  
+> 最後更新：2026-05-25（Phase 34 完成後）  
 > 供新貢獻者快速定位切入點。
 
 ---
@@ -12,14 +12,14 @@ nlang-tools/
 ├── crates/
 │   ├── parser/          # AST 與語法解析
 │   │   ├── src/lib.rs   # Parser 入口（Pest）
-│   │   ├── src/ast.rs   # AST 類型定義
+│   │   ├── src/ast.rs   # AST 類型定義（含 AtomKind::Bytes）
 │   │   └── src/n.pest   # Pest 語法定義
 │   │
 │   ├── interpreter/     # 核心 runtime 引擎
-│   │   ├── src/lib.rs            # Ouroboros 引擎、EvalContext
+│   │   ├── src/lib.rs            # Ouroboros 引擎、EvalContext、root_with_system()
 │   │   ├── src/value.rs          # Value、ComboVal、EffectTag、ContentHash
 │   │   ├── src/eval.rs           # 表達式求值
-│   │   ├── src/unify.rs          # 統一化（Meet）運算 + H¹/H² obstruction
+│   │   ├── src/unify.rs          # 統一化（Meet）+ H¹/H² obstruction
 │   │   ├── src/dispatch.rs       # 態射模式派發
 │   │   ├── src/complement.rs     # 正交補運算（!）
 │   │   ├── src/oml.rs            # Orthomodular Law 驗證
@@ -33,25 +33,29 @@ nlang-tools/
 │   │   ├── src/ladd.rs           # LADD 引力路由（GBB）
 │   │   ├── src/genesis.rs        # 創世種子 CAID 常數
 │   │   └── src/builtins/         # 內建模組
-│   │       ├── mod.rs            # 註冊入口
-│   │       ├── math.rs           # ~%Math, ~%Complex
-│   │       ├── list.rs           # ~%List
-│   │       ├── string.rs         # ~%Str
-│   │       ├── cond.rs           # ~%Cond（/if, /cond, /match）
-│   │       ├── disc.rs           # ~%Disc（LADD 發現協議）
-│   │       ├── engine.rs         # ~%Engine（/observe, /save, /add_architect, /sign_refine）
-│   │       ├── reflection.rs     # ~%Refl（/keys, /has, /is_cocoon, /type_of）
-│   │       └── time.rs           # ~%Time（/now）
+│   │       ├── mod.rs            # 統一註冊入口
+│   │       ├── math.rs           # ~%Math（31 態射）+ ~%Complex（4）
+│   │       ├── list.rs           # ~%List（32 態射）
+│   │       ├── string.rs         # ~%String（28 態射）
+│   │       ├── cond.rs           # ~%Cond（/if /cond /match）
+│   │       ├── engine.rs         # @option/@result combinators + ~%Engine
+│   │       ├── reflection.rs     # ~%Reflection（17 態射）
+│   │       ├── disc.rs           # ~%Discovery（LADD 發現協議）
+│   │       ├── time.rs           # ~%Time（/now /format /diff /add_ms）
+│   │       ├── bytes.rs          # ~%Bytes（12 態射：基礎 + sha256/base64/hmac）
+│   │       ├── regex.rs          # ~%Regex（/match /find /replace /split）
+│   │       ├── json.rs           # ~%Json（/parse /stringify /get /keys）
+│   │       └── io.rs             # ~%Io（/read_file /write_file /exists /append_file）
 │   │
 │   └── oo/              # CLI 工具入口
 │       ├── src/main.rs          # CLI 命令處理
 │       └── src/static_analyzer.rs # 靜態分析
 │
 └── docs/                # 文件目錄
-    ├── implementation-status.md  # 實作狀態（本次更新）
+    ├── implementation-status.md  # 實作狀態
     ├── engine-architecture.md    # 本文件
-    ├── feature-roadmap.md        # 功能路線圖（本次更新）
-    └── phase-N-handover.md       # Phase 1-14 交接文件
+    ├── feature-roadmap.md        # 功能路線圖
+    └── phase-N-handover.md       # Phase 1–34 交接文件
 ```
 
 ---
@@ -81,8 +85,8 @@ pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>>
 
 | 類型 | 檔案 | 說明 |
 |:-----|:-----|:-----|
-| `Ouroboros` | `lib.rs` | 主引擎：store、registry、peers、identity、GBB、architects |
-| `EvalContext` | `lib.rs` | 求值上下文：root、fuel、depth、strategy、max_* |
+| `Ouroboros` | `lib.rs` | 主引擎：store、builtin_registry、peers、identity |
+| `EvalContext` | `lib.rs` | 求值上下文：root、fuel、depth、strategy |
 | `Universe` | `universe.rs` | 狀態管理：head、root、#refine |
 | `Value` | `value.rs` | 核心值類型 enum |
 | `ComboVal` | `value.rs` | Combo 結構體（含 masa_ref）|
@@ -97,7 +101,7 @@ pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>>
 - 新增 Value 類型 → `value.rs:Value enum + AtomKind`
 - 新增統一化規則 → `unify.rs:do_unify`
 - 新增求值邏輯 → `eval.rs:eval_internal`
-- 新增內建模組 → `builtins/` 新建模組 + `mod.rs` 註冊
+- 新增內建模組 → `builtins/` 新建模組 + `mod.rs` 註冊 + `lib.rs:root_with_system()` + `genesis.rs:all_seeds()`
 
 ---
 
@@ -108,6 +112,8 @@ pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>>
 | 命令 | 功能 |
 |:-----|:-----|
 | `oo run <files>` | 單次執行 |
+| `oo eval <expr>` | 單次求值（Phase 23） |
+| `oo inspect <expr>` | 詳細輸出（Phase 23） |
 | `oo evolve <files>` | 演化暫存區 |
 | `oo test <files>` | 執行測試 |
 | `oo repl` | 互動 REPL |
@@ -138,9 +144,8 @@ Value (enum)
 │   ├── Complex(f64, f64)               # 複數（re + im·i）
 │   ├── Str(String)                      # 字串
 │   ├── Tag(String)                      # 標籤 #true, #false, #none ...
-│   ├── TagStart / TagEnd                # 序位錨點
-│   ├── Regex, PathLit, Bytes, Uri, Time
-│   └── Unit                             # ()
+│   ├── TagStart / TagEnd                # 序位錨點 #_|_ / #_
+│   └── Bytes(Vec<u8>)                  # 二進位（Phase 30）
 ├── Combo(ComboVal)                      # 組合結構 {}
 ├── Union(Vec<Value>)                    # 聯集 A | B
 ├── Thunk { expr, closure, effect }      # 惰性求值
@@ -159,9 +164,16 @@ pub struct ComboVal {
     pub local:   IndexMap<String, Value>,  // ~ 前綴（私有）
     pub closed:  bool,                     // Cocoon 模式 {{}}
     pub effect:  EffectTag,                // Pure/State/IO/NonDet
-    pub relations: Vec<ValRelation>,       // 序位關係 <, >, <=, >=
-    pub masa_ref: MasaRef,                 // MASA 識別（Top 或 Digest）
+    pub relations: Vec<ValRelation>,
+    pub masa_ref: MasaRef,                 // MASA 識別
 }
+
+// 常用 API
+pub fn get_field(&self, key: &str) -> Option<&Value>
+pub fn insert_field(&mut self, key: &str, val: Value)
+pub fn fields(&self) -> IndexMap<String, Value>       // clone（開銷較大）
+pub fn fields_iter(&self) -> impl Iterator<Item = (&String, &Value)>  // 零拷貝
+pub fn collapse(&self) -> &Value  // 穿透 %val 包裝
 ```
 
 ### 3.3 前綴命名空間
@@ -172,22 +184,22 @@ pub struct ComboVal {
 | Private | `~` | 私有欄位 | `~temp` |
 | Logic | `/` | 態射/規則 | `/handler` |
 | Type | `@` | 型別約束 | `@int`, `@option` |
-| Meta | `%` | 元資料 | `%morphism`, `%branch` |
+| Meta | `%` | 元資料 | `%morphism`, `%branch`, `%kind` |
 | Data | 無 | 普通資料 | `name`, `0`, `1` |
 
 ### 3.4 Ouroboros 引擎
 
 ```rust
 pub struct Ouroboros {
-    pub store:             ObjectStore,            // CAID 物件儲存
-    pub base_dir:          Option<PathBuf>,        // .oo/ 目錄（Phase 11）
-    pub unify_memo:        RwLock<HashMap<...>>,   // 統一化 memoization
-    pub builtin_registry:  HashMap<String, Arc<BuiltinFn>>,
-    pub peers:             RwLock<HashMap<String, Peer>>,
-    pub identity:          Identity,               // Ed25519 金鑰對
-    pub refine_map:        RwLock<HashMap<String, Vec<String>>>,
-    pub gbb_registry:      RwLock<HashMap<String, GBB>>, // LADD
-    pub architect_registry: RwLock<HashSet<String>>,     // Phase 11
+    pub store:              ObjectStore,
+    pub base_dir:           Option<PathBuf>,
+    pub unify_memo:         RwLock<HashMap<(ContentHash, ContentHash), Value>>,
+    pub builtin_registry:   HashMap<String, Arc<BuiltinFn>>,
+    pub peers:              RwLock<HashMap<String, Peer>>,
+    pub identity:           Identity,
+    pub refine_map:         RwLock<HashMap<String, Vec<String>>>,
+    pub gbb_registry:       RwLock<HashMap<String, GBB>>,
+    pub architect_registry: RwLock<HashSet<String>>,
 }
 ```
 
@@ -195,17 +207,17 @@ pub struct Ouroboros {
 
 ```rust
 pub struct EvalContext {
-    pub root:                ComboVal,           // 作用域根（含 ~%Config 等）
-    pub scopes:              Vec<ComboVal>,
-    pub fuel:                u64,                // 預設 10000（~%Config）
-    pub strategy:            ObservationStrategy, // Blur/Strict/Approximate
-    pub max_branches:        usize,              // 預設 64
-    pub max_unification_depth: usize,            // 預設 256
-    pub max_pattern_nodes:   usize,              // 預設 1024
-    pub had_nondistrib_event: bool,              // OML 非分配性旗標
-    // ... 其他欄位
+    pub root:                    ComboVal,           // 作用域根（含所有 ~%* 模組）
+    pub scopes:                  Vec<ComboVal>,
+    pub fuel:                    u64,                // 預設 10000（~%Config）
+    pub strategy:                ObservationStrategy, // Blur/Strict/Approximate
+    pub max_branches:            usize,              // 64
+    pub max_unification_depth:   usize,              // 256
+    pub max_pattern_nodes:       usize,              // 1024
+    pub timeout_deadline:        Option<u64>,        // Unix ms
+    pub had_nondistrib_event:    bool,               // OML 非分配性旗標
 }
-// 建構：Ouroboros::eval_context()（讀取 ~%Config）或 EvalContext::new(root)
+// 建構：Ouroboros::eval_context()（讀取 ~%Config）
 ```
 
 ---
@@ -218,17 +230,17 @@ pub struct EvalContext {
 
 ```
 unify(A, B):
-  1. hash(A) == hash(B)                    → 返回 A（memoized）
-  2. A == Top                              → 返回 B
-  3. A == Bottom 或 B == Bottom            → 返回 Bottom
-  4. A == Blur 或 B == Blur               → Blur 傳播規則
-  5. A, B 是 Atom                         → 相等則返回 A，否則 Bottom
-  6. A, B 都是 Combo                      → phase_merge_decision
-     - H² MASA 不相容                     → Bottom(H2Split)
-     - θ >= ε_coherent                    → Bottom(H1Split)（目前 θ 恆為 0.0）
-     - 否則遞迴合併欄位
-  7. A 是 Atom, B 是 Combo               → Trinity Isomorphism（展開為 {%val: A}）
-  8. Union                                → 極小元素篩選
+  1. hash(A) == hash(B)      → A（memoized）
+  2. A == Top                → B
+  3. Bottom                  → Bottom
+  4. Blur                    → Blur 傳播規則
+  5. Atom × Atom             → 相等則 A，否則 Bottom
+  6. Combo × Combo           → phase_merge_decision
+     H² MASA 不相容          → Bottom(H2Split)
+     θ >= ε_coherent（目前恆 0.0）→ Bottom(H1Split)
+     否則遞迴合併欄位
+  7. Atom × Combo            → Trinity Isomorphism（{%val: atom}）
+  8. Union                   → 極小元素篩選
 ```
 
 ### 4.2 求值流程
@@ -239,13 +251,12 @@ unify(A, B):
 |:---------|:-----|
 | `Atom` | 直接返回 Value |
 | `Path` | 在 root/scopes 中觀測路徑 |
-| `Apply` | 呼叫態射 |
+| `Apply` | 呼叫 apply_morphism |
 | `Pipe` | `a \|> b = b(a)` |
 | `Morphism` | 建立閉包 |
 | `Combo` | 構建 ComboVal |
 | `Meet/Join/Complement` | 呼叫 unify/eval/complement |
-| `Add/Sub/Mul/Div/Rem` | 數學運算 |
-| `List` | 構建 List Combo |
+| `List` | 構建 List Combo（numeric keys + `%kind:#list`） |
 
 ### 4.3 態射派發
 
@@ -254,7 +265,7 @@ unify(A, B):
 ```
 dispatch_morphism(morphism, arg):
   1. 從 %rules 提取所有分支
-  2. 對每個分支：unify(pattern, arg) 測試
+  2. 對每個分支：unify(pattern, arg)
   3. 篩選非 Bottom 結果
   4. 極小元素規則（移除被包含者）
   5. 單一極小 → 執行 body；多個 → Union
@@ -262,18 +273,15 @@ dispatch_morphism(morphism, arg):
 
 ### 4.4 CAID v2 計算
 
-**格式**：`hash:sha256:v2:<masa_ref>:<lattice_sketch>:<content_digest>`
+格式：`hash:sha256:v2:<masa_ref>:<lattice_sketch>:<content_digest>`
 
-**流程**：
 ```
 content_hash(value):
   1. BN/ 序列化（bn_serial.rs）→ 位元組流
-  2. lattice_sketch(value)     → Base64 字串（≤16 分量）
+  2. lattice_sketch(value)     → Base64（≤16 分量）
   3. SHA256(BN/ bytes)         → content_digest
   4. 組合 → CAID
 ```
-
-**Blur CAID**：`SHA256("blur:" || cause_bytes || ":fuel=" || fuel_le64 || ":strategy=" || strat_u8 || ":salt=" || salt_32bytes)`
 
 ### 4.5 #refine 流程
 
@@ -281,10 +289,10 @@ content_hash(value):
 
 ```
 refine(source_caids, target_caids, authority, meta):
-  Step 1a: 幾何單調性驗證（ID_new ⊑ ID_old）
-  Step 1b: bootstrap_exempt = head.is_none() || architect_reg.is_empty()
-           → verify_refine_authority（Ed25519 簽署）
-  Step 1c: Shadow scan（向上掃 16 commits 找 source_caids 出現處）
+  Step 1a: 幾何單調性（ID_new ⊑ ID_old）
+  Step 1b: verify_refine_authority（Ed25519）
+  Step 1c: Shadow scan（向上掃 16 commits）
+  Step 1d: BFS Cycle Detection（Phase 15）
   Step 2:  寫入 RefineCommit → ObjectStore
   Step 3:  更新 refine_map + head
 ```
@@ -293,86 +301,113 @@ refine(source_caids, target_caids, authority, meta):
 
 ## 5. 內建模組詳解
 
-### 5.1 現有模組清單
+### 5.1 現有模組清單（Phase 34 後）
 
-| 模組 | 檔案 | 態射 | 行數 |
-|:-----|:-----|:-----|-----:|
-| Math | `math.rs` | `/add` `/sub` `/mul` `/div` `/rem` `/abs` `/pow` `/bit*` `/random` `/exp` `/ln` `/sin` `/cos` `/sqrt` `/eml` | ~407 |
-| Complex | `math.rs` | `/conj` `/phase` `/real` `/imag` | — |
-| List | `list.rs` | `/len` `/at` `/concat` `/reverse` `/slice` `/zip` `/sort` `/map` `/fold` `/filter` | ~198 |
-| Str | `string.rs` | `/concat` `/len` `/trim` `/split` `/join` `/replace` `/to_lower` `/to_upper` `/starts_with` `/ends_with` `/contains` | ~117 |
-| Cond | `cond.rs` | `/if` `/cond` `/match` | ~75 |
-| Disc | `disc.rs` | `/connect` `/fetch` `/identify` `/advertise` `/find` | ~203 |
-| Engine | `engine.rs` | `/observe` `/save` `/add_architect` `/sign_refine` | ~255 |
-| Refl | `reflection.rs` | `/keys` `/has` `/is_cocoon` `/type_of` | ~68 |
-| Time | `time.rs` | `/now` | ~10 |
+| 模組 | 檔案 | 態射數 | EffectTag | 代表功能 |
+|:-----|:-----|:------:|:---------:|:---------|
+| ~%Math | `math.rs` | 31 | Pure | 算術、超越函數、gcd/log2/sign |
+| ~%Complex | `math.rs` | 4 | Pure | conj/phase/real/imag |
+| ~%List | `list.rs` | 32 | Pure | 全 FP 操作、group_by/chunk/window |
+| ~%String | `string.rs` | 28 | Pure | 全字串操作、format 命名佔位符 |
+| ~%Bytes | `bytes.rs` | 12 | Pure | 二進位 + sha256/base64/hmac |
+| ~%Regex | `regex.rs` | 4 | Pure | match/find/replace/split |
+| ~%Json | `json.rs` | 4 | Pure | parse/stringify/get/keys |
+| ~%Io | `io.rs` | 4 | **IO** | 檔案讀寫、exists、append |
+| ~%Time | `time.rs` | 4 | **IO** | now/format/diff/add_ms |
+| ~%Cond | `cond.rs` | 3 | Pure | if/cond/match |
+| ~%Reflection | `reflection.rs` | 17 | Pure | 反射、get/set/delete |
+| ~%Discovery | `disc.rs` | 6 | **IO** | LADD 發現協議 |
+| ~%Engine | `engine.rs` | 8 | Mixed | observe/save/differential |
+| @option | `engine.rs` | 8 | Pure | Functor + 全組合子 |
+| @result | `engine.rs` | 9 | Pure | Functor + 全組合子 |
+| @list | — | 1 | Pure | %fmap → list.map |
 
-### 5.2 新增內建模組的步驟
+### 5.2 新增內建模組的標準步驟
 
-1. 建立 `builtins/my_module.rs`
-2. 在 `builtins/mod.rs` 引入並呼叫 `register_my_builtins(&mut m)`
-3. 在 `lib.rs:root_with_system()` 建立 `~%MyModule` Combo 並暴露態射
+1. 建立 `builtins/my_module.rs`（含 `pub fn register_my_builtins(m: &mut HashMap<...>)`）
+2. 在 `builtins/mod.rs` 加入 `mod my_module;` + 呼叫
+3. 在 `lib.rs:root_with_system()` 建立 `~%MyModule` Combo
+   - Pure 模組：`EffectTag::Pure` on morphism ComboVal
+   - IO 模組：`EffectTag::IO` on morphism ComboVal（參考 `~%Time /now` 實作）
+4. 在 `genesis.rs` 加入 `SEED_MY_MODULE` 常數 + `all_seeds()` 條目
+5. 重跑 seed test：`cargo test seed_caids_are_stable -- --nocapture`
 
-### 5.3 系統根（root_with_system）包含
+### 5.3 系統根（root_with_system）鍵一覽
 
-| 鍵 | 內容 |
-|:---|:-----|
-| `~%Math` | 數學態射 |
-| `~%Complex` | 複數態射 |
-| `~%List` | 串列態射 |
-| `~%Str` | 字串態射 |
-| `~%Cond` | 條件控制流（/if, /cond, /match）|
-| `~%Disc` | LADD 發現協議 |
-| `~%Engine` | 引擎操作 |
-| `~%Refl` | 反射 |
-| `~%Time` | 時間 |
-| `@option` | Option 型別約束 |
-| `@result` | Result 型別約束 |
-| `~%Config` | Genesis 配置預設值（%fuel: 10000, %max_branches: 64, ...）|
+```
+~%Math, ~%List, ~%String, ~%Bytes, ~%Regex, ~%Json, ~%Io,
+~%Time, ~%Complex, ~%Cond, ~%Reflection, ~%Discovery,
+~%Engine, ~%Official, ~%Config,
+@option, @result, @list,
+/add（向後相容快捷鍵）
+```
+
+### 5.4 List 格式規範
+
+```
+List = Combo { "0": v0, "1": v1, ..., "%kind": Tag("list") }
+```
+
+- `build_list_value(items: Vec<Value>) → Value`（list.rs 內部函式）
+- 外部模組手動建構：同上格式 + `ComboVal::new`
+
+### 5.5 Option / Result 格式規範
+
+```
+Some(x)  = Combo { "%val": x }
+None     = Tag("none")
+Ok(x)    = Combo { "%val": x }
+Err(e)   = Combo { "%cause": e }
+```
 
 ---
 
 ## 6. 效果系統
 
-### 6.1 EffectTag 層級
+### 6.1 EffectTag 層級（部分有序）
 
 | 標籤 | 值 | 說明 |
 |:-----|:---|:-----|
 | Pure | 0 | 確定性、無副作用、可快取 |
 | State | 1 | 讀寫程式狀態 |
-| IO | 2 | 外部 I/O |
-| NonDet | 3 | 非確定性（random, time）|
+| IO | 2 | 外部 I/O（檔案、網路、時間） |
+| NonDet | 3 | 非確定性（math.random） |
+
+EffectTag 在 Value 傳播時取 `max`（最高效果勝出）。
 
 ### 6.2 ObservationStrategy（Phase 9）
 
-| 策略 | 資源耗盡行為 | 奇點行為 |
-|:-----|:------------|:---------|
+| 策略 | 資源耗盡 | 奇點 |
+|:-----|:---------|:-----|
 | `Blur`（預設） | → `Value::Blur` | → `Value::Blur` |
 | `Strict` | → `Value::Bottom` | → `Value::Bottom` |
-| `Approximate` | → `Value::Blur` | → approximate result |
+| `Approximate` | → `Value::Blur` | → approximate |
 
 ---
 
 ## 7. 測試系統
 
-### 7.1 測試格式（.n 文件）
+### 7.1 Rust 整合測試（tests/*.rs）
 
-```nlang
-test_basic: 1 + 1 == 2
-test_morph: (x -> x + 1) 5 == 6
-test_error: 1 & 2 == _|_
+~392 tests，0 failed。主要覆蓋：
+
+- **格論**：unify, complement, oml, orthomodular
+- **CAID**：caid, lattice_sketch_v2（17 固定向量）
+- **#refine**：refine, authority, shadow
+- **Blur**：blur（11 tests）
+- **標準庫**：eval, dispatch, cond_match, math_branch, type_constraint
+- **LADD**：ladd, nerve_routing
+- **Phase 25–34**：list/str/bytes/regex/json/io 各專項測試套件
+
+### 7.2 Genesis 穩定性測試
+
+`seed_caids_are_stable`（在 `genesis_test.rs`）：  
+驗證所有 `SEED_*` 常數與 `root_with_system()` 當前計算一致。  
+每次修改 `root_with_system()` 後必須重跑並更新常數。
+
+```bash
+cargo test --manifest-path crates/interpreter/Cargo.toml seed_caids_are_stable -- --nocapture
 ```
-
-### 7.2 Rust 整合測試（tests/*.rs）
-
-24 個測試檔，173 tests 全部通過。主要覆蓋：
-- 格論（unify, complement, oml, orthomodular）
-- CAID（caid, lattice_sketch_v2）
-- 精炼（refine, authority）
-- 模糊（blur）
-- 標準庫（eval, dispatch, cond_match, math_branch, type_constraint）
-- LADD（ladd, nerve_routing）
-- 創世（genesis）
 
 ---
 
@@ -382,36 +417,38 @@ test_error: 1 & 2 == _|_
 |:-----|:-----|:---------|
 | 新增語法 | `parser/n.pest`, `parser/ast.rs` | Rule enum, ExprKind enum |
 | 新增值類型 | `interpreter/value.rs` | Value enum, AtomKind enum |
-| 新增統一化規則 | `interpreter/unify.rs` | do_unify() |
-| 新增求值邏輯 | `interpreter/eval.rs` | eval_internal() |
-| 新增正交補規則 | `interpreter/complement.rs` | orthocomplement() |
-| 新增 BN/ 序列化 | `interpreter/bn_serial.rs` | serialize_value() |
-| 新增內建函數 | `interpreter/builtins/*.rs` | 新建模組 + mod.rs 註冊 |
-| 新增型別約束 | `interpreter/type_constraint.rs` | TypeConstraint enum |
-| 新增 CLI 命令 | `oo/main.rs` | Commands enum + match arm |
-| 新增靜態檢查 | `oo/static_analyzer.rs` | StaticViolation enum |
+| 新增統一化規則 | `interpreter/unify.rs` | `do_unify()` |
+| 新增求值邏輯 | `interpreter/eval.rs` | `eval_internal()` |
+| 新增正交補規則 | `interpreter/complement.rs` | `orthocomplement()` |
+| 新增 BN/ 序列化 | `interpreter/bn_serial.rs` | `serialize_value()` |
+| 新增內建函數 | `interpreter/builtins/*.rs` | 新建模組 + `mod.rs` + `lib.rs` + `genesis.rs` |
+| 新增型別約束 | `interpreter/type_constraint.rs` | `TypeConstraint enum` |
+| 新增 CLI 命令 | `oo/main.rs` | `Commands enum + match arm` |
+| 新增靜態檢查 | `oo/static_analyzer.rs` | `StaticViolation enum` |
 
 ---
 
 ## 9. 與規格書的對應
 
-| 規格章節 | 引擎對應檔案 |
-|:---------|:-------------|
+| 規格章節 | 引擎對應 |
+|:---------|:---------|
 | SPEC_01（格論基礎） | `value.rs`, `unify.rs`, `complement.rs`, `oml.rs` |
 | SPEC_06（統一化邏輯） | `unify.rs`, `dispatch.rs`, `observation.rs` |
-| SPEC_09（標準庫） | `builtins/*.rs`, `type_constraint.rs` |
+| SPEC_09（標準庫） | `builtins/*.rs`（13 個模組），`type_constraint.rs` |
 | SPEC_10（演化與 Commit） | `universe.rs`, `storage.rs`, `authority.rs` |
 | SPEC_13（OODP）| `builtins/disc.rs`, `ladd.rs`, `lattice_sketch.rs`, `bn_serial.rs` |
 | REAL_03（CAID 協議） | `value.rs:content_hash()`, `bn_serial.rs`, `lattice_sketch.rs` |
-| APP_05（LADD） | `ladd.rs`, `builtins/disc.rs`（部分）|
+| APP_05（LADD） | `ladd.rs`, `builtins/disc.rs` |
 | SPEC_17（自我演化） | 未實作 |
 
 ---
 
 ## 10. 快速入門建議
 
-1. 先讀 `value.rs` — 理解 `Value` enum，尤其 `Blur`、`Bottom`、`Combo`
+1. 先讀 `value.rs` — 理解 `Value` enum，尤其 `Blur`、`Bottom`、`Combo`、`Bytes`
 2. 再讀 `unify.rs` — 理解 Meet 運算、H¹/H² obstruction
-3. 讀 `eval.rs` — 理解求值流程和態射派發
-4. 用 `oo repl` 或測試 (`cargo test -p nlang-interpreter`) 實驗驗證
-5. 看 `docs/phase-N-handover.md` — 了解各功能的實作決策背景
+3. 讀 `eval.rs` — 理解求值流程
+4. 讀 `builtins/json.rs` 或 `builtins/bytes.rs` — 最清晰的模組實作範本
+5. 看 `genesis.rs` + `lib.rs:root_with_system()` — 理解模組系統結構
+6. 用 `cargo test -p nlang-interpreter` 驗證（~392 tests all pass）
+7. 參考 `docs/phase-N-handover.md` — 了解各功能的決策背景

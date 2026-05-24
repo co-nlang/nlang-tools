@@ -10,6 +10,9 @@ mod bytes;
 mod regex;
 mod json;
 mod io;
+mod env;
+mod process;
+mod path;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,6 +34,9 @@ pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     regex::register_regex_builtins(&mut m);
     json::register_json_builtins(&mut m);
     io::register_io_builtins(&mut m);
+    env::register_env_builtins(&mut m);
+    process::register_process_builtins(&mut m);
+    path::register_path_builtins(&mut m);
     
     m
 }

@@ -66,6 +66,18 @@ path = "tests/list_p35_test.rs"
 name = "math_p35_test"
 path = "tests/math_p35_test.rs"
 
+[[test]]
+name = "env_p36_test"
+path = "tests/env_p36_test.rs"
+
+[[test]]
+name = "process_p36_test"
+path = "tests/process_p36_test.rs"
+
+[[test]]
+name = "path_p37_test"
+path = "tests/path_p37_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }
