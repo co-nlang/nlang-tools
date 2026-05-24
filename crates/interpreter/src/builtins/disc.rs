@@ -22,7 +22,10 @@ fn bottom_not_found() -> Value {
 /// Two Combos with the same field keys form the same MASA (classical sub-algebra).
 fn field_key_masa_id(cv: &crate::value::ComboVal) -> String {
     use sha2::{Sha256, Digest};
-    let mut keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
+    let mut keys: Vec<String> = cv.all_fields_iter()
+        .map(|(k, _)| k)
+        .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
+        .collect();
     keys.sort();
     let joined = keys.join("\x00");
     let digest = Sha256::digest(joined.as_bytes());
@@ -120,7 +123,10 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         // Phase 11: nerve_structure from field key MASA computation
         // Phase 17: also store field_keys for dynamic intersection + compute overlapping
         let nerve_structure: Vec<crate::ladd::NerveEntry> = if let Value::Combo(ref cv) = arg {
-            let keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
+            let keys: Vec<String> = cv.all_fields_iter()
+                .map(|(k, _)| k)
+                .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
+                .collect();
             if keys.is_empty() {
                 vec![]
             } else {
@@ -162,7 +168,10 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         } else { 1.0 };
         let query_sketch = base64_decode_sketch(&query_hash.lattice_sketch);
         let query_nerve = if let Value::Combo(ref cv) = arg {
-            let keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
+            let keys: Vec<String> = cv.all_fields_iter()
+                .map(|(k, _)| k)
+                .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
+                .collect();
             if keys.is_empty() { vec![] }
             else { vec![crate::ladd::NerveEntry { masa_caid: field_key_masa_id(cv), overlapping_masa_caids: vec![], field_keys: keys }] }
         } else { vec![] };

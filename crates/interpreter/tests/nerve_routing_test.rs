@@ -203,3 +203,156 @@ fn test_nerve_overlap_precomputed_overlapping() {
     let gbb_b = make_gbb_with_nerve(vec![ne_b]);
     assert!(nerve_overlap(&gbb_a, &gbb_b));
 }
+
+// ── Phase 38: 精確交集 field_keys 過濾 ──
+
+#[test]
+fn test_morphism_node_gets_empty_nerve() {
+    use nlang_interpreter::*;
+    use nlang_interpreter::value::{ComboVal, EffectTag};
+    use nlang_parser::ast::AtomKind;
+    use indexmap::IndexMap;
+    use std::sync::Arc;
+
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let mut ctx = EvalContext::new(oo.root_with_system());
+
+    let mut fields = IndexMap::new();
+    fields.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+    fields.insert("%builtin".to_string(), Value::Atom(AtomKind::Str("str.len".to_string()), EffectTag::Pure, None));
+    let cv = ComboVal::new(fields, true, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
+    advertise_fn(Value::Combo(cv), &oo, &mut ctx);
+
+    let reg = oo.gbb_registry.read().unwrap();
+    let all_empty = reg.values().all(|gbb| gbb.nerve_structure.is_empty());
+    assert!(all_empty, "morphism node (only %-keys) -> empty nerve_structure");
+}
+
+#[test]
+fn test_data_node_nerve_excludes_percent_keys() {
+    use nlang_interpreter::*;
+    use nlang_interpreter::value::{ComboVal, EffectTag};
+    use nlang_parser::ast::AtomKind;
+    use indexmap::IndexMap;
+    use std::sync::Arc;
+
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let mut ctx = EvalContext::new(oo.root_with_system());
+
+    let mut fields = IndexMap::new();
+    fields.insert("name".to_string(), Value::Atom(AtomKind::Str("Alice".to_string()), EffectTag::Pure, None));
+    fields.insert("age".to_string(), Value::Atom(AtomKind::Int(30.into()), EffectTag::Pure, None));
+    fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("person".to_string()), EffectTag::Pure, None));
+    let cv = ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
+    advertise_fn(Value::Combo(cv), &oo, &mut ctx);
+
+    let reg = oo.gbb_registry.read().unwrap();
+    let all_nerves: Vec<_> = reg.values()
+        .filter(|gbb| !gbb.nerve_structure.is_empty())
+        .flat_map(|gbb| gbb.nerve_structure[0].field_keys.iter().cloned())
+        .collect();
+
+    assert!(!all_nerves.is_empty(), "data+%kind node should have non-empty nerve");
+    assert!(
+        all_nerves.iter().all(|k| !k.starts_with('%') && !k.starts_with("~%")),
+        "nerve field_keys must not contain %-prefixed keys, got: {:?}", all_nerves
+    );
+    assert!(all_nerves.contains(&"name".to_string()), "nerve should contain 'name'");
+    assert!(all_nerves.contains(&"age".to_string()), "nerve should contain 'age'");
+}
+
+#[test]
+fn test_same_structure_diff_percent_same_masa() {
+    use nlang_interpreter::*;
+    use nlang_interpreter::value::{ComboVal, EffectTag};
+    use nlang_parser::ast::AtomKind;
+    use indexmap::IndexMap;
+    use std::sync::Arc;
+
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let mut ctx = EvalContext::new(oo.root_with_system());
+
+    let mut f1 = IndexMap::new();
+    f1.insert("x".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
+    f1.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("foo".to_string()), EffectTag::Pure, None));
+    let cv1 = ComboVal::new(f1, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let mut f2 = IndexMap::new();
+    f2.insert("x".to_string(), Value::Atom(AtomKind::Int(2.into()), EffectTag::Pure, None));
+    f2.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("bar".to_string()), EffectTag::Pure, None));
+    let cv2 = ComboVal::new(f2, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
+    advertise_fn(Value::Combo(cv1), &oo, &mut ctx);
+    advertise_fn(Value::Combo(cv2), &oo, &mut ctx);
+
+    let reg = oo.gbb_registry.read().unwrap();
+    let masas: Vec<_> = reg.values()
+        .filter(|gbb| !gbb.nerve_structure.is_empty())
+        .map(|gbb| gbb.nerve_structure[0].masa_caid.clone())
+        .collect();
+
+    assert!(masas.len() >= 2, "should have at least 2 advertised nodes with nerve");
+    let first = &masas[0];
+    assert!(masas.iter().all(|m| m == first),
+        "same data-field structure -> same MASA regardless of %kind: {:?}", masas);
+}
+
+#[test]
+fn test_list_node_nerve_uses_index_keys() {
+    use nlang_interpreter::*;
+    use nlang_interpreter::value::{ComboVal, EffectTag};
+    use nlang_parser::ast::AtomKind;
+    use indexmap::IndexMap;
+    use std::sync::Arc;
+
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let mut ctx = EvalContext::new(oo.root_with_system());
+
+    let mut fields = IndexMap::new();
+    fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+    fields.insert("0".to_string(), Value::Atom(AtomKind::Int(10.into()), EffectTag::Pure, None));
+    fields.insert("1".to_string(), Value::Atom(AtomKind::Int(20.into()), EffectTag::Pure, None));
+    let cv = ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
+    advertise_fn(Value::Combo(cv), &oo, &mut ctx);
+
+    let reg = oo.gbb_registry.read().unwrap();
+    let nerve_keys: Vec<_> = reg.values()
+        .filter(|gbb| !gbb.nerve_structure.is_empty())
+        .flat_map(|gbb| gbb.nerve_structure[0].field_keys.iter().cloned())
+        .collect();
+
+    assert!(nerve_keys.contains(&"0".to_string()), "list nerve should have key '0'");
+    assert!(nerve_keys.contains(&"1".to_string()), "list nerve should have key '1'");
+    assert!(!nerve_keys.iter().any(|k| k.starts_with('%')),
+        "list nerve must not contain %kind: {:?}", nerve_keys);
+}
+
+#[test]
+fn test_empty_after_filter_is_transparent() {
+    use nlang_interpreter::ladd::{GBB, NerveEntry, nerve_overlap};
+    use nlang_interpreter::value::{ContentHash, MasaRef, HashAlgorithm, CaidVersion};
+
+    let dummy = ContentHash { algorithm: HashAlgorithm::Sha256, version: CaidVersion::V2,
+        masa_ref: MasaRef::Top, lattice_sketch: String::new(), digest: vec![0; 32] };
+
+    let empty_nerve = GBB { node_caid: dummy.clone(), mass: 1.0, sketch_bytes: vec![],
+        masa_ref: MasaRef::Top, nerve_structure: vec![] };
+    let has_nerve = GBB { node_caid: dummy, mass: 1.0, sketch_bytes: vec![],
+        masa_ref: MasaRef::Top,
+        nerve_structure: vec![NerveEntry {
+            masa_caid: "masa:fk:abc".into(),
+            overlapping_masa_caids: vec![],
+            field_keys: vec!["x".into()],
+        }],
+    };
+
+    assert!(nerve_overlap(&empty_nerve, &has_nerve), "empty nerve passes through");
+    assert!(nerve_overlap(&has_nerve, &empty_nerve), "symmetric: empty nerve passes through");
+}
