@@ -218,6 +218,23 @@ impl ComboVal {
         self.get_field(key).is_some()
     }
 
+    pub fn remove_field(&mut self, key: &str) {
+        let key_trimmed = key.trim();
+        if key_trimmed.starts_with("~%") {
+            self.system.shift_remove(&key_trimmed[2..]);
+        } else if key_trimmed.starts_with('/') {
+            self.rules.shift_remove(&key_trimmed[1..]);
+        } else if key_trimmed.starts_with('@') {
+            self.types.shift_remove(&key_trimmed[1..]);
+        } else if key_trimmed.starts_with('%') {
+            self.meta.shift_remove(&key_trimmed[1..]);
+        } else if key_trimmed.starts_with('~') {
+            self.local.shift_remove(&key_trimmed[1..]);
+        } else {
+            self.data.shift_remove(key_trimmed);
+        }
+    }
+
     pub fn bits(&self) -> u64 {
         let mut b = 64u64;
         for (k, v) in &self.data { b += (k.len() as u64) * 8 + v.bits(); }

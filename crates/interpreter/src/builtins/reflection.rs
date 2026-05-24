@@ -136,4 +136,92 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None)
         }
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 20: Dynamic Combo access ───────────────────────────
+
+    m.insert("refl.get".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vkey), Some(vobj)) = (c.get_field("0"), c.get_field("1")) {
+                let key = oo.force(vkey.clone(), ctx).to_string_plain();
+                let obj = oo.force(vobj.clone(), ctx);
+                if let Value::Combo(ref oc) = obj.collapse() {
+                    return oc.get_field(&key).cloned().unwrap_or(Value::Top);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.set".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vkey), Some(vval), Some(vobj)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
+                let key = oo.force(vkey.clone(), ctx).to_string_plain();
+                let val = oo.force(vval.clone(), ctx);
+                let obj = oo.force(vobj.clone(), ctx);
+                if let Value::Combo(ref oc) = obj.collapse() {
+                    let mut new_combo = oc.clone();
+                    new_combo.insert_field(&key, val);
+                    return Value::Combo(new_combo);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.delete".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vkey), Some(vobj)) = (c.get_field("0"), c.get_field("1")) {
+                let key = oo.force(vkey.clone(), ctx).to_string_plain();
+                let obj = oo.force(vobj.clone(), ctx);
+                if let Value::Combo(ref oc) = obj.collapse() {
+                    let mut new_combo = oc.clone();
+                    new_combo.remove_field(&key);
+                    return Value::Combo(new_combo);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.values".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg {
+            c.get_field("0").cloned().unwrap_or_else(|| arg.clone())
+        } else { arg.clone() };
+        if let Value::Combo(c) = oo.force(v, ctx).collapse() {
+            let mut pairs: Vec<(String, Value)> = c.fields().into_iter()
+                .filter(|(k, _)| !k.starts_with('%'))
+                .collect();
+            pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+            let mut res = IndexMap::new();
+            for (i, (_, val)) in pairs.into_iter().enumerate() {
+                res.insert(i.to_string(), val);
+            }
+            res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+            return Value::Combo(ComboVal::new(res, false, IndexMap::new(), EffectTag::Pure, vec![]));
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.entries".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg {
+            c.get_field("0").cloned().unwrap_or_else(|| arg.clone())
+        } else { arg.clone() };
+        if let Value::Combo(c) = oo.force(v, ctx).collapse() {
+            let mut pairs: Vec<(String, Value)> = c.fields().into_iter()
+                .filter(|(k, _)| !k.starts_with('%'))
+                .collect();
+            pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+            let mut res = IndexMap::new();
+            for (i, (key, val)) in pairs.into_iter().enumerate() {
+                let mut entry = IndexMap::new();
+                entry.insert("key".to_string(), Value::Atom(AtomKind::Str(key), EffectTag::Pure, None));
+                entry.insert("val".to_string(), val);
+                let entry_combo = ComboVal::new(entry, true, IndexMap::new(), EffectTag::Pure, vec![]);
+                res.insert(i.to_string(), Value::Combo(entry_combo));
+            }
+            res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+            return Value::Combo(ComboVal::new(res, false, IndexMap::new(), EffectTag::Pure, vec![]));
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

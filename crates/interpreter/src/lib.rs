@@ -205,6 +205,11 @@ let mut refl_fields = IndexMap::new();
             ("/is_err",       "refl.is_err"),
             ("/to_str",       "refl.to_str"),
             ("/bottom_cause", "refl.bottom_cause"),
+            ("/get",          "refl.get"),
+            ("/set",          "refl.set"),
+            ("/delete",       "refl.delete"),
+            ("/values",       "refl.values"),
+            ("/entries",      "refl.entries"),
         ];
         for (n, b) in refl_morphisms { refl_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%Reflection".to_string(), Value::Combo(ComboVal::new(refl_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
