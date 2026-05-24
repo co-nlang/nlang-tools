@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-24（Phase 14 完成後）  
-> 測試數量：173 tests passing（26 個測試套件）
+> 最後更新：2026-05-24（Phase 22 完成後）  
+> 測試數量：274 tests passing（35+ 個測試套件）
 
 ---
 
@@ -10,10 +10,10 @@
 | 規格章節 | 完整度 | 關鍵剩餘差距 |
 |:---------|:------:|:------------|
 | SPEC_01（格論基礎） | **95%** | ArithmeticOnAnchor 自動攔截 |
-| SPEC_06（統一化邏輯） | **90%** | %max_pattern_nodes 組合爆炸保護細節 |
-| SPEC_09（標準庫） | **85%** | %fmap/%fold 元欄位、%timeout runtime |
-| SPEC_10（演化與 Commit） | **95%** | cycle detection、equivalence map |
-| SPEC_13（OODP） | **50%** | /find 引力導航、GPP/CIP 證明 |
+| SPEC_06（統一化邏輯） | **90%** | approximate_phase_diff（高風險，暫緩） |
+| SPEC_09（標準庫） | **97%** | @list 型別定義（genesis seed） |
+| SPEC_10（演化與 Commit） | **97%** | equivalence map（SPEC_17 邊界） |
+| SPEC_13（OODP） | **65%** | GPP/CIP 零知識證明（P3） |
 | SPEC_17（自我演化） | **0%** | N-1 自舉算法（長期目標） |
 
 ---
