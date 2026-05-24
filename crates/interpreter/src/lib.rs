@@ -574,6 +574,8 @@ let mut refl_fields = IndexMap::new();
         engine_fields.insert("/project_up".to_string(), engine_morph("/project_up", "engine.project_up", EffectTag::State));
         engine_fields.insert("/set_strategy".to_string(), engine_morph("/set_strategy", "engine.set_strategy", EffectTag::State));
         engine_fields.insert("/check_oml".to_string(), engine_morph("/check_oml", "engine.check_oml", EffectTag::Pure));
+        engine_fields.insert("/equivalence_map".to_string(), engine_morph("/equivalence_map", "engine.equivalence_map", EffectTag::State));
+        engine_fields.insert("/resolve".to_string(),         engine_morph("/resolve",         "engine.resolve",         EffectTag::State));
         let mut state_inner = IndexMap::new();
         state_inner.insert("differential".to_string(), Value::Atom(AtomKind::Tag("d1_converging".to_string()), EffectTag::Pure, None));
         state_inner.insert("strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));

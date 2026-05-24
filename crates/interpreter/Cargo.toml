@@ -78,6 +78,10 @@ path = "tests/process_p36_test.rs"
 name = "path_p37_test"
 path = "tests/path_p37_test.rs"
 
+[[test]]
+name = "engine_p39_test"
+path = "tests/engine_p39_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }

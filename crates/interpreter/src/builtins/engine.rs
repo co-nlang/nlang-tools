@@ -6,6 +6,7 @@ use crate::value::{Value, EffectTag, BottomCause, BottomDetail, MasaRef, Content
 use crate::value::ObservationStrategy;
 use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
 use num_traits::ToPrimitive;
+use num_bigint::BigInt;
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -331,8 +332,68 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         Value::Top
     }) as Arc<BuiltinFn>);
 
-    // ── Monad bind (and_then / chain, Phase 16) ────────────────────
+    // ── Phase 39: equivalence_map + resolve ───────────────────────
 
+    // engine.equivalence_map: _ → {%kind:#equivalence_map, %count:Int, entries:list}  (State)
+    // 回傳所有已知 refine 鏈的合成視圖：每個 from_caid 對應其鏈尾 to_caid。
+    m.insert("engine.equivalence_map".to_string(), Arc::new(|_arg: Value, oo: &Ouroboros, _ctx: &mut EvalContext| {
+        // 1. 取出所有 key（持鎖極短，立即釋放）
+        let all_from: Vec<String> = match oo.refine_map.read() {
+            Ok(map) => map.keys().cloned().collect(),
+            Err(_)  => return BottomCause::Conflict.into(),
+        };
+
+        // 2. 對每個 key 跟蹤鏈尾（follow_refine 內部自己取讀鎖，安全）
+        let mut entries: Vec<Value> = Vec::new();
+        for from_str in &all_from {
+            if let Ok(from_hash) = ContentHash::parse(from_str) {
+                if let Ok(to_hash) = oo.follow_refine(&from_hash) {
+                    let to_str = to_hash.to_string();
+                    if to_str != *from_str {
+                        let mut entry = IndexMap::new();
+                        entry.insert("from".to_string(), Value::Atom(AtomKind::Str(from_str.clone()), EffectTag::State, None));
+                        entry.insert("to".to_string(),   Value::Atom(AtomKind::Str(to_str),          EffectTag::State, None));
+                        entries.push(Value::Combo(ComboVal::new(entry, false, IndexMap::new(), EffectTag::State, vec![])));
+                    }
+                }
+            }
+        }
+
+        // 3. 包裝成 list
+        let mut list_fields = IndexMap::new();
+        list_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::State, None));
+        for (i, e) in entries.iter().enumerate() {
+            list_fields.insert(i.to_string(), e.clone());
+        }
+        let entries_list = Value::Combo(ComboVal::new(list_fields, false, IndexMap::new(), EffectTag::State, vec![]));
+
+        // 4. 建立結果 Combo
+        let mut result = IndexMap::new();
+        result.insert("%kind".to_string(),  Value::Atom(AtomKind::Tag("equivalence_map".to_string()), EffectTag::Pure, None));
+        result.insert("%count".to_string(), Value::Atom(AtomKind::Int(BigInt::from(entries.len() as i64)), EffectTag::State, None));
+        result.insert("entries".to_string(), entries_list);
+
+        Value::Combo(ComboVal::new(result, true, IndexMap::new(), EffectTag::State, vec![]))
+    }) as Arc<BuiltinFn>);
+
+    // engine.resolve: {0: caid_str} → Str(State)
+    // 跟蹤 refine 鏈到鏈尾，若 CAID 不在 map 中則回傳原字串。
+    m.insert("engine.resolve".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let forced = oo.force(v, ctx);
+        if let Value::Atom(AtomKind::Str(caid_str), _, _) = forced.collapse() {
+            if let Ok(h) = ContentHash::parse(caid_str.as_str()) {
+                return match oo.follow_refine(&h) {
+                    Ok(resolved) => Value::Atom(AtomKind::Str(resolved.to_string()), EffectTag::State, None),
+                    Err(_)       => Value::Top,
+                };
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Monad bind (and_then / chain, Phase 16) ────────────────────
+ 
     m.insert("option.and_then".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg {
             if let (Some(f), Some(opt_v)) = (c.get_field("0"), c.get_field("1")) {
