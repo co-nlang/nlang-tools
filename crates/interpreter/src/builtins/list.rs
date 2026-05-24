@@ -241,4 +241,141 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: list.any ────────────────────────────────────────
+
+    m.insert("list.any".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let pred_f = pred_f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                for item in items {
+                    let result = oo.apply_morphism(pred_f.clone(), item, ctx);
+                    if result.to_string_plain().trim_start_matches('#') == "true" {
+                        return Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None);
+                    }
+                }
+                return Value::Atom(AtomKind::Tag("false".to_string()), EffectTag::Pure, None);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: list.all ────────────────────────────────────────
+
+    m.insert("list.all".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let pred_f = pred_f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                for item in items {
+                    let result = oo.apply_morphism(pred_f.clone(), item, ctx);
+                    if result.to_string_plain().trim_start_matches('#') != "true" {
+                        return Value::Atom(AtomKind::Tag("false".to_string()), EffectTag::Pure, None);
+                    }
+                }
+                return Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: list.find ───────────────────────────────────────
+
+    m.insert("list.find".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let none_val = Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None);
+        if let Value::Combo(ref c) = arg {
+            if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let pred_f = pred_f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                for item in items {
+                    let result = oo.apply_morphism(pred_f.clone(), item.clone(), ctx);
+                    if result.to_string_plain().trim_start_matches('#') == "true" {
+                        let mut fields = IndexMap::new();
+                        fields.insert("%val".to_string(), item);
+                        return Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+                    }
+                }
+                return none_val;
+            }
+        }
+        none_val
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: list.head ───────────────────────────────────────
+
+    m.insert("list.head".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let none_val = Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None);
+        let list = if let Value::Combo(ref c) = arg {
+            // If arg has %kind: #list, it IS the list. Otherwise check "0" field.
+            if c.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#') == "list").unwrap_or(false) {
+                oo.force(arg, ctx)
+            } else {
+                oo.force(c.get_field("0").cloned().unwrap_or_else(|| arg.clone()), ctx)
+            }
+        } else { oo.force(arg, ctx) };
+        let items = extract_list_items(&list);
+        if items.is_empty() {
+            return none_val;
+        }
+        let mut fields = IndexMap::new();
+        fields.insert("%val".to_string(), items[0].clone());
+        Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: list.tail ───────────────────────────────────────
+
+    m.insert("list.tail".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let list = if let Value::Combo(ref c) = arg {
+            if c.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#') == "list").unwrap_or(false) {
+                oo.force(arg, ctx)
+            } else {
+                oo.force(c.get_field("0").cloned().unwrap_or_else(|| arg.clone()), ctx)
+            }
+        } else { oo.force(arg, ctx) };
+        let items = extract_list_items(&list);
+        if items.len() <= 1 {
+            return build_list_value(vec![]);
+        }
+        build_list_value(items[1..].to_vec())
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: list.take ───────────────────────────────────────
+
+    m.insert("list.take".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vn), Some(vlist)) = (c.get_field("0"), c.get_field("1")) {
+                let n_forced = oo.force(vn.clone(), ctx);
+                let list = oo.force(vlist.clone(), ctx);
+                if let Value::Atom(AtomKind::Int(ref n), _, _) = n_forced {
+                    let n = n.to_usize().unwrap_or(0);
+                    let items = extract_list_items(&list);
+                    let taken = items.into_iter().take(n).collect();
+                    return build_list_value(taken);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: list.drop ───────────────────────────────────────
+
+    m.insert("list.drop".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vn), Some(vlist)) = (c.get_field("0"), c.get_field("1")) {
+                let n_forced = oo.force(vn.clone(), ctx);
+                let list = oo.force(vlist.clone(), ctx);
+                if let Value::Atom(AtomKind::Int(ref n), _, _) = n_forced {
+                    let n = n.to_usize().unwrap_or(0);
+                    let items = extract_list_items(&list);
+                    let dropped = items.into_iter().skip(n).collect();
+                    return build_list_value(dropped);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

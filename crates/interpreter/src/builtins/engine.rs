@@ -445,4 +445,80 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None)
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: result.unwrap ───────────────────────────────────
+
+    m.insert("result.unwrap".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let res = oo.force(arg, ctx);
+        match &res {
+            Value::Combo(ref cv) => {
+                if let Some(inner) = cv.get_field("%val").cloned() {
+                    return inner;
+                }
+                if let Some(cause) = cv.get_field("%cause") {
+                    return Value::Bottom(Box::new(BottomDetail {
+                        cause: BottomCause::Conflict,
+                        message: Some(format!("called unwrap on Err: {}", cause.to_string_plain())),
+                        ..Default::default()
+                    }));
+                }
+            }
+            _ => {}
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: result.expect ───────────────────────────────────
+
+    m.insert("result.expect".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(msg_v), Some(res_v)) = (c.get_field("0"), c.get_field("1")) {
+                let msg = oo.force(msg_v.clone(), ctx).to_string_plain();
+                let res = oo.force(res_v.clone(), ctx);
+                match &res {
+                    Value::Combo(ref cv) => {
+                        if let Some(inner) = cv.get_field("%val").cloned() {
+                            return inner;
+                        }
+                        if let Some(cause) = cv.get_field("%cause") {
+                            return Value::Bottom(Box::new(BottomDetail {
+                                cause: BottomCause::Conflict,
+                                message: Some(format!("{}: {}", msg, cause.to_string_plain())),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 18: option.expect ───────────────────────────────────
+
+    m.insert("option.expect".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(msg_v), Some(opt_v)) = (c.get_field("0"), c.get_field("1")) {
+                let msg = oo.force(msg_v.clone(), ctx).to_string_plain();
+                let opt = oo.force(opt_v.clone(), ctx);
+                match &opt {
+                    Value::Atom(AtomKind::Tag(ref t), _, _) if t.trim_start_matches('#') == "none" => {
+                        return Value::Bottom(Box::new(BottomDetail {
+                            cause: BottomCause::Conflict,
+                            message: Some(msg),
+                            ..Default::default()
+                        }));
+                    }
+                    Value::Combo(ref cv) => {
+                        if let Some(inner) = cv.get_field("%val").cloned() {
+                            return inner;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }
