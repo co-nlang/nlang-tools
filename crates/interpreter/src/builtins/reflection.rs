@@ -57,6 +57,7 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd => "tag",
                 AtomKind::Top => "top",
                 AtomKind::Bottom => "bottom",
+                AtomKind::Bytes(_) => "bytes",
                 _ => "atom",
             },
             Value::Combo(c) => if c.contains_key("%morphism") || c.contains_key("%rules") || c.contains_key("%builtin") { "logic" } 

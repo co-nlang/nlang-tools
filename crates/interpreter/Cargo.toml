@@ -30,6 +30,14 @@ path = "tests/str_p27_test.rs"
 name = "list_p28_test"
 path = "tests/list_p28_test.rs"
 
+[[test]]
+name = "str_format_p29_test"
+path = "tests/str_format_p29_test.rs"
+
+[[test]]
+name = "bytes_p30_test"
+path = "tests/bytes_p30_test.rs"
+
 [dependencies]
 nlang-parser = { path = "../parser" }
 thiserror = "1.0"

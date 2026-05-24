@@ -224,9 +224,20 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                             result.push_str(args.get(idx).map(|s| s.as_str()).unwrap_or(""));
                                         }
                                         Err(_) => {
-                                            result.push('{');
-                                            result.push_str(&inner);
-                                            result.push('}');
+                                            let name = inner.trim();
+                                            if let Value::Combo(ref nc) = list_forced {
+                                                if let Some(v) = nc.get_field(name) {
+                                                    result.push_str(&oo.force(v.clone(), ctx).to_string_plain());
+                                                } else {
+                                                    result.push('{');
+                                                    result.push_str(&inner);
+                                                    result.push('}');
+                                                }
+                                            } else {
+                                                result.push('{');
+                                                result.push_str(&inner);
+                                                result.push('}');
+                                            }
                                         }
                                     }
                                 }

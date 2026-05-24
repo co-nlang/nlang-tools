@@ -658,6 +658,7 @@ impl Value {
                 AtomKind::TagStart | AtomKind::TagEnd => 32,
                 AtomKind::Top => 0,
                 AtomKind::Bottom => 128,
+                AtomKind::Bytes(b) => (b.len() as u64) * 8,
                 _ => 128,
             },
             Value::Combo(c) => c.bits(),
@@ -752,7 +753,8 @@ impl Value {
                 AtomKind::TagEnd => "#_".to_string(),
                 AtomKind::Top => "_".to_string(),
                 AtomKind::Bottom => "_|_".to_string(),
-                _ => format!("{:?}", kind) 
+                AtomKind::Bytes(b) => format!("b\"{:?}\"", b),
+                _ => format!("{:?}", kind),
             },
             Value::Top => "_".to_string(),
             Value::Bottom(d) => format!("_|_ (%cause: {:?})", d.cause),
@@ -779,6 +781,7 @@ impl Value {
                     AtomKind::Tag(t) => format!("#{}", t),
                     AtomKind::TagStart => "#_|_".to_string(),
                     AtomKind::TagEnd => "#_".to_string(),
+                    AtomKind::Bytes(b) => format!("b\"{:?}\"", b),
                     _ => format!("{:?}", kind),
                 };
                 if let Some(r) = rank { s.push_str(&format!("  ;; %rank: {}", r)); }
@@ -880,6 +883,7 @@ impl Value {
                     AtomKind::Tag(t) => { hasher.update([0x03]); hasher.update(t.as_bytes()); }
                     AtomKind::TagStart => { hasher.update([0x04]); }
                     AtomKind::TagEnd => { hasher.update([0x05]); }
+                    AtomKind::Bytes(b) => { hasher.update([0x09]); hasher.update(b); }
                     _ => { hasher.update([0x06]); hasher.update(format!("{:?}", kind).as_bytes()); }
                 }
                 if let Some(r) = rank { hasher.update(r.to_le_bytes()); }

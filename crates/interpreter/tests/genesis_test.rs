@@ -26,6 +26,7 @@ fn seed_caids_are_stable() {
         ("@result",      nlang_interpreter::genesis::SEED_RESULT),
         ("@list",        nlang_interpreter::genesis::SEED_TYPE_LIST),
         ("~%Config",     nlang_interpreter::genesis::SEED_CONFIG),
+        ("~%Bytes",      nlang_interpreter::genesis::SEED_BYTES),
     ];
 
     // Verify every seed matches its constant
