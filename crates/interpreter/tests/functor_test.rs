@@ -136,3 +136,68 @@ fn option_fmap_accessible_from_type() {
         panic!("@option should be a Combo");
     }
 }
+
+// ── Phase 16: Monad bind (and_then) tests ──
+
+#[test]
+fn option_and_then_some_chains() {
+    let oo = Ouroboros::new_in_memory();
+    let mut ctx = EvalContext::new(oo.root_with_system());
+    let opt = make_some(make_int(42));
+    let morph = get_morph_builtin("option.and_then");
+    let arg = make_map_arg(Value::Top, opt);
+    let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
+    if let Value::Atom(AtomKind::Int(n), _, _) = result.collapse() {
+        assert_eq!(n.to_string(), "42", "and_then Some should chain: {:?}", result);
+    } else {
+        panic!("Expected Int(42), got {:?}", result);
+    }
+}
+
+#[test]
+fn option_and_then_none_propagates() {
+    let oo = Ouroboros::new_in_memory();
+    let mut ctx = EvalContext::new(oo.root_with_system());
+    let opt = make_none();
+    let morph = get_morph_builtin("option.and_then");
+    let arg = make_map_arg(Value::Top, opt);
+    let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
+    if let Value::Atom(AtomKind::Tag(t), _, _) = result.collapse() {
+        assert_eq!(t.trim_start_matches('#'), "none",
+            "and_then None should propagate #none: {:?}", result);
+    } else {
+        panic!("Expected #none, got {:?}", result);
+    }
+}
+
+#[test]
+fn result_and_then_ok_chains() {
+    let oo = Ouroboros::new_in_memory();
+    let mut ctx = EvalContext::new(oo.root_with_system());
+    let res = make_ok(make_int(99));
+    let morph = get_morph_builtin("result.and_then");
+    let arg = make_map_arg(Value::Top, res);
+    let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
+    if let Value::Atom(AtomKind::Int(n), _, _) = result.collapse() {
+        assert_eq!(n.to_string(), "99", "result.and_then Ok should chain: {:?}", result);
+    } else {
+        panic!("Expected Int(99), got {:?}", result);
+    }
+}
+
+#[test]
+fn result_and_then_err_propagates() {
+    let oo = Ouroboros::new_in_memory();
+    let mut ctx = EvalContext::new(oo.root_with_system());
+    let err_cause = Value::Atom(AtomKind::Tag("fail".to_string()), EffectTag::Pure, None);
+    let res = make_err(err_cause);
+    let morph = get_morph_builtin("result.and_then");
+    let arg = make_map_arg(Value::Top, res);
+    let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
+    if let Value::Combo(ref c) = result.collapse() {
+        assert!(c.get_field("%cause").is_some(),
+            "result.and_then Err should propagate: {:?}", result);
+    } else {
+        panic!("Expected Err combo, got {:?}", result);
+    }
+}

@@ -49,6 +49,7 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         let tag = match fv.collapse() {
             Value::Top => "top",
             Value::Bottom(_) => "bottom",
+            Value::Blur(_) => "blur",
             Value::Atom(kind, _, _) => match kind {
                 AtomKind::Int(_) => "int",
                 AtomKind::Float(_) => "float",
@@ -65,5 +66,74 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             _ => "unknown",
         };
         Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 16: predicates + to_str + bottom_cause ─────────────
+
+    m.insert("refl.is_blur".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let is = matches!(fv.collapse(), Value::Blur(_));
+        Value::Atom(AtomKind::Tag(if is { "true" } else { "false" }.to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.is_bottom".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let is = matches!(fv.collapse(), Value::Bottom(_));
+        Value::Atom(AtomKind::Tag(if is { "true" } else { "false" }.to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.is_some".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let is = match &fv {
+            Value::Combo(ref cv) => cv.get_field("%val").is_some(),
+            _ => false,
+        };
+        Value::Atom(AtomKind::Tag(if is { "true" } else { "false" }.to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.is_none".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let is = matches!(&fv, Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "none");
+        Value::Atom(AtomKind::Tag(if is { "true" } else { "false" }.to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.is_ok".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let is = match &fv {
+            Value::Combo(ref cv) => cv.get_field("%val").is_some() && cv.get_field("%cause").is_none(),
+            _ => false,
+        };
+        Value::Atom(AtomKind::Tag(if is { "true" } else { "false" }.to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.is_err".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let is = match &fv {
+            Value::Combo(ref cv) => cv.get_field("%cause").is_some(),
+            _ => false,
+        };
+        Value::Atom(AtomKind::Tag(if is { "true" } else { "false" }.to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.to_str".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        Value::Atom(AtomKind::Str(fv.collapse().to_string_plain()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("refl.bottom_cause".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        if let Value::Bottom(ref bd) = fv.collapse() {
+            Value::Atom(AtomKind::Tag(bd.cause.as_tag().to_string()), EffectTag::Pure, None)
+        } else {
+            Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None)
+        }
     }) as Arc<BuiltinFn>);
 }

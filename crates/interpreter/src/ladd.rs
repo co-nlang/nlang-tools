@@ -18,19 +18,23 @@ pub struct GBB {
     pub nerve_structure: Vec<NerveEntry>,
 }
 
-/// Approximate spectral distance via sketch Hamming distance.
+/// Approximate spectral distance via sketch cosine similarity (APP_05 §3.2).
+/// d_L = arccos(cos_sim) / π  ∈ [0, 1].
 pub fn d_l_approx(a: &GBB, b: &GBB) -> f64 {
     if a.sketch_bytes.is_empty() || b.sketch_bytes.is_empty() {
         return 1.0;
     }
     let min_len = a.sketch_bytes.len().min(b.sketch_bytes.len());
-    let xor_bits: u32 = a.sketch_bytes[..min_len]
-        .iter()
-        .zip(&b.sketch_bytes[..min_len])
-        .map(|(x, y)| (x ^ y).count_ones())
-        .sum();
-    let max_bits = (min_len * 8) as f64;
-    (xor_bits as f64) / max_bits
+    let av: Vec<f64> = a.sketch_bytes[..min_len].iter().map(|&x| x as i8 as f64).collect();
+    let bv: Vec<f64> = b.sketch_bytes[..min_len].iter().map(|&x| x as i8 as f64).collect();
+    let dot: f64   = av.iter().zip(bv.iter()).map(|(x, y)| x * y).sum();
+    let na: f64    = av.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let nb: f64    = bv.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        return if na == nb { 0.0 } else { 1.0 };
+    }
+    let cos_sim = (dot / (na * nb)).clamp(-1.0, 1.0);
+    cos_sim.acos() / std::f64::consts::PI
 }
 
 /// Gravitational routing weight: W = mass / (d_L² + ε).

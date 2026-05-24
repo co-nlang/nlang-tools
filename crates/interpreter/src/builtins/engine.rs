@@ -330,4 +330,53 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Monad bind (and_then / chain, Phase 16) ────────────────────
+
+    m.insert("option.and_then".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(f), Some(opt_v)) = (c.get_field("0"), c.get_field("1")) {
+                let f = f.clone();
+                let opt = oo.force(opt_v.clone(), ctx);
+                let was_none = match &opt {
+                    Value::Atom(AtomKind::Tag(t), _, _) => t.trim_start_matches('#') == "none",
+                    _ => false,
+                };
+                let inner = match &opt {
+                    Value::Combo(ref cv) => cv.get_field("%val").cloned(),
+                    _ => None,
+                };
+                if was_none {
+                    return Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None);
+                }
+                if let Some(val) = inner {
+                    let applied = if matches!(f, Value::Top) { val } else { oo.apply_morphism(f, val, ctx) };
+                    return applied;
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("result.and_then".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(f), Some(res_v)) = (c.get_field("0"), c.get_field("1")) {
+                let f = f.clone();
+                let res = oo.force(res_v.clone(), ctx);
+                match &res {
+                    Value::Combo(ref cv) => {
+                        if let Some(inner) = cv.get_field("%val").cloned() {
+                            let applied = if matches!(f, Value::Top) { inner } else { oo.apply_morphism(f, inner, ctx) };
+                            return applied;
+                        }
+                        if cv.get_field("%cause").is_some() {
+                            return res.clone();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

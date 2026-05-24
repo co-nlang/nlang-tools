@@ -364,6 +364,24 @@ impl BottomDetail {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum BottomCause { #[default] Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split }
 
+impl BottomCause {
+    pub fn as_tag(&self) -> &str {
+        match self {
+            BottomCause::Conflict => "conflict",
+            BottomCause::MissingKey => "missing_key",
+            BottomCause::FuelExhausted => "fuel_exhausted",
+            BottomCause::Timeout => "timeout",
+            BottomCause::Divergent => "divergent",
+            BottomCause::InvalidPath => "invalid_path",
+            BottomCause::PrivateAccessViolation => "private_access_violation",
+            BottomCause::NumericalError => "numerical_error",
+            BottomCause::ArithmeticOnAnchor => "arithmetic_on_anchor",
+            BottomCause::H1Split => "h1_split",
+            BottomCause::H2Split => "h2_split",
+        }
+    }
+}
+
 impl From<BottomCause> for Value {
     fn from(cause: BottomCause) -> Self {
         Value::Bottom(Box::new(BottomDetail { cause, path: None, message: None, expected: None, found: None, involved: vec![], obstruction_degree: None, holonomy: None }))

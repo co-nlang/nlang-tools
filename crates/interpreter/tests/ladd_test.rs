@@ -89,3 +89,35 @@ fn test_disc_advertise_and_find() {
     let reg = oo.gbb_registry.read().unwrap();
     assert!(!reg.is_empty(), "gbb_registry should have entries after advertise");
 }
+
+// ── Phase 16: cosine d_l_approx tests ──
+
+#[test]
+fn test_d_l_approx_cosine_different() {
+    let a = GBB {
+        node_caid: dummy_caid(),
+        mass: 1.0,
+        sketch_bytes: vec![1u8, 0, 0, 0],
+        masa_ref: MasaRef::Top,
+        nerve_structure: vec![],
+    };
+    let b = GBB {
+        node_caid: dummy_caid(),
+        mass: 1.0,
+        sketch_bytes: vec![0u8, 1, 0, 0],
+        masa_ref: MasaRef::Top,
+        nerve_structure: vec![],
+    };
+    let d = d_l_approx(&a, &b);
+    assert!((d - 0.5).abs() < 1e-10, "orthogonal sketches → d_L ≈ 0.5, got {}", d);
+}
+
+#[test]
+fn test_d_l_approx_identical_still_zero() {
+    let bytes = vec![42u8, 17, 255, 0, 128];
+    let a = GBB { node_caid: dummy_caid(), mass: 1.0,
+        sketch_bytes: bytes.clone(), masa_ref: MasaRef::Top, nerve_structure: vec![] };
+    let b = GBB { node_caid: dummy_caid(), mass: 1.0,
+        sketch_bytes: bytes, masa_ref: MasaRef::Top, nerve_structure: vec![] };
+    assert_eq!(d_l_approx(&a, &b), 0.0, "identical sketch → d_L = 0");
+}

@@ -192,7 +192,20 @@ impl Ouroboros {
         fields.insert("~%Discovery".to_string(), Value::Combo(ComboVal::new(disc_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
 let mut refl_fields = IndexMap::new();
-        let refl_morphisms = vec![("/keys", "refl.keys"), ("/has", "refl.has"), ("/is_cocoon", "refl.is_cocoon"), ("/type_of", "refl.type_of")];
+        let refl_morphisms = vec![
+            ("/keys",         "refl.keys"),
+            ("/has",          "refl.has"),
+            ("/is_cocoon",    "refl.is_cocoon"),
+            ("/type_of",      "refl.type_of"),
+            ("/is_blur",      "refl.is_blur"),
+            ("/is_bottom",    "refl.is_bottom"),
+            ("/is_some",      "refl.is_some"),
+            ("/is_none",      "refl.is_none"),
+            ("/is_ok",        "refl.is_ok"),
+            ("/is_err",       "refl.is_err"),
+            ("/to_str",       "refl.to_str"),
+            ("/bottom_cause", "refl.bottom_cause"),
+        ];
         for (n, b) in refl_morphisms { refl_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%Reflection".to_string(), Value::Combo(ComboVal::new(refl_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
