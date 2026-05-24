@@ -53,6 +53,26 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
         Value::Union(items) => serialize_union(items, buf),
         Value::Code(expr) => { buf.push(TAG_ATOM); encode_string(&format!("{:?}", expr), buf); }
         Value::Thunk { expr, .. } => { buf.push(TAG_ATOM); encode_string(&format!("{:?}", expr), buf); }
+        Value::Blur(bd) => {
+            buf.push(0xFD);
+            let cause_bytes = bd.cause.as_bytes();
+            encode_unsigned_leb128(cause_bytes.len() as u64, buf);
+            buf.extend_from_slice(cause_bytes);
+            buf.extend_from_slice(&bd.horizon.fuel_remaining.to_le_bytes());
+            let strat_byte: u8 = match bd.horizon.strategy {
+                crate::value::ObservationStrategy::Blur => 0,
+                crate::value::ObservationStrategy::Strict => 1,
+                crate::value::ObservationStrategy::Approximate => 2,
+            };
+            buf.push(strat_byte);
+            buf.extend_from_slice(&bd.horizon.salt.digest);
+            if let Some(partial) = &bd.partial {
+                buf.push(0x01);
+                serialize_value(partial, buf);
+            } else {
+                buf.push(0x00);
+            }
+        }
     }
 }
 

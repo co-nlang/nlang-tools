@@ -12,10 +12,21 @@ fn base64_decode_sketch(s: &str) -> Vec<u8> {
 
 fn bottom_not_found() -> Value {
     Value::Bottom(Box::new(BottomDetail {
-        cause: BottomCause::Conflict,
-        message: Some("#not_found: no compatible peer".to_string()),
+        cause: BottomCause::MissingKey, path: Some("disc.find".to_string()),
+        message: Some("No matching peers found".to_string()),
         ..Default::default()
     }))
+}
+
+/// Compute a MASA identifier from a Combo's field key set.
+/// Two Combos with the same field keys form the same MASA (classical sub-algebra).
+fn field_key_masa_id(cv: &crate::value::ComboVal) -> String {
+    use sha2::{Sha256, Digest};
+    let mut keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
+    keys.sort();
+    let joined = keys.join("\x00");
+    let digest = Sha256::digest(joined.as_bytes());
+    format!("masa:fk:{}", hex::encode(&digest[..8]))
 }
 
 pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
@@ -106,14 +117,19 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         let mass = mass.min(100.0);
         let sketch_bytes = base64_decode_sketch(&hash.lattice_sketch);
         let masa_ref = hash.masa_ref.clone();
-        // Phase 5 nerve_structure from refine_map (approximation)
-        let nerve_structure: Vec<crate::ladd::NerveEntry> = {
-            oo.refine_map.read().map_or_else(|_| vec![], |m| {
-                m.iter().map(|(src, targets)| crate::ladd::NerveEntry {
-                    masa_caid: src.clone(),
-                    overlapping_masa_caids: targets.clone(),
-                }).collect()
-            })
+        // Phase 11: nerve_structure from field key MASA computation
+        let nerve_structure: Vec<crate::ladd::NerveEntry> = if let Value::Combo(ref cv) = arg {
+            let keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
+            if keys.is_empty() {
+                vec![]
+            } else {
+                vec![crate::ladd::NerveEntry {
+                    masa_caid: field_key_masa_id(cv),
+                    overlapping_masa_caids: vec![],
+                }]
+            }
+        } else {
+            vec![]
         };
         let gbb = crate::ladd::GBB { node_caid: hash.clone(), mass, sketch_bytes, masa_ref, nerve_structure };
         if let Ok(mut reg) = oo.gbb_registry.write() {
@@ -131,10 +147,15 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
              + cv.rules.len() + cv.data.len() + cv.local.len()) as f64
         } else { 1.0 };
         let query_sketch = base64_decode_sketch(&query_hash.lattice_sketch);
+        let query_nerve = if let Value::Combo(ref cv) = arg {
+            let keys: Vec<String> = cv.all_fields_iter().map(|(k, _)| k).collect();
+            if keys.is_empty() { vec![] }
+            else { vec![crate::ladd::NerveEntry { masa_caid: field_key_masa_id(cv), overlapping_masa_caids: vec![] }] }
+        } else { vec![] };
         let query_gbb = crate::ladd::GBB {
             node_caid: query_hash.clone(), mass: query_mass.min(100.0),
             sketch_bytes: query_sketch, masa_ref: query_hash.masa_ref.clone(),
-            nerve_structure: vec![],
+            nerve_structure: query_nerve,
         };
 
         // 2. MASA filter + gravitational weighting

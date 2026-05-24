@@ -80,6 +80,33 @@ impl ObjectStore {
         Ok(fs::read_to_string(path)?)
     }
 
+    pub fn save_architects(
+        &self,
+        base_dir: &Path,
+        architects: &std::collections::HashSet<String>,
+    ) -> anyhow::Result<()> {
+        let dir = base_dir.join(".oo");
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("architects.json");
+        let list: Vec<&String> = architects.iter().collect();
+        let json = serde_json::to_string(&list)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    pub fn load_architects(
+        &self,
+        base_dir: &Path,
+    ) -> anyhow::Result<std::collections::HashSet<String>> {
+        let path = base_dir.join(".oo").join("architects.json");
+        if !path.exists() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let json = std::fs::read_to_string(path)?;
+        let list: Vec<String> = serde_json::from_str(&json)?;
+        Ok(list.into_iter().collect())
+    }
+
     fn hash_to_path(&self, hash: &ContentHash) -> PathBuf {
         let algo_dir = match hash.algorithm { HashAlgorithm::Sha256 => "sha256" };
         let hex = hex::encode(&hash.digest);

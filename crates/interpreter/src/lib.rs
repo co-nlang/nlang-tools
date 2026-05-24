@@ -4,6 +4,8 @@ use std::sync::{Arc, RwLock};
 use indexmap::IndexMap;
 use nlang_parser::ast::{Path, PathAnchor, AtomKind};
 use num_bigint::BigInt;
+use num_traits::ToPrimitive;
+use std::path::PathBuf;
 pub mod value;
 pub mod bn_serial;
 pub mod lattice_sketch;
@@ -19,10 +21,10 @@ pub mod genesis;
 pub mod ladd;
 pub mod oml;
 pub mod authority;
-pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo};
+pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
-pub use crate::observation::{ObservationState, ObservationStrategy, handle_resource_exhausted};
+pub use crate::observation::{ObservationState, handle_resource_exhausted};
 use crate::builtins::create_default_builtins;
 use crate::type_constraint::TypeConstraint;
 use anyhow::Result;
@@ -87,6 +89,7 @@ pub enum Peer {
 
 pub struct Ouroboros {
     pub store: ObjectStore,
+    pub base_dir: Option<PathBuf>,
     pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), Value>>,
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
@@ -105,7 +108,13 @@ impl Ouroboros {
         let mut bytes = [0u8; 8];
         ring::rand::SystemRandom::new().fill(&mut bytes).unwrap();
         let dir = std::env::temp_dir().join(format!("nlang-test-{}", hex::encode(bytes)));
-        Self::init(&dir).unwrap()
+        let store = ObjectStore::init(&dir).unwrap();
+        let builtins = create_default_builtins();
+        let identity = crate::value::Identity::new_random();
+        let local_pk_hex = hex::encode(&identity.public_key);
+        let mut architects = std::collections::HashSet::new();
+        architects.insert(local_pk_hex);
+        Self { store, base_dir: None, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) }
     }
 
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
@@ -115,7 +124,10 @@ impl Ouroboros {
         let local_pk_hex = hex::encode(&identity.public_key);
         let mut architects = std::collections::HashSet::new();
         architects.insert(local_pk_hex);
-        let mut oo = Self { store, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
+        if let Ok(persisted) = store.load_architects(base_dir) {
+            architects.extend(persisted);
+        }
+        let mut oo = Self { store, base_dir: Some(base_dir.to_path_buf()), unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
         Ok(oo)
     }
     
@@ -181,6 +193,49 @@ let mut refl_fields = IndexMap::new();
         for (n, b) in complex_morphisms { complex_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%Complex".to_string(), Value::Combo(ComboVal::new(complex_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
+        // @option: @Some { %val: _ } | #none  (SPEC_09 §2.7)
+        let mut option_fields = IndexMap::new();
+        option_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("type".to_string()), EffectTag::Pure, None));
+        option_fields.insert("%name".to_string(), Value::Atom(AtomKind::Str("option".to_string()), EffectTag::Pure, None));
+        option_fields.insert(
+            "%some".to_string(),
+            Value::Combo(ComboVal::new(
+                IndexMap::from_iter(vec![("%val".to_string(), Value::Top)]),
+                false, IndexMap::new(), EffectTag::Pure, vec![],
+            )),
+        );
+        option_fields.insert(
+            "%none".to_string(),
+            Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None),
+        );
+        fields.insert(
+            "@option".to_string(),
+            Value::Combo(ComboVal::new(option_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
+
+        // @result: @Ok { %val: _ } | @Err { %cause: _ }  (SPEC_09 §2.8)
+        let mut result_fields = IndexMap::new();
+        result_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("type".to_string()), EffectTag::Pure, None));
+        result_fields.insert("%name".to_string(), Value::Atom(AtomKind::Str("result".to_string()), EffectTag::Pure, None));
+        result_fields.insert(
+            "%ok".to_string(),
+            Value::Combo(ComboVal::new(
+                IndexMap::from_iter(vec![("%val".to_string(), Value::Top)]),
+                false, IndexMap::new(), EffectTag::Pure, vec![],
+            )),
+        );
+        result_fields.insert(
+            "%err".to_string(),
+            Value::Combo(ComboVal::new(
+                IndexMap::from_iter(vec![("%cause".to_string(), Value::Top)]),
+                false, IndexMap::new(), EffectTag::Pure, vec![],
+            )),
+        );
+        fields.insert(
+            "@result".to_string(),
+            Value::Combo(ComboVal::new(result_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
+
         // ~%Engine: observe, save, /%differential.{1,2,3}
         fn engine_morph(name: &str, builtin: &str, effect: EffectTag) -> Value {
             Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
@@ -218,9 +273,48 @@ let mut refl_fields = IndexMap::new();
         official_fields.insert("/add_architect".to_string(), official_morph("engine.add_architect", EffectTag::IO));
         fields.insert("~%Official".to_string(), Value::Combo(ComboVal::new(official_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
+        // ~%Config: genesis defaults (SPEC_09 §6)
+        let mut config_fields = IndexMap::new();
+        config_fields.insert("%fuel".to_string(), Value::Atom(AtomKind::Int(10000i64.into()), EffectTag::Pure, None));
+        config_fields.insert("%max_branches".to_string(), Value::Atom(AtomKind::Int(64i64.into()), EffectTag::Pure, None));
+        config_fields.insert("%max_depth".to_string(), Value::Atom(AtomKind::Int(256i64.into()), EffectTag::Pure, None));
+        config_fields.insert("%max_pattern_nodes".to_string(), Value::Atom(AtomKind::Int(1024i64.into()), EffectTag::Pure, None));
+        config_fields.insert("%timeout".to_string(), Value::Atom(AtomKind::Int(1000i64.into()), EffectTag::Pure, None));
+        config_fields.insert("%strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));
+        fields.insert(
+            "~%Config".to_string(),
+            Value::Combo(ComboVal::new(config_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
+
         ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![])
     }
 
+    pub fn eval_context(&self) -> EvalContext {
+        let sys_root = self.root_with_system();
+        let mut ctx = EvalContext::new(sys_root.clone());
+        if let Some(Value::Combo(ref cfg)) = sys_root.get_field("~%Config").cloned() {
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%fuel").cloned() {
+                if let Some(f) = n.to_u64() { ctx.fuel = f; }
+            }
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%max_branches").cloned() {
+                if let Some(v) = n.to_u64() { ctx.max_branches = v as usize; }
+            }
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%max_depth").cloned() {
+                if let Some(v) = n.to_u64() { ctx.max_unification_depth = v as usize; }
+            }
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%max_pattern_nodes").cloned() {
+                if let Some(v) = n.to_u64() { ctx.max_pattern_nodes = v as usize; }
+            }
+            if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("%strategy").cloned() {
+                ctx.strategy = match s.trim_start_matches('#') {
+                    "strict" => ObservationStrategy::Strict,
+                    "approximate" => ObservationStrategy::Approximate,
+                    _ => ObservationStrategy::Blur,
+                };
+            }
+        }
+        ctx
+    }
 
     pub fn apply_morphism(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
         let f = self.force(f, ctx); if let Value::Bottom(_) = f { return f; } if let Value::Top = f { return Value::Top; }
@@ -290,6 +384,7 @@ let mut refl_fields = IndexMap::new();
                     _ => res,
                 }
             }
+            Value::Blur(_) => val,
             _ => val,
         }
     }
@@ -379,7 +474,7 @@ let mut refl_fields = IndexMap::new();
         let mut accumulated_effect = val.effect();
         for seg in segments {
             if let Err(e) = ctx.check_resources(2) { 
-                return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, accumulated_effect);
+                return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, accumulated_effect);
             }
             let seg = seg.trim();
             let mut current = self.force(val, ctx);

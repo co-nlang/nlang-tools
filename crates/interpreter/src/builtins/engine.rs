@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn};
 use crate::value::{Value, EffectTag, BottomCause, BottomDetail, MasaRef, ContentHash};
-use crate::observation::ObservationStrategy;
+use crate::value::ObservationStrategy;
 use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
 use num_traits::ToPrimitive;
 
@@ -247,6 +247,9 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         if pubkey_hex.len() != 64 { return BottomCause::Conflict.into(); }
         if let Ok(mut reg) = oo.architect_registry.write() {
             reg.insert(pubkey_hex);
+            if let Some(ref base_dir) = oo.base_dir {
+                let _ = oo.store.save_architects(base_dir, &reg);
+            }
             Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
         } else { BottomCause::Conflict.into() }
     }) as Arc<BuiltinFn>);

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext};
-use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef};
+use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail};
 use crate::type_constraint::{TypeConstraint, type_constraint_meet, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
 use nlang_parser::ast::AtomKind;
@@ -77,9 +77,9 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
 
 impl Ouroboros {
     pub fn unify(&self, a: Value, b: Value) -> Value {
-        let mut ctx = EvalContext::new(self.root_with_system());
+        let mut ctx = self.eval_context();
         if let Err(e) = ctx.check_resources(10) { 
-            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, EffectTag::Pure);
+            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
         }
         self.unify_internal(a, b, &mut ctx)
     }
@@ -167,6 +167,61 @@ impl Ouroboros {
                     1 => results.into_iter().next().unwrap(), 
                     _ => Value::Union(results),
                 }
+            }
+            // Blur unification rules
+            (Value::Blur(ba), Value::Blur(bb)) => {
+                let merged_partial = match (ba.partial.as_deref(), bb.partial.as_deref()) {
+                    (Some(pa), Some(pb)) => {
+                        let unified = self.unify_internal(pa.clone(), pb.clone(), ctx);
+                        if matches!(unified, Value::Bottom(_)) {
+                            Some(Box::new(Value::Union(vec![pa.clone(), pb.clone()])))
+                        } else {
+                            Some(Box::new(unified))
+                        }
+                    }
+                    (Some(p), None) | (None, Some(p)) => Some(Box::new(p.clone())),
+                    (None, None) => None,
+                };
+                let eff = ba.effect.max(bb.effect);
+                let base = if ba.horizon.fuel_remaining <= bb.horizon.fuel_remaining { ba } else { bb };
+                Value::Blur(BlurDetail {
+                    cause: base.cause.clone(),
+                    horizon: base.horizon.clone(),
+                    partial: merged_partial,
+                    effect: eff,
+                })
+            }
+            (Value::Blur(_), b @ Value::Bottom(_)) => b,
+            (a @ Value::Bottom(_), Value::Blur(_)) => a,
+            (ba @ Value::Blur(_), Value::Top) => ba,
+            (Value::Top, bb @ Value::Blur(_)) => bb,
+            (Value::Blur(bd), other) => {
+                let new_partial = match bd.partial.as_deref() {
+                    Some(existing) => {
+                        let unified = self.unify_internal(existing.clone(), other.clone(), ctx);
+                        if matches!(unified, Value::Bottom(_)) {
+                            Some(Box::new(other.clone()))
+                        } else {
+                            Some(Box::new(unified))
+                        }
+                    }
+                    None => Some(Box::new(other.clone())),
+                };
+                Value::Blur(BlurDetail { partial: new_partial, ..bd.clone() })
+            }
+            (other, Value::Blur(bd)) => {
+                let new_partial = match bd.partial.as_deref() {
+                    Some(existing) => {
+                        let unified = self.unify_internal(existing.clone(), other.clone(), ctx);
+                        if matches!(unified, Value::Bottom(_)) {
+                            Some(Box::new(other.clone()))
+                        } else {
+                            Some(Box::new(unified))
+                        }
+                    }
+                    None => Some(Box::new(other.clone())),
+                };
+                Value::Blur(BlurDetail { partial: new_partial, ..bd.clone() })
             }
             (a, b) => Value::Bottom(Box::new(BottomDetail { 
                 cause: BottomCause::Conflict, 

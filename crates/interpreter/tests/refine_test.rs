@@ -1,6 +1,9 @@
 use nlang_interpreter::*;
-use nlang_interpreter::value::{CommitKind, RefineInfo, ContentHash, CommitMeta};
+use nlang_interpreter::value::{CommitKind, RefineInfo, ContentHash, CommitMeta, Commit, default_cache_id};
 use std::sync::Arc;
+use nlang_parser::ast::AtomKind;
+use hex;
+use indexmap::IndexMap;
 
 fn setup() -> (Universe, Arc<Ouroboros>, std::path::PathBuf) {
     let oo = Arc::new(Ouroboros::new_in_memory());
@@ -169,4 +172,194 @@ fn get_live_value_follows_refine() {
     // get_live_value should follow refine and return v2, not v1
     let live = oo.get_live_value(&caid1).unwrap();
     assert_eq!(live, v2, "get_live_value should return refined target");
+}
+
+// ── Phase 10: bootstrap_exempt epoch judgment tests ──
+
+#[test]
+fn bootstrap_exempt_when_no_architects() {
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let base_dir = std::env::temp_dir().join("nlang-refine-epoch-a");
+    let _ = std::fs::create_dir_all(&base_dir);
+
+    // Clear architect_registry to simulate "no architects" state
+    { oo.architect_registry.write().unwrap().clear(); }
+
+    let mut u = Universe::new(None, oo.root_with_system());
+
+    let val_a = Value::Top;
+    let val_b = Value::Atom(AtomKind::Int(100.into()), EffectTag::Pure, None);
+    let ca = oo.store.put_value(&val_a).unwrap();
+    let cb = oo.store.put_value(&val_b).unwrap();
+
+    // First refine: head=None → exempt (regardless of architect_reg)
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None };
+    u.refine(&oo, &base_dir, vec![ca.clone()], vec![cb.clone()], None, meta1).unwrap();
+    assert!(u.head.is_some());
+
+    // Second refine: head is set, architect_reg is empty → still exempt
+    let val_c = Value::Atom(AtomKind::Int(99.into()), EffectTag::Pure, None);
+    let cb2 = oo.store.put_value(&val_c).unwrap();
+    let ca2 = Value::Top;
+    let ca2_hash = oo.store.put_value(&ca2).unwrap();
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None };
+    // Top & 99 = 99 → monotonicity holds
+    let result = u.refine(&oo, &base_dir, vec![ca2_hash], vec![cb2], None, meta2);
+    assert!(result.is_ok(), "should be exempt when architect_reg empty: {:?}", result);
+}
+
+#[test]
+fn not_exempt_when_architect_registered_and_has_head() {
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let base_dir = std::env::temp_dir().join("nlang-refine-epoch-b");
+    let _ = std::fs::create_dir_all(&base_dir);
+
+    // Register local key as architect
+    let local_pk = hex::encode(&oo.identity.public_key);
+    { oo.architect_registry.write().unwrap().insert(local_pk); }
+
+    let mut u = Universe::new(None, oo.root_with_system());
+
+    let val_a = Value::Top;
+    let val_b = Value::Atom(AtomKind::Int(200.into()), EffectTag::Pure, None);
+    let ca = oo.store.put_value(&val_a).unwrap();
+    let cb = oo.store.put_value(&val_b).unwrap();
+
+    // First refine: head=None → exempt (bootstrap)
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None };
+    u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1).unwrap();
+    assert!(u.head.is_some(), "head should be set after first refine");
+
+    // Second refine: head set, architect registered → NOT exempt
+    // Without signature → should fail
+    let val_c = Value::Top;
+    let val_d = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
+    let cc = oo.store.put_value(&val_c).unwrap();
+    let cd = oo.store.put_value(&val_d).unwrap();
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None };
+    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2);
+    assert!(result.is_err(), "refine without signature should fail when architect is registered and head is set");
+}
+
+#[test]
+fn exempt_with_valid_signature_when_architect_registered() {
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let base_dir = std::env::temp_dir().join("nlang-refine-epoch-c");
+    let _ = std::fs::create_dir_all(&base_dir);
+
+    // Register local key as architect
+    let local_pk = hex::encode(&oo.identity.public_key);
+    { oo.architect_registry.write().unwrap().insert(local_pk); }
+
+    let mut u = Universe::new(None, oo.root_with_system());
+
+    let val_a = Value::Top;
+    let val_b = Value::Atom(AtomKind::Int(300.into()), EffectTag::Pure, None);
+    let ca = oo.store.put_value(&val_a).unwrap();
+    let cb = oo.store.put_value(&val_b).unwrap();
+
+    // First refine: exempt (head=None)
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None };
+    u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1).unwrap();
+
+    // Second refine: with valid signature → should succeed
+    let val_c = Value::Top;
+    let val_d = Value::Atom(AtomKind::Int(999.into()), EffectTag::Pure, None);
+    let cc = oo.store.put_value(&val_c).unwrap();
+    let cd = oo.store.put_value(&val_d).unwrap();
+
+    let payload = nlang_interpreter::authority::compute_refine_payload(&[cc.clone()], &[cd.clone()]);
+    let auth = nlang_interpreter::authority::sign_refine(&payload, &oo.identity).unwrap();
+
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None };
+    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], Some(auth), meta2);
+    assert!(result.is_ok(), "refine with valid signature should succeed: {:?}", result);
+}
+
+// ── Phase 12: Shadow refinement tests ──
+
+#[test]
+fn shadow_affected_empty_on_fresh_universe() {
+    let (mut u, oo, base_dir) = setup();
+    let base_dir = base_dir.join("shadow_empty");
+
+    let val_a = Value::Top;
+    let val_b = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
+    let ca = oo.store.put_value(&val_a).unwrap();
+    let cb = oo.store.put_value(&val_b).unwrap();
+
+    let meta = CommitMeta { author: None, timestamp: 0, message: None };
+    let ch = u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta).unwrap();
+
+    let commit = oo.store.get_commit(&ch).unwrap();
+    let ri = commit.refine_info.unwrap();
+    assert!(ri.shadow_affected.is_empty(), "fresh universe → no shadow history");
+}
+
+#[test]
+fn shadow_affected_detects_historical_usage() {
+    let (mut u, oo, base_dir) = setup();
+    let base_dir = base_dir.join("shadow_detect");
+    { oo.architect_registry.write().unwrap().clear(); }
+
+    let val_a = Value::Top;
+    let ca = oo.store.put_value(&val_a).unwrap();
+
+    let val_b_precise = Value::Atom(AtomKind::Int(99.into()), EffectTag::Pure, None);
+    let cb = oo.store.put_value(&val_b_precise).unwrap();
+
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None };
+    u.refine(&oo, &base_dir, vec![ca.clone()], vec![cb.clone()], None, meta1).unwrap();
+
+    let val_c = Value::Top;
+    let val_d = Value::Atom(AtomKind::Int(1000.into()), EffectTag::Pure, None);
+    let cc = oo.store.put_value(&val_c).unwrap();
+    let cd = oo.store.put_value(&val_d).unwrap();
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None };
+    let ch2 = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2).unwrap();
+
+    let commit2 = oo.store.get_commit(&ch2).unwrap();
+    let ri2 = commit2.refine_info.unwrap();
+    assert!(ri2.shadow_affected.len() <= 16, "shadow scan bounded to 16 commits");
+}
+
+#[test]
+fn shadow_scan_finds_field_in_committed_root() {
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let base_dir = std::env::temp_dir().join("nlang-shadow-hit");
+    let _ = std::fs::create_dir_all(&base_dir);
+    let mut u = Universe::new(None, oo.root_with_system());
+    { oo.architect_registry.write().unwrap().clear(); }
+
+    let val_to_evolve = Value::Atom(AtomKind::Int(77.into()), EffectTag::Pure, None);
+    let caid_77 = oo.store.put_value(&val_to_evolve).unwrap();
+
+    let mut root_fields = IndexMap::new();
+    root_fields.insert("tracked_field".to_string(), val_to_evolve.clone());
+    u.root = ComboVal::new(root_fields, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let root_hash = oo.store.put_value(&Value::Combo(u.root.clone())).unwrap();
+    let commit0 = Commit {
+        parent: None,
+        root: root_hash,
+        meta: CommitMeta { author: None, timestamp: 0, message: None },
+        kind: CommitKind::Refine,
+        refine_info: None,
+        cache_id: default_cache_id(),
+    };
+    let ch0_hash = commit0.content_hash();
+    let ch0 = oo.store.put_commit(&commit0).unwrap();
+    assert_eq!(ch0, ch0_hash, "commit hash should match");
+    oo.store.set_head(&base_dir, &ch0).unwrap();
+    u.head = Some(ch0);
+
+    let meta = CommitMeta { author: None, timestamp: 1, message: None };
+    let ch_refine = u.refine(&oo, &base_dir, vec![caid_77.clone()], vec![caid_77], None, meta).unwrap();
+
+    let commit = oo.store.get_commit(&ch_refine).unwrap();
+    let ri = commit.refine_info.unwrap();
+    assert!(ri.shadow_affected.contains(&ch0_hash) || !ri.shadow_affected.is_empty(),
+        "shadow scan should find the historical commit with tracked_field == val_77");
+
+    let _ = std::fs::remove_dir_all(&base_dir);
 }

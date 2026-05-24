@@ -24,6 +24,7 @@ pub enum Value {
     Top, Atom(AtomKind, EffectTag, Option<i64>), Combo(ComboVal), Union(Vec<Value>), Code(Box<Expr>),
     Thunk { expr: Box<Expr>, closure: Vec<ComboVal>, effect: EffectTag },
     Bottom(Box<BottomDetail>),
+    Blur(BlurDetail),
 }
 
 impl PartialEq for Value {
@@ -36,6 +37,7 @@ impl PartialEq for Value {
             (Value::Code(c1), Value::Code(c2)) => c1 == c2,
             (Value::Thunk { expr: ex1, closure: cl1, effect: ef1 }, Value::Thunk { expr: ex2, closure: cl2, effect: ef2 }) => ex1 == ex2 && cl1 == cl2 && ef1 == ef2,
             (Value::Bottom(b1), Value::Bottom(b2)) => b1 == b2,
+            (Value::Blur(b1), Value::Blur(b2)) => b1 == b2,
             _ => false,
         }
     }
@@ -368,6 +370,85 @@ impl From<BottomCause> for Value {
     }
 }
 
+// ── ObservationStrategy (moved from observation.rs to break circular dep) ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ObservationStrategy {
+    Blur,
+    Strict,
+    Approximate,
+}
+
+impl Default for ObservationStrategy {
+    fn default() -> Self {
+        ObservationStrategy::Blur
+    }
+}
+
+// ── Blur types (Phase 9: first-class #blur) ──
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BlurCause {
+    FuelExhausted,
+    Timeout,
+    StackOverflow,
+    MathSingularity(String),
+}
+
+impl BlurCause {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            BlurCause::FuelExhausted => b"fuel_exhausted",
+            BlurCause::Timeout => b"timeout",
+            BlurCause::StackOverflow => b"stack_overflow",
+            BlurCause::MathSingularity(s) => s.as_bytes(),
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        match self {
+            BlurCause::FuelExhausted => "fuel_exhausted",
+            BlurCause::Timeout => "timeout",
+            BlurCause::StackOverflow => "stack_overflow",
+            BlurCause::MathSingularity(s) => s.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HorizonParams {
+    pub fuel_remaining: u64,
+    pub strategy: ObservationStrategy,
+    pub salt: ContentHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlurDetail {
+    pub cause: BlurCause,
+    pub horizon: HorizonParams,
+    pub partial: Option<Box<Value>>,
+    pub effect: EffectTag,
+}
+
+impl BlurDetail {
+    pub fn blur_caid(&self) -> ContentHash {
+        let mut hasher = Sha256::new();
+        hasher.update(b"blur:");
+        hasher.update(self.cause.as_bytes());
+        hasher.update(b":fuel=");
+        hasher.update(&self.horizon.fuel_remaining.to_le_bytes());
+        hasher.update(b":strategy=");
+        let strat_byte: u8 = match self.horizon.strategy {
+            ObservationStrategy::Blur => 0,
+            ObservationStrategy::Strict => 1,
+            ObservationStrategy::Approximate => 2,
+        };
+        hasher.update(&[strat_byte]);
+        hasher.update(b":salt=");
+        hasher.update(&self.horizon.salt.digest);
+        ContentHash::v1(hasher.finalize().to_vec())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HashAlgorithm { Sha256 }
 
@@ -472,6 +553,8 @@ pub struct RefineInfo {
     pub target_caids: Vec<ContentHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<AuthorityInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadow_affected: Vec<ContentHash>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -546,6 +629,9 @@ impl Value {
             Value::Union(branches) => branches.iter().map(|b| b.bits()).sum(),
             Value::Code(_) | Value::Thunk { .. } => 256,
             Value::Bottom(d) => d.bits(),
+            Value::Blur(bd) => {
+                128 + bd.partial.as_ref().map(|p| p.bits()).unwrap_or(0)
+            },
         }
     }
 
@@ -557,6 +643,7 @@ impl Value {
             Value::Thunk { .. } | Value::Code(_) => 1,
             Value::Union(branches) => branches.iter().map(|b| b.tropical_weight()).min().unwrap_or(TROPICAL_INFINITY),
             Value::Combo(c) => c.all_fields_iter().map(|(_, v)| v.tropical_weight()).fold(0u64, |acc, w| acc.saturating_add(w)),
+            Value::Blur(_) => 64,
         }
     }
 
@@ -588,6 +675,7 @@ impl Value {
             Value::Atom(_, e, None) => *e,
             Value::Thunk { effect, .. } => *effect, 
             Value::Union(b) => b.iter().map(|v| v.effect()).max().unwrap_or(EffectTag::Pure), 
+            Value::Blur(bd) => bd.effect,
             _ => EffectTag::Pure 
         }
     }
@@ -609,6 +697,7 @@ impl Value {
                 let max_e = branches.iter().map(|b| b.effect()).max().unwrap_or(EffectTag::Pure);
                 (self.clone(), max_e)
             }
+            Value::Blur(bd) => (self.clone(), bd.effect),
             _ => (self.clone(), EffectTag::Pure),
         }
     }
@@ -634,6 +723,7 @@ impl Value {
             Value::Bottom(d) => format!("_|_ (%cause: {:?})", d.cause),
             Value::Combo(c) => { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } "{...}".to_string() }
             Value::Union(_) => "(...|...)".to_string(),
+            Value::Blur(bd) => format!("#blur({})", bd.cause.as_str()),
             _ => format!("{:?}", self),
         }
     }
@@ -683,6 +773,10 @@ impl Value {
             }
             Value::Union(branches) => { let parts: Vec<String> = branches.iter().map(|b| b.to_nlang(indent)).collect(); parts.join(" | ") }
             Value::Bottom(d) => { let mut s = "_|_".to_string(); if let Some(ref m) = d.message { s.push_str(&format!("  ;; {}", m)); } s }
+            Value::Blur(bd) => {
+                let caid = bd.blur_caid().to_string();
+                format!("#blur {{ %cause: #{}, %caid: \"{}\" }}", bd.cause.as_str(), caid)
+            }
             _ => format!("{:?}", self),
         }
     }
@@ -695,7 +789,7 @@ impl Value {
     }
     
     pub fn content_hash(&self) -> ContentHash {
-        let bn_bytes = crate::bn_serial::serialize_bn(self);
+        let _bn_bytes = crate::bn_serial::serialize_bn(self);
         let digest = crate::bn_serial::content_digest(self);
         let sketch = crate::lattice_sketch::compute_sketch_v2(self);
         let masa_ref = match self {
@@ -784,6 +878,12 @@ impl Value {
                 for d in digests { hasher.update(&d); }
             }
             Value::Bottom(d) => { hasher.update([0x04]); hasher.update([d.cause as u8]); }
+            Value::Blur(bd) => {
+                hasher.update([0xFD]);
+                hasher.update(bd.cause.as_bytes());
+                hasher.update(&bd.horizon.fuel_remaining.to_le_bytes());
+                hasher.update(&bd.horizon.salt.digest);
+            }
             Value::Thunk { expr, .. } => { hasher.update([0x05]); hasher.update(format!("{:?}", expr).as_bytes()); }
             Value::Code(expr) => { hasher.update([0x06]); hasher.update(format!("{:?}", expr).as_bytes()); }
         }

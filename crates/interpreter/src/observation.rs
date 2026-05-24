@@ -1,4 +1,5 @@
-use crate::value::{Value, BottomCause, BottomDetail, EffectTag, ContentHash};
+use crate::value::{Value, BottomCause, BottomDetail, EffectTag, ContentHash, BlurDetail, BlurCause, HorizonParams};
+pub use crate::value::ObservationStrategy;
 use nlang_parser::ast::AtomKind;
 use serde::{Serialize, Deserialize};
 
@@ -14,19 +15,6 @@ pub enum ObservationState {
 impl Default for ObservationState {
     fn default() -> Self {
         ObservationState::Lazy
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ObservationStrategy {
-    Blur,
-    Strict,
-    Approximate,
-}
-
-impl Default for ObservationStrategy {
-    fn default() -> Self {
-        ObservationStrategy::Blur
     }
 }
 
@@ -64,6 +52,7 @@ pub fn handle_resource_exhausted(
     cause: crate::ResourceExhausted,
     strategy: ObservationStrategy,
     horizon_salt: &ContentHash,
+    fuel_remaining: u64,
     partial_result: Option<Value>,
     effect: EffectTag,
 ) -> Value {
@@ -84,36 +73,24 @@ pub fn handle_resource_exhausted(
              ..Default::default() }))
         }
         ObservationStrategy::Blur => {
-            let blur_hash = compute_blur_caid(&cause, horizon_salt);
-            Value::Combo(crate::value::ComboVal::new(
-                indexmap::IndexMap::from_iter(vec![
-                    ("%kind".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None)),
-                    ("%state".to_string(), Value::Atom(AtomKind::Str(blur_hash.to_string()), effect, None)),
-                    ("%partial".to_string(), partial_result.unwrap_or(Value::Atom(AtomKind::Tag("incomplete".to_string()), effect, None))),
-                ]),
-                true,
-                indexmap::IndexMap::new(),
+            let blur_cause = match cause {
+                crate::ResourceExhausted::FuelExhausted => BlurCause::FuelExhausted,
+                crate::ResourceExhausted::Timeout       => BlurCause::Timeout,
+                crate::ResourceExhausted::StackOverflow => BlurCause::StackOverflow,
+            };
+            Value::Blur(BlurDetail {
+                cause: blur_cause,
+                horizon: HorizonParams {
+                    fuel_remaining,
+                    strategy,
+                    salt: horizon_salt.clone(),
+                },
+                partial: partial_result.map(Box::new),
                 effect,
-                vec![]
-            ))
+            })
         }
         ObservationStrategy::Approximate => {
             Value::Atom(AtomKind::Tag("approximate".to_string()), effect, None)
         }
     }
-}
-
-fn compute_blur_caid(cause: &crate::ResourceExhausted, salt: &ContentHash) -> ContentHash {
-    use sha2::{Sha256, Digest};
-    
-    let mut hasher = Sha256::new();
-    hasher.update(salt.digest.as_slice());
-    let cause_bytes: &[u8] = match cause {
-        crate::ResourceExhausted::FuelExhausted => b"fuel_exhausted",
-        crate::ResourceExhausted::Timeout => b"timeout",
-        crate::ResourceExhausted::StackOverflow => b"stack_overflow",
-    };
-    hasher.update(cause_bytes);
-    
-    ContentHash::v1(hasher.finalize().to_vec())
 }

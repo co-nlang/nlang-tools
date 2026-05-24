@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn};
-use crate::value::{Value, EffectTag, BottomCause};
+use crate::value::{Value, EffectTag, BottomCause, BlurDetail, BlurCause, HorizonParams};
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 use num_traits::{Signed, Zero, ToPrimitive};
@@ -169,33 +169,58 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     // ── Phase 2: EML-derived functions ──────────────────────
 
     m.insert("math.sqrt".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let branch: i64 = if let Value::Combo(ref c) = arg {
+            c.get_field("%branch")
+                .and_then(|v| if let Value::Atom(AtomKind::Int(n), _, _) = v { n.to_i64() } else { None })
+                .unwrap_or(0)
+        } else { 0 };
         let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
-        match oo.force(v, ctx).collapse() {
-            Value::Atom(AtomKind::Float(f), e, _) if *f >= 0.0 => Value::Atom(AtomKind::Float(f.sqrt()), *e, None),
-            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Complex(0.0, f.abs().sqrt()), *e, None),
+        let result = match oo.force(v, ctx).collapse() {
             Value::Atom(AtomKind::Int(n), e, _) => {
                 let f = n.to_f64().unwrap_or(0.0);
-                if f >= 0.0 { Value::Atom(AtomKind::Float(f.sqrt()), *e, None) }
-                else { Value::Atom(AtomKind::Complex(0.0, f.abs().sqrt()), *e, None) }
+                if f < 0.0 {
+                    Value::Atom(AtomKind::Complex(0.0, f.abs().sqrt()), *e, None)
+                } else {
+                    Value::Atom(AtomKind::Float(f.sqrt()), *e, None)
+                }
+            }
+            Value::Atom(AtomKind::Float(f), e, _) => {
+                if *f < 0.0 {
+                    Value::Atom(AtomKind::Complex(0.0, f.abs().sqrt()), *e, None)
+                } else {
+                    Value::Atom(AtomKind::Float(f.sqrt()), *e, None)
+                }
             }
             Value::Atom(AtomKind::Complex(r, i), e, _) => {
-                let r2 = (r * r + i * i).sqrt();
-                let theta = i.atan2(*r) / 2.0;
-                Value::Atom(AtomKind::Complex(r2 * theta.cos(), r2 * theta.sin()), *e, None)
+                let mag = (r * r + i * i).sqrt();
+                let new_r = ((mag + r) / 2.0).sqrt();
+                let new_i = if *i >= 0.0 { ((mag - r) / 2.0).sqrt() } else { -((mag - r) / 2.0).sqrt() };
+                Value::Atom(AtomKind::Complex(new_r, new_i), *e, None)
             }
-            _ => BottomCause::Conflict.into()
+            _ => BottomCause::Conflict.into(),
+        };
+        if branch == 1 {
+            match result {
+                Value::Atom(AtomKind::Float(f), e, r) => Value::Atom(AtomKind::Float(-f), e, r),
+                Value::Atom(AtomKind::Complex(re, im), e, r) => Value::Atom(AtomKind::Complex(-re, -im), e, r),
+                other => other,
+            }
+        } else {
+            result
         }
     }) as Arc<BuiltinFn>);
 
-    fn blur_singularity(cause_tag: &str) -> Value {
-        Value::Bottom(Box::new(crate::value::BottomDetail {
-            cause: BottomCause::NumericalError,
-            path: None,
-            message: Some(cause_tag.to_string()),
-            expected: None,
-            found: None,
-            involved: vec![],
-         ..Default::default() }))
+    fn blur_singularity(cause_tag: &str, ctx: &crate::EvalContext) -> Value {
+        Value::Blur(BlurDetail {
+            cause: BlurCause::MathSingularity(cause_tag.trim_start_matches('#').to_string()),
+            horizon: HorizonParams {
+                fuel_remaining: ctx.fuel,
+                strategy: ctx.strategy,
+                salt: ctx.horizon_salt.clone(),
+            },
+            partial: None,
+            effect: EffectTag::Pure,
+        })
     }
 
     fn to_f64(v: &Value) -> Option<f64> {
@@ -245,16 +270,33 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     }) as Arc<BuiltinFn>);
 
     m.insert("math.ln".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let branch: i64 = if let Value::Combo(ref c) = arg {
+            c.get_field("%branch")
+                .and_then(|v| if let Value::Atom(AtomKind::Int(n), _, _) = v { n.to_i64() } else { None })
+                .unwrap_or(0)
+        } else { 0 };
         let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
         let v = oo.force(v, ctx).collapse().clone();
         // ln(0) is singular
         if let Some(f) = to_f64(&v) {
-            if f == 0.0 { return blur_singularity("#log_singularity"); }
+            if f == 0.0 { return blur_singularity("#log_singularity", &*ctx); }
         }
         if let Some((r, i)) = to_complex(&v) {
-            if r == 0.0 && i == 0.0 { return blur_singularity("#log_singularity"); }
+            if r == 0.0 && i == 0.0 { return blur_singularity("#log_singularity", &*ctx); }
         }
-        compute_ln(&v).unwrap_or(blur_singularity("#log_singularity"))
+        let base_result = compute_ln(&v).unwrap_or(blur_singularity("#log_singularity", &*ctx));
+        if branch != 0 {
+            let offset_imag = 2.0 * std::f64::consts::PI * (branch as f64);
+            match base_result {
+                Value::Atom(AtomKind::Complex(r, i), e, rank) =>
+                    Value::Atom(AtomKind::Complex(r, i + offset_imag), e, rank),
+                Value::Atom(AtomKind::Float(r), e, rank) =>
+                    Value::Atom(AtomKind::Complex(r, offset_imag), e, rank),
+                other => other,
+            }
+        } else {
+            base_result
+        }
     }) as Arc<BuiltinFn>);
 
     m.insert("math.sin".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
@@ -282,24 +324,37 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     }) as Arc<BuiltinFn>);
 
     m.insert("math.eml".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let branch: i64 = if let Value::Combo(ref c) = arg {
+            c.get_field("%branch")
+                .and_then(|v| if let Value::Atom(AtomKind::Int(n), _, _) = v { n.to_i64() } else { None })
+                .unwrap_or(0)
+        } else { 0 };
         if let Value::Combo(ref c) = arg {
             if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
                 let x = oo.force(vx.clone(), ctx).collapse().clone();
                 let y = oo.force(vy.clone(), ctx).collapse().clone();
-                // eml(x, y) = exp(x) - ln(y)
                 let exp_x = compute_exp(&x);
                 let ln_y = compute_ln(&y);
                 return match (exp_x, ln_y) {
                     (Some(ex), Some(ly)) => {
-                        // sub(ex, ly) — inline the Complex subtraction
                         let eff = ex.effect().max(ly.effect());
-                        match (ex, ly) {
+                        let base = match (ex, ly) {
                             (Value::Atom(AtomKind::Complex(r1, i1), _, _), Value::Atom(AtomKind::Complex(r2, i2), _, _)) =>
                                 Value::Atom(AtomKind::Complex(r1 - r2, i1 - i2), eff, None),
-                            _ => BottomCause::Conflict.into(),
+                            _ => return BottomCause::Conflict.into(),
+                        };
+                        if branch != 0 {
+                            let offset_imag = 2.0 * std::f64::consts::PI * (branch as f64);
+                            match base {
+                                Value::Atom(AtomKind::Complex(r, i), e, rank) =>
+                                    Value::Atom(AtomKind::Complex(r, i - offset_imag), e, rank),
+                                other => other,
+                            }
+                        } else {
+                            base
                         }
                     }
-                    _ => blur_singularity("#eml_singularity"),
+                    _ => blur_singularity("#eml_singularity", &*ctx),
                 };
             }
         }

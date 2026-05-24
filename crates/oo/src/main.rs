@@ -20,6 +20,16 @@ enum Commands {
     Test { #[arg(long)] static_only: bool, #[arg(short, long)] pattern: Option<String>, files: Vec<PathBuf> },
     Repl, Status, Log,
     Commit { #[arg(short, long)] message: Option<String> },
+    Refine {
+        #[arg(short, long, required = true, num_args = 1..)]
+        source: Vec<String>,
+        #[arg(short, long, required = true, num_args = 1..)]
+        target: Vec<String>,
+        #[arg(long)]
+        sign: bool,
+        #[arg(short, long)]
+        message: Option<String>,
+    },
     Fmt { file: PathBuf, #[arg(short, long)] write: bool },
     Serve { #[arg(short, long, default_value_t = 8080)] port: u16 },
 }
@@ -34,6 +44,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Status => run_status(),
         Commands::Log => run_log(),
         Commands::Commit { message } => run_commit(message),
+        Commands::Refine { source, target, sign, message } => run_refine(source, target, sign, message),
         Commands::Repl => run_repl(),
         Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
     }
@@ -128,6 +139,65 @@ fn run_commit(message: Option<String>) -> anyhow::Result<()> {
     };
     let hash = universe.commit(&engine, &std::env::current_dir()?, meta)?;
     println!("Commit successful: {}", hash);
+    Ok(())
+}
+
+fn run_refine(
+    sources: Vec<String>,
+    targets: Vec<String>,
+    sign: bool,
+    message: Option<String>,
+) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    let mut universe = load_universe(&engine, &cur)?;
+
+    let source_caids: Vec<ContentHash> = sources
+        .iter()
+        .map(|s| ContentHash::parse(s)
+            .map_err(|e| anyhow::anyhow!("Invalid source CAID '{}': {}", s, e)))
+        .collect::<anyhow::Result<_>>()?;
+
+    let target_caids: Vec<ContentHash> = targets
+        .iter()
+        .map(|s| ContentHash::parse(s)
+            .map_err(|e| anyhow::anyhow!("Invalid target CAID '{}': {}", s, e)))
+        .collect::<anyhow::Result<_>>()?;
+
+    let authority = if sign {
+        let payload = nlang_interpreter::authority::compute_refine_payload(
+            &source_caids,
+            &target_caids,
+        );
+        let auth = nlang_interpreter::authority::sign_refine(&payload, &engine.identity)
+            .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
+        Some(auth)
+    } else {
+        None
+    };
+
+    let meta = CommitMeta {
+        message,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64,
+        author: Some("oo-cli".to_string()),
+    };
+
+    let hash = universe.refine(&engine, &cur, source_caids, target_caids, authority, meta)?;
+    println!("Refine commit: {}", hash);
+
+    // Report shadow-affected commits
+    if let Ok(commit) = engine.store.get_commit(&hash) {
+        if let Some(ri) = commit.refine_info {
+            if !ri.shadow_affected.is_empty() {
+                println!("Shadow: {} historical commit(s) will be semantically updated:", ri.shadow_affected.len());
+                for ch in &ri.shadow_affected {
+                    println!("  {}", ch);
+                }
+            }
+        }
+    }
     Ok(())
 }
 

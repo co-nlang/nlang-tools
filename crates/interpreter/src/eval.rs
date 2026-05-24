@@ -93,13 +93,13 @@ impl Ouroboros {
 
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         if let Err(e) = ctx.check_resources(1) {
-            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, EffectTag::Pure);
+            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
         }
         match &expr.kind {
             ExprKind::Atom(kind) => Value::Atom(kind.clone(), EffectTag::Pure, None),
             ExprKind::Combo { fields, relations, closed } => {
                 if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, EffectTag::Pure);
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
                 }
                 let mut rf = IndexMap::new();
                 let mut rl = IndexMap::new();
@@ -208,7 +208,7 @@ impl Ouroboros {
             ExprKind::Path(p) => self.resolve_path(p, ctx),
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(5) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, EffectTag::Pure);
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
                 }
                 let fv = self.eval(f, ctx);
                 let av = self.eval(a, ctx);

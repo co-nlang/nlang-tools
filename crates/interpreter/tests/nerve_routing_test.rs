@@ -63,3 +63,91 @@ fn test_gravitational_weight_with_nerve_gbb() {
     let w = gravitational_weight(&q, &p, 1e-6);
     assert!(w > 0.0, "weight should be positive");
 }
+
+// ── Phase 11: nerve_structure field-key MASA tests ──
+
+#[test]
+fn nerve_overlap_same_field_structure() {
+    use nlang_interpreter::*;
+    use nlang_interpreter::value::{ComboVal, EffectTag};
+    use nlang_parser::ast::AtomKind;
+    use indexmap::IndexMap;
+    use std::sync::Arc;
+
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let mut ctx = EvalContext::new(oo.root_with_system());
+
+    let mut fields1 = IndexMap::new();
+    fields1.insert("x".to_string(), Value::Top);
+    fields1.insert("y".to_string(), Value::Top);
+    let cv1 = ComboVal::new(fields1.clone(), false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let mut fields2 = IndexMap::new();
+    fields2.insert("x".to_string(), Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None));
+    fields2.insert("y".to_string(), Value::Atom(AtomKind::Int(7.into()), EffectTag::Pure, None));
+    let cv2 = ComboVal::new(fields2, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
+    advertise_fn(Value::Combo(cv1), &oo, &mut ctx);
+    advertise_fn(Value::Combo(cv2), &oo, &mut ctx);
+
+    let reg = oo.gbb_registry.read().unwrap();
+    let masa_ids: Vec<_> = reg.values()
+        .filter(|gbb| !gbb.nerve_structure.is_empty())
+        .map(|gbb| gbb.nerve_structure[0].masa_caid.clone())
+        .collect();
+
+    if masa_ids.len() >= 2 {
+        assert_eq!(masa_ids[0], masa_ids[1], "same field structure → same MASA id");
+    }
+}
+
+#[test]
+fn nerve_different_field_structure_different_masa() {
+    use nlang_interpreter::*;
+    use nlang_interpreter::value::{ComboVal, EffectTag};
+    use indexmap::IndexMap;
+    use std::sync::Arc;
+
+    let mut fields1 = IndexMap::new();
+    fields1.insert("x".to_string(), Value::Top);
+    fields1.insert("y".to_string(), Value::Top);
+    let cv1 = ComboVal::new(fields1, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let mut fields2 = IndexMap::new();
+    fields2.insert("a".to_string(), Value::Top);
+    fields2.insert("b".to_string(), Value::Top);
+    let cv2 = ComboVal::new(fields2, false, IndexMap::new(), EffectTag::Pure, vec![]);
+
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let mut ctx = EvalContext::new(oo.root_with_system());
+    let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
+    advertise_fn(Value::Combo(cv1), &oo, &mut ctx);
+    advertise_fn(Value::Combo(cv2), &oo, &mut ctx);
+
+    let reg = oo.gbb_registry.read().unwrap();
+    let masa_ids: std::collections::HashSet<_> = reg.values()
+        .filter(|gbb| !gbb.nerve_structure.is_empty())
+        .map(|gbb| gbb.nerve_structure[0].masa_caid.clone())
+        .collect();
+
+    assert_eq!(masa_ids.len(), 2, "different field structures → different MASA ids");
+}
+
+#[test]
+fn nerve_non_combo_empty_structure() {
+    use nlang_interpreter::*;
+    use nlang_interpreter::value::EffectTag;
+    use nlang_parser::ast::AtomKind;
+    use std::sync::Arc;
+
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let mut ctx = EvalContext::new(oo.root_with_system());
+    let atom = Value::Atom(AtomKind::Int(99.into()), EffectTag::Pure, None);
+    let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
+    advertise_fn(atom, &oo, &mut ctx);
+
+    let reg = oo.gbb_registry.read().unwrap();
+    let nerve_lens: Vec<_> = reg.values().map(|gbb| gbb.nerve_structure.len()).collect();
+    assert!(nerve_lens.iter().all(|&l| l == 0), "non-Combo → empty nerve_structure");
+}

@@ -56,6 +56,10 @@ impl Ouroboros {
                 }
             }
             
+            Value::Blur(bd) => {
+                Value::Blur(bd)
+            }
+            
             Value::Thunk { .. } => {
                 let inner = self.force(forced, ctx);
                 self.orthocomplement(inner, ctx)

@@ -3,6 +3,13 @@ use nlang_interpreter::value::{Value, ComboVal, EffectTag, MasaRef};
 use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
 
+// Cross-arch test vectors (generated on x86_64, must match on all platforms)
+const EXPECTED_SKETCH_TOP:      &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const EXPECTED_SKETCH_ATOM_42:  &str = "/5+DhI2V6Mt4AICgg4SNlejLeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const EXPECTED_SKETCH_COMBO_X1: &str = "gIDogv69pdYuAP//54L+vaXWLgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const EXPECTED_SKETCH_COMBO_XY: &str = "///47L7Apc6uAQCAgOHvvP7KpN0BAP//54L+vaXWLgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const EXPECTED_SKETCH_STR_HELLO:&str = "/5/wgcPFlPZRAICg8IHDxZT2UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
 fn combo_with_data(data: IndexMap<String, Value>) -> Value {
     Value::Combo(ComboVal::new(data, false, IndexMap::new(), EffectTag::Pure, vec![]))
 }
@@ -56,20 +63,48 @@ fn test_sketch_length_bounded() {
     assert!(sketch.len() < 256, "sketch should be < 256 bytes");
 }
 
-fn sample_combo() -> Value {
-    let mut data = IndexMap::new();
-    data.insert("x".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
-    combo_with_data(data)
+#[test]
+fn test_sketch_cross_arch_top() {
+    assert_eq!(compute_sketch_v2(&Value::Top), EXPECTED_SKETCH_TOP,
+        "Top sketch must be identical across architectures");
+}
+
+#[test]
+fn test_sketch_cross_arch_atom_int() {
+    let v = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
+    assert_eq!(compute_sketch_v2(&v), EXPECTED_SKETCH_ATOM_42);
+}
+
+#[test]
+fn test_sketch_cross_arch_combo_one_field() {
+    let mut d = IndexMap::new();
+    d.insert("x".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
+    let v = Value::Combo(ComboVal::new(d, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    assert_eq!(compute_sketch_v2(&v), EXPECTED_SKETCH_COMBO_X1);
+}
+
+#[test]
+fn test_sketch_cross_arch_combo_two_fields() {
+    let mut d = IndexMap::new();
+    d.insert("x".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
+    d.insert("y".to_string(), Value::Atom(AtomKind::Int(2.into()), EffectTag::Pure, None));
+    let v = Value::Combo(ComboVal::new(d, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    assert_eq!(compute_sketch_v2(&v), EXPECTED_SKETCH_COMBO_XY);
+}
+
+#[test]
+fn test_sketch_cross_arch_str() {
+    let v = Value::Atom(AtomKind::Str("hello".to_string()), EffectTag::Pure, None);
+    assert_eq!(compute_sketch_v2(&v), EXPECTED_SKETCH_STR_HELLO);
 }
 
 #[test]
 fn test_sketch_known_vector() {
-    let v = sample_combo();
-    let sketch = compute_sketch_v2(&v);
-    // Compute once, hardcode for stability. Run with --nocapture to update.
-    // To regenerate: println!("sketch = {}", compute_sketch_v2(&v));
-    assert!(!sketch.is_empty(), "sketch should not be empty");
-    assert!(sketch.len() > 10, "sketch should be at least 10 chars");
+    let mut d = IndexMap::new();
+    d.insert("x".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
+    let v = combo_with_data(d);
+    assert_eq!(compute_sketch_v2(&v), EXPECTED_SKETCH_COMBO_X1,
+        "known vector must be stable; if changed, update all EXPECTED_SKETCH_* constants");
 }
 
 #[test]

@@ -13,6 +13,8 @@ pub enum TypeConstraint {
     List,
     Combo,
     Morphism,
+    Option,
+    Result,
     Unknown(String),
 }
 
@@ -29,6 +31,8 @@ impl TypeConstraint {
             "list" => TypeConstraint::List,
             "combo" => TypeConstraint::Combo,
             "morphism" => TypeConstraint::Morphism,
+            "option" => TypeConstraint::Option,
+            "result" => TypeConstraint::Result,
             other => TypeConstraint::Unknown(other.to_string()),
         }
     }
@@ -99,6 +103,18 @@ impl TypeConstraint {
                     }
                 }
                 _ => ValidationResult::Fail("Value is not a morphism".to_string()),
+            },
+            TypeConstraint::Option => match value {
+                Value::Atom(AtomKind::Tag(t), _, _) if t == "none" => ValidationResult::Pass,
+                Value::Combo(cv) if cv.get_field("%val").is_some() => ValidationResult::Pass,
+                Value::Top => ValidationResult::Pass,
+                _ => ValidationResult::Fail("Value is not @option (expected #none or Combo with %val)".to_string()),
+            },
+            TypeConstraint::Result => match value {
+                Value::Combo(cv) if cv.get_field("%val").is_some() => ValidationResult::Pass,
+                Value::Combo(cv) if cv.get_field("%cause").is_some() => ValidationResult::Pass,
+                Value::Top => ValidationResult::Pass,
+                _ => ValidationResult::Fail("Value is not @result (expected Combo with %val or %cause)".to_string()),
             },
             TypeConstraint::Unknown(name) => ValidationResult::Unknown(name.clone()),
         }

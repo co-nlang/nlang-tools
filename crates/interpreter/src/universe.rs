@@ -110,14 +110,47 @@ impl Universe {
             }
         }
 
-        // Step 1b: authority verification (Phase 8)
-        let bootstrap_exempt = true; // TODO Phase 9: set false when Epoch >= 0
+        // Step 1b: authority verification
         let payload = crate::authority::compute_refine_payload(&source_caids, &target_caids);
         let architect_reg = engine.architect_registry.read().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        // Epoch judgment: exempt only in genesis state (no HEAD) or before any architect registered
+        let bootstrap_exempt = self.head.is_none() || architect_reg.is_empty();
         match crate::authority::verify_refine_authority(authority.as_ref(), &payload, &architect_reg, bootstrap_exempt) {
             crate::authority::AuthVerifyResult::Valid | crate::authority::AuthVerifyResult::Exempt => {}
             crate::authority::AuthVerifyResult::Invalid(reason) => {
                 return Err(anyhow::anyhow!("authority verification failed: {}", reason));
+            }
+        }
+
+        // Step 1c: Shadow scan — identify historical commits that directly reference source CAIDs
+        const SHADOW_SCAN_DEPTH: usize = 16;
+        let mut shadow_affected: Vec<ContentHash> = Vec::new();
+        {
+            let mut current = self.head.clone();
+            let mut depth = 0;
+            while let Some(ref ch) = current.clone() {
+                if depth >= SHADOW_SCAN_DEPTH { break; }
+                depth += 1;
+                let commit = match engine.store.get_commit(ch) {
+                    Ok(c) => c,
+                    Err(_) => break,
+                };
+                let root_val = match engine.store.get_value(&commit.root) {
+                    Ok(v) => v,
+                    Err(_) => { current = commit.parent; continue; }
+                };
+                if let Value::Combo(ref cv) = root_val {
+                    'field_scan: for (_, fv) in cv.all_fields_iter() {
+                        let fh = fv.content_hash();
+                        for src in &source_caids {
+                            if &fh == src {
+                                shadow_affected.push(ch.clone());
+                                break 'field_scan;
+                            }
+                        }
+                    }
+                }
+                current = commit.parent;
             }
         }
 
@@ -135,6 +168,7 @@ impl Universe {
                 source_caids: source_caids.clone(),
                 target_caids: target_caids.clone(),
                 authority,
+                shadow_affected,
             }),
             cache_id: crate::value::default_cache_id(),
         };

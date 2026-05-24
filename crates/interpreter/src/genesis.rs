@@ -11,6 +11,9 @@ pub const SEED_STRING:    &str = "hash:sha256:v1:e34106e36d87fdb6e474664cefdf67f
 pub const SEED_COMPLEX:   &str = "hash:sha256:v1:bb982ffea2042ab09c8f2320a6562244638cf6eb9a5e010503ff86591aef0b65";
 pub const SEED_REFL:      &str = "hash:sha256:v1:eb2a1045b05c808b8608229c54b297c11f34310e8b833f0d866d28574b0c09a3";
 pub const SEED_TIME:      &str = "hash:sha256:v1:c5fe8bb62ac855e7acc6ad95701aa1d0dd21abf616f77b1f8f5760f91739d012";
+pub const SEED_OPTION:    &str = "hash:sha256:v1:4d31542abfa3acc6dcf0a81df5244e0e093310520cec1faa433bc8e311d2f404";
+pub const SEED_RESULT:    &str = "hash:sha256:v1:48789a39b85209a15598636e9967e3991cc9eddfaf37f7378ba70c1a4b34bfbf";
+pub const SEED_CONFIG:    &str = "hash:sha256:v1:87afeec4f3c5a2f384733301885ea6497eef5b352f6961576f5c538a05550f73";
 
 pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -22,5 +25,8 @@ pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
         ("~%Complex",    SEED_COMPLEX),
         ("~%Reflection", SEED_REFL),
         ("~%Time",       SEED_TIME),
+        ("@option",      SEED_OPTION),
+        ("@result",      SEED_RESULT),
+        ("~%Config",     SEED_CONFIG),
     ]
 }

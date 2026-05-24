@@ -99,3 +99,44 @@ fn test_universe_refine_with_authority() {
     let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta);
     assert!(result.is_ok(), "refine with valid authority should succeed");
 }
+
+// ── Phase 11: Architects persistence tests ──
+
+#[test]
+fn architect_persists_across_init() {
+    use nlang_interpreter::Ouroboros;
+
+    let dir = std::env::temp_dir().join("nlang-persist-test-a");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir.join(".oo"));
+
+    let fake_pk = "a".repeat(64);
+    {
+        let oo = Ouroboros::init(&dir).unwrap();
+        {
+            let mut reg = oo.architect_registry.write().unwrap();
+            reg.insert(fake_pk.clone());
+            oo.store.save_architects(&dir, &reg).unwrap();
+        }
+    }
+
+    {
+        let oo2 = Ouroboros::init(&dir).unwrap();
+        let reg = oo2.architect_registry.read().unwrap();
+        assert!(reg.contains(&fake_pk), "persisted architect should be loaded on re-init");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn in_memory_no_persist() {
+    use nlang_interpreter::Ouroboros;
+    let oo = Ouroboros::new_in_memory();
+    assert!(oo.base_dir.is_none(), "new_in_memory should have base_dir = None");
+    {
+        let fake_pk = "b".repeat(64);
+        let mut reg = oo.architect_registry.write().unwrap();
+        reg.insert(fake_pk.clone());
+    }
+}
