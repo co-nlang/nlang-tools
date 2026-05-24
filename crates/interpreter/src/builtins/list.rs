@@ -425,4 +425,143 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 22: List extras ─────────────────────────────────────
+
+    m.insert("list.partition".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let pred_f = pred_f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                let mut yes_items: Vec<Value> = Vec::new();
+                let mut no_items:  Vec<Value> = Vec::new();
+                for item in items {
+                    let result = oo.apply_morphism(pred_f.clone(), item.clone(), ctx);
+                    if result.to_string_plain().trim_start_matches('#') == "true" {
+                        yes_items.push(item);
+                    } else {
+                        no_items.push(item);
+                    }
+                }
+                let mut out = ComboVal::default();
+                out.insert_field("yes", build_list_value(yes_items));
+                out.insert_field("no",  build_list_value(no_items));
+                return Value::Combo(out);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("list.flatten".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let outer = if let Value::Combo(ref c) = arg {
+            if c.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#') == "list").unwrap_or(false) {
+                oo.force(arg, ctx)
+            } else {
+                oo.force(c.get_field("0").cloned().unwrap_or_else(|| arg.clone()), ctx)
+            }
+        } else { oo.force(arg, ctx) };
+        let outer_items = extract_list_items(&outer);
+        let mut result: Vec<Value> = Vec::new();
+        for item in outer_items {
+            let item_forced = oo.force(item.clone(), ctx);
+            if oo.is_list(&item_forced, ctx) {
+                let inner = extract_list_items(&item_forced);
+                result.extend(inner);
+            } else {
+                result.push(item_forced);
+            }
+        }
+        build_list_value(result)
+    }) as Arc<BuiltinFn>);
+
+    m.insert("list.sum".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let list = if let Value::Combo(ref c) = arg {
+            if c.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#') == "list").unwrap_or(false) {
+                oo.force(arg, ctx)
+            } else {
+                oo.force(c.get_field("0").cloned().unwrap_or_else(|| arg.clone()), ctx)
+            }
+        } else { oo.force(arg, ctx) };
+        let items = extract_list_items(&list);
+        let mut int_sum = BigInt::from(0i64);
+        let mut float_sum: f64 = 0.0;
+        let mut has_float = false;
+        for item in items {
+            match oo.force(item, ctx).collapse().clone() {
+                Value::Atom(AtomKind::Int(n), _, _) => {
+                    if has_float {
+                        float_sum += n.to_f64().unwrap_or(0.0);
+                    } else {
+                        int_sum += n;
+                    }
+                }
+                Value::Atom(AtomKind::Float(f), _, _) => {
+                    if !has_float {
+                        float_sum = int_sum.to_f64().unwrap_or(0.0);
+                        has_float = true;
+                    }
+                    float_sum += f;
+                }
+                _ => {}
+            }
+        }
+        if has_float {
+            Value::Atom(AtomKind::Float(float_sum), EffectTag::Pure, None)
+        } else {
+            Value::Atom(AtomKind::Int(int_sum), EffectTag::Pure, None)
+        }
+    }) as Arc<BuiltinFn>);
+
+    m.insert("list.min_by".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(key_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let key_f = key_f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                let mut best_elem: Option<Value> = None;
+                let mut best_key: f64 = f64::INFINITY;
+                for item in items {
+                    let k = oo.apply_morphism(key_f.clone(), item.clone(), ctx);
+                    let kf = match k.collapse() {
+                        Value::Atom(AtomKind::Float(f), _, _) => *f,
+                        Value::Atom(AtomKind::Int(n), _, _)   => n.to_f64().unwrap_or(f64::INFINITY),
+                        _ => continue,
+                    };
+                    if kf < best_key {
+                        best_key = kf;
+                        best_elem = Some(item);
+                    }
+                }
+                return best_elem.unwrap_or(Value::Top);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("list.max_by".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(key_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let key_f = key_f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                let mut best_elem: Option<Value> = None;
+                let mut best_key: f64 = f64::NEG_INFINITY;
+                for item in items {
+                    let k = oo.apply_morphism(key_f.clone(), item.clone(), ctx);
+                    let kf = match k.collapse() {
+                        Value::Atom(AtomKind::Float(f), _, _) => *f,
+                        Value::Atom(AtomKind::Int(n), _, _)   => n.to_f64().unwrap_or(f64::NEG_INFINITY),
+                        _ => continue,
+                    };
+                    if kf > best_key {
+                        best_key = kf;
+                        best_elem = Some(item);
+                    }
+                }
+                return best_elem.unwrap_or(Value::Top);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }
