@@ -28,6 +28,8 @@ fn seed_caids_are_stable() {
         ("~%Config",     nlang_interpreter::genesis::SEED_CONFIG),
         ("~%Bytes",      nlang_interpreter::genesis::SEED_BYTES),
         ("~%Regex",      nlang_interpreter::genesis::SEED_REGEX),
+        ("~%Json",       nlang_interpreter::genesis::SEED_JSON),
+        ("~%Io",         nlang_interpreter::genesis::SEED_IO),
     ];
 
     // Verify every seed matches its constant

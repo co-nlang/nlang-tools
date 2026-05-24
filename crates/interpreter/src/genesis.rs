@@ -13,6 +13,8 @@ pub const SEED_REFL:      &str = "hash:sha256:v1:681c55de94a5d77464c5e048904c1eb
 pub const SEED_TIME:      &str = "hash:sha256:v1:a544d35e9fba77b8af42571318a28014a4f0d1f23e1652b350e7254382b05b11";
 pub const SEED_TYPE_LIST: &str = "hash:sha256:v1:eb600acdc99e27df1c2420f1d2e6a48d530f19b728a2a7149c36772ee1e71c86";
 pub const SEED_BYTES:     &str = "hash:sha256:v1:4f6824f38f0de657b90055ceb9a643a4fcb2e2ecda9c4cba46dd736c22ee9121";
+pub const SEED_JSON:      &str = "hash:sha256:v1:0b50257b9d1e84637c576b9cd4b1f478429aeaca07893e2ecb67b491d9bb0337";
+pub const SEED_IO:        &str = "hash:sha256:v1:e620bfad72ec3142d4ffbb7d37955496d831e47566551a3609df61d1a47f7590";
 
 pub const SEED_OPTION:    &str = "hash:sha256:v1:882e630c8f1cf5cd644ae7cfe6561e8738911c0b5105dcd0680266433400a89d";
 pub const SEED_RESULT:    &str = "hash:sha256:v1:bf98c6ee2b26ba36628f5b14050cd48b090e6e4e8248bb8e6e98a9d26fb66c46";
@@ -30,6 +32,8 @@ pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
         ("~%Reflection", SEED_REFL),
         ("~%Time",       SEED_TIME),
         ("~%Bytes",      SEED_BYTES),
+        ("~%Json",       SEED_JSON),
+        ("~%Io",         SEED_IO),
         ("~%Regex",      SEED_REGEX),
         ("@option",      SEED_OPTION),
         ("@result",      SEED_RESULT),

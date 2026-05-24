@@ -332,6 +332,36 @@ impl Ouroboros {
         }
         fields.insert("~%Regex".to_string(), Value::Combo(ComboVal::new(regex_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
+        let mut json_fields = IndexMap::new();
+        let json_morphisms = vec![
+            ("/parse",     "json.parse"),
+            ("/stringify", "json.stringify"),
+            ("/get",       "json.get"),
+            ("/keys",      "json.keys"),
+        ];
+        for (n, b) in json_morphisms {
+            json_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(),  Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])));
+        }
+        fields.insert("~%Json".to_string(), Value::Combo(ComboVal::new(json_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+        
+        let mut io_fields = IndexMap::new();
+        let io_morphisms = vec![
+            ("/read_file",   "io.read_file"),
+            ("/write_file",  "io.write_file"),
+            ("/exists",      "io.exists"),
+            ("/append_file", "io.append_file"),
+        ];
+        for (n, b) in io_morphisms {
+            io_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(),  Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::IO, vec![])));
+        }
+        fields.insert("~%Io".to_string(), Value::Combo(ComboVal::new(io_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+        
         let mut disc_fields = IndexMap::new();
         let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
         for (n, b) in disc_morphisms { disc_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![]))); }
