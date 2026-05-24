@@ -6,6 +6,17 @@ use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 use num_traits::{Signed, Zero, ToPrimitive};
 
+fn bigint_gcd(mut a: BigInt, mut b: BigInt) -> BigInt {
+    a = a.abs();
+    b = b.abs();
+    while !b.is_zero() {
+        let t = b.clone();
+        b = a % &b;
+        a = t;
+    }
+    a
+}
+
 pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("math.add".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg { 
@@ -510,5 +521,106 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             }
         }
         Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.gcd: {0: a, 1: b} → Int (gcd of |a|, |b|)
+    m.insert("math.gcd".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
+                let fa = oo.force(va.clone(), ctx);
+                let fb = oo.force(vb.clone(), ctx);
+                if let (Value::Atom(AtomKind::Int(a), _, _), Value::Atom(AtomKind::Int(b), _, _)) =
+                    (fa.collapse(), fb.collapse())
+                {
+                    return Value::Atom(AtomKind::Int(bigint_gcd(a.clone(), b.clone())), EffectTag::Pure, None);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.lcm: {0: a, 1: b} → Int (lcm of |a|, |b|)
+    m.insert("math.lcm".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
+                let fa = oo.force(va.clone(), ctx);
+                let fb = oo.force(vb.clone(), ctx);
+                if let (Value::Atom(AtomKind::Int(a), _, _), Value::Atom(AtomKind::Int(b), _, _)) =
+                    (fa.collapse(), fb.collapse())
+                {
+                    let g = bigint_gcd(a.clone(), b.clone());
+                    if g.is_zero() {
+                        return Value::Atom(AtomKind::Int(BigInt::from(0)), EffectTag::Pure, None);
+                    }
+                    let lcm = (a.clone().abs() / &g) * b.clone().abs();
+                    return Value::Atom(AtomKind::Int(lcm), EffectTag::Pure, None);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.sign: {0: x} → Int (-1/0/1) or Float (-1.0/0.0/1.0)
+    m.insert("math.sign".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse().clone() {
+            Value::Atom(AtomKind::Int(i), e, _) => {
+                let s = if i.is_positive() { 1i64 } else if i.is_negative() { -1 } else { 0 };
+                Value::Atom(AtomKind::Int(BigInt::from(s)), e, None)
+            }
+            Value::Atom(AtomKind::Float(f), e, _) => {
+                let s = if f > 0.0 { 1.0f64 } else if f < 0.0 { -1.0 } else { 0.0 };
+                Value::Atom(AtomKind::Float(s), e, None)
+            }
+            _ => Value::Top,
+        }
+    }) as Arc<BuiltinFn>);
+
+    // math.log2: {0: x} → Float; log2(0) or log2(negative) → Blur
+    m.insert("math.log2".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let x: f64 = match fv.collapse() {
+            Value::Atom(AtomKind::Float(f), _, _) => *f,
+            Value::Atom(AtomKind::Int(i), _, _) => match i.to_f64() { Some(f) => f, None => return Value::Top },
+            _ => return Value::Top,
+        };
+        if x <= 0.0 {
+            return Value::Blur(BlurDetail {
+                cause: BlurCause::MathSingularity("log2".to_string()),
+                horizon: HorizonParams {
+                    fuel_remaining: ctx.fuel,
+                    strategy: ctx.strategy,
+                    salt: ctx.horizon_salt.clone(),
+                },
+                partial: None,
+                effect: EffectTag::Pure,
+            });
+        }
+        Value::Atom(AtomKind::Float(x.log2()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    // math.log10: {0: x} → Float; log10(0) or log10(negative) → Blur
+    m.insert("math.log10".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let fv = oo.force(v, ctx);
+        let x: f64 = match fv.collapse() {
+            Value::Atom(AtomKind::Float(f), _, _) => *f,
+            Value::Atom(AtomKind::Int(i), _, _) => match i.to_f64() { Some(f) => f, None => return Value::Top },
+            _ => return Value::Top,
+        };
+        if x <= 0.0 {
+            return Value::Blur(BlurDetail {
+                cause: BlurCause::MathSingularity("log10".to_string()),
+                horizon: HorizonParams {
+                    fuel_remaining: ctx.fuel,
+                    strategy: ctx.strategy,
+                    salt: ctx.horizon_salt.clone(),
+                },
+                partial: None,
+                effect: EffectTag::Pure,
+            });
+        }
+        Value::Atom(AtomKind::Float(x.log10()), EffectTag::Pure, None)
     }) as Arc<BuiltinFn>);
 }

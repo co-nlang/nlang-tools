@@ -157,7 +157,40 @@ impl Ouroboros {
         
         let mut math_builtins = IndexMap::new();
         math_builtins.insert("/add".to_string(), add_morph);
-        let math_morphisms = vec![("/sub", "math.sub"), ("/mul", "math.mul"), ("/div", "math.div"), ("/rem", "math.rem"), ("/abs", "math.abs"), ("/bits", "math.bits"), ("/pow", "math.pow"), ("/sqrt", "math.sqrt"), ("/bitAnd", "math.bitAnd"), ("/bitOr", "math.bitOr"), ("/bitXor", "math.bitXor"), ("/bitNot", "math.bitNot"), ("/shl", "math.shl"), ("/shr", "math.shr"), ("/exp", "math.exp"), ("/ln", "math.ln"), ("/sin", "math.sin"), ("/cos", "math.cos"), ("/eml", "math.eml")];
+        let math_morphisms = vec![
+            ("/sub",    "math.sub"),
+            ("/mul",    "math.mul"),
+            ("/div",    "math.div"),
+            ("/rem",    "math.rem"),
+            ("/abs",    "math.abs"),
+            ("/bits",   "math.bits"),
+            ("/pow",    "math.pow"),
+            ("/sqrt",   "math.sqrt"),
+            ("/bitAnd", "math.bitAnd"),
+            ("/bitOr",  "math.bitOr"),
+            ("/bitXor", "math.bitXor"),
+            ("/bitNot", "math.bitNot"),
+            ("/shl",    "math.shl"),
+            ("/shr",    "math.shr"),
+            ("/exp",    "math.exp"),
+            ("/ln",     "math.ln"),
+            ("/sin",    "math.sin"),
+            ("/cos",    "math.cos"),
+            ("/eml",    "math.eml"),
+            // Phase 19 (previously missing from module)
+            ("/min",    "math.min"),
+            ("/max",    "math.max"),
+            ("/floor",  "math.floor"),
+            ("/ceil",   "math.ceil"),
+            ("/round",  "math.round"),
+            ("/clamp",  "math.clamp"),
+            // Phase 27
+            ("/gcd",    "math.gcd"),
+            ("/lcm",    "math.lcm"),
+            ("/sign",   "math.sign"),
+            ("/log2",   "math.log2"),
+            ("/log10",  "math.log10"),
+        ];
         for (n, b) in math_morphisms { math_builtins.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         math_builtins.insert("/random".to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str("math.random".to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::NonDet, vec![])));
         math_builtins.insert("one".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
@@ -203,6 +236,10 @@ impl Ouroboros {
             ("/unique",    "list.unique"),
             ("/range",     "list.range"),
             ("/reduce",    "list.reduce"),
+            // Phase 28
+            ("/group_by",  "list.group_by"),
+            ("/chunk",     "list.chunk"),
+            ("/window",    "list.window"),
         ];
         for (n, b) in list_morphisms { list_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%List".to_string(), Value::Combo(ComboVal::new(list_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
@@ -229,6 +266,12 @@ impl Ouroboros {
             // Phase 25
             ("/char_at",     "str.char_at"),
             ("/chars",       "str.chars"),
+            // Phase 27
+            ("/index_of",    "str.index_of"),
+            ("/pad_left",    "str.pad_left"),
+            ("/pad_right",   "str.pad_right"),
+            ("/trim_start",  "str.trim_start"),
+            ("/trim_end",    "str.trim_end"),
         ];
         for (n, b) in string_morphisms { string_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%String".to_string(), Value::Combo(ComboVal::new(string_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));

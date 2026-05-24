@@ -631,4 +631,75 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // list.group_by: {0: key_fn, 1: list} → Combo { key → list }
+    m.insert("list.group_by".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vf), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
+                let key_fn = vf.clone();
+                let list = oo.force(vl.clone(), ctx);
+                let items = extract_list_items(&list);
+                let mut groups: IndexMap<String, Vec<Value>> = IndexMap::new();
+                for item in items {
+                    let item_forced = oo.force(item, ctx);
+                    let key = oo.apply_morphism(key_fn.clone(), item_forced.clone(), ctx);
+                    let key_str = key.collapse().to_string_plain();
+                    groups.entry(key_str).or_insert_with(Vec::new).push(item_forced);
+                }
+                let mut out = ComboVal::default();
+                for (key, group_items) in groups {
+                    out.insert_field(&key, build_list_value(group_items));
+                }
+                return Value::Combo(out);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.chunk: {0: n, 1: list} → list of lists (each sub-list size n, last may be smaller)
+    m.insert("list.chunk".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vn), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
+                let fn_ = oo.force(vn.clone(), ctx);
+                let list = oo.force(vl.clone(), ctx);
+                if let Value::Atom(AtomKind::Int(n), _, _) = fn_.collapse() {
+                    let size = match n.to_usize() {
+                        Some(s) if s > 0 => s,
+                        _ => return Value::Top,
+                    };
+                    let items = extract_list_items(&list);
+                    let chunks: Vec<Value> = items.chunks(size)
+                        .map(|chunk| build_list_value(chunk.to_vec()))
+                        .collect();
+                    return build_list_value(chunks);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.window: {0: n, 1: list} → list of lists (sliding windows of size n)
+    m.insert("list.window".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vn), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
+                let fn_ = oo.force(vn.clone(), ctx);
+                let list = oo.force(vl.clone(), ctx);
+                if let Value::Atom(AtomKind::Int(n), _, _) = fn_.collapse() {
+                    let size = match n.to_usize() {
+                        Some(s) if s > 0 => s,
+                        _ => return Value::Top,
+                    };
+                    let items = extract_list_items(&list);
+                    if items.len() < size {
+                        return build_list_value(vec![]);
+                    }
+                    let windows: Vec<Value> = (0..=(items.len() - size))
+                        .map(|i| build_list_value(items[i..i + size].to_vec()))
+                        .collect();
+                    return build_list_value(windows);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

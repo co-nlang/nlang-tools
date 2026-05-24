@@ -18,6 +18,18 @@ path = "tests/str_p25_test.rs"
 name = "option_result_p26_test"
 path = "tests/option_result_p26_test.rs"
 
+[[test]]
+name = "math_p27_test"
+path = "tests/math_p27_test.rs"
+
+[[test]]
+name = "str_p27_test"
+path = "tests/str_p27_test.rs"
+
+[[test]]
+name = "list_p28_test"
+path = "tests/list_p28_test.rs"
+
 [dependencies]
 nlang-parser = { path = "../parser" }
 thiserror = "1.0"

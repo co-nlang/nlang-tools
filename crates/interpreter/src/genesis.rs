@@ -3,11 +3,11 @@
 //   cargo test seed_caids_are_stable -- --nocapture
 // and copy the printed "UPDATE:" lines into the constants below.
 
-pub const SEED_MATH:      &str = "hash:sha256:v1:22a5a2d20c1908c70145ba82e7132f4be7c80ebd45af64986ec0dba1a2618138";
-pub const SEED_LIST:      &str = "hash:sha256:v1:25c3918e7b6c5ac946ab3785cef7cef4f0dc22c0d15e479d2f73eb35b6e67e00";
+pub const SEED_MATH:      &str = "hash:sha256:v1:1cacd3c2f58b63cba69d2f58b479e21ecf33311fae89788c78132c0b6c439b45";
+pub const SEED_LIST:      &str = "hash:sha256:v1:83be1aaa5e41ff7bba686dccd4846cced091bababc738d7d4dd3b039eec17e5e";
 pub const SEED_COND:      &str = "hash:sha256:v1:17afe8ef452181276edc99f124dc0a0acbe59b6cbebecf58d073f0a62a383469";
 pub const SEED_DISCOVERY: &str = "hash:sha256:v1:1cfb41b083aeedd1c0acbe2c6a153809006ee30f8af6aa7b12f7aef7cb34d295";
-pub const SEED_STRING:    &str = "hash:sha256:v1:83ee6699f452586f88ab5dbe1e7752876986558fee7176dfed718c80e5b6e922";
+pub const SEED_STRING:    &str = "hash:sha256:v1:95d83dfacfc828d4a4b8812d30e84acd0d605e96098f7505e12d7d4e93b9e101";
 pub const SEED_COMPLEX:   &str = "hash:sha256:v1:bb982ffea2042ab09c8f2320a6562244638cf6eb9a5e010503ff86591aef0b65";
 pub const SEED_REFL:      &str = "hash:sha256:v1:681c55de94a5d77464c5e048904c1ebedf6e08bdffb8e8c3aa509a6e2db64cf0";
 pub const SEED_TIME:      &str = "hash:sha256:v1:a544d35e9fba77b8af42571318a28014a4f0d1f23e1652b350e7254382b05b11";
