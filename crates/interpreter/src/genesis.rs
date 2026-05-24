@@ -3,8 +3,8 @@
 //   cargo test seed_caids_are_stable -- --nocapture
 // and copy the printed "UPDATE:" lines into the constants below.
 
-pub const SEED_MATH:      &str = "hash:sha256:v1:1cacd3c2f58b63cba69d2f58b479e21ecf33311fae89788c78132c0b6c439b45";
-pub const SEED_LIST:      &str = "hash:sha256:v1:83be1aaa5e41ff7bba686dccd4846cced091bababc738d7d4dd3b039eec17e5e";
+pub const SEED_MATH:      &str = "hash:sha256:v1:448343e267bcabb338566ac5b48be74c1f3aa8b6a478aa4bb3f42c8dfc8b5249";
+pub const SEED_LIST:      &str = "hash:sha256:v1:881454d725f6c0df8b21e1ac27744185a171e7a4c0c36acbef17aabe677f0686";
 pub const SEED_COND:      &str = "hash:sha256:v1:17afe8ef452181276edc99f124dc0a0acbe59b6cbebecf58d073f0a62a383469";
 pub const SEED_DISCOVERY: &str = "hash:sha256:v1:1cfb41b083aeedd1c0acbe2c6a153809006ee30f8af6aa7b12f7aef7cb34d295";
 pub const SEED_STRING:    &str = "hash:sha256:v1:525dcad5ac90bbb6b01a86b70b82f9897f0501bee64be69ad07ed72bcc9cb400";

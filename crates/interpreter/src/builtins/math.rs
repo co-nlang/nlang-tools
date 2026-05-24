@@ -4,7 +4,7 @@ use crate::{Ouroboros, EvalContext, BuiltinFn};
 use crate::value::{Value, EffectTag, BottomCause, BlurDetail, BlurCause, HorizonParams};
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
-use num_traits::{Signed, Zero, ToPrimitive};
+use num_traits::{Signed, Zero, One, ToPrimitive};
 
 fn bigint_gcd(mut a: BigInt, mut b: BigInt) -> BigInt {
     a = a.abs();
@@ -15,6 +15,72 @@ fn bigint_gcd(mut a: BigInt, mut b: BigInt) -> BigInt {
         a = t;
     }
     a
+}
+
+fn bigint_factorial(n: BigInt) -> BigInt {
+    let mut result = BigInt::one();
+    let mut i = BigInt::from(2i64);
+    while i <= n {
+        result *= &i;
+        i += 1i64;
+    }
+    result
+}
+
+fn bigint_choose(n: &BigInt, k: &BigInt) -> BigInt {
+    if k.is_negative() || k > n { return BigInt::zero(); }
+    let n_minus_k = n - k;
+    let k_eff = if n_minus_k < *k { n_minus_k } else { k.clone() };
+    let mut result = BigInt::one();
+    let mut i = BigInt::zero();
+    while i < k_eff {
+        result = &result * (n - &i) / (&i + BigInt::one());
+        i += 1i64;
+    }
+    result
+}
+
+fn bigint_modpow(mut base: BigInt, mut exp: BigInt, modulus: &BigInt) -> BigInt {
+    if modulus == &BigInt::one() { return BigInt::zero(); }
+    let mut result = BigInt::one();
+    base = base % modulus;
+    while exp > BigInt::zero() {
+        if &exp % 2i64 == BigInt::one() {
+            result = &result * &base % modulus;
+        }
+        exp /= 2i64;
+        base = &base * &base % modulus;
+    }
+    result
+}
+
+fn is_prime_miller_rabin(n: &BigInt) -> bool {
+    if n < &BigInt::from(2i32) { return false; }
+    if n == &BigInt::from(2i32) || n == &BigInt::from(3i32) { return true; }
+    if (n % 2i32) == BigInt::zero() { return false; }
+
+    let mut d = n - BigInt::one();
+    let mut r = 0u32;
+    while (&d % 2i32) == BigInt::zero() {
+        d /= 2i32;
+        r += 1;
+    }
+
+    let witnesses: &[i64] = &[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
+    let n_minus_one = n - BigInt::one();
+
+    'witness: for &w in witnesses {
+        let a = BigInt::from(w);
+        if &a >= n { continue; }
+        let mut x = bigint_modpow(a, d.clone(), n);
+        if x == BigInt::one() || x == n_minus_one { continue; }
+        for _ in 0..(r - 1) {
+            x = &x * &x % n;
+            if x == n_minus_one { continue 'witness; }
+        }
+        return false;
+    }
+    true
 }
 
 pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
@@ -622,5 +688,64 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             });
         }
         Value::Atom(AtomKind::Float(x.log10()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    // math.factorial: {0: n} → Int; n < 0 → Bottom
+    m.insert("math.factorial".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Int(n), _, _) = oo.force(v, ctx).collapse() {
+            if n.is_negative() { return BottomCause::Conflict.into(); }
+            return Value::Atom(AtomKind::Int(bigint_factorial(n.clone())), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.choose: {0: n, 1: k} → Int (C(n,k)); n < 0 → Bottom; k < 0 or k > n → 0
+    m.insert("math.choose".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vn), Some(vk)) = (c.get_field("0"), c.get_field("1")) {
+                let fn_v = oo.force(vn.clone(), ctx);
+                let fk_v = oo.force(vk.clone(), ctx);
+                if let (Value::Atom(AtomKind::Int(n), _, _), Value::Atom(AtomKind::Int(k), _, _)) =
+                    (fn_v.collapse(), fk_v.collapse())
+                {
+                    if n.is_negative() { return BottomCause::Conflict.into(); }
+                    return Value::Atom(AtomKind::Int(bigint_choose(n, k)), EffectTag::Pure, None);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.is_prime: {0: n} → #true | #false (deterministic Miller-Rabin)
+    m.insert("math.is_prime".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Int(n), _, _) = oo.force(v, ctx).collapse() {
+            let tag = if is_prime_miller_rabin(n) { "true" } else { "false" };
+            return Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.pow_mod: {0: base, 1: exp, 2: mod} → Int ((base^exp) % mod)
+    m.insert("math.pow_mod".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vb), Some(ve), Some(vm)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
+                let fb = oo.force(vb.clone(), ctx);
+                let fe = oo.force(ve.clone(), ctx);
+                let fm = oo.force(vm.clone(), ctx);
+                if let (
+                    Value::Atom(AtomKind::Int(base), _, _),
+                    Value::Atom(AtomKind::Int(exp), _, _),
+                    Value::Atom(AtomKind::Int(modulus), _, _),
+                ) = (fb.collapse(), fe.collapse(), fm.collapse()) {
+                    if base.is_negative() || exp.is_negative() || modulus <= &BigInt::zero() {
+                        return BottomCause::Conflict.into();
+                    }
+                    return Value::Atom(AtomKind::Int(bigint_modpow(base.clone(), exp.clone(), modulus)), EffectTag::Pure, None);
+                }
+            }
+        }
+        Value::Top
     }) as Arc<BuiltinFn>);
 }

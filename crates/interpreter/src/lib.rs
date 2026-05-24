@@ -188,8 +188,13 @@ impl Ouroboros {
             ("/gcd",    "math.gcd"),
             ("/lcm",    "math.lcm"),
             ("/sign",   "math.sign"),
-            ("/log2",   "math.log2"),
-            ("/log10",  "math.log10"),
+            ("/log2",      "math.log2"),
+            ("/log10",     "math.log10"),
+            // Phase 35
+            ("/factorial", "math.factorial"),
+            ("/choose",    "math.choose"),
+            ("/is_prime",  "math.is_prime"),
+            ("/pow_mod",   "math.pow_mod"),
         ];
         for (n, b) in math_morphisms { math_builtins.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         math_builtins.insert("/random".to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str("math.random".to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::NonDet, vec![])));
@@ -239,7 +244,12 @@ impl Ouroboros {
             // Phase 28
             ("/group_by",  "list.group_by"),
             ("/chunk",     "list.chunk"),
-            ("/window",    "list.window"),
+            ("/window",      "list.window"),
+            // Phase 35
+            ("/enumerate",   "list.enumerate"),
+            ("/sort_by",     "list.sort_by"),
+            ("/dedup",       "list.dedup"),
+            ("/intersperse", "list.intersperse"),
         ];
         for (n, b) in list_morphisms { list_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%List".to_string(), Value::Combo(ComboVal::new(list_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));

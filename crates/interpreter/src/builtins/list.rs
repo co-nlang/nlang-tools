@@ -5,7 +5,7 @@ use crate::{Ouroboros, EvalContext, BuiltinFn};
 use crate::value::{Value, ComboVal, EffectTag};
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
-use num_traits::ToPrimitive;
+use num_traits::{Signed, ToPrimitive};
 
 pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("list.len".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
@@ -698,6 +698,84 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         .collect();
                     return build_list_value(windows);
                 }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.enumerate: {0: list} → list of {0: Int, 1: Value}
+    m.insert("list.enumerate".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let list = oo.force(v, ctx);
+        let items = extract_list_items(&list);
+        let pairs: Vec<Value> = items.into_iter().enumerate().map(|(i, item)| {
+            let mut pair = IndexMap::new();
+            pair.insert("0".to_string(), Value::Atom(AtomKind::Int(BigInt::from(i)), EffectTag::Pure, None));
+            pair.insert("1".to_string(), item);
+            Value::Combo(ComboVal::new(pair, false, IndexMap::new(), EffectTag::Pure, vec![]))
+        }).collect();
+        build_list_value(pairs)
+    }) as Arc<BuiltinFn>);
+
+    // list.sort_by: {0: cmp_fn, 1: list} → sorted list (stable sort)
+    m.insert("list.sort_by".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vf), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
+                let cmp_fn = vf.clone();
+                let list = oo.force(vl.clone(), ctx);
+                let mut items = extract_list_items(&list);
+                items.sort_by(|a, b| {
+                    let mut pair = IndexMap::new();
+                    pair.insert("0".to_string(), a.clone());
+                    pair.insert("1".to_string(), b.clone());
+                    let pair_val = Value::Combo(ComboVal::new(pair, true, IndexMap::new(), EffectTag::Pure, vec![]));
+                    let result = oo.apply_morphism(cmp_fn.clone(), pair_val, ctx);
+                    match result.collapse() {
+                        Value::Atom(AtomKind::Int(n), _, _) if n.is_negative() => std::cmp::Ordering::Less,
+                        Value::Atom(AtomKind::Int(n), _, _) if n.is_positive() => std::cmp::Ordering::Greater,
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                });
+                return build_list_value(items);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.dedup: {0: list} → list (remove consecutive duplicates, stable)
+    m.insert("list.dedup".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let list = oo.force(v, ctx);
+        let items = extract_list_items(&list);
+        let mut out: Vec<Value> = Vec::new();
+        let mut last_key: Option<String> = None;
+        for item in items {
+            let forced = oo.force(item, ctx);
+            let key = forced.to_nlang(0);
+            if Some(&key) != last_key.as_ref() {
+                last_key = Some(key);
+                out.push(forced);
+            }
+        }
+        build_list_value(out)
+    }) as Arc<BuiltinFn>);
+
+    // list.intersperse: {0: sep, 1: list} → list with sep inserted between elements
+    m.insert("list.intersperse".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vs), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
+                let sep = vs.clone();
+                let list = oo.force(vl.clone(), ctx);
+                let items = extract_list_items(&list);
+                if items.len() <= 1 {
+                    return build_list_value(items);
+                }
+                let mut out = Vec::new();
+                for (i, item) in items.into_iter().enumerate() {
+                    if i > 0 { out.push(sep.clone()); }
+                    out.push(item);
+                }
+                return build_list_value(out);
             }
         }
         Value::Top

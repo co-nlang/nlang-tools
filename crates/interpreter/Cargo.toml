@@ -58,6 +58,14 @@ path = "tests/json_p33_test.rs"
 name = "io_p34_test"
 path = "tests/io_p34_test.rs"
 
+[[test]]
+name = "list_p35_test"
+path = "tests/list_p35_test.rs"
+
+[[test]]
+name = "math_p35_test"
+path = "tests/math_p35_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }
