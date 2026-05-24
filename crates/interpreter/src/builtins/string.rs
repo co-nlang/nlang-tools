@@ -249,4 +249,38 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // str.char_at: get nth Unicode character (0-indexed), Top if out of range
+    m.insert("str.char_at".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vi), Some(vs)) = (c.get_field("0"), c.get_field("1")) {
+                let fi = oo.force(vi.clone(), ctx);
+                let fs = oo.force(vs.clone(), ctx);
+                if let (Value::Atom(AtomKind::Int(idx), _, _), Value::Atom(AtomKind::Str(s), _, _)) =
+                    (fi.collapse(), fs.collapse())
+                {
+                    if let Some(n) = idx.to_usize() {
+                        if let Some(ch) = s.chars().nth(n) {
+                            return Value::Atom(AtomKind::Str(ch.to_string()), EffectTag::Pure, None);
+                        }
+                    }
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.chars: split string into list of single-character strings
+    m.insert("str.chars".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            let mut res = IndexMap::new();
+            for (i, ch) in s.chars().enumerate() {
+                res.insert(i.to_string(), Value::Atom(AtomKind::Str(ch.to_string()), EffectTag::Pure, None));
+            }
+            res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+            return Value::Combo(ComboVal::new(res, false, IndexMap::new(), EffectTag::Pure, vec![]));
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

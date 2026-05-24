@@ -24,6 +24,7 @@ fn seed_caids_are_stable() {
         ("~%Discovery",  nlang_interpreter::genesis::SEED_DISCOVERY),
         ("@option",      nlang_interpreter::genesis::SEED_OPTION),
         ("@result",      nlang_interpreter::genesis::SEED_RESULT),
+        ("@list",        nlang_interpreter::genesis::SEED_TYPE_LIST),
         ("~%Config",     nlang_interpreter::genesis::SEED_CONFIG),
     ];
 

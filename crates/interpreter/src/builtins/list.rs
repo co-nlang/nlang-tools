@@ -564,4 +564,71 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // list.unique: remove duplicates (first occurrence preserved)
+    m.insert("list.unique".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg {
+            if c.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#') == "list").unwrap_or(false) {
+                oo.force(arg, ctx)
+            } else {
+                oo.force(c.get_field("0").cloned().unwrap_or_else(|| arg.clone()), ctx)
+            }
+        } else { oo.force(arg, ctx) };
+        let items = extract_list_items(&v);
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for item in items {
+            let forced = oo.force(item, ctx);
+            let key = forced.to_nlang(0);
+            if seen.insert(key) {
+                out.push(forced);
+            }
+        }
+        build_list_value(out)
+    }) as Arc<BuiltinFn>);
+
+    // list.range: [start, start+1, ..., end-1]
+    m.insert("list.range".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vs), Some(ve)) = (c.get_field("0"), c.get_field("1")) {
+                let fs = oo.force(vs.clone(), ctx);
+                let fe = oo.force(ve.clone(), ctx);
+                if let (Value::Atom(AtomKind::Int(start), _, _), Value::Atom(AtomKind::Int(end), _, _)) =
+                    (fs.collapse(), fe.collapse())
+                {
+                    let mut items = Vec::new();
+                    let mut i = start.clone();
+                    while i < *end {
+                        items.push(Value::Atom(AtomKind::Int(i.clone()), EffectTag::Pure, None));
+                        i += 1;
+                    }
+                    return build_list_value(items);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.reduce: fold with first element as initial accumulator
+    m.insert("list.reduce".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vf), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
+                let func = vf.clone();
+                let list = oo.force(vl.clone(), ctx);
+                let items = extract_list_items(&list);
+                if items.is_empty() { return Value::Top; }
+                let mut acc = oo.force(items[0].clone(), ctx);
+                for item in items.into_iter().skip(1) {
+                    let item_forced = oo.force(item, ctx);
+                    let mut pair = IndexMap::new();
+                    pair.insert("0".to_string(), acc);
+                    pair.insert("1".to_string(), item_forced);
+                    let pair_val = Value::Combo(ComboVal::new(pair, true, IndexMap::new(), EffectTag::Pure, vec![]));
+                    acc = oo.apply_morphism(func.clone(), pair_val, ctx);
+                }
+                return acc;
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

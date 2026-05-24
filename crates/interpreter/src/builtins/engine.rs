@@ -521,4 +521,111 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 26: option/result advanced combinators ───────────────
+
+    // option.zip: {0: opt_a, 1: opt_b} → Option<{0:a, 1:b}>
+    m.insert("option.zip".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
+                let oa = oo.force(va.clone(), ctx);
+                let ob = oo.force(vb.clone(), ctx);
+                let is_none = |v: &Value| matches!(v, Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "none");
+                let inner = |v: &Value| -> Option<Value> {
+                    match v { Value::Combo(ref cv) => cv.get_field("%val").cloned(), _ => None }
+                };
+                if is_none(&oa) || is_none(&ob) {
+                    return Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None);
+                }
+                if let (Some(a), Some(b)) = (inner(&oa), inner(&ob)) {
+                    let mut pair = IndexMap::new();
+                    pair.insert("0".to_string(), a);
+                    pair.insert("1".to_string(), b);
+                    let pair_val = Value::Combo(ComboVal::new(pair, true, IndexMap::new(), EffectTag::Pure, vec![]));
+                    let mut res = IndexMap::new();
+                    res.insert("%val".to_string(), pair_val);
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), EffectTag::Pure, vec![]));
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // option.flatten: Option<Option<T>> → Option<T>
+    m.insert("option.flatten".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let outer = oo.force(v, ctx);
+        let none = Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None);
+        match &outer {
+            Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "none" => none,
+            Value::Combo(ref cv) => {
+                match cv.get_field("%val") {
+                    None => Value::Top,
+                    Some(inner) => {
+                        let inner_forced = oo.force(inner.clone(), ctx);
+                        match &inner_forced {
+                            Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "none" => none,
+                            Value::Combo(ref icv) if icv.get_field("%val").is_some() => inner_forced.clone(),
+                            _ => Value::Top,
+                        }
+                    }
+                }
+            }
+            _ => Value::Top,
+        }
+    }) as Arc<BuiltinFn>);
+
+    // result.and: {0: result_b, 1: result_a}
+    m.insert("result.and".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vb), Some(va)) = (c.get_field("0"), c.get_field("1")) {
+                let ra = oo.force(va.clone(), ctx);
+                return match &ra {
+                    Value::Combo(ref cv) if cv.get_field("%val").is_some() => vb.clone(),
+                    Value::Combo(ref cv) if cv.get_field("%cause").is_some() => ra.clone(),
+                    _ => Value::Top,
+                };
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // result.or: {0: result_b, 1: result_a}
+    m.insert("result.or".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vb), Some(va)) = (c.get_field("0"), c.get_field("1")) {
+                let ra = oo.force(va.clone(), ctx);
+                return match &ra {
+                    Value::Combo(ref cv) if cv.get_field("%val").is_some() => ra.clone(),
+                    Value::Combo(ref cv) if cv.get_field("%cause").is_some() => vb.clone(),
+                    _ => Value::Top,
+                };
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // result.flatten: Result<Result<T,E>,E> → Result<T,E>
+    m.insert("result.flatten".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let outer = oo.force(v, ctx);
+        match &outer {
+            Value::Combo(ref cv) => {
+                if cv.get_field("%cause").is_some() {
+                    return outer.clone();
+                }
+                if let Some(inner) = cv.get_field("%val") {
+                    let inner_forced = oo.force(inner.clone(), ctx);
+                    match &inner_forced {
+                        Value::Combo(ref icv) if icv.get_field("%val").is_some() || icv.get_field("%cause").is_some() => {
+                            return inner_forced.clone();
+                        }
+                        _ => return Value::Top,
+                    }
+                }
+                Value::Top
+            }
+            _ => Value::Top,
+        }
+    }) as Arc<BuiltinFn>);
 }

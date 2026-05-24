@@ -6,6 +6,18 @@ edition = "2021"
 [dev-dependencies]
 tempfile = "3.3"
 
+[[test]]
+name = "list_p25_test"
+path = "tests/list_p25_test.rs"
+
+[[test]]
+name = "str_p25_test"
+path = "tests/str_p25_test.rs"
+
+[[test]]
+name = "option_result_p26_test"
+path = "tests/option_result_p26_test.rs"
+
 [dependencies]
 nlang-parser = { path = "../parser" }
 thiserror = "1.0"

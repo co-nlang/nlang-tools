@@ -169,21 +169,78 @@ impl Ouroboros {
         fields.insert("~%Cond".to_string(), Value::Combo(ComboVal::new(cond_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
         let mut list_fields = IndexMap::new();
-        let list_morphisms = vec![("/map", "list.map"), ("/filter", "list.filter"), ("/fold", "list.fold"), ("/len", "list.len"), ("/concat", "list.concat"), ("/at", "list.at"), ("/sort", "list.sort"), ("/reverse", "list.reverse"), ("/slice", "list.slice"), ("/zip", "list.zip")];
+        let list_morphisms = vec![
+            ("/map",       "list.map"),
+            ("/filter",    "list.filter"),
+            ("/fold",      "list.fold"),
+            ("/len",       "list.len"),
+            ("/concat",    "list.concat"),
+            ("/at",        "list.at"),
+            ("/sort",      "list.sort"),
+            ("/reverse",   "list.reverse"),
+            ("/slice",     "list.slice"),
+            ("/zip",       "list.zip"),
+            // Phase 17
+            ("/flat_map",  "list.flat_map"),
+            // Phase 18
+            ("/any",       "list.any"),
+            ("/all",       "list.all"),
+            ("/find",      "list.find"),
+            ("/head",      "list.head"),
+            ("/tail",      "list.tail"),
+            ("/take",      "list.take"),
+            ("/drop",      "list.drop"),
+            // Phase 19
+            ("/count",     "list.count"),
+            ("/zip_with",  "list.zip_with"),
+            // Phase 22
+            ("/partition", "list.partition"),
+            ("/flatten",   "list.flatten"),
+            ("/sum",       "list.sum"),
+            ("/min_by",    "list.min_by"),
+            ("/max_by",    "list.max_by"),
+            // Phase 25
+            ("/unique",    "list.unique"),
+            ("/range",     "list.range"),
+            ("/reduce",    "list.reduce"),
+        ];
         for (n, b) in list_morphisms { list_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%List".to_string(), Value::Combo(ComboVal::new(list_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
         let mut string_fields = IndexMap::new();
         let string_morphisms = vec![
-            ("/concat", "str.concat"), ("/split", "str.split"), ("/join", "str.join"), ("/trim", "str.trim"), ("/len", "str.len"),
-            ("/replace", "str.replace"), ("/to_lower", "str.to_lower"), ("/to_upper", "str.to_upper"), 
-            ("/starts_with", "str.starts_with"), ("/ends_with", "str.ends_with"), ("/contains", "str.contains")
+            ("/concat",      "str.concat"),
+            ("/split",       "str.split"),
+            ("/join",        "str.join"),
+            ("/trim",        "str.trim"),
+            ("/len",         "str.len"),
+            ("/replace",     "str.replace"),
+            ("/to_lower",    "str.to_lower"),
+            ("/to_upper",    "str.to_upper"),
+            ("/starts_with", "str.starts_with"),
+            ("/ends_with",   "str.ends_with"),
+            ("/contains",    "str.contains"),
+            // Phase 19
+            ("/parse_int",   "str.parse_int"),
+            ("/from_int",    "str.from_int"),
+            ("/repeat",      "str.repeat"),
+            // Phase 21
+            ("/format",      "str.format"),
+            // Phase 25
+            ("/char_at",     "str.char_at"),
+            ("/chars",       "str.chars"),
         ];
         for (n, b) in string_morphisms { string_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%String".to_string(), Value::Combo(ComboVal::new(string_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
         let mut time_fields = IndexMap::new();
         time_fields.insert("/now".to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str("time.now".to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![])));
+        let time_morphisms = vec![
+            ("/format", "time.format"),
+            ("/diff",   "time.diff"),
+            ("/add_ms", "time.add_ms"),
+        ];
+        for (n, b) in time_morphisms { time_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%Time".to_string(), Value::Combo(ComboVal::new(time_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
         let mut disc_fields = IndexMap::new();
@@ -241,6 +298,21 @@ let mut refl_fields = IndexMap::new();
                 ("%builtin".to_string(), Value::Atom(AtomKind::Str("option.map".to_string()), EffectTag::Pure, None)),
             ]), true, IndexMap::new(), EffectTag::Pure, vec![])),
         );
+        let opt_morphisms = vec![
+            ("/and_then",  "option.and_then"),
+            ("/or",        "option.or"),
+            ("/unwrap_or", "option.unwrap_or"),
+            ("/filter",    "option.filter"),
+            ("/expect",    "option.expect"),
+            ("/zip",       "option.zip"),
+            ("/flatten",   "option.flatten"),
+        ];
+        for (n, b) in opt_morphisms {
+            option_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])));
+        }
         fields.insert(
             "@option".to_string(),
             Value::Combo(ComboVal::new(option_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
@@ -278,9 +350,39 @@ let mut refl_fields = IndexMap::new();
                 ("%builtin".to_string(), Value::Atom(AtomKind::Str("result.map_err".to_string()), EffectTag::Pure, None)),
             ]), true, IndexMap::new(), EffectTag::Pure, vec![])),
         );
+        let res_morphisms = vec![
+            ("/and_then", "result.and_then"),
+            ("/unwrap",   "result.unwrap"),
+            ("/expect",   "result.expect"),
+            ("/and",      "result.and"),
+            ("/or",       "result.or"),
+            ("/flatten",  "result.flatten"),
+        ];
+        for (n, b) in res_morphisms {
+            result_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])));
+        }
         fields.insert(
             "@result".to_string(),
             Value::Combo(ComboVal::new(result_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
+
+        // @list: Combo with %kind: #list  (SPEC_09 §2.x)
+        let mut list_type_fields = IndexMap::new();
+        list_type_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("type".to_string()), EffectTag::Pure, None));
+        list_type_fields.insert("%name".to_string(), Value::Atom(AtomKind::Str("list".to_string()), EffectTag::Pure, None));
+        list_type_fields.insert(
+            "%fmap".to_string(),
+            Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str("list.map".to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
+        fields.insert(
+            "@list".to_string(),
+            Value::Combo(ComboVal::new(list_type_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
         );
 
         // ~%Engine: observe, save, /%differential.{1,2,3}

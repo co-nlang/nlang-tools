@@ -32,6 +32,16 @@ enum Commands {
     },
     Fmt { file: PathBuf, #[arg(short, long)] write: bool },
     Serve { #[arg(short, long, default_value_t = 8080)] port: u16 },
+    /// Evaluate a nlang expression inline
+    Eval {
+        /// nlang expression to evaluate (wrap in quotes for shell safety)
+        expr: String,
+    },
+    /// Inspect a value in the local store by CAID
+    Inspect {
+        /// CAID string (hash:sha256:v2:...)
+        caid: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -47,6 +57,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Refine { source, target, sign, message } => run_refine(source, target, sign, message),
         Commands::Repl => run_repl(),
         Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
+        Commands::Eval { expr } => run_eval(expr),
+        Commands::Inspect { caid } => run_inspect(caid),
     }
 }
 
@@ -290,6 +302,71 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     program.canonicalize();
     let formatted = program.to_nlang();
     if write { fs::write(file, formatted)?; } else { println!("{}", formatted); }
+    Ok(())
+}
+
+fn run_eval(expr: String) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)
+        .unwrap_or_else(|_| Ouroboros::new_in_memory());
+
+    let mut universe = Universe::new(None, engine.root_with_system());
+
+    let parsed_expr = nlang_parser::parse_expr_only(expr.trim())
+        .map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+
+    let field = nlang_parser::ast::Field {
+        key: nlang_parser::ast::FieldKey::Named {
+            prefix: None,
+            name: "__eval_result".to_string(),
+        },
+        value: parsed_expr,
+        span: nlang_parser::ast::Span { start: 0, end: 0 },
+    };
+
+    let program = nlang_parser::ast::Program {
+        fields: vec![field],
+    };
+
+    for f in &program.fields {
+        if let Err(e) = universe.evolve(&engine, f) {
+            anyhow::bail!("Eval error: {:?}", e);
+        }
+    }
+
+    let path = nlang_parser::ast::Path {
+        anchor: nlang_parser::ast::PathAnchor::Bare,
+        segments: vec!["__eval_result".to_string()],
+        span: nlang_parser::ast::Span { start: 0, end: 0 },
+    };
+    let result = universe.observe(&engine, &path);
+    println!("{}", result.to_nlang(0));
+    Ok(())
+}
+
+fn run_inspect(caid_str: String) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)
+        .unwrap_or_else(|_| Ouroboros::new_in_memory());
+
+    let hash = ContentHash::parse(&caid_str)
+        .map_err(|_| anyhow::anyhow!("Invalid CAID format: {}", caid_str))?;
+
+    let val = engine.store.get_value(&hash)
+        .map_err(|_| anyhow::anyhow!("CAID not found in local store: {}", caid_str))?;
+
+    println!("CAID:   {}", caid_str);
+    println!("MASA:   {}", hash.masa_ref);
+    if !hash.lattice_sketch.is_empty() {
+        let sketch_preview = if hash.lattice_sketch.len() > 32 {
+            format!("{}...", &hash.lattice_sketch[..32])
+        } else {
+            hash.lattice_sketch.clone()
+        };
+        println!("Sketch: {}", sketch_preview);
+    }
+    println!();
+    println!("{}", val.to_nlang(0));
     Ok(())
 }
 
