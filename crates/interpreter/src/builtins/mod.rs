@@ -7,6 +7,7 @@ mod reflection;
 mod engine;
 mod time;
 mod bytes;
+mod regex;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +26,7 @@ pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     engine::register_engine_builtins(&mut m);
     time::register_time_builtins(&mut m);
     bytes::register_bytes_builtins(&mut m);
+    regex::register_regex_builtins(&mut m);
     
     m
 }

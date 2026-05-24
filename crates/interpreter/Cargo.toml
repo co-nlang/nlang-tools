@@ -38,7 +38,20 @@ path = "tests/str_format_p29_test.rs"
 name = "bytes_p30_test"
 path = "tests/bytes_p30_test.rs"
 
+[[test]]
+name = "regex_p31_test"
+path = "tests/regex_p31_test.rs"
+
+[[test]]
+name = "bytes_crypto_p32_test"
+path = "tests/bytes_crypto_p32_test.rs"
+
+[[test]]
+name = "str_p32_test"
+path = "tests/str_p32_test.rs"
+
 [dependencies]
+regex = "1"
 nlang-parser = { path = "../parser" }
 thiserror = "1.0"
 anyhow = "1.0"

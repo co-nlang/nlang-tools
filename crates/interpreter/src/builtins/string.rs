@@ -380,4 +380,93 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // str.reverse: {0: str} → Str (Unicode-safe char reversal)
+    m.insert("str.reverse".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            return Value::Atom(AtomKind::Str(s.chars().rev().collect::<String>()), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.count: {0: needle, 1: haystack} → Int (non-overlapping occurrences)
+    m.insert("str.count".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vn), Some(vh)) = (c.get_field("0"), c.get_field("1")) {
+                let needle   = oo.force(vn.clone(), ctx);
+                let haystack = oo.force(vh.clone(), ctx);
+                if let (Value::Atom(AtomKind::Str(n), _, _), Value::Atom(AtomKind::Str(h), _, _)) =
+                    (needle.collapse(), haystack.collapse())
+                {
+                    let count = h.matches(n.as_str()).count();
+                    return Value::Atom(AtomKind::Int(BigInt::from(count)), EffectTag::Pure, None);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.slice: {0: start, 1: end, 2: str} → Str (Unicode char indices, clamped)
+    m.insert("str.slice".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vs), Some(ve), Some(vstr)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
+                let fs  = oo.force(vs.clone(), ctx);
+                let fe  = oo.force(ve.clone(), ctx);
+                let fst = oo.force(vstr.clone(), ctx);
+                if let (
+                    Value::Atom(AtomKind::Int(s), _, _),
+                    Value::Atom(AtomKind::Int(e), _, _),
+                    Value::Atom(AtomKind::Str(st), _, _),
+                ) = (fs.collapse(), fe.collapse(), fst.collapse()) {
+                    let chars: Vec<char> = st.chars().collect();
+                    let len   = chars.len();
+                    let start = s.to_usize().unwrap_or(0).min(len);
+                    let end   = e.to_usize().unwrap_or(0).min(len);
+                    let sliced: String = if start <= end { chars[start..end].iter().collect() } else { String::new() };
+                    return Value::Atom(AtomKind::Str(sliced), EffectTag::Pure, None);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.is_empty: {0: str} → #true | #false
+    m.insert("str.is_empty".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            return Value::Atom(AtomKind::Tag(if s.is_empty() { "true".to_string() } else { "false".to_string() }), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.parse_float: {0: str} → Float | Bottom (parse error)
+    m.insert("str.parse_float".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            return match s.trim().parse::<f64>() {
+                Ok(f)  => Value::Atom(AtomKind::Float(f), EffectTag::Pure, None),
+                Err(_) => Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::Conflict,
+                    message: Some(format!("parse_float: invalid float {:?}", s)),
+                    ..Default::default()
+                })),
+            };
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.lines: {0: str} → list of Str (split by line endings)
+    m.insert("str.lines".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            let mut res = IndexMap::new();
+            for (i, line) in s.lines().enumerate() {
+                res.insert(i.to_string(), Value::Atom(AtomKind::Str(line.to_string()), EffectTag::Pure, None));
+            }
+            res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+            return Value::Combo(ComboVal::new(res, false, IndexMap::new(), EffectTag::Pure, vec![]));
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

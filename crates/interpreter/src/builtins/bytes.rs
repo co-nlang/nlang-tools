@@ -5,6 +5,9 @@ use crate::value::{Value, EffectTag};
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
+use sha2::{Sha256, Digest};
+use base64::{engine::general_purpose, Engine as _};
+use ring::hmac;
 
 pub fn register_bytes_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
 
@@ -116,6 +119,56 @@ pub fn register_bytes_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 Ok(bytes) => Value::Atom(AtomKind::Bytes(bytes), EffectTag::Pure, None),
                 Err(_)    => Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None),
             };
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // bytes.sha256: {0: bytes} → Bytes (32-byte SHA-256 hash)
+    m.insert("bytes.sha256".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Bytes(b), _, _) = oo.force(v, ctx).collapse() {
+            let mut hasher = Sha256::new();
+            hasher.update(b);
+            return Value::Atom(AtomKind::Bytes(hasher.finalize().to_vec()), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // bytes.base64_encode: {0: bytes} → Str (standard base64, with padding)
+    m.insert("bytes.base64_encode".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Bytes(b), _, _) = oo.force(v, ctx).collapse() {
+            return Value::Atom(AtomKind::Str(general_purpose::STANDARD.encode(b)), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // bytes.base64_decode: {0: str} → Bytes | #none (invalid base64 → #none)
+    m.insert("bytes.base64_decode".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            return match general_purpose::STANDARD.decode(s.trim()) {
+                Ok(bytes) => Value::Atom(AtomKind::Bytes(bytes), EffectTag::Pure, None),
+                Err(_)    => Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None),
+            };
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // bytes.hmac_sha256: {0: key_bytes, 1: msg_bytes} → Bytes (32-byte HMAC-SHA256 tag)
+    m.insert("bytes.hmac_sha256".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vk), Some(vm)) = (c.get_field("0"), c.get_field("1")) {
+                let fk = oo.force(vk.clone(), ctx);
+                let fm = oo.force(vm.clone(), ctx);
+                if let (Value::Atom(AtomKind::Bytes(key), _, _), Value::Atom(AtomKind::Bytes(msg), _, _)) =
+                    (fk.collapse(), fm.collapse())
+                {
+                    let signing_key = hmac::Key::new(hmac::HMAC_SHA256, key);
+                    let tag = hmac::sign(&signing_key, msg);
+                    return Value::Atom(AtomKind::Bytes(tag.as_ref().to_vec()), EffectTag::Pure, None);
+                }
+            }
         }
         Value::Top
     }) as Arc<BuiltinFn>);

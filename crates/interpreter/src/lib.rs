@@ -272,6 +272,13 @@ impl Ouroboros {
             ("/pad_right",   "str.pad_right"),
             ("/trim_start",  "str.trim_start"),
             ("/trim_end",    "str.trim_end"),
+            // Phase 32
+            ("/reverse",     "str.reverse"),
+            ("/count",       "str.count"),
+            ("/slice",       "str.slice"),
+            ("/is_empty",    "str.is_empty"),
+            ("/parse_float", "str.parse_float"),
+            ("/lines",       "str.lines"),
         ];
         for (n, b) in string_morphisms { string_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%String".to_string(), Value::Combo(ComboVal::new(string_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
@@ -288,14 +295,19 @@ impl Ouroboros {
         
         let mut bytes_fields = IndexMap::new();
         let bytes_morphisms = vec![
-            ("/from_str", "bytes.from_str"),
-            ("/to_str",   "bytes.to_str"),
-            ("/len",      "bytes.len"),
-            ("/at",       "bytes.at"),
-            ("/concat",   "bytes.concat"),
-            ("/slice",    "bytes.slice"),
-            ("/to_hex",   "bytes.to_hex"),
-            ("/from_hex", "bytes.from_hex"),
+            ("/from_str",      "bytes.from_str"),
+            ("/to_str",        "bytes.to_str"),
+            ("/len",           "bytes.len"),
+            ("/at",            "bytes.at"),
+            ("/concat",        "bytes.concat"),
+            ("/slice",         "bytes.slice"),
+            ("/to_hex",        "bytes.to_hex"),
+            ("/from_hex",      "bytes.from_hex"),
+            // Phase 32
+            ("/sha256",        "bytes.sha256"),
+            ("/base64_encode", "bytes.base64_encode"),
+            ("/base64_decode", "bytes.base64_decode"),
+            ("/hmac_sha256",   "bytes.hmac_sha256"),
         ];
         for (n, b) in bytes_morphisms {
             bytes_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
@@ -304,6 +316,21 @@ impl Ouroboros {
             ]), true, IndexMap::new(), EffectTag::Pure, vec![])));
         }
         fields.insert("~%Bytes".to_string(), Value::Combo(ComboVal::new(bytes_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+        
+        let mut regex_fields = IndexMap::new();
+        let regex_morphisms = vec![
+            ("/match",   "regex.match"),
+            ("/find",    "regex.find"),
+            ("/replace", "regex.replace"),
+            ("/split",   "regex.split"),
+        ];
+        for (n, b) in regex_morphisms {
+            regex_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(),  Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])));
+        }
+        fields.insert("~%Regex".to_string(), Value::Combo(ComboVal::new(regex_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
         
         let mut disc_fields = IndexMap::new();
         let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
