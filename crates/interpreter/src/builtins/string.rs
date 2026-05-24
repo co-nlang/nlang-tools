@@ -159,4 +159,94 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 21: str.format ──────────────────────────────────────
+
+    m.insert("str.format".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vfmt), Some(vlist)) = (c.get_field("0"), c.get_field("1")) {
+                let fmt_forced = oo.force(vfmt.clone(), ctx);
+                let list_forced = oo.force(vlist.clone(), ctx);
+
+                let fmt_str = match fmt_forced.collapse() {
+                    Value::Atom(AtomKind::Str(s), _, _) => s.clone(),
+                    _ => return Value::Top,
+                };
+
+                let args: Vec<String> = {
+                    let mut items = Vec::new();
+                    let mut i = 0usize;
+                    loop {
+                        match &list_forced {
+                            Value::Combo(ref lc) => {
+                                match lc.get_field(&i.to_string()) {
+                                    Some(v) => {
+                                        items.push(oo.force(v.clone(), ctx).to_string_plain());
+                                        i += 1;
+                                    }
+                                    None => break,
+                                }
+                            }
+                            _ => break,
+                        }
+                    }
+                    items
+                };
+
+                let mut result = String::with_capacity(fmt_str.len());
+                let mut chars = fmt_str.chars().peekable();
+                let mut auto_idx = 0usize;
+
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        '{' => {
+                            match chars.peek() {
+                                Some(&'{') => {
+                                    chars.next();
+                                    result.push('{');
+                                }
+                                Some(&'}') => {
+                                    chars.next();
+                                    result.push_str(args.get(auto_idx).map(|s| s.as_str()).unwrap_or(""));
+                                    auto_idx += 1;
+                                }
+                                _ => {
+                                    let mut inner = String::new();
+                                    loop {
+                                        match chars.next() {
+                                            Some('}') => break,
+                                            Some(c)   => inner.push(c),
+                                            None      => break,
+                                        }
+                                    }
+                                    match inner.trim().parse::<usize>() {
+                                        Ok(idx) => {
+                                            result.push_str(args.get(idx).map(|s| s.as_str()).unwrap_or(""));
+                                        }
+                                        Err(_) => {
+                                            result.push('{');
+                                            result.push_str(&inner);
+                                            result.push('}');
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        '}' => {
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                                result.push('}');
+                            } else {
+                                result.push('}');
+                            }
+                        }
+                        other => result.push(other),
+                    }
+                }
+
+                return Value::Atom(AtomKind::Str(result), EffectTag::Pure, None);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }
