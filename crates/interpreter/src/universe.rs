@@ -154,6 +154,32 @@ impl Universe {
             }
         }
 
+        // Step 1d: cycle detection — reject if source→target would close a refine cycle
+        {
+            let map = engine.refine_map.read().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            for src in &source_caids {
+                let src_str = src.to_string();
+                for tgt in &target_caids {
+                    if src == tgt { continue; }
+                    let mut stack = vec![tgt.to_string()];
+                    let mut seen = std::collections::HashSet::new();
+                    while let Some(current) = stack.pop() {
+                        if current == src_str {
+                            return Err(anyhow::anyhow!(
+                                "refine cycle detected: {} → {} would create a cycle",
+                                src_str, tgt
+                            ));
+                        }
+                        if seen.insert(current.clone()) {
+                            if let Some(nexts) = map.get(&current) {
+                                stack.extend(nexts.iter().cloned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Step 2: build Refine Commit
         let current_root_hash = match &self.head {
             Some(h) => engine.store.get_commit(h)?.root.clone(),

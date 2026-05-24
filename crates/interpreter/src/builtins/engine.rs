@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn};
-use crate::value::{Value, EffectTag, BottomCause, BottomDetail, MasaRef, ContentHash};
+use crate::value::{Value, EffectTag, BottomCause, BottomDetail, MasaRef, ContentHash, ComboVal};
 use crate::value::ObservationStrategy;
 use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
 use num_traits::ToPrimitive;
@@ -252,5 +252,82 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             }
             Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
         } else { BottomCause::Conflict.into() }
+    }) as Arc<BuiltinFn>);
+
+    // ── Functor operations (Phase 15) ──────────────────────────────
+
+    m.insert("option.map".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(f), Some(opt_v)) = (c.get_field("0"), c.get_field("1")) {
+                let f = f.clone();
+                let opt = oo.force(opt_v.clone(), ctx);
+                let was_none = match &opt {
+                    Value::Atom(AtomKind::Tag(t), _, _) => t.trim_start_matches('#') == "none",
+                    _ => false,
+                };
+                let inner = match &opt {
+                    Value::Combo(ref cv) => cv.get_field("%val").cloned(),
+                    _ => None,
+                };
+                if was_none {
+                    return Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None);
+                }
+                if let Some(val) = inner {
+                    let mapped = if matches!(f, Value::Top) { val } else { oo.apply_morphism(f, val, ctx) };
+                    let mut res_fields = IndexMap::new();
+                    res_fields.insert("%val".to_string(), mapped);
+                    return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("result.map".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(f), Some(res_v)) = (c.get_field("0"), c.get_field("1")) {
+                let f = f.clone();
+                let res = oo.force(res_v.clone(), ctx);
+                match &res {
+                    Value::Combo(ref cv) => {
+                        if let Some(inner) = cv.get_field("%val").cloned() {
+                            let mapped = if matches!(f, Value::Top) { inner } else { oo.apply_morphism(f, inner, ctx) };
+                            let mut res_fields = IndexMap::new();
+                            res_fields.insert("%val".to_string(), mapped);
+                            return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+                        }
+                        if cv.get_field("%cause").is_some() {
+                            return res.clone();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("result.map_err".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(f), Some(res_v)) = (c.get_field("0"), c.get_field("1")) {
+                let f = f.clone();
+                let res = oo.force(res_v.clone(), ctx);
+                match &res {
+                    Value::Combo(ref cv) => {
+                        if cv.get_field("%val").is_some() {
+                            return res.clone();
+                        }
+                        if let Some(cause) = cv.get_field("%cause").cloned() {
+                            let mapped = if matches!(f, Value::Top) { cause } else { oo.apply_morphism(f, cause, ctx) };
+                            let mut res_fields = IndexMap::new();
+                            res_fields.insert("%cause".to_string(), mapped);
+                            return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Top
     }) as Arc<BuiltinFn>);
 }

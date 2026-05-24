@@ -125,3 +125,28 @@ fn eval_context_reads_config_strategy() {
     assert!(matches!(ctx.strategy, ObservationStrategy::Blur),
         "~%Config %strategy: #blur should map to ObservationStrategy::Blur");
 }
+
+// ── Phase 15: %timeout → timeout_deadline tests ──
+
+#[test]
+fn eval_context_sets_timeout_deadline() {
+    let oo = Ouroboros::new_in_memory();
+    let ctx = oo.eval_context();
+    assert!(ctx.timeout_deadline.is_some(),
+        "eval_context() should set timeout_deadline from ~%Config %timeout");
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let deadline = ctx.timeout_deadline.unwrap();
+    assert!(deadline > now_ms, "timeout_deadline should be in the future");
+    assert!(deadline < now_ms + 2000, "timeout_deadline should be within 2 seconds");
+}
+
+#[test]
+fn eval_context_new_has_no_timeout() {
+    let oo = Ouroboros::new_in_memory();
+    let ctx = EvalContext::new(oo.root_with_system());
+    assert!(ctx.timeout_deadline.is_none(),
+        "EvalContext::new() should not set timeout_deadline");
+}

@@ -73,9 +73,17 @@ impl EvalContext {
     pub fn with_fuel(mut self, fuel: u64) -> Self { self.fuel = fuel; self }
     pub fn with_strategy(mut self, strategy: ObservationStrategy) -> Self { self.strategy = strategy; self }
     pub fn check_resources(&mut self, cost: u64) -> Result<(), ResourceExhausted> { 
-        if self.fuel < cost { Err(ResourceExhausted::FuelExhausted) } 
-        else if self.depth > self.max_unification_depth as u32 { Err(ResourceExhausted::StackOverflow) } 
-        else { self.fuel -= cost; Ok(()) } 
+        if self.fuel < cost { return Err(ResourceExhausted::FuelExhausted); }
+        if self.depth > self.max_unification_depth as u32 { return Err(ResourceExhausted::StackOverflow); }
+        if let Some(deadline) = self.timeout_deadline {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            if now > deadline { return Err(ResourceExhausted::Timeout); }
+        }
+        self.fuel -= cost;
+        Ok(())
     }
 }
 
@@ -208,6 +216,13 @@ let mut refl_fields = IndexMap::new();
             "%none".to_string(),
             Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None),
         );
+        option_fields.insert(
+            "%fmap".to_string(),
+            Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str("option.map".to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
         fields.insert(
             "@option".to_string(),
             Value::Combo(ComboVal::new(option_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
@@ -230,6 +245,20 @@ let mut refl_fields = IndexMap::new();
                 IndexMap::from_iter(vec![("%cause".to_string(), Value::Top)]),
                 false, IndexMap::new(), EffectTag::Pure, vec![],
             )),
+        );
+        result_fields.insert(
+            "%fmap".to_string(),
+            Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str("result.map".to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
+        result_fields.insert(
+            "%map_err".to_string(),
+            Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
+                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
+                ("%builtin".to_string(), Value::Atom(AtomKind::Str("result.map_err".to_string()), EffectTag::Pure, None)),
+            ]), true, IndexMap::new(), EffectTag::Pure, vec![])),
         );
         fields.insert(
             "@result".to_string(),
@@ -312,6 +341,15 @@ let mut refl_fields = IndexMap::new();
                     _ => ObservationStrategy::Blur,
                 };
             }
+        if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%timeout").cloned() {
+            if let Some(timeout_ms) = n.to_u64() {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                ctx.timeout_deadline = Some(now_ms + timeout_ms);
+            }
+        }
         }
         ctx
     }

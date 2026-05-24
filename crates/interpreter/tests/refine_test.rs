@@ -363,3 +363,33 @@ fn shadow_scan_finds_field_in_committed_root() {
 
     let _ = std::fs::remove_dir_all(&base_dir);
 }
+
+// ── Phase 15: cycle detection tests ──
+
+#[test]
+#[test]
+fn refine_cycle_ab_ba_rejected() {
+    let oo = Arc::new(Ouroboros::new_in_memory());
+    let base_dir = std::env::temp_dir().join("nlang-cycle-ab");
+    let _ = std::fs::create_dir_all(&base_dir);
+    let mut u = Universe::new(None, oo.root_with_system());
+    { oo.architect_registry.write().unwrap().clear(); }
+
+    // Manually construct a cycle: A→B, B→A in refine_map
+    let val_a = Value::Top;
+    let val_b = Value::Atom(AtomKind::Int(5i64.into()), EffectTag::Pure, None);
+    let ca = oo.store.put_value(&val_a).unwrap();
+    let cb = oo.store.put_value(&val_b).unwrap();
+    {
+        let mut map = oo.refine_map.write().unwrap();
+        map.entry(ca.to_string()).or_default().push(cb.to_string());
+        map.entry(cb.to_string()).or_default().push(ca.to_string());
+    }
+    // Now try to commit a refine A→B again: src=ca, tgt=cb
+    // Geometric: Top & 5 = 5 = cb ✓. BFS from cb: cb→ca→cb... ca matches src → cycle!
+    let meta = CommitMeta { author: None, timestamp: 0, message: None };
+    let result = u.refine(&oo, &base_dir, vec![ca.clone()], vec![cb.clone()], None, meta);
+    assert!(result.is_err(), "A→B with A→B→A cycle should be rejected: {:?}", result);
+    let err_str = result.unwrap_err().to_string();
+    assert!(err_str.contains("cycle"), "Error should mention cycle: {}", err_str);
+}
