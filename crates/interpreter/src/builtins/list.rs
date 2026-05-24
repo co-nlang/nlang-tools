@@ -378,4 +378,51 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 19: List count ─────────────────────────────────────
+
+    m.insert("list.count".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
+                let pred_f = pred_f.clone();
+                let list = oo.force(list_v.clone(), ctx);
+                let items = extract_list_items(&list);
+                let mut count: usize = 0;
+                for item in items {
+                    let result = oo.apply_morphism(pred_f.clone(), item, ctx);
+                    if result.to_string_plain().trim_start_matches('#') == "true" {
+                        count += 1;
+                    }
+                }
+                return Value::Atom(AtomKind::Int(BigInt::from(count)), EffectTag::Pure, None);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 19: List zip_with ──────────────────────────────────
+
+    m.insert("list.zip_with".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(f), Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
+                let f = f.clone();
+                let list_a = oo.force(va.clone(), ctx);
+                let list_b = oo.force(vb.clone(), ctx);
+                let items_a = extract_list_items(&list_a);
+                let items_b = extract_list_items(&list_b);
+                let min_len = items_a.len().min(items_b.len());
+                let mut result: Vec<Value> = Vec::with_capacity(min_len);
+                for i in 0..min_len {
+                    let mut pair_fields = IndexMap::new();
+                    pair_fields.insert("0".to_string(), items_a[i].clone());
+                    pair_fields.insert("1".to_string(), items_b[i].clone());
+                    let pair = Value::Combo(ComboVal::new(pair_fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+                    let mapped = oo.apply_morphism(f.clone(), pair, ctx);
+                    result.push(mapped);
+                }
+                return build_list_value(result);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

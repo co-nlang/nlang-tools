@@ -405,4 +405,110 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             _ => Value::Top
         }
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 19: Math comparison and rounding ────────────────────
+
+    m.insert("math.min".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
+                let a = oo.force(va.clone(), ctx).collapse().clone();
+                let b = oo.force(vb.clone(), ctx).collapse().clone();
+                let res_e = a.effect().max(b.effect());
+                return match (&a, &b) {
+                    (Value::Atom(AtomKind::Int(ia), _, _), Value::Atom(AtomKind::Int(ib), _, _)) =>
+                        Value::Atom(AtomKind::Int(if ia <= ib { ia.clone() } else { ib.clone() }), res_e, None),
+                    (Value::Atom(AtomKind::Float(fa), _, _), Value::Atom(AtomKind::Float(fb), _, _)) =>
+                        Value::Atom(AtomKind::Float(fa.min(*fb)), res_e, None),
+                    (Value::Atom(AtomKind::Int(ia), _, _), Value::Atom(AtomKind::Float(fb), _, _)) =>
+                        Value::Atom(AtomKind::Float(ia.to_f64().unwrap_or(0.0).min(*fb)), res_e, None),
+                    (Value::Atom(AtomKind::Float(fa), _, _), Value::Atom(AtomKind::Int(ib), _, _)) =>
+                        Value::Atom(AtomKind::Float(fa.min(ib.to_f64().unwrap_or(0.0))), res_e, None),
+                    _ => BottomCause::Conflict.into(),
+                };
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("math.max".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
+                let a = oo.force(va.clone(), ctx).collapse().clone();
+                let b = oo.force(vb.clone(), ctx).collapse().clone();
+                let res_e = a.effect().max(b.effect());
+                return match (&a, &b) {
+                    (Value::Atom(AtomKind::Int(ia), _, _), Value::Atom(AtomKind::Int(ib), _, _)) =>
+                        Value::Atom(AtomKind::Int(if ia >= ib { ia.clone() } else { ib.clone() }), res_e, None),
+                    (Value::Atom(AtomKind::Float(fa), _, _), Value::Atom(AtomKind::Float(fb), _, _)) =>
+                        Value::Atom(AtomKind::Float(fa.max(*fb)), res_e, None),
+                    (Value::Atom(AtomKind::Int(ia), _, _), Value::Atom(AtomKind::Float(fb), _, _)) =>
+                        Value::Atom(AtomKind::Float(ia.to_f64().unwrap_or(0.0).max(*fb)), res_e, None),
+                    (Value::Atom(AtomKind::Float(fa), _, _), Value::Atom(AtomKind::Int(ib), _, _)) =>
+                        Value::Atom(AtomKind::Float(fa.max(ib.to_f64().unwrap_or(0.0))), res_e, None),
+                    _ => BottomCause::Conflict.into(),
+                };
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("math.floor".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse().clone() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.floor()), e, None),
+            Value::Atom(AtomKind::Int(i), e, _)   => Value::Atom(AtomKind::Int(i), e, None),
+            _ => BottomCause::Conflict.into(),
+        }
+    }) as Arc<BuiltinFn>);
+
+    m.insert("math.ceil".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse().clone() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.ceil()), e, None),
+            Value::Atom(AtomKind::Int(i), e, _)   => Value::Atom(AtomKind::Int(i), e, None),
+            _ => BottomCause::Conflict.into(),
+        }
+    }) as Arc<BuiltinFn>);
+
+    m.insert("math.round".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse().clone() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.round()), e, None),
+            Value::Atom(AtomKind::Int(i), e, _)   => Value::Atom(AtomKind::Int(i), e, None),
+            _ => BottomCause::Conflict.into(),
+        }
+    }) as Arc<BuiltinFn>);
+
+    m.insert("math.clamp".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vlo), Some(vhi), Some(vx)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
+                let lo = oo.force(vlo.clone(), ctx).collapse().clone();
+                let hi = oo.force(vhi.clone(), ctx).collapse().clone();
+                let x  = oo.force(vx.clone(),  ctx).collapse().clone();
+                let res_e = lo.effect().max(hi.effect()).max(x.effect());
+                let to_f = |v: &Value| -> Option<f64> {
+                    match v {
+                        Value::Atom(AtomKind::Float(f), _, _) => Some(*f),
+                        Value::Atom(AtomKind::Int(i), _, _) => i.to_f64(),
+                        _ => None,
+                    }
+                };
+                if let (Some(flo), Some(fhi), Some(fx)) = (to_f(&lo), to_f(&hi), to_f(&x)) {
+                    let clamped = fx.clamp(flo, fhi);
+                    return match &x {
+                        Value::Atom(AtomKind::Int(ix), _, _) => {
+                            if (clamped - fx).abs() < f64::EPSILON {
+                                Value::Atom(AtomKind::Int(ix.clone()), res_e, None)
+                            } else {
+                                Value::Atom(AtomKind::Float(clamped), res_e, None)
+                            }
+                        }
+                        _ => Value::Atom(AtomKind::Float(clamped), res_e, None),
+                    };
+                }
+                return BottomCause::Conflict.into();
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

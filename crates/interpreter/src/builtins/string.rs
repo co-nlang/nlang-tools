@@ -1,9 +1,12 @@
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::str::FromStr;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn};
-use crate::value::{Value, ComboVal, EffectTag};
+use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail};
 use nlang_parser::ast::AtomKind;
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 
 pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("str.concat".to_string(), m.get("math.add").unwrap().clone());
@@ -110,6 +113,47 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let fs = oo.force(vs.clone(), ctx).collapse().clone();
                 if let (Value::Atom(AtomKind::Str(p), e1, _), Value::Atom(AtomKind::Str(s), e2, _)) = (fp, fs) {
                     return Value::Atom(AtomKind::Tag(if s.contains(&p) { "true".to_string() } else { "false".to_string() }), e1.max(e2), None);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // ── Phase 19: String conversions ─────────────────────────────
+
+    m.insert("str.parse_int".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            match BigInt::from_str(s.trim()) {
+                Ok(n) => return Value::Atom(AtomKind::Int(n), EffectTag::Pure, None),
+                Err(_) => return Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::Conflict,
+                    message: Some(format!("parse_int: invalid integer {:?}", s)),
+                    ..Default::default()
+                })),
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    m.insert("str.from_int".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        let forced = oo.force(v, ctx);
+        match forced.collapse() {
+            Value::Atom(AtomKind::Int(n), e, _) => Value::Atom(AtomKind::Str(n.to_string()), *e, None),
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Str(format!("{}", f)), *e, None),
+            other => Value::Atom(AtomKind::Str(other.to_string_plain()), EffectTag::Pure, None),
+        }
+    }) as Arc<BuiltinFn>);
+
+    m.insert("str.repeat".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vn), Some(vs)) = (c.get_field("0"), c.get_field("1")) {
+                let fn_v = oo.force(vn.clone(), ctx).collapse().clone();
+                let fs   = oo.force(vs.clone(), ctx).collapse().clone();
+                if let (Value::Atom(AtomKind::Int(n), _, _), Value::Atom(AtomKind::Str(s), e, _)) = (fn_v, fs) {
+                    let count = n.to_usize().unwrap_or(0);
+                    return Value::Atom(AtomKind::Str(s.repeat(count)), e, None);
                 }
             }
         }
