@@ -18,6 +18,7 @@ pub const SEED_IO:        &str = "hash:sha256:v1:e620bfad72ec3142d4ffbb7d3795549
 pub const SEED_ENV:       &str = "hash:sha256:v1:361d79419a1f56a72f923115812360c8aee25a35f47163068223f13acfcef334";
 pub const SEED_PROCESS:   &str = "hash:sha256:v1:e2720f7dd95ce94e03f1d33b724d13a16c1075dcb95b794ebe79f29c5cb25ada";
 pub const SEED_PATH:      &str = "hash:sha256:v1:d7f80fd2dc1e98b01a782f21266d99c9df8feb548bb92bd525ce4f0b0b50cb65";
+pub const SEED_QUERY:     &str = "hash:sha256:v1:ed1e83ba547dd53732d265531fd219627d5e24bd9583f3255b8a255cac173c3c";
 
 pub const SEED_OPTION:    &str = "hash:sha256:v1:882e630c8f1cf5cd644ae7cfe6561e8738911c0b5105dcd0680266433400a89d";
 pub const SEED_RESULT:    &str = "hash:sha256:v1:bf98c6ee2b26ba36628f5b14050cd48b090e6e4e8248bb8e6e98a9d26fb66c46";
@@ -40,6 +41,7 @@ pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
         ("~%Env",        SEED_ENV),
         ("~%Process",    SEED_PROCESS),
         ("~%Path",       SEED_PATH),
+        ("~%Query",      SEED_QUERY),
         ("~%Regex",      SEED_REGEX),
         ("@option",      SEED_OPTION),
         ("@result",      SEED_RESULT),

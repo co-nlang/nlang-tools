@@ -13,6 +13,7 @@ mod io;
 mod env;
 mod process;
 mod path;
+mod query;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,6 +38,7 @@ pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     env::register_env_builtins(&mut m);
     process::register_process_builtins(&mut m);
     path::register_path_builtins(&mut m);
+    query::register_query_builtins(&mut m);
     
     m
 }

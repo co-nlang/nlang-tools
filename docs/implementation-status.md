@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-25（Phase 41 完成後）  
-> 測試數量：~452 tests passing（57+ 個測試套件）
+> 最後更新：2026-05-25（Phase 42 完成後）  
+> 測試數量：~458 tests passing（58+ 個測試套件）
 
 ---
 
@@ -13,7 +13,7 @@
 | SPEC_06（統一化邏輯） | **98%** | `approximate_phase_diff` ✓；視界震盪防禦（P3） |
 | SPEC_09（標準庫） | **100%** | — |
 | SPEC_10（演化與 Commit） | **99%** | — |
-| SPEC_13（OODP） | **72%** | GPP/CIP 零知識證明（P3）；/find 多跳路由完整實作 |
+| SPEC_13（OODP） | **80%** | GPP/CIP 零知識證明（P3，研究級） |
 | SPEC_17（自我演化） | **0%** | N-1 自舉算法（長期目標） |
 
 ---
@@ -178,13 +178,13 @@
 | `d_l_approx` cosine similarity | `ladd.rs` — Phase 16 |
 | NerveEntry.field_keys 精確交集（語義 key 過濾） | `builtins/disc.rs` — Phase 38 |
 | 視界震盪防禦（SemanticEclipse + blacklist + tiebreaker） | `disc.rs`, `value.rs`, `lib.rs:EvalContext` — Phase 41 |
+| `disc.find` 多跳迭代路由（MAX_ROUTING_HOPS = 16） | `disc.rs:multi-hop loop` — Phase 42 |
 
 ### 剩餘 △
 
 | 功能 | 說明 |
 |:-----|:-----|
-| `/find` 完整引力導航 | disc.find 單跳完整；多跳迭代路由未實作 |
-| GPP/CIP 零知識證明 | APP_05 §5-6，P3 |
+| GPP/CIP 零知識證明 | APP_05 §5-6，研究級，P3 |
 
 ---
 
@@ -278,5 +278,6 @@ pub struct ComboVal {
 | `engine_p39_test` | engine.equivalence_map / engine.resolve |
 | `h1_phase_test` | phase_diff_between、H1Split 觸發、Top-MASA 無回歸 |
 | `semantic_eclipse_test` | disc.find blacklist、hop budget、SemanticEclipse 觸發、tiebreaker 確定性 |
+| `disc_multihop_test` | 多跳路由、hop counter、store 命中、預算耗盡、空 registry |
 
-**總計：~452 tests, 0 failed**
+**總計：~458 tests, 0 failed**

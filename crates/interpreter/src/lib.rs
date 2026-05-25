@@ -418,7 +418,23 @@ impl Ouroboros {
             ]), true, IndexMap::new(), EffectTag::Pure, vec![])));
         }
         fields.insert("~%Path".to_string(), Value::Combo(ComboVal::new(path_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
-        
+
+        // ~%Query module
+        let mut query_fields = IndexMap::new();
+        let qmorph = |name: &str, id: &str, eff: EffectTag| -> Value {
+            let mut f = IndexMap::new();
+            f.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+            f.insert("%builtin".to_string(), Value::Atom(AtomKind::Str(id.to_string()), EffectTag::Pure, None));
+            f.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None));
+            Value::Combo(ComboVal::new(f, true, IndexMap::new(), eff, vec![]))
+        };
+        query_fields.insert("/select".to_string(),     qmorph("/select",     "query.select",     EffectTag::Pure));
+        query_fields.insert("/where".to_string(),      qmorph("/where",      "query.where",      EffectTag::IO));
+        query_fields.insert("/pluck".to_string(),      qmorph("/pluck",      "query.pluck",      EffectTag::Pure));
+        query_fields.insert("/deep_merge".to_string(), qmorph("/deep_merge", "query.deep_merge", EffectTag::Pure));
+        let query_module = Value::Combo(ComboVal::new(query_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
+        fields.insert("~%Query".to_string(), query_module);
+
         let mut disc_fields = IndexMap::new();
         let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
         for (n, b) in disc_morphisms { disc_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![]))); }

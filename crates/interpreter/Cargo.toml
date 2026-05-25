@@ -94,6 +94,10 @@ path = "tests/semantic_eclipse_test.rs"
 name = "disc_multihop_test"
 path = "tests/disc_multihop_test.rs"
 
+[[test]]
+name = "query_p43_test"
+path = "tests/query_p43_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }
