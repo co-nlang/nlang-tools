@@ -1,11 +1,11 @@
 # nlang 功能路線圖
 
-> 最後更新：2026-05-25（Phase 34 完成後）  
+> 最後更新：2026-05-25（Phase 39 完成後）  
 > 開發模式：由 "project brain" AI 出規劃，執行 AI 實作，逐 Phase 交接
 
 ---
 
-## 1. 已完成功能（Phase 1–34）
+## 1. 已完成功能（Phase 1–39）
 
 ### 核心格論
 
@@ -53,6 +53,7 @@
 | `%branch` Riemann 面（ln/sqrt/eml） | 13/14 |
 | min/max/floor/ceil/round/clamp | 19 |
 | gcd/lcm/sign/log2/log10 | 27 |
+| factorial/choose/is_prime/pow_mod | 35 |
 
 ### 標準庫 ~%List
 
@@ -65,6 +66,7 @@
 | partition/flatten/sum/min_by/max_by | 22 |
 | unique/range/reduce；@list genesis seed | 25 |
 | group_by/chunk/window | 28 |
+| enumerate/sort_by/dedup/intersperse | 35 |
 
 ### 標準庫 ~%String
 
@@ -108,6 +110,9 @@
 | ~%Regex | 31 | 4 | match/find/replace/split |
 | ~%Json | 33 | 4 | parse/stringify/get/keys |
 | ~%Io | 34 | 4 | read_file/write_file/exists/append_file（IO） |
+| ~%Env | 36 | 3 | get/args/cwd（IO） |
+| ~%Process | 36 | 2 | exit/pid（IO） |
+| ~%Path | 37 | 5 | join/dirname/basename/extension/is_absolute（Pure） |
 
 ### 引擎基礎設施
 
@@ -119,21 +124,15 @@
 | `%timeout` → `timeout_deadline` 動態設定 | 15 |
 | `d_l_approx` cosine similarity | 16 |
 | `oo eval` + `oo inspect` CLI 子命令 | 23 |
+| NerveEntry.field_keys 精確交集（語義 key 過濾） | 38 |
+| `~%Engine.equivalence_map` 動態視圖 | 39 |
+| `~%Engine.resolve` CAID 鏈尾追蹤 | 39 |
 
 ---
 
 ## 2. 剩餘 Backlog
 
-### P2：有明確設計，下一批候選
-
-| 功能 | 說明 | 規格章節 |
-|:-----|:-----|:---------|
-| List Round 2 | list.enumerate/sort_by/dedup/intersperse | SPEC_09 |
-| Math Round 2 | math.factorial/choose/is_prime/pow_mod | SPEC_09 |
-| `~%Env` 迷你模組 | env.get/env.args/env.cwd（環境變數） | SPEC_09 |
-| `~%Process` | process.exit/process.pid | SPEC_09 |
-| Equivalence map 合成 | `~%Engine.equivalence_map` 動態視圖 | SPEC_17 §1.3 |
-| `NerveEntry.field_keys` 精確交集 | Čech nerve 精確過濾 | Phase 11 deferred |
+### P2：已全部完成（Phase 35–39）✓
 
 ### P3：長期目標
 
@@ -152,7 +151,8 @@
 
 Phase 1–16：核心格論、CAID、#refine、基礎標準庫（~198 tests）  
 Phase 17–24：標準庫大幅擴展（option/result/list/refl 補全、cond.match、eval CLI）→ 274 tests  
-Phase 25–34：新模組（Bytes/Regex/Json/Io）+ 字串/數學/列表補全 → ~392 tests
+Phase 25–34：新模組（Bytes/Regex/Json/Io）+ 字串/數學/列表補全 → ~392 tests  
+Phase 35–39：P2 清空（List/Math Round 2、Env/Process/Path 模組、nerve 精確交集、Engine 視圖）→ ~439 tests
 
 每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
 零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。

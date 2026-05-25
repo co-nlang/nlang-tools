@@ -1,6 +1,6 @@
 # nlang 引擎架構概覽
 
-> 最後更新：2026-05-25（Phase 34 完成後）  
+> 最後更新：2026-05-25（Phase 39 完成後）  
 > 供新貢獻者快速定位切入點。
 
 ---
@@ -45,7 +45,10 @@ nlang-tools/
 │   │       ├── bytes.rs          # ~%Bytes（12 態射：基礎 + sha256/base64/hmac）
 │   │       ├── regex.rs          # ~%Regex（/match /find /replace /split）
 │   │       ├── json.rs           # ~%Json（/parse /stringify /get /keys）
-│   │       └── io.rs             # ~%Io（/read_file /write_file /exists /append_file）
+│   │       ├── io.rs             # ~%Io（/read_file /write_file /exists /append_file）
+│   │       ├── env.rs            # ~%Env（/get /args /cwd）
+│   │       ├── process.rs        # ~%Process（/exit /pid）
+│   │       └── path.rs           # ~%Path（/join /dirname /basename /extension /is_absolute）
 │   │
 │   └── oo/              # CLI 工具入口
 │       ├── src/main.rs          # CLI 命令處理
@@ -55,7 +58,7 @@ nlang-tools/
     ├── implementation-status.md  # 實作狀態
     ├── engine-architecture.md    # 本文件
     ├── feature-roadmap.md        # 功能路線圖
-    └── phase-N-handover.md       # Phase 1–34 交接文件
+    └── phase-N-handover.md       # Phase 1–39 交接文件
 ```
 
 ---
@@ -301,23 +304,26 @@ refine(source_caids, target_caids, authority, meta):
 
 ## 5. 內建模組詳解
 
-### 5.1 現有模組清單（Phase 34 後）
+### 5.1 現有模組清單（Phase 39 後）
 
 | 模組 | 檔案 | 態射數 | EffectTag | 代表功能 |
 |:-----|:-----|:------:|:---------:|:---------|
-| ~%Math | `math.rs` | 31 | Pure | 算術、超越函數、gcd/log2/sign |
+| ~%Math | `math.rs` | 35 | Pure | 算術、超越函數、gcd/log2/factorial/is_prime |
 | ~%Complex | `math.rs` | 4 | Pure | conj/phase/real/imag |
-| ~%List | `list.rs` | 32 | Pure | 全 FP 操作、group_by/chunk/window |
+| ~%List | `list.rs` | 36 | Pure | 全 FP 操作、group_by/enumerate/sort_by |
 | ~%String | `string.rs` | 28 | Pure | 全字串操作、format 命名佔位符 |
 | ~%Bytes | `bytes.rs` | 12 | Pure | 二進位 + sha256/base64/hmac |
 | ~%Regex | `regex.rs` | 4 | Pure | match/find/replace/split |
 | ~%Json | `json.rs` | 4 | Pure | parse/stringify/get/keys |
 | ~%Io | `io.rs` | 4 | **IO** | 檔案讀寫、exists、append |
+| ~%Env | `env.rs` | 3 | **IO** | get/args/cwd |
+| ~%Process | `process.rs` | 2 | **IO** | exit/pid |
+| ~%Path | `path.rs` | 5 | Pure | join/dirname/basename/extension/is_absolute |
 | ~%Time | `time.rs` | 4 | **IO** | now/format/diff/add_ms |
 | ~%Cond | `cond.rs` | 3 | Pure | if/cond/match |
 | ~%Reflection | `reflection.rs` | 17 | Pure | 反射、get/set/delete |
-| ~%Discovery | `disc.rs` | 6 | **IO** | LADD 發現協議 |
-| ~%Engine | `engine.rs` | 8 | Mixed | observe/save/differential |
+| ~%Discovery | `disc.rs` | 6 | **IO** | LADD 發現協議（Phase 38 精確 key 過濾） |
+| ~%Engine | `engine.rs` | 10 | Mixed | observe/save/equivalence_map/resolve |
 | @option | `engine.rs` | 8 | Pure | Functor + 全組合子 |
 | @result | `engine.rs` | 9 | Pure | Functor + 全組合子 |
 | @list | — | 1 | Pure | %fmap → list.map |
@@ -336,6 +342,7 @@ refine(source_caids, target_caids, authority, meta):
 
 ```
 ~%Math, ~%List, ~%String, ~%Bytes, ~%Regex, ~%Json, ~%Io,
+~%Env, ~%Process, ~%Path,
 ~%Time, ~%Complex, ~%Cond, ~%Reflection, ~%Discovery,
 ~%Engine, ~%Official, ~%Config,
 @option, @result, @list,
@@ -389,7 +396,7 @@ EffectTag 在 Value 傳播時取 `max`（最高效果勝出）。
 
 ### 7.1 Rust 整合測試（tests/*.rs）
 
-~392 tests，0 failed。主要覆蓋：
+~439 tests，0 failed。主要覆蓋：
 
 - **格論**：unify, complement, oml, orthomodular
 - **CAID**：caid, lattice_sketch_v2（17 固定向量）
@@ -398,6 +405,7 @@ EffectTag 在 Value 傳播時取 `max`（最高效果勝出）。
 - **標準庫**：eval, dispatch, cond_match, math_branch, type_constraint
 - **LADD**：ladd, nerve_routing
 - **Phase 25–34**：list/str/bytes/regex/json/io 各專項測試套件
+- **Phase 35–39**：list/math Round 2、env/process/path、nerve 精確交集、engine.equivalence_map
 
 ### 7.2 Genesis 穩定性測試
 
@@ -450,5 +458,5 @@ cargo test --manifest-path crates/interpreter/Cargo.toml seed_caids_are_stable -
 3. 讀 `eval.rs` — 理解求值流程
 4. 讀 `builtins/json.rs` 或 `builtins/bytes.rs` — 最清晰的模組實作範本
 5. 看 `genesis.rs` + `lib.rs:root_with_system()` — 理解模組系統結構
-6. 用 `cargo test -p nlang-interpreter` 驗證（~392 tests all pass）
+6. 用 `cargo test -p nlang-interpreter` 驗證（~439 tests all pass）
 7. 參考 `docs/phase-N-handover.md` — 了解各功能的決策背景

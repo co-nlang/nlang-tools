@@ -1,4 +1,4 @@
-use crate::value::{Value, MasaRef};
+use crate::value::{Value, MasaRef, ComboVal};
 use crate::bn_serial::serialize_bn;
 use sha2::{Sha256, Digest};
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
@@ -138,4 +138,34 @@ fn leb128_encode(mut v: u64, out: &mut Vec<u8>) {
 pub fn compute_sketch_approximate(bn_bytes: &[u8]) -> String {
     let hash = Sha256::digest(bn_bytes);
     base64::Engine::encode(&STANDARD_NO_PAD, &hash[..12])
+}
+
+/// Compute H¹ phase obstruction angle θ = arccos(Tr(P_A · P_B)).
+///
+/// Tr(P_A · P_B) = |⟨ψ_A|ψ_B⟩|² where |ψ⟩ = Σ √λ_i e^(iφ_i) |e_i⟩ / ‖ψ‖.
+/// Returns θ ∈ [0, π/2]. Returns 0.0 for degenerate (all-zero amplitude) states.
+pub fn phase_diff_between(a: &ComboVal, b: &ComboVal) -> f64 {
+    let (amps_a, phases_a) = extract_spectral_components(&Value::Combo(a.clone()));
+    let (amps_b, phases_b) = extract_spectral_components(&Value::Combo(b.clone()));
+
+    let norm_a: f64 = amps_a.iter().sum::<f64>().sqrt();
+    let norm_b: f64 = amps_b.iter().sum::<f64>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+
+    let mut re = 0.0f64;
+    let mut im = 0.0f64;
+    for i in 0..MAX_COMPONENTS {
+        let amp = (amps_a[i] * amps_b[i]).sqrt();
+        let delta_phi = phases_b[i] - phases_a[i];
+        re += amp * delta_phi.cos();
+        im += amp * delta_phi.sin();
+    }
+    let denom = norm_a * norm_b;
+    re /= denom;
+    im /= denom;
+
+    let trace = (re * re + im * im).clamp(0.0, 1.0);
+    trace.acos()
 }

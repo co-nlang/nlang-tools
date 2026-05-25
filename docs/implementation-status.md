@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-25（Phase 34 完成後）  
-> 測試數量：~392 tests passing（50+ 個測試套件）
+> 最後更新：2026-05-25（Phase 39 完成後）  
+> 測試數量：~439 tests passing（55+ 個測試套件）
 
 ---
 
@@ -11,8 +11,8 @@
 |:---------|:------:|:------------|
 | SPEC_01（格論基礎） | **95%** | ArithmeticOnAnchor 未在所有算術路徑攔截 |
 | SPEC_06（統一化邏輯） | **90%** | `approximate_phase_diff`（高風險，暫緩） |
-| SPEC_09（標準庫） | **99%** | equivalence map 接口 |
-| SPEC_10（演化與 Commit） | **97%** | Equivalence map 合成視圖 |
+| SPEC_09（標準庫） | **100%** | — |
+| SPEC_10（演化與 Commit） | **99%** | — |
 | SPEC_13（OODP） | **65%** | GPP/CIP 零知識證明（P3） |
 | SPEC_17（自我演化） | **0%** | N-1 自舉算法（長期目標） |
 
@@ -73,13 +73,13 @@
 
 ### 已實作 ✓
 
-#### ~%Math（31 態射）
-`/add` `/sub` `/mul` `/div` `/rem` `/abs` `/bits` `/pow` `/sqrt` `/bitAnd` `/bitOr` `/bitXor` `/bitNot` `/shl` `/shr` `/exp` `/ln` `/sin` `/cos` `/eml` `/random` `/min` `/max` `/floor` `/ceil` `/round` `/clamp` `/gcd` `/lcm` `/sign` `/log2` `/log10`
+#### ~%Math（35 態射）
+`/add` `/sub` `/mul` `/div` `/rem` `/abs` `/bits` `/pow` `/sqrt` `/bitAnd` `/bitOr` `/bitXor` `/bitNot` `/shl` `/shr` `/exp` `/ln` `/sin` `/cos` `/eml` `/random` `/min` `/max` `/floor` `/ceil` `/round` `/clamp` `/gcd` `/lcm` `/sign` `/log2` `/log10` `/factorial` `/choose` `/is_prime` `/pow_mod`
 
 特殊：`ln(0)` / `sqrt(-1)` / `eml(0)` → `Value::Blur`（MathSingularity）；`%branch` Riemann 面
 
-#### ~%List（32 態射）
-`/map` `/filter` `/fold` `/len` `/concat` `/at` `/sort` `/reverse` `/slice` `/zip` `/flat_map` `/any` `/all` `/find` `/head` `/tail` `/take` `/drop` `/count` `/zip_with` `/partition` `/flatten` `/sum` `/min_by` `/max_by` `/unique` `/range` `/reduce` `/group_by` `/chunk` `/window`
+#### ~%List（36 態射）
+`/map` `/filter` `/fold` `/len` `/concat` `/at` `/sort` `/reverse` `/slice` `/zip` `/flat_map` `/any` `/all` `/find` `/head` `/tail` `/take` `/drop` `/count` `/zip_with` `/partition` `/flatten` `/sum` `/min_by` `/max_by` `/unique` `/range` `/reduce` `/group_by` `/chunk` `/window` `/enumerate` `/sort_by` `/dedup` `/intersperse`
 
 #### ~%String（28 態射）
 `/concat` `/split` `/join` `/trim` `/len` `/replace` `/to_lower` `/to_upper` `/starts_with` `/ends_with` `/contains` `/parse_int` `/from_int` `/repeat` `/format`（含命名佔位符）`/char_at` `/chars` `/index_of` `/pad_left` `/pad_right` `/trim_start` `/trim_end` `/reverse` `/count` `/slice` `/is_empty` `/parse_float` `/lines`
@@ -96,6 +96,15 @@
 #### ~%Io（4 態射，IO EffectTag）
 `/read_file` `/write_file` `/exists` `/append_file`
 
+#### ~%Env（3 態射，IO EffectTag）
+`/get` `/args` `/cwd`
+
+#### ~%Process（2 態射，IO EffectTag）
+`/exit` `/pid`
+
+#### ~%Path（5 態射，Pure）
+`/join` `/dirname` `/basename` `/extension` `/is_absolute`
+
 #### ~%Time（4 態射，IO EffectTag）
 `/now` `/format` `/diff` `/add_ms`
 
@@ -111,8 +120,8 @@
 #### ~%Discovery（6 態射，IO EffectTag）
 `/connect` `/fetch` `/identify` `/identify_and_store` `/advertise` `/find`
 
-#### ~%Engine（8 態射）
-`/observe` `/save` `/%differential.{1,2,3}` `/project_down` `/project_up` `/set_strategy` `/check_oml`
+#### ~%Engine（10 態射）
+`/observe` `/save` `/%differential.{1,2,3}` `/project_down` `/project_up` `/set_strategy` `/check_oml` `/equivalence_map` `/resolve`
 
 #### ~%Official（2 態射，IO EffectTag）
 `/sign_refine` `/add_architect`
@@ -128,12 +137,6 @@
 
 #### ~%Config
 `%fuel:10000` `%max_branches:64` `%max_depth:256` `%max_pattern_nodes:1024` `%timeout:1000` `%strategy:blur`
-
-### 剩餘 △
-
-| 功能 | 說明 |
-|:-----|:-----|
-| Equivalence map 接口 | `~%Engine.equivalence_map` 動態視圖（SPEC_17 §1.3） |
 
 ---
 
@@ -152,12 +155,8 @@
 | Shadow Refinement（DAG 回溯掃描） | `universe.rs` step 1c — Phase 12 |
 | BFS Cycle Detection（環形 DAG 拒絕） | `universe.rs` step 1d — Phase 15 |
 | `RefineInfo.shadow_affected` | `value.rs:RefineInfo` — Phase 12 |
-
-### 剩餘 △
-
-| 功能 | 說明 |
-|:-----|:-----|
-| Equivalence map 合成 | `~%Engine.equivalence_map` 動態視圖 |
+| `~%Engine.equivalence_map` 動態視圖 | `builtins/engine.rs` — Phase 39 |
+| `~%Engine.resolve` CAID 鏈尾追蹤 | `builtins/engine.rs` — Phase 39 |
 
 ---
 
@@ -176,6 +175,7 @@
 | nerve_structure MASA（field-key based） | `builtins/disc.rs` — Phase 11 |
 | nerve_overlap 前置過濾 | `ladd.rs:nerve_overlap` |
 | `d_l_approx` cosine similarity | `ladd.rs` — Phase 16 |
+| NerveEntry.field_keys 精確交集（語義 key 過濾） | `builtins/disc.rs` — Phase 38 |
 
 ### 剩餘 △
 
@@ -251,7 +251,7 @@ pub struct ComboVal {
 | `math_branch_test` | %branch Riemann 面 |
 | `ladd_test`, `nerve_routing_test` | LADD/nerve MASA |
 
-### 標準庫測試（Phase 25–34 新增）
+### 標準庫測試（Phase 25–39 新增）
 
 | 測試套件 | 覆蓋 |
 |:---------|:-----|
@@ -268,5 +268,12 @@ pub struct ComboVal {
 | `str_p32_test` | str.reverse/count/slice/is_empty/parse_float/lines |
 | `json_p33_test` | ~%Json 全套 |
 | `io_p34_test` | ~%Io 全套（tempfile 隔離） |
+| `list_p35_test` | list.enumerate/sort_by/dedup/intersperse |
+| `math_p35_test` | math.factorial/choose/is_prime/pow_mod |
+| `env_p36_test` | env.get/args/cwd |
+| `process_p36_test` | process.pid（exit 僅驗證已注冊） |
+| `path_p37_test` | path.join/dirname/basename/extension/is_absolute |
+| `nerve_routing_test`（Phase 38 節）| disc.rs 語義 key 過濾 |
+| `engine_p39_test` | engine.equivalence_map / engine.resolve |
 
-**總計：~392 tests, 0 failed**
+**總計：~439 tests, 0 failed**

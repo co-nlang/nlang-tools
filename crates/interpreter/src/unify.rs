@@ -4,6 +4,7 @@ use crate::{Ouroboros, EvalContext};
 use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail};
 use crate::type_constraint::{TypeConstraint, type_constraint_meet, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
+use crate::lattice_sketch;
 use nlang_parser::ast::AtomKind;
 
 const EPSILON_COHERENT: f64 = 0.1;
@@ -24,10 +25,12 @@ fn phase_merge_decision(a: &ComboVal, b: &ComboVal) -> MergeDecision {
         return MergeDecision::H2Split;
     }
 
-    // Step 2: geometric phase difference (Phase 1b: architecture only)
-    // TODO Phase 4: replace with arccos(Tr(P_A · P_B)) eigenvalue computation
-    // Returning 0.0 so all Combos merge (architecture-only deployment)
-    let theta = 0.0;
+    // Step 2: H¹ phase obstruction — only for explicit MASA context combos.
+    // Top-MASA combos are context-free; geometric check is undefined for them.
+    let theta = match (&a.masa_ref, &b.masa_ref) {
+        (MasaRef::Digest(_), MasaRef::Digest(_)) => lattice_sketch::phase_diff_between(a, b),
+        _ => 0.0,
+    };
 
     // Step 3: three-way decision
     if theta < EPSILON_COHERENT {
@@ -35,12 +38,6 @@ fn phase_merge_decision(a: &ComboVal, b: &ComboVal) -> MergeDecision {
     } else {
         MergeDecision::H1Split { theta }
     }
-}
-
-#[allow(dead_code)]
-fn approximate_phase_diff(_sketch_a: &str, _sketch_b: &str) -> f64 {
-    // TODO Phase 4: replace with real eigenvalue-based computation
-    0.0
 }
 
 fn make_h1_split_bottom(a: &ComboVal, b: &ComboVal, theta: f64) -> Value {
