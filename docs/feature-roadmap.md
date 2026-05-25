@@ -1,11 +1,11 @@
 # nlang 功能路線圖
 
-> 最後更新：2026-05-25（Phase 43 完成後）  
+> 最後更新：2026-05-25（Phase 44 完成後）  
 > 開發模式：由 "project brain" AI 出規劃，執行 AI 實作，逐 Phase 交接
 
 ---
 
-## 1. 已完成功能（Phase 1–43）
+## 1. 已完成功能（Phase 1–44）
 
 ### 核心格論
 
@@ -117,6 +117,7 @@
 | ~%Process | 36 | 2 | exit/pid（IO） |
 | ~%Path | 37 | 5 | join/dirname/basename/extension/is_absolute（Pure） |
 | ~%Query | 43 | 4 | select/where/pluck/deep_merge（巢狀 Combo 讀取） |
+| ~%Diff | 44 | 3 | diff/patch/is_compatible（Value 樹差異與修補） |
 
 ### 引擎基礎設施
 
@@ -160,7 +161,8 @@ Phase 35–39：P2 清空（List/Math Round 2、Env/Process/Path 模組、nerve 
 Phase 40：量子相位距離 arccos(Tr(P_A·P_B))（`phase_diff_between`，P3 第一項）→ ~446 tests  
 Phase 41：視界震盪防禦（SemanticEclipse + disc.find blacklist/tiebreaker）→ ~452 tests  
 Phase 42：disc.find 多跳迭代路由（multi-hop loop + compute_mass/build_query_nerve）→ ~458 tests  
-Phase 43：~%Query 模組（select/where/pluck/deep_merge，含 parse_path/get_at_path pub helpers）→ ~466 tests
+Phase 43：~%Query 模組（select/where/pluck/deep_merge，含 parse_path/get_at_path pub helpers）→ ~466 tests  
+Phase 44：~%Diff 模組（diff/patch/is_compatible，set_at_path + collect_diffs 遞歸）→ ~474 tests
 
 每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
 零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。

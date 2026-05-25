@@ -748,4 +748,113 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 45: Numeric extras ──────────────────────────────────
+
+    // math.atan2: {0: y, 1: x} → Float
+    m.insert("math.atan2".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vy), Some(vx)) = (c.get_field("0"), c.get_field("1")) {
+                let fy = oo.force(vy.clone(), ctx);
+                let fx = oo.force(vx.clone(), ctx);
+                let y: f64 = match fy.collapse() {
+                    Value::Atom(AtomKind::Float(f), _, _) => *f,
+                    Value::Atom(AtomKind::Int(n), _, _) => match n.to_f64() { Some(f) => f, None => return Value::Top },
+                    _ => return Value::Top,
+                };
+                let x: f64 = match fx.collapse() {
+                    Value::Atom(AtomKind::Float(f), _, _) => *f,
+                    Value::Atom(AtomKind::Int(n), _, _) => match n.to_f64() { Some(f) => f, None => return Value::Top },
+                    _ => return Value::Top,
+                };
+                return Value::Atom(AtomKind::Float(y.atan2(x)), EffectTag::Pure, None);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.hypot: {0: x, 1: y} → Float
+    m.insert("math.hypot".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
+                let fx = oo.force(vx.clone(), ctx);
+                let fy = oo.force(vy.clone(), ctx);
+                let x: f64 = match fx.collapse() {
+                    Value::Atom(AtomKind::Float(f), _, _) => *f,
+                    Value::Atom(AtomKind::Int(n), _, _) => match n.to_f64() { Some(f) => f, None => return Value::Top },
+                    _ => return Value::Top,
+                };
+                let y: f64 = match fy.collapse() {
+                    Value::Atom(AtomKind::Float(f), _, _) => *f,
+                    Value::Atom(AtomKind::Int(n), _, _) => match n.to_f64() { Some(f) => f, None => return Value::Top },
+                    _ => return Value::Top,
+                };
+                return Value::Atom(AtomKind::Float(x.hypot(y)), EffectTag::Pure, None);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // math.sinh: unary Float → Float
+    m.insert("math.sinh".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.sinh()), *e, None),
+            Value::Atom(AtomKind::Int(n), e, _) => Value::Atom(AtomKind::Float(n.to_f64().unwrap_or(0.0).sinh()), *e, None),
+            _ => BottomCause::Conflict.into()
+        }
+    }) as Arc<BuiltinFn>);
+
+    // math.cosh: unary Float → Float
+    m.insert("math.cosh".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.cosh()), *e, None),
+            Value::Atom(AtomKind::Int(n), e, _) => Value::Atom(AtomKind::Float(n.to_f64().unwrap_or(0.0).cosh()), *e, None),
+            _ => BottomCause::Conflict.into()
+        }
+    }) as Arc<BuiltinFn>);
+
+    // math.tanh: unary Float → Float
+    m.insert("math.tanh".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.tanh()), *e, None),
+            Value::Atom(AtomKind::Int(n), e, _) => Value::Atom(AtomKind::Float(n.to_f64().unwrap_or(0.0).tanh()), *e, None),
+            _ => BottomCause::Conflict.into()
+        }
+    }) as Arc<BuiltinFn>);
+
+    // math.trunc: unary Float → Float
+    m.insert("math.trunc".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse().clone() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.trunc()), e, None),
+            Value::Atom(AtomKind::Int(i), e, _)   => Value::Atom(AtomKind::Int(i), e, None),
+            _ => BottomCause::Conflict.into()
+        }
+    }) as Arc<BuiltinFn>);
+
+    // math.fract: unary Float → Float
+    m.insert("math.fract".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse().clone() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(f.fract()), e, None),
+            Value::Atom(AtomKind::Int(_), e, _)   => Value::Atom(AtomKind::Float(0.0), e, None),
+            _ => BottomCause::Conflict.into()
+        }
+    }) as Arc<BuiltinFn>);
+
+    // math.to_float: unary Int/Float → Float
+    m.insert("math.to_float".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        match oo.force(v, ctx).collapse() {
+            Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(*f), *e, None),
+            Value::Atom(AtomKind::Int(n), _, _) => match n.to_f64() {
+                Some(f) => Value::Atom(AtomKind::Float(f), EffectTag::Pure, None),
+                None => Value::Top,
+            },
+            _ => BottomCause::Conflict.into()
+        }
+    }) as Arc<BuiltinFn>);
 }

@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-25（Phase 43 完成後）  
-> 測試數量：~466 tests passing（59+ 個測試套件）
+> 最後更新：2026-05-25（Phase 44 完成後）  
+> 測試數量：~474 tests passing（60+ 個測試套件）
 
 ---
 
@@ -108,7 +108,10 @@
 
 #### ~%Query（4 態射）
 `/select`（dot-path 導航）`/where`（謂詞過濾，IO）`/pluck`（欄位摘取）`/deep_merge`（遞歸合併）  
-共用 helpers：`parse_path`、`get_at_path`（pub，Phase 44 ~%Diff 複用）— Phase 43
+共用 helpers：`parse_path`、`get_at_path`、`set_at_path`、`deep_merge_values`（pub）— Phase 43/44
+
+#### ~%Diff（3 態射）
+`/diff`（遞歸收集 `{path,from,to}` 條目）`/patch`（套用 diff 重建 Value 樹）`/is_compatible`（deep_merge 無 Bottom → #true）— Phase 44
 
 #### ~%Time（4 態射，IO EffectTag）
 `/now` `/format` `/diff` `/add_ms`
@@ -284,5 +287,6 @@ pub struct ComboVal {
 | `semantic_eclipse_test` | disc.find blacklist、hop budget、SemanticEclipse 觸發、tiebreaker 確定性 |
 | `disc_multihop_test` | 多跳路由、hop counter、store 命中、預算耗盡、空 registry |
 | `query_p43_test` | query.select（路徑導航、list index）、query.pluck、query.deep_merge（遞歸）、query.where（空 list）|
+| `diff_p44_test` | diff.diff（相同→空、葉差異、新增欄位、巢狀路徑）、diff.patch（空 diff、套用修補）、diff.is_compatible（相容/衝突）|
 
-**總計：~466 tests, 0 failed**
+**總計：~474 tests, 0 failed**

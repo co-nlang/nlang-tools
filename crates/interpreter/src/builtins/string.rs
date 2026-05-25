@@ -469,4 +469,108 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 45: String extras ──────────────────────────────────
+
+    // str.encode_uri: {0: str} → Str (percent-encode)
+    m.insert("str.encode_uri".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            let mut result = String::new();
+            for b in s.bytes() {
+                match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        result.push(b as char);
+                    }
+                    _ => result.push_str(&format!("%{:02X}", b)),
+                }
+            }
+            return Value::Atom(AtomKind::Str(result), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.decode_uri: {0: str} → Str (percent-decode)
+    m.insert("str.decode_uri".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            let mut bytes = Vec::new();
+            let mut chars = s.chars();
+            while let Some(c) = chars.next() {
+                if c == '%' {
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if hex.len() == 2 {
+                        bytes.push(u8::from_str_radix(&hex, 16).unwrap_or(b'%'));
+                    } else {
+                        bytes.push(b'%');
+                        bytes.extend(hex.bytes());
+                    }
+                } else {
+                    let mut buf = [0u8; 4];
+                    let encoded = c.encode_utf8(&mut buf);
+                    bytes.extend_from_slice(encoded.as_bytes());
+                }
+            }
+            return Value::Atom(AtomKind::Str(String::from_utf8_lossy(&bytes).to_string()), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.levenshtein: {0: a, 1: b} → Int
+    m.insert("str.levenshtein".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
+                let fa = oo.force(va.clone(), ctx);
+                let fb = oo.force(vb.clone(), ctx);
+                if let (Value::Atom(AtomKind::Str(a), _, _), Value::Atom(AtomKind::Str(b), _, _)) =
+                    (fa.collapse(), fb.collapse())
+                {
+                    let a_chars: Vec<char> = a.chars().collect();
+                    let b_chars: Vec<char> = b.chars().collect();
+                    let a_len = a_chars.len();
+                    let b_len = b_chars.len();
+                    let mut dp = vec![vec![0usize; b_len + 1]; a_len + 1];
+                    for i in 0..=a_len { dp[i][0] = i; }
+                    for j in 0..=b_len { dp[0][j] = j; }
+                    for i in 1..=a_len {
+                        for j in 1..=b_len {
+                            let cost = if a_chars[i-1] == b_chars[j-1] { 0 } else { 1 };
+                            dp[i][j] = (dp[i-1][j] + 1).min(dp[i][j-1] + 1).min(dp[i-1][j-1] + cost);
+                        }
+                    }
+                    return Value::Atom(AtomKind::Int(BigInt::from(dp[a_len][b_len])), EffectTag::Pure, None);
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.word_count: {0: str} → Int
+    m.insert("str.word_count".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            let count = s.split_whitespace().count();
+            return Value::Atom(AtomKind::Int(BigInt::from(count)), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // str.title_case: {0: str} → Str (capitalize each word)
+    m.insert("str.title_case".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
+            let result = s.split_whitespace()
+                .map(|word| {
+                    let mut chars = word.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Value::Atom(AtomKind::Str(result), EffectTag::Pure, None);
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

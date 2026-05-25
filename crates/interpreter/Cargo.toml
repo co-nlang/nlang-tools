@@ -102,6 +102,22 @@ path = "tests/query_p43_test.rs"
 name = "diff_p44_test"
 path = "tests/diff_p44_test.rs"
 
+[[test]]
+name = "math_p45_test"
+path = "tests/math_p45_test.rs"
+
+[[test]]
+name = "list_p45_test"
+path = "tests/list_p45_test.rs"
+
+[[test]]
+name = "str_p45_test"
+path = "tests/str_p45_test.rs"
+
+[[test]]
+name = "time_p45_test"
+path = "tests/time_p45_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }

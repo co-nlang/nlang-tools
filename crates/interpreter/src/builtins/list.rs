@@ -780,4 +780,149 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         Value::Top
     }) as Arc<BuiltinFn>);
+
+    // ── Phase 45: List extras 2 ────────────────────────────────────
+
+    fn is_truthy_pred(v: &Value) -> bool {
+        match v {
+            Value::Bottom(_) => false,
+            Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "false" => false,
+            _ => true,
+        }
+    }
+
+    // list.scan: {0: list, 1: f, 2: init} → @list
+    m.insert("list.scan".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vl), Some(vf), Some(vi)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
+                let list = oo.force(vl.clone(), ctx);
+                let morph = vf.clone();
+                let mut acc = oo.force(vi.clone(), ctx);
+                let items = extract_list_items(&list);
+                let mut result: Vec<Value> = Vec::new();
+                for item in items {
+                    let f_acc = oo.apply_morphism(morph.clone(), acc, ctx);
+                    let new_acc = oo.apply_morphism(f_acc, item, ctx);
+                    acc = oo.force_recursive(new_acc, ctx);
+                    result.push(acc.clone());
+                }
+                return build_list_value(result);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.take_while: {0: list, 1: pred} → @list
+    m.insert("list.take_while".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vl), Some(vp)) = (c.get_field("0"), c.get_field("1")) {
+                let list = oo.force(vl.clone(), ctx);
+                let pred = vp.clone();
+                let items = extract_list_items(&list);
+                let mut result: Vec<Value> = Vec::new();
+                for item in items {
+                    let p = oo.apply_morphism(pred.clone(), item.clone(), ctx);
+                    if !is_truthy_pred(&p) { break; }
+                    result.push(item);
+                }
+                return build_list_value(result);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.drop_while: {0: list, 1: pred} → @list
+    m.insert("list.drop_while".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(vl), Some(vp)) = (c.get_field("0"), c.get_field("1")) {
+                let list = oo.force(vl.clone(), ctx);
+                let pred = vp.clone();
+                let items = extract_list_items(&list);
+                let mut dropping = true;
+                let mut result: Vec<Value> = Vec::new();
+                for item in items {
+                    if dropping {
+                        let p = oo.apply_morphism(pred.clone(), item.clone(), ctx);
+                        if is_truthy_pred(&p) { continue; }
+                        dropping = false;
+                    }
+                    result.push(item);
+                }
+                return build_list_value(result);
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
+
+    // list.product: {0: list} → Int/Float
+    m.insert("list.product".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let list = if let Value::Combo(ref c) = arg {
+            if c.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#') == "list").unwrap_or(false) {
+                oo.force(arg, ctx)
+            } else {
+                oo.force(c.get_field("0").cloned().unwrap_or_else(|| arg.clone()), ctx)
+            }
+        } else { oo.force(arg, ctx) };
+        let items = extract_list_items(&list);
+        let mut int_prod = BigInt::from(1i64);
+        let mut float_prod: f64 = 1.0;
+        let mut has_float = false;
+        for item in items {
+            match oo.force(item, ctx).collapse().clone() {
+                Value::Atom(AtomKind::Int(n), _, _) => {
+                    if has_float {
+                        float_prod *= n.to_f64().unwrap_or(0.0);
+                    } else {
+                        int_prod *= n;
+                    }
+                }
+                Value::Atom(AtomKind::Float(f), _, _) => {
+                    if !has_float {
+                        float_prod = int_prod.to_f64().unwrap_or(1.0);
+                        has_float = true;
+                    }
+                    float_prod *= f;
+                }
+                _ => {}
+            }
+        }
+        if has_float {
+            Value::Atom(AtomKind::Float(float_prod), EffectTag::Pure, None)
+        } else {
+            Value::Atom(AtomKind::Int(int_prod), EffectTag::Pure, None)
+        }
+    }) as Arc<BuiltinFn>);
+
+    // list.transpose: {0: list} → @list of @list
+    m.insert("list.transpose".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        let list_val = if let Value::Combo(ref c) = arg {
+            if c.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#') == "list").unwrap_or(false) {
+                oo.force(arg, ctx)
+            } else {
+                oo.force(c.get_field("0").cloned().unwrap_or_else(|| arg.clone()), ctx)
+            }
+        } else { oo.force(arg, ctx) };
+        let outer_items = extract_list_items(&list_val);
+        if outer_items.is_empty() {
+            return build_list_value(vec![]);
+        }
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for item in outer_items {
+            let forced = oo.force(item, ctx);
+            rows.push(extract_list_items(&forced));
+        }
+        if rows.is_empty() || rows.iter().any(|r| r.is_empty()) {
+            return build_list_value(vec![]);
+        }
+        let min_cols = rows.iter().map(|r| r.len()).min().unwrap_or(0);
+        let mut result: Vec<Value> = Vec::with_capacity(min_cols);
+        for col in 0..min_cols {
+            let mut col_items: Vec<Value> = Vec::with_capacity(rows.len());
+            for row in &rows {
+                col_items.push(row[col].clone());
+            }
+            result.push(build_list_value(col_items));
+        }
+        build_list_value(result)
+    }) as Arc<BuiltinFn>);
 }

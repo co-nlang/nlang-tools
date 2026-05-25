@@ -199,6 +199,15 @@ impl Ouroboros {
             ("/choose",    "math.choose"),
             ("/is_prime",  "math.is_prime"),
             ("/pow_mod",   "math.pow_mod"),
+            // Phase 45
+            ("/atan2",    "math.atan2"),
+            ("/hypot",    "math.hypot"),
+            ("/sinh",     "math.sinh"),
+            ("/cosh",     "math.cosh"),
+            ("/tanh",     "math.tanh"),
+            ("/trunc",    "math.trunc"),
+            ("/fract",    "math.fract"),
+            ("/to_float", "math.to_float"),
         ];
         for (n, b) in math_morphisms { math_builtins.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         math_builtins.insert("/random".to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str("math.random".to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::NonDet, vec![])));
@@ -254,6 +263,12 @@ impl Ouroboros {
             ("/sort_by",     "list.sort_by"),
             ("/dedup",       "list.dedup"),
             ("/intersperse", "list.intersperse"),
+            // Phase 45
+            ("/scan",        "list.scan"),
+            ("/take_while",  "list.take_while"),
+            ("/drop_while",  "list.drop_while"),
+            ("/product",     "list.product"),
+            ("/transpose",   "list.transpose"),
         ];
         for (n, b) in list_morphisms { list_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%List".to_string(), Value::Combo(ComboVal::new(list_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
@@ -293,6 +308,12 @@ impl Ouroboros {
             ("/is_empty",    "str.is_empty"),
             ("/parse_float", "str.parse_float"),
             ("/lines",       "str.lines"),
+            // Phase 45
+            ("/encode_uri",   "str.encode_uri"),
+            ("/decode_uri",   "str.decode_uri"),
+            ("/levenshtein",  "str.levenshtein"),
+            ("/word_count",   "str.word_count"),
+            ("/title_case",   "str.title_case"),
         ];
         for (n, b) in string_morphisms { string_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%String".to_string(), Value::Combo(ComboVal::new(string_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
@@ -303,6 +324,12 @@ impl Ouroboros {
             ("/format", "time.format"),
             ("/diff",   "time.diff"),
             ("/add_ms", "time.add_ms"),
+            // Phase 45
+            ("/parse",     "time.parse"),
+            ("/to_iso8601","time.to_iso8601"),
+            ("/add_days",  "time.add_days"),
+            ("/add_hours", "time.add_hours"),
+            ("/weekday",   "time.weekday"),
         ];
         for (n, b) in time_morphisms { time_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         fields.insert("~%Time".to_string(), Value::Combo(ComboVal::new(time_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
