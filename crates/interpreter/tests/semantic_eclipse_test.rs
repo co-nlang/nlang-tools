@@ -42,6 +42,7 @@ fn test_find_empty_registry_is_missing_key() {
 fn test_find_adds_to_visited() {
     let oo = oo(); let mut ctx = oo.eval_context();
     let node = combo(&[("x", 1)]);
+    oo.store.put_value(&node).expect("put_value");
     call_advertise(&oo, &mut ctx, node.clone());
 
     assert!(ctx.disc_routing_visited.is_empty(), "visited should start empty");
@@ -80,6 +81,7 @@ fn test_semantic_eclipse_as_tag() {
 fn test_find_all_visited_still_returns() {
     let oo = oo(); let mut ctx = oo.eval_context();
     let node = combo(&[("p", 100), ("q", 200)]);
+    oo.store.put_value(&node).expect("put_value");
     call_advertise(&oo, &mut ctx, node.clone());
 
     let r1 = call_find(&oo, &mut ctx, node.clone());
@@ -103,6 +105,8 @@ fn test_find_tiebreaker_is_deterministic() {
     let node_b = combo(&[("b", 2)]);
 
     let mut ctx = oo.eval_context();
+    oo.store.put_value(&node_a).expect("put_value");
+    oo.store.put_value(&node_b).expect("put_value");
     call_advertise(&oo, &mut ctx, node_a.clone());
     call_advertise(&oo, &mut ctx, node_b.clone());
 

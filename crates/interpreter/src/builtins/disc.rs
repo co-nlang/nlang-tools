@@ -46,6 +46,32 @@ fn field_key_masa_id(cv: &crate::value::ComboVal) -> String {
     format!("masa:fk:{}", hex::encode(&digest[..8]))
 }
 
+/// Field count as GBB mass (capped at 100).
+fn compute_mass(val: &Value) -> f64 {
+    if let Value::Combo(ref cv) = val {
+        (cv.system.len() + cv.meta.len() + cv.types.len()
+         + cv.rules.len() + cv.data.len() + cv.local.len()) as f64
+    } else { 1.0 }.min(100.0)
+}
+
+/// Build the initial query nerve for disc.find (no overlapping MASA lookup).
+fn build_query_nerve(val: &Value) -> Vec<crate::ladd::NerveEntry> {
+    if let Value::Combo(ref cv) = val {
+        let keys: Vec<String> = cv.all_fields_iter()
+            .map(|(k, _)| k)
+            .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
+            .collect();
+        if keys.is_empty() { vec![] }
+        else {
+            vec![crate::ladd::NerveEntry {
+                masa_caid: field_key_masa_id(cv),
+                overlapping_masa_caids: vec![],
+                field_keys: keys,
+            }]
+        }
+    } else { vec![] }
+}
+
 pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("disc.connect".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg { 
@@ -125,13 +151,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     // Phase 4 / Phase 5: LADD advertise
     m.insert("disc.advertise".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, _ctx: &mut EvalContext| {
         let hash = arg.content_hash();
-        // Phase 5 mass: field count (closer to Tr(P) semantics)
-        let mass = if let Value::Combo(ref cv) = arg {
-            (cv.system.len() + cv.meta.len() + cv.types.len()
-             + cv.rules.len() + cv.data.len() + cv.local.len()) as f64
-        } else { 1.0 };
-        // Phase 5 mass capped to avoid runaway weights
-        let mass = mass.min(100.0);
+        let mass = compute_mass(&arg);
         let sketch_bytes = base64_decode_sketch(&hash.lattice_sketch);
         let masa_ref = hash.masa_ref.clone();
         // Phase 11: nerve_structure from field key MASA computation
@@ -174,92 +194,103 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
 
     // Phase 4 / Phase 5: LADD find
     m.insert("disc.find".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        // 1. Build query GBB
+        // 1. Build initial query GBB
         let query_hash = arg.content_hash();
-        let query_mass = if let Value::Combo(ref cv) = arg {
-            (cv.system.len() + cv.meta.len() + cv.types.len()
-             + cv.rules.len() + cv.data.len() + cv.local.len()) as f64
-        } else { 1.0 };
-        let query_sketch = base64_decode_sketch(&query_hash.lattice_sketch);
-        let query_nerve = if let Value::Combo(ref cv) = arg {
-            let keys: Vec<String> = cv.all_fields_iter()
-                .map(|(k, _)| k)
-                .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
-                .collect();
-            if keys.is_empty() { vec![] }
-            else { vec![crate::ladd::NerveEntry { masa_caid: field_key_masa_id(cv), overlapping_masa_caids: vec![], field_keys: keys }] }
-        } else { vec![] };
-        let query_gbb = crate::ladd::GBB {
-            node_caid: query_hash.clone(), mass: query_mass.min(100.0),
-            sketch_bytes: query_sketch, masa_ref: query_hash.masa_ref.clone(),
-            nerve_structure: query_nerve,
+        let mut current_query = crate::ladd::GBB {
+            node_caid: query_hash.clone(),
+            mass: compute_mass(&arg),
+            sketch_bytes: base64_decode_sketch(&query_hash.lattice_sketch),
+            masa_ref: query_hash.masa_ref.clone(),
+            nerve_structure: build_query_nerve(&arg),
         };
 
-        // 2. MASA filter + gravitational weighting
+        // 2. Extract explicit target CAID (optional direct-lookup mode)
+        let explicit_target: Option<String> = if let Value::Combo(ref c) = arg {
+            c.get_field("target").map(|v| oo.force(v.clone(), ctx).to_string_plain())
+        } else { None };
+
         const EPSILON: f64 = 1e-6;
-        let mut candidates: Vec<(f64, String)> = {
-            let reg = match oo.gbb_registry.read() { Ok(r) => r, Err(_) => return BottomCause::Conflict.into() };
-            reg.values()
-                .filter(|peer_gbb| crate::ladd::masa_compatible(&query_gbb, peer_gbb))
-                .filter(|peer_gbb| crate::ladd::nerve_overlap(&query_gbb, peer_gbb))
-                .map(|peer_gbb| {
-                    let w = crate::ladd::gravitational_weight(&query_gbb, peer_gbb, EPSILON);
-                    (w, peer_gbb.node_caid.to_string())
-                })
-                .collect()
-        };
 
-        if candidates.is_empty() { return bottom_not_found(); }
+        // 3. Multi-hop routing loop
+        loop {
+            // Safety: hard hop budget (Phase 41)
+            if ctx.disc_routing_hops >= MAX_ROUTING_HOPS {
+                return Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::SemanticEclipse,
+                    path: Some("disc.find".to_string()),
+                    message: Some(format!(
+                        "Routing budget exceeded after {} hops", MAX_ROUTING_HOPS
+                    )),
+                    ..Default::default()
+                }));
+            }
 
-        // 3. Horizon oscillation defence: blacklist + horizon_salt tiebreaker
-        // Safety: hard hop budget terminates routing unconditionally.
-        if ctx.disc_routing_hops >= MAX_ROUTING_HOPS {
-            return Value::Bottom(Box::new(BottomDetail {
-                cause: BottomCause::SemanticEclipse,
-                path: Some("disc.find".to_string()),
-                message: Some(format!(
-                    "Routing budget exceeded after {} hops (MAX_ROUTING_HOPS={})",
-                    ctx.disc_routing_hops, MAX_ROUTING_HOPS
-                )),
-                ..Default::default()
-            }));
-        }
+            // Gravitational candidate scoring
+            let candidates: Vec<(f64, String)> = {
+                let reg = match oo.gbb_registry.read() {
+                    Ok(r) => r, Err(_) => return BottomCause::Conflict.into(),
+                };
+                reg.values()
+                    .filter(|g| crate::ladd::masa_compatible(&current_query, g))
+                    .filter(|g| crate::ladd::nerve_overlap(&current_query, g))
+                    .map(|g| {
+                        let w = crate::ladd::gravitational_weight(&current_query, g, EPSILON);
+                        (w, g.node_caid.to_string())
+                    })
+                    .collect()
+            };
 
-        // Apply deterministic perturbation (horizon_salt × node_caid → ±0.5% weight noise)
-        let mut perturbed: Vec<(f64, String)> = candidates.iter()
-            .map(|(w, caid)| (perturb_weight(*w, caid, &ctx.horizon_salt), caid.clone()))
-            .collect();
-        perturbed.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            if candidates.is_empty() { return bottom_not_found(); }
 
-        // Prefer unvisited candidates; fall back to best revisited if blacklist is exhausted.
-        let chosen_caid_str = if let Some((_, caid)) = perturbed.iter()
-            .find(|(_, c)| !ctx.disc_routing_visited.contains(c))
-        {
-            caid.clone()
-        } else {
-            // All candidates have been visited in this session — tiebreaker still applies.
-            perturbed[0].1.clone()
-        };
+            // Blacklist + horizon_salt tiebreaker (Phase 41)
+            let mut perturbed: Vec<(f64, String)> = candidates.iter()
+                .map(|(w, caid)| (perturb_weight(*w, caid, &ctx.horizon_salt), caid.clone()))
+                .collect();
+            perturbed.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        ctx.disc_routing_visited.insert(chosen_caid_str.clone());
-        ctx.disc_routing_hops += 1;
+            let chosen = if let Some((_, caid)) = perturbed.iter()
+                .find(|(_, c)| !ctx.disc_routing_visited.contains(c))
+            {
+                caid.clone()
+            } else {
+                perturbed[0].1.clone()
+            };
 
-        // 4. Fetch target
-        let target_caid_str = if let Value::Combo(ref c) = arg {
-            if let Some(v) = c.get_field("target") { oo.force(v.clone(), ctx).to_string_plain() }
-            else { chosen_caid_str.clone() }
-        } else { chosen_caid_str.clone() };
+            ctx.disc_routing_visited.insert(chosen.clone());
+            ctx.disc_routing_hops += 1;
 
-        if let Ok(hash) = crate::value::ContentHash::parse(&target_caid_str) {
-            if let Ok(val) = oo.store.get_value(&hash) { return val; }
-            let peers_copy: Vec<_> = oo.peers.read().map(|p| p.values().cloned().collect()).unwrap_or_default();
-            for peer in peers_copy {
-                match peer {
-                    crate::Peer::Local(store) => { if let Ok(val) = store.get_value(&hash) { return val; } }
-                    crate::Peer::Remote(addr) => { if let Ok(val) = oo.remote_fetch(&addr, &hash) { return val; } }
+            // Determine which CAID to fetch at this hop
+            let fetch_target = explicit_target.as_deref().unwrap_or(chosen.as_str());
+
+            // Try local store, then connected peers
+            if let Ok(hash) = crate::value::ContentHash::parse(fetch_target) {
+                if let Ok(val) = oo.store.get_value(&hash) { return val; }
+                let peers_copy: Vec<_> = oo.peers.read()
+                    .map(|p| p.values().cloned().collect()).unwrap_or_default();
+                for peer in peers_copy {
+                    match peer {
+                        crate::Peer::Local(store) => {
+                            if let Ok(val) = store.get_value(&hash) { return val; }
+                        }
+                        crate::Peer::Remote(addr) => {
+                            if let Ok(val) = oo.remote_fetch(&addr, &hash) { return val; }
+                        }
+                    }
                 }
             }
+
+            // Value not found at this hop — advance query to chosen GBB for next hop
+            let next_gbb = {
+                let reg = match oo.gbb_registry.read() {
+                    Ok(r) => r, Err(_) => return BottomCause::Conflict.into(),
+                };
+                reg.get(&chosen).cloned()
+            };
+
+            match next_gbb {
+                Some(gbb) => { current_query = gbb; }
+                None => { return bottom_not_found(); }
+            }
         }
-        bottom_not_found()
     }) as Arc<BuiltinFn>);
 }
