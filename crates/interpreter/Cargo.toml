@@ -118,6 +118,26 @@ path = "tests/str_p45_test.rs"
 name = "time_p45_test"
 path = "tests/time_p45_test.rs"
 
+[[test]]
+name = "set_p46_test"
+path = "tests/set_p46_test.rs"
+
+[[test]]
+name = "stat_p46_test"
+path = "tests/stat_p46_test.rs"
+
+[[test]]
+name = "csv_p47_test"
+path = "tests/csv_p47_test.rs"
+
+[[test]]
+name = "url_p47_test"
+path = "tests/url_p47_test.rs"
+
+[[test]]
+name = "toml_p47_test"
+path = "tests/toml_p47_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }
@@ -134,3 +154,5 @@ hex = "0.4"
 ring = "0.17"
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
+url = "=2.2.2"
+toml = "0.8"

@@ -15,6 +15,11 @@ mod process;
 mod path;
 mod query;
 mod diff;
+mod set;
+mod stat;
+mod csv;
+mod url;
+mod toml;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,6 +46,11 @@ pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     path::register_path_builtins(&mut m);
     query::register_query_builtins(&mut m);
     diff::register_diff_builtins(&mut m);
+    set::register_set_builtins(&mut m);
+    stat::register_stat_builtins(&mut m);
+    csv::register_csv_builtins(&mut m);
+    url::register_url_builtins(&mut m);
+    toml::register_toml_builtins(&mut m);
     
     m
 }

@@ -477,6 +477,63 @@ impl Ouroboros {
         let diff_module = Value::Combo(ComboVal::new(diff_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
         fields.insert("~%Diff".to_string(), diff_module);
 
+        // ~%Set module
+        let mut set_fields = IndexMap::new();
+        let smorph = |name: &str, id: &str, eff: EffectTag| -> Value {
+            let mut f = IndexMap::new();
+            f.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+            f.insert("%builtin".to_string(), Value::Atom(AtomKind::Str(id.to_string()), EffectTag::Pure, None));
+            f.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None));
+            Value::Combo(ComboVal::new(f, true, IndexMap::new(), eff, vec![]))
+        };
+        set_fields.insert("/from_list".to_string(),    smorph("/from_list",    "set.from_list",    EffectTag::Pure));
+        set_fields.insert("/union".to_string(),         smorph("/union",         "set.union",        EffectTag::Pure));
+        set_fields.insert("/intersection".to_string(),  smorph("/intersection",  "set.intersection", EffectTag::Pure));
+        set_fields.insert("/difference".to_string(),    smorph("/difference",    "set.difference",   EffectTag::Pure));
+        set_fields.insert("/is_subset".to_string(),     smorph("/is_subset",     "set.is_subset",    EffectTag::Pure));
+        set_fields.insert("/is_superset".to_string(),   smorph("/is_superset",   "set.is_superset",  EffectTag::Pure));
+        set_fields.insert("/is_disjoint".to_string(),   smorph("/is_disjoint",   "set.is_disjoint",  EffectTag::Pure));
+        set_fields.insert("/contains".to_string(),      smorph("/contains",      "set.contains",     EffectTag::Pure));
+        let set_module = Value::Combo(ComboVal::new(set_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
+        fields.insert("~%Set".to_string(), set_module);
+
+        // ~%Stat module
+        let mut stat_fields = IndexMap::new();
+        stat_fields.insert("/mean".to_string(),        smorph("/mean",        "stat.mean",        EffectTag::Pure));
+        stat_fields.insert("/variance".to_string(),    smorph("/variance",    "stat.variance",    EffectTag::Pure));
+        stat_fields.insert("/std_dev".to_string(),     smorph("/std_dev",     "stat.std_dev",     EffectTag::Pure));
+        stat_fields.insert("/median".to_string(),      smorph("/median",      "stat.median",      EffectTag::Pure));
+        stat_fields.insert("/percentile".to_string(),  smorph("/percentile",  "stat.percentile",  EffectTag::Pure));
+        stat_fields.insert("/histogram".to_string(),   smorph("/histogram",   "stat.histogram",   EffectTag::Pure));
+        let stat_module = Value::Combo(ComboVal::new(stat_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
+        fields.insert("~%Stat".to_string(), stat_module);
+
+        // ~%Csv module
+        let mut csv_fields = IndexMap::new();
+        csv_fields.insert("/parse".to_string(),              smorph("/parse",              "csv.parse",              EffectTag::Pure));
+        csv_fields.insert("/parse_with_headers".to_string(), smorph("/parse_with_headers", "csv.parse_with_headers", EffectTag::Pure));
+        csv_fields.insert("/stringify".to_string(),          smorph("/stringify",          "csv.stringify",          EffectTag::Pure));
+        csv_fields.insert("/read_csv".to_string(),           smorph("/read_csv",           "csv.read_csv",           EffectTag::IO));
+        let csv_module = Value::Combo(ComboVal::new(csv_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
+        fields.insert("~%Csv".to_string(), csv_module);
+
+        // ~%Url module
+        let mut url_fields = IndexMap::new();
+        url_fields.insert("/parse".to_string(),        smorph("/parse",        "url.parse",        EffectTag::Pure));
+        url_fields.insert("/encode".to_string(),       smorph("/encode",       "url.encode",       EffectTag::Pure));
+        url_fields.insert("/decode".to_string(),       smorph("/decode",       "url.decode",       EffectTag::Pure));
+        url_fields.insert("/join".to_string(),         smorph("/join",         "url.join",         EffectTag::Pure));
+        url_fields.insert("/query_params".to_string(), smorph("/query_params", "url.query_params", EffectTag::Pure));
+        let url_module = Value::Combo(ComboVal::new(url_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
+        fields.insert("~%Url".to_string(), url_module);
+
+        // ~%Toml module
+        let mut toml_fields = IndexMap::new();
+        toml_fields.insert("/parse".to_string(),     smorph("/parse",     "toml.parse",     EffectTag::Pure));
+        toml_fields.insert("/stringify".to_string(), smorph("/stringify", "toml.stringify", EffectTag::Pure));
+        let toml_module = Value::Combo(ComboVal::new(toml_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
+        fields.insert("~%Toml".to_string(), toml_module);
+
         let mut disc_fields = IndexMap::new();
         let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
         for (n, b) in disc_morphisms { disc_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![]))); }

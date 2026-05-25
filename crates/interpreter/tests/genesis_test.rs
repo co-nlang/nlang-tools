@@ -35,6 +35,11 @@ fn seed_caids_are_stable() {
         ("~%Path",       nlang_interpreter::genesis::SEED_PATH),
         ("~%Query",      nlang_interpreter::genesis::SEED_QUERY),
         ("~%Diff",       nlang_interpreter::genesis::SEED_DIFF),
+        ("~%Set",        nlang_interpreter::genesis::SEED_SET),
+        ("~%Stat",       nlang_interpreter::genesis::SEED_STAT),
+        ("~%Csv",        nlang_interpreter::genesis::SEED_CSV),
+        ("~%Url",        nlang_interpreter::genesis::SEED_URL),
+        ("~%Toml",       nlang_interpreter::genesis::SEED_TOML),
     ];
 
     // Verify every seed matches its constant

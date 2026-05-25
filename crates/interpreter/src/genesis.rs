@@ -20,6 +20,11 @@ pub const SEED_PROCESS:   &str = "hash:sha256:v1:e2720f7dd95ce94e03f1d33b724d13a
 pub const SEED_PATH:      &str = "hash:sha256:v1:d7f80fd2dc1e98b01a782f21266d99c9df8feb548bb92bd525ce4f0b0b50cb65";
 pub const SEED_QUERY:     &str = "hash:sha256:v1:ed1e83ba547dd53732d265531fd219627d5e24bd9583f3255b8a255cac173c3c";
 pub const SEED_DIFF:      &str = "hash:sha256:v1:71b4039acce977fdd196b8059abbf091b768e5bc593ed8cfb1071560911e5189";
+pub const SEED_SET:       &str = "hash:sha256:v1:23ffbb2b03131b490d414368660caf3bae6888e10d37024b7d4b9f630fdee937";
+pub const SEED_STAT:      &str = "hash:sha256:v1:ba911f4a2e02263bf3f8d696c4dddaf144a0294fc66c95fcc1ebbc111239fb80";
+pub const SEED_CSV:       &str = "hash:sha256:v1:e27bde26d0e45265e5fe7e6d95828e9b1844fc7b1063b0e54334a6cd74332f8a";
+pub const SEED_URL:       &str = "hash:sha256:v1:10c2dab94a48719eae894d8c8dfdbdfd24b4114962ccf904c7d4ca00ad56589f";
+pub const SEED_TOML:      &str = "hash:sha256:v1:4594a34f5da20ab41957665d774f485e763696429c882201cb67c80ab376e28c";
 
 pub const SEED_OPTION:    &str = "hash:sha256:v1:882e630c8f1cf5cd644ae7cfe6561e8738911c0b5105dcd0680266433400a89d";
 pub const SEED_RESULT:    &str = "hash:sha256:v1:bf98c6ee2b26ba36628f5b14050cd48b090e6e4e8248bb8e6e98a9d26fb66c46";
@@ -44,6 +49,11 @@ pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
         ("~%Path",       SEED_PATH),
         ("~%Query",      SEED_QUERY),
         ("~%Diff",       SEED_DIFF),
+        ("~%Set",        SEED_SET),
+        ("~%Stat",       SEED_STAT),
+        ("~%Csv",        SEED_CSV),
+        ("~%Url",        SEED_URL),
+        ("~%Toml",       SEED_TOML),
         ("~%Regex",      SEED_REGEX),
         ("@option",      SEED_OPTION),
         ("@result",      SEED_RESULT),
