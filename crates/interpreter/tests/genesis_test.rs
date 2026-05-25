@@ -34,6 +34,7 @@ fn seed_caids_are_stable() {
         ("~%Process",    nlang_interpreter::genesis::SEED_PROCESS),
         ("~%Path",       nlang_interpreter::genesis::SEED_PATH),
         ("~%Query",      nlang_interpreter::genesis::SEED_QUERY),
+        ("~%Diff",       nlang_interpreter::genesis::SEED_DIFF),
     ];
 
     // Verify every seed matches its constant

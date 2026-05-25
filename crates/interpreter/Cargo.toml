@@ -98,6 +98,10 @@ path = "tests/disc_multihop_test.rs"
 name = "query_p43_test"
 path = "tests/query_p43_test.rs"
 
+[[test]]
+name = "diff_p44_test"
+path = "tests/diff_p44_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }

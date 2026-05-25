@@ -435,6 +435,21 @@ impl Ouroboros {
         let query_module = Value::Combo(ComboVal::new(query_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
         fields.insert("~%Query".to_string(), query_module);
 
+        // ~%Diff module
+        let mut diff_fields = IndexMap::new();
+        let dmorph = |name: &str, id: &str, eff: EffectTag| -> Value {
+            let mut f = IndexMap::new();
+            f.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+            f.insert("%builtin".to_string(), Value::Atom(AtomKind::Str(id.to_string()), EffectTag::Pure, None));
+            f.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None));
+            Value::Combo(ComboVal::new(f, true, IndexMap::new(), eff, vec![]))
+        };
+        diff_fields.insert("/diff".to_string(),          dmorph("/diff",          "diff.diff",          EffectTag::Pure));
+        diff_fields.insert("/patch".to_string(),         dmorph("/patch",         "diff.patch",         EffectTag::Pure));
+        diff_fields.insert("/is_compatible".to_string(), dmorph("/is_compatible", "diff.is_compatible", EffectTag::Pure));
+        let diff_module = Value::Combo(ComboVal::new(diff_fields, true, IndexMap::new(), EffectTag::Pure, vec![]));
+        fields.insert("~%Diff".to_string(), diff_module);
+
         let mut disc_fields = IndexMap::new();
         let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
         for (n, b) in disc_morphisms { disc_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![]))); }

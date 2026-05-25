@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-25（Phase 42 完成後）  
-> 測試數量：~458 tests passing（58+ 個測試套件）
+> 最後更新：2026-05-25（Phase 43 完成後）  
+> 測試數量：~466 tests passing（59+ 個測試套件）
 
 ---
 
@@ -66,7 +66,7 @@
 
 | 功能 | 說明 |
 |:-----|:-----|
-| 視界震盪防禦（#semantic_eclipse） | APP_05 §7.2，P3 |
+| 剩餘差距暫無（視界震盪防禦已完成 Phase 41） | — |
 
 ---
 
@@ -105,6 +105,10 @@
 
 #### ~%Path（5 態射，Pure）
 `/join` `/dirname` `/basename` `/extension` `/is_absolute`
+
+#### ~%Query（4 態射）
+`/select`（dot-path 導航）`/where`（謂詞過濾，IO）`/pluck`（欄位摘取）`/deep_merge`（遞歸合併）  
+共用 helpers：`parse_path`、`get_at_path`（pub，Phase 44 ~%Diff 複用）— Phase 43
 
 #### ~%Time（4 態射，IO EffectTag）
 `/now` `/format` `/diff` `/add_ms`
@@ -279,5 +283,6 @@ pub struct ComboVal {
 | `h1_phase_test` | phase_diff_between、H1Split 觸發、Top-MASA 無回歸 |
 | `semantic_eclipse_test` | disc.find blacklist、hop budget、SemanticEclipse 觸發、tiebreaker 確定性 |
 | `disc_multihop_test` | 多跳路由、hop counter、store 命中、預算耗盡、空 registry |
+| `query_p43_test` | query.select（路徑導航、list index）、query.pluck、query.deep_merge（遞歸）、query.where（空 list）|
 
-**總計：~458 tests, 0 failed**
+**總計：~466 tests, 0 failed**

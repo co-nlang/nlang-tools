@@ -24,6 +24,27 @@ pub fn get_at_path(val: &Value, path: &[String], oo: &Ouroboros, ctx: &mut EvalC
     }
 }
 
+/// Immutably update a Value tree at the given path.
+/// Returns the rebuilt tree with new_val at path, or Bottom(MissingKey) if path traverses non-Combo.
+pub fn set_at_path(val: Value, path: &[String], new_val: Value) -> Value {
+    if path.is_empty() { return new_val; }
+    match val {
+        Value::Combo(mut c) => {
+            let key = &path[0];
+            let child = c.get_field(key).cloned().unwrap_or(Value::Top);
+            let updated = set_at_path(child, &path[1..], new_val);
+            c.insert_field(key, updated);
+            Value::Combo(c)
+        }
+        _ => Value::Bottom(Box::new(BottomDetail {
+            cause: BottomCause::MissingKey,
+            path: Some(path.join(".")),
+            message: Some("Cannot navigate into non-Combo value".to_string()),
+            ..Default::default()
+        })),
+    }
+}
+
 fn extract_list_items(list: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Vec<Value> {
     if let Value::Combo(c) = list {
         let mut items = Vec::new();
@@ -53,7 +74,7 @@ fn is_truthy(val: &Value) -> bool {
     }
 }
 
-fn deep_merge_values(a: Value, b: Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Value {
+pub fn deep_merge_values(a: Value, b: Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Value {
     match (&a, &b) {
         (Value::Combo(ca), Value::Combo(cb)) => {
             let mut merged = ca.clone();
