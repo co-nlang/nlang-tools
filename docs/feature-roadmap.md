@@ -1,11 +1,11 @@
 # nlang 功能路線圖
 
-> 最後更新：2026-05-25（Phase 39 完成後）  
+> 最後更新：2026-05-25（Phase 40 完成後）  
 > 開發模式：由 "project brain" AI 出規劃，執行 AI 實作，逐 Phase 交接
 
 ---
 
-## 1. 已完成功能（Phase 1–39）
+## 1. 已完成功能（Phase 1–40）
 
 ### 核心格論
 
@@ -14,6 +14,7 @@
 | Meet/Join/Complement 基礎 | 1a-1c | `unify.rs`, `complement.rs` |
 | H¹ phase obstruction（相位阻礙） | 7 | `unify.rs:make_h1_split_bottom` |
 | H² MASA obstruction（互補性違規） | 7 | `unify.rs:make_h2_split_bottom` |
+| `approximate_phase_diff` 量子距離（arccos） | 40 | `lattice_sketch.rs:phase_diff_between`, `unify.rs` |
 | Orthomodular Law 驗證 | 7 | `oml.rs` |
 | Bohrification Q↔B | 7 | `lib.rs` |
 | `Value::Blur(BlurDetail)` 第一類公民 | 9 | `value.rs` |
@@ -138,7 +139,6 @@
 
 | 功能 | 說明 | 規格章節 |
 |:-----|:-----|:---------|
-| `approximate_phase_diff` 量子距離 | 0.0 stub → 真實 arccos（**高風險**） | Phase 4 殘留 |
 | 視界震盪防禦 | #semantic_eclipse | SPEC_13 §7.2 |
 | GPP 幾何概率零知識證明 | 基於 Lattice Sketch | APP_05 §5 |
 | CIP 因果完整性證明 | 分布式計算委託 | APP_05 §6 |
@@ -152,7 +152,8 @@
 Phase 1–16：核心格論、CAID、#refine、基礎標準庫（~198 tests）  
 Phase 17–24：標準庫大幅擴展（option/result/list/refl 補全、cond.match、eval CLI）→ 274 tests  
 Phase 25–34：新模組（Bytes/Regex/Json/Io）+ 字串/數學/列表補全 → ~392 tests  
-Phase 35–39：P2 清空（List/Math Round 2、Env/Process/Path 模組、nerve 精確交集、Engine 視圖）→ ~439 tests
+Phase 35–39：P2 清空（List/Math Round 2、Env/Process/Path 模組、nerve 精確交集、Engine 視圖）→ ~439 tests  
+Phase 40：量子相位距離 arccos(Tr(P_A·P_B))（`phase_diff_between`，P3 第一項）→ ~446 tests
 
 每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
 零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。

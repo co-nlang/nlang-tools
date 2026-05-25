@@ -5,6 +5,8 @@ use crate::value::{Value, EffectTag, BottomCause, BottomDetail, ContentHash};
 use crate::storage::ObjectStore;
 use nlang_parser::ast::AtomKind;
 
+const MAX_ROUTING_HOPS: u32 = 16;
+
 fn base64_decode_sketch(s: &str) -> Vec<u8> {
     use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
     STANDARD_NO_PAD.decode(s).unwrap_or_default()
@@ -16,6 +18,18 @@ fn bottom_not_found() -> Value {
         message: Some("No matching peers found".to_string()),
         ..Default::default()
     }))
+}
+
+/// Perturb gravitational weight with a deterministic session salt.
+/// Adds ±0.5% noise: enough to break ties, not enough to override strong gravity.
+fn perturb_weight(weight: f64, caid: &str, horizon_salt: &crate::value::ContentHash) -> f64 {
+    use sha2::{Sha256, Digest as Sha2Digest};
+    let mut h = Sha256::new();
+    h.update(&horizon_salt.digest);
+    h.update(caid.as_bytes());
+    let hash = h.finalize();
+    let salt_f = u64::from_be_bytes(hash[0..8].try_into().unwrap()) as f64 / u64::MAX as f64;
+    weight * (1.0 + (salt_f - 0.5) * 0.01)
 }
 
 /// Compute a MASA identifier from a Combo's field key set.
@@ -196,15 +210,39 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         };
 
         if candidates.is_empty() { return bottom_not_found(); }
-        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // 3. Horizon oscillation: 10% random jump
-        let chosen_caid_str = if ctx.horizon_salt.digest.first() == Some(&0) {
-            let idx = (ctx.horizon_salt.digest.get(1).copied().unwrap_or(0) as usize) % candidates.len();
-            candidates[idx].1.clone()
+        // 3. Horizon oscillation defence: blacklist + horizon_salt tiebreaker
+        // Safety: hard hop budget terminates routing unconditionally.
+        if ctx.disc_routing_hops >= MAX_ROUTING_HOPS {
+            return Value::Bottom(Box::new(BottomDetail {
+                cause: BottomCause::SemanticEclipse,
+                path: Some("disc.find".to_string()),
+                message: Some(format!(
+                    "Routing budget exceeded after {} hops (MAX_ROUTING_HOPS={})",
+                    ctx.disc_routing_hops, MAX_ROUTING_HOPS
+                )),
+                ..Default::default()
+            }));
+        }
+
+        // Apply deterministic perturbation (horizon_salt × node_caid → ±0.5% weight noise)
+        let mut perturbed: Vec<(f64, String)> = candidates.iter()
+            .map(|(w, caid)| (perturb_weight(*w, caid, &ctx.horizon_salt), caid.clone()))
+            .collect();
+        perturbed.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Prefer unvisited candidates; fall back to best revisited if blacklist is exhausted.
+        let chosen_caid_str = if let Some((_, caid)) = perturbed.iter()
+            .find(|(_, c)| !ctx.disc_routing_visited.contains(c))
+        {
+            caid.clone()
         } else {
-            candidates[0].1.clone()
+            // All candidates have been visited in this session — tiebreaker still applies.
+            perturbed[0].1.clone()
         };
+
+        ctx.disc_routing_visited.insert(chosen_caid_str.clone());
+        ctx.disc_routing_hops += 1;
 
         // 4. Fetch target
         let target_caid_str = if let Value::Combo(ref c) = arg {

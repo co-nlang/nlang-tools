@@ -86,6 +86,10 @@ path = "tests/engine_p39_test.rs"
 name = "h1_phase_test"
 path = "tests/h1_phase_test.rs"
 
+[[test]]
+name = "semantic_eclipse_test"
+path = "tests/semantic_eclipse_test.rs"
+
 [dependencies]
 regex = "1"
 nlang-parser = { path = "../parser" }

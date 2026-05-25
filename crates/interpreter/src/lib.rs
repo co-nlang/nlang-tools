@@ -53,6 +53,8 @@ pub struct EvalContext {
     pub max_lifting_depth: usize,
     pub refine_map_active: bool,
     pub had_nondistrib_event: bool,
+    pub disc_routing_visited: std::collections::HashSet<String>,
+    pub disc_routing_hops: u32,
 }
 
 impl EvalContext {
@@ -68,6 +70,8 @@ impl EvalContext {
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
             refine_map_active: false,
             had_nondistrib_event: false,
+            disc_routing_visited: std::collections::HashSet::new(),
+            disc_routing_hops: 0,
         }
     }
     pub fn with_fuel(mut self, fuel: u64) -> Self { self.fuel = fuel; self }
@@ -835,6 +839,7 @@ let mut refl_fields = IndexMap::new();
                         BottomCause::ArithmeticOnAnchor => "arithmetic_on_anchor",
                         BottomCause::H1Split => "h1_split",
                         BottomCause::H2Split => "h2_split",
+                        BottomCause::SemanticEclipse => "semantic_eclipse",
                     };
                     return Value::Atom(AtomKind::Tag(type_tag.to_string()), EffectTag::Pure, None).with_effect(accumulated_effect);
                 }

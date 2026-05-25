@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-25（Phase 39 完成後）  
-> 測試數量：~439 tests passing（55+ 個測試套件）
+> 最後更新：2026-05-25（Phase 40 完成後）  
+> 測試數量：~446 tests passing（56+ 個測試套件）
 
 ---
 
@@ -10,7 +10,7 @@
 | 規格章節 | 完整度 | 關鍵剩餘差距 |
 |:---------|:------:|:------------|
 | SPEC_01（格論基礎） | **95%** | ArithmeticOnAnchor 未在所有算術路徑攔截 |
-| SPEC_06（統一化邏輯） | **90%** | `approximate_phase_diff`（高風險，暫緩） |
+| SPEC_06（統一化邏輯） | **98%** | `approximate_phase_diff` ✓；視界震盪防禦（P3） |
 | SPEC_09（標準庫） | **100%** | — |
 | SPEC_10（演化與 Commit） | **99%** | — |
 | SPEC_13（OODP） | **65%** | GPP/CIP 零知識證明（P3） |
@@ -60,12 +60,13 @@
 | had_nondistrib_event 非分配性旗標 | `EvalContext.had_nondistrib_event` — Phase 7 |
 | Unify memoization | `Ouroboros.unify_memo: RwLock<HashMap>` |
 | `%timeout` → `timeout_deadline` 動態設定 | `lib.rs:eval_context` — Phase 15 |
+| `phase_diff_between` 量子距離 arccos(Tr(P_A·P_B)) | `lattice_sketch.rs` — Phase 40 |
 
 ### 剩餘 △
 
 | 功能 | 說明 |
 |:-----|:-----|
-| `approximate_phase_diff` 量子距離 | `unify.rs` stub 0.0 → 真實 arccos（**高風險**） |
+| 視界震盪防禦（#semantic_eclipse） | APP_05 §7.2，P3 |
 
 ---
 
@@ -275,5 +276,6 @@ pub struct ComboVal {
 | `path_p37_test` | path.join/dirname/basename/extension/is_absolute |
 | `nerve_routing_test`（Phase 38 節）| disc.rs 語義 key 過濾 |
 | `engine_p39_test` | engine.equivalence_map / engine.resolve |
+| `h1_phase_test` | phase_diff_between、H1Split 觸發、Top-MASA 無回歸 |
 
-**總計：~439 tests, 0 failed**
+**總計：~446 tests, 0 failed**
