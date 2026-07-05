@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-25（Phase 44 完成後）  
-> 測試數量：~474 tests passing（60+ 個測試套件）
+> 最後更新：2026-05-25（Phase 47 完成後）  
+> 測試數量：~514 tests passing（69+ 個測試套件）
 
 ---
 
@@ -74,16 +74,16 @@
 
 ### 已實作 ✓
 
-#### ~%Math（35 態射）
-`/add` `/sub` `/mul` `/div` `/rem` `/abs` `/bits` `/pow` `/sqrt` `/bitAnd` `/bitOr` `/bitXor` `/bitNot` `/shl` `/shr` `/exp` `/ln` `/sin` `/cos` `/eml` `/random` `/min` `/max` `/floor` `/ceil` `/round` `/clamp` `/gcd` `/lcm` `/sign` `/log2` `/log10` `/factorial` `/choose` `/is_prime` `/pow_mod`
+#### ~%Math（43 態射）
+`/add` `/sub` `/mul` `/div` `/rem` `/abs` `/bits` `/pow` `/sqrt` `/bitAnd` `/bitOr` `/bitXor` `/bitNot` `/shl` `/shr` `/exp` `/ln` `/sin` `/cos` `/eml` `/random` `/min` `/max` `/floor` `/ceil` `/round` `/clamp` `/gcd` `/lcm` `/sign` `/log2` `/log10` `/factorial` `/choose` `/is_prime` `/pow_mod` `/atan2` `/hypot` `/sinh` `/cosh` `/tanh` `/trunc` `/fract` `/to_float`
 
 特殊：`ln(0)` / `sqrt(-1)` / `eml(0)` → `Value::Blur`（MathSingularity）；`%branch` Riemann 面
 
-#### ~%List（36 態射）
-`/map` `/filter` `/fold` `/len` `/concat` `/at` `/sort` `/reverse` `/slice` `/zip` `/flat_map` `/any` `/all` `/find` `/head` `/tail` `/take` `/drop` `/count` `/zip_with` `/partition` `/flatten` `/sum` `/min_by` `/max_by` `/unique` `/range` `/reduce` `/group_by` `/chunk` `/window` `/enumerate` `/sort_by` `/dedup` `/intersperse`
+#### ~%List（41 態射）
+`/map` `/filter` `/fold` `/len` `/concat` `/at` `/sort` `/reverse` `/slice` `/zip` `/flat_map` `/any` `/all` `/find` `/head` `/tail` `/take` `/drop` `/count` `/zip_with` `/partition` `/flatten` `/sum` `/min_by` `/max_by` `/unique` `/range` `/reduce` `/group_by` `/chunk` `/window` `/enumerate` `/sort_by` `/dedup` `/intersperse` `/scan` `/take_while` `/drop_while` `/product` `/transpose`
 
-#### ~%String（28 態射）
-`/concat` `/split` `/join` `/trim` `/len` `/replace` `/to_lower` `/to_upper` `/starts_with` `/ends_with` `/contains` `/parse_int` `/from_int` `/repeat` `/format`（含命名佔位符）`/char_at` `/chars` `/index_of` `/pad_left` `/pad_right` `/trim_start` `/trim_end` `/reverse` `/count` `/slice` `/is_empty` `/parse_float` `/lines`
+#### ~%String（33 態射）
+`/concat` `/split` `/join` `/trim` `/len` `/replace` `/to_lower` `/to_upper` `/starts_with` `/ends_with` `/contains` `/parse_int` `/from_int` `/repeat` `/format`（含命名佔位符）`/char_at` `/chars` `/index_of` `/pad_left` `/pad_right` `/trim_start` `/trim_end` `/reverse` `/count` `/slice` `/is_empty` `/parse_float` `/lines` `/encode_uri` `/decode_uri` `/levenshtein` `/word_count` `/title_case`
 
 #### ~%Bytes（12 態射）
 `/from_str` `/to_str` `/len` `/at` `/concat` `/slice` `/to_hex` `/from_hex` `/sha256` `/base64_encode` `/base64_decode` `/hmac_sha256`
@@ -106,6 +106,24 @@
 #### ~%Path（5 態射，Pure）
 `/join` `/dirname` `/basename` `/extension` `/is_absolute`
 
+#### ~%Set（8 態射，Pure）
+`/from_list` `/union` `/intersection` `/difference` `/is_subset` `/is_superset` `/is_disjoint` `/contains`  
+基於 @list 表示，去重保序；`val_eq` 使用 Debug 字串比較 — Phase 46
+
+#### ~%Stat（6 態射，Pure）
+`/mean` `/variance` `/std_dev` `/median` `/percentile`（線性插值）`/histogram`（均分 bins，返回 @list of @list）— Phase 46
+
+#### ~%Csv（4 態射）
+`/parse`（→ @list of @list）`/parse_with_headers`（→ @list of Combo）`/stringify` `/read_csv`（IO）  
+手寫 RFC 4180 解析器（無新依賴）— Phase 47
+
+#### ~%Url（5 態射，Pure）
+`/parse`（→ `{scheme,host,path,query,fragment}`）`/encode` `/decode` `/join` `/query_params`（→ Combo）  
+使用 `url = "2"` crate；encode/decode 手寫 — Phase 47
+
+#### ~%Toml（2 態射，Pure）
+`/parse`（→ Combo）`/stringify`（→ Str）；使用 `toml = "0.8"` crate — Phase 47
+
 #### ~%Query（4 態射）
 `/select`（dot-path 導航）`/where`（謂詞過濾，IO）`/pluck`（欄位摘取）`/deep_merge`（遞歸合併）  
 共用 helpers：`parse_path`、`get_at_path`、`set_at_path`、`deep_merge_values`（pub）— Phase 43/44
@@ -113,8 +131,8 @@
 #### ~%Diff（3 態射）
 `/diff`（遞歸收集 `{path,from,to}` 條目）`/patch`（套用 diff 重建 Value 樹）`/is_compatible`（deep_merge 無 Bottom → #true）— Phase 44
 
-#### ~%Time（4 態射，IO EffectTag）
-`/now` `/format` `/diff` `/add_ms`
+#### ~%Time（9 態射，IO/Pure EffectTag）
+`/now` `/format` `/diff` `/add_ms` `/parse`（IO）`/to_iso8601` `/add_days` `/add_hours` `/weekday`（Pure）
 
 #### ~%Complex（4 態射）
 `/conj` `/phase` `/real` `/imag`
@@ -288,5 +306,14 @@ pub struct ComboVal {
 | `disc_multihop_test` | 多跳路由、hop counter、store 命中、預算耗盡、空 registry |
 | `query_p43_test` | query.select（路徑導航、list index）、query.pluck、query.deep_merge（遞歸）、query.where（空 list）|
 | `diff_p44_test` | diff.diff（相同→空、葉差異、新增欄位、巢狀路徑）、diff.patch（空 diff、套用修補）、diff.is_compatible（相容/衝突）|
+| `math_p45_test` | atan2/hypot/tanh（零）、trunc/fract、to_float（Int→Float）|
+| `list_p45_test` | scan 前綴和、take_while 空 list、product（連乘）、transpose 2×2 |
+| `str_p45_test` | encode_uri/decode_uri roundtrip、levenshtein（kitten→sitting=3）、word_count、title_case |
+| `time_p45_test` | to_iso8601 roundtrip、weekday（2024-01-01=#monday）、add_days |
+| `set_p46_test` | from_list 去重、union、intersection、difference、is_subset、contains |
+| `stat_p46_test` | mean、median（奇數長）、std_dev（=2.0）、percentile p50、histogram bins=3、variance |
+| `csv_p47_test` | parse 基本、parse_with_headers、stringify roundtrip、quoted field（含逗號）|
+| `url_p47_test` | parse 分解 scheme/host/path、encode/decode roundtrip、query_params |
+| `toml_p47_test` | parse 基本、parse 巢狀 table、parse 錯誤→Bottom |
 
-**總計：~474 tests, 0 failed**
+**總計：~514 tests, 0 failed**

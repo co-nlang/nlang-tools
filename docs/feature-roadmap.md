@@ -1,11 +1,11 @@
 # nlang 功能路線圖
 
-> 最後更新：2026-05-25（Phase 44 完成後）  
+> 最後更新：2026-05-25（Phase 47 完成後）  
 > 開發模式：由 "project brain" AI 出規劃，執行 AI 實作，逐 Phase 交接
 
 ---
 
-## 1. 已完成功能（Phase 1–44）
+## 1. 已完成功能（Phase 1–47）
 
 ### 核心格論
 
@@ -57,6 +57,7 @@
 | min/max/floor/ceil/round/clamp | 19 |
 | gcd/lcm/sign/log2/log10 | 27 |
 | factorial/choose/is_prime/pow_mod | 35 |
+| atan2/hypot/sinh/cosh/tanh/trunc/fract/to_float | 45 |
 
 ### 標準庫 ~%List
 
@@ -70,6 +71,7 @@
 | unique/range/reduce；@list genesis seed | 25 |
 | group_by/chunk/window | 28 |
 | enumerate/sort_by/dedup/intersperse | 35 |
+| scan/take_while/drop_while/product/transpose | 45 |
 
 ### 標準庫 ~%String
 
@@ -82,6 +84,7 @@
 | index_of/pad_left/pad_right/trim_start/trim_end | 27 |
 | format 命名佔位符 `{name}` | 29 |
 | reverse/count/slice/is_empty/parse_float/lines | 32 |
+| encode_uri/decode_uri/levenshtein/word_count/title_case | 45 |
 
 ### 標準庫 @option / @result
 
@@ -106,7 +109,7 @@
 
 | 模組 | Phase | 態射數 | 說明 |
 |:-----|:-----:|:------:|:-----|
-| ~%Time | 早期 + 擴展 | 4 | now/format/diff/add_ms |
+| ~%Time | 早期 + 45 | 9 | now/format/diff/add_ms/parse/to_iso8601/add_days/add_hours/weekday |
 | ~%Complex | 早期 | 4 | conj/phase/real/imag |
 | ~%Cond | 早期 + 14 | 3 | if/cond/match（真實模式匹配） |
 | ~%Bytes | 30 + 32 | 12 | 二進位 + sha256/base64/hmac_sha256 |
@@ -118,6 +121,11 @@
 | ~%Path | 37 | 5 | join/dirname/basename/extension/is_absolute（Pure） |
 | ~%Query | 43 | 4 | select/where/pluck/deep_merge（巢狀 Combo 讀取） |
 | ~%Diff | 44 | 3 | diff/patch/is_compatible（Value 樹差異與修補） |
+| ~%Set | 46 | 8 | from_list/union/intersection/difference/is_subset/is_superset/is_disjoint/contains |
+| ~%Stat | 46 | 6 | mean/variance/std_dev/median/percentile/histogram |
+| ~%Csv | 47 | 4 | parse/parse_with_headers/stringify/read_csv（手寫 RFC 4180） |
+| ~%Url | 47 | 5 | parse/encode/decode/join/query_params（url crate） |
+| ~%Toml | 47 | 2 | parse/stringify（toml crate） |
 
 ### 引擎基礎設施
 
@@ -162,7 +170,10 @@ Phase 40：量子相位距離 arccos(Tr(P_A·P_B))（`phase_diff_between`，P3 �
 Phase 41：視界震盪防禦（SemanticEclipse + disc.find blacklist/tiebreaker）→ ~452 tests  
 Phase 42：disc.find 多跳迭代路由（multi-hop loop + compute_mass/build_query_nerve）→ ~458 tests  
 Phase 43：~%Query 模組（select/where/pluck/deep_merge，含 parse_path/get_at_path pub helpers）→ ~466 tests  
-Phase 44：~%Diff 模組（diff/patch/is_compatible，set_at_path + collect_diffs 遞歸）→ ~474 tests
+Phase 44：~%Diff 模組（diff/patch/is_compatible，set_at_path + collect_diffs 遞歸）→ ~474 tests  
+Phase 45：A 組擴充（~%Math +8, ~%List +5, ~%String +5, ~%Time +5）→ ~492 tests  
+Phase 46：~%Set（8）+ ~%Stat（6）零 dep 新模組 → ~504 tests  
+Phase 47：~%Csv（手寫）+ ~%Url（url crate）+ ~%Toml（toml crate）→ ~514 tests
 
 每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
 零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。
