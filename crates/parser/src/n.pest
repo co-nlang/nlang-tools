@@ -137,11 +137,13 @@ float_lit = @{
     "-"? ~ numeric ~ "." ~ numeric
     ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )?
 }
+// trailing !(XID_CONTINUE | "-") guard: `io`/`it`/`i-1` are idents, not
+// complex-then-apply (2026-07-06 fix, back-ported to SPEC_14)
 complex_lit = @{
     ( "-"? ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? )
-    ~ ("+" | "-") ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i"
-    | "-"? ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i"
-    | "-"? ~ "i"
+    ~ ("+" | "-") ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i" ~ !(XID_CONTINUE | "-")
+    | "-"? ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i" ~ !(XID_CONTINUE | "-")
+    | "-"? ~ "i" ~ !(XID_CONTINUE | "-")
 }
 
 bottom = { "_|_" }

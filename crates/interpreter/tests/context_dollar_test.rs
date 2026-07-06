@@ -106,6 +106,30 @@ fn p4_tuple_sealed_against_structural_add() {
     assert!(matches!(v, Value::Bottom(_)), "sealed tuple must reject new field, got {:?}", v);
 }
 
+// P4 corollary: explicit unboxing `{ ...t }` is the canonical way to extend —
+// the seal is respected by default, breaking it is explicit (SYNTAX_12 §4 #7)
+#[test]
+fn p4_tuple_explicit_unbox_then_extend() {
+    let v = eval_one("u: { ...(1, 2) } |> { s: $.0 + $.1 }");
+    assert_eq!(field_of(&v, "s"), int(3));
+    assert_eq!(field_of(&v, "0"), int(1));
+}
+
+// Tuple seal is the ARITY seal only — effects stay visible (2026-07-06 ruling:
+// effect shielding is Cocoon-exclusive; tuple effect = max over elements)
+#[test]
+fn tuple_effect_transparent() {
+    let oo = Ouroboros::new_in_memory();
+    let mut root = ComboVal::default();
+    let mut io_cv = ComboVal::default();
+    io_cv.effect = EffectTag::IO;
+    root.insert_field("io_thing", Value::Combo(io_cv));
+    let mut ctx = EvalContext::new(root);
+    let program = parse_program("t: (io_thing, 1)").unwrap();
+    let v = oo.eval(&program.fields[0].value, &mut ctx);
+    assert_eq!(v.effect(), EffectTag::IO, "tuple must not shield element effects, got {:?}", v);
+}
+
 // P5: interpolation does not open a scope — ${$} is the pipe input
 #[test]
 fn p5_interpolation_transparent() {

@@ -408,16 +408,22 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
             }
             ExprKind::Spread(e) => self.eval(e, ctx),
-            // Tuple (a, b): fixed-arity "numeric cocoon" — closed combo with positional keys (SYNTAX_04 §2.4/§2.5)
+            // Tuple (a, b): fixed-arity positional packet — closed combo with numeric keys.
+            // The seal is the ARITY seal only (SYNTAX_04 §2.5): no new fields. Effect
+            // shielding is Cocoon-exclusive — tuple effect = max over elements
+            // (2026-07-06 ruling: decoupled from the cocoon analogy).
             ExprKind::Tuple(items) => {
                 if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
                     return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
                 }
                 let mut rf = IndexMap::new();
+                let mut me = EffectTag::Pure;
                 for (i, it) in items.iter().enumerate() {
-                    rf.insert(i.to_string(), self.eval(it, ctx));
+                    let v = self.eval(it, ctx);
+                    me = me.max(v.effect());
+                    rf.insert(i.to_string(), v);
                 }
-                Value::Combo(ComboVal::new(rf, true, IndexMap::new(), EffectTag::Pure, vec![]))
+                Value::Combo(ComboVal::new(rf, true, IndexMap::new(), me, vec![]))
             }
             // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
             ExprKind::Poset(relations) => {

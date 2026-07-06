@@ -123,6 +123,14 @@ fn pinned_edge_cases() {
     // 2+3i atomic vs spaced addition
     assert!(matches!(parse_expr_only("2+3i").unwrap().kind, ExprKind::Atom(AtomKind::Complex(_, _))));
     assert!(matches!(parse_expr_only("2 + 3i").unwrap().kind, ExprKind::Add(_, _)));
+    // i-leading identifiers are idents, not complex-then-apply (complex_lit
+    // trailing guard, 2026-07-06); bare i / -i stay the imaginary unit
+    assert!(matches!(parse_expr_only("io").unwrap().kind, ExprKind::Path(_)));
+    assert!(matches!(parse_expr_only("input").unwrap().kind, ExprKind::Path(_)));
+    assert!(matches!(parse_expr_only("i-1").unwrap().kind, ExprKind::Path(_)));   // kebab ident
+    assert!(matches!(parse_expr_only("i2").unwrap().kind, ExprKind::Path(_)));
+    assert!(matches!(parse_expr_only("i").unwrap().kind, ExprKind::Atom(AtomKind::Complex(_, _))));
+    assert!(matches!(parse_expr_only("i - 1").unwrap().kind, ExprKind::Sub(_, _))); // spaced: complex minus int
 }
 
 // deep nesting must not blow the stack (test_enum_auto_number.n shape, regression)
