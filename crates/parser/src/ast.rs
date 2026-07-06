@@ -52,9 +52,17 @@ pub enum ExprKind {
     Ternary { cond: Box<Expr>, then_branch: Box<Expr>, else_branch: Box<Expr> },
     Add(Box<Expr>, Box<Expr>), Sub(Box<Expr>, Box<Expr>), Mul(Box<Expr>, Box<Expr>), Div(Box<Expr>, Box<Expr>), Rem(Box<Expr>, Box<Expr>),
     Eq(Box<Expr>, Box<Expr>), Ne(Box<Expr>, Box<Expr>), Lt(Box<Expr>, Box<Expr>), Gt(Box<Expr>, Box<Expr>), Lte(Box<Expr>, Box<Expr>), Gte(Box<Expr>, Box<Expr>),
+    /// Lattice-family equality `=` (non-collapsing; distinct from atomic `==`)
+    LatticeEq(Box<Expr>, Box<Expr>),
+    /// Direction probe `<=>` (returns an order tag, never a boolean; SYNTAX_10)
+    Probe(Box<Expr>, Box<Expr>),
     TypeAnnotation(Box<Expr>, Box<Expr>),
     Unary { op: UnaryOp, expr: Box<Expr> },
     List(Vec<Expr>),
+    /// Fixed-arity positional tuple `(a, b)` / 1-tuple `(a,)` — a "numeric cocoon" (SYNTAX_04)
+    Tuple(Vec<Expr>),
+    /// Poset literal `#{ #a <= #b < #c }` — order chains live only here (SYNTAX_10)
+    Poset(Vec<Relation>),
     Lens(Box<Expr>, Box<Expr>),
     AnonSet(Box<Expr>),
     Interpolated(Vec<StringPart>),
@@ -65,7 +73,7 @@ pub enum ExprKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RelOp { Lt, Gt, Lte, Gte }
+pub enum RelOp { Lt, Gt, Lte, Gte, Eq }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Relation {
@@ -126,7 +134,8 @@ impl Expr {
             ExprKind::Apply(f, a) | ExprKind::Pipe(f, a) | ExprKind::Meet(f, a) | ExprKind::Join(f, a) | ExprKind::Diff(f, a) |
             ExprKind::Add(f, a) | ExprKind::Sub(f, a) | ExprKind::Mul(f, a) | ExprKind::Div(f, a) | ExprKind::Rem(f, a) |
             ExprKind::Eq(f, a) | ExprKind::Ne(f, a) | ExprKind::Lt(f, a) | ExprKind::Gt(f, a) | ExprKind::Lte(f, a) | ExprKind::Gte(f, a) |
-            ExprKind::TypeAnnotation(f, a) | ExprKind::Lens(f, a) => { f.canonicalize(); a.canonicalize(); }
+            ExprKind::TypeAnnotation(f, a) | ExprKind::Lens(f, a) |
+            ExprKind::LatticeEq(f, a) | ExprKind::Probe(f, a) => { f.canonicalize(); a.canonicalize(); }
             ExprKind::Morphism { param, body } => { param.canonicalize(); body.canonicalize(); }
             ExprKind::Combo { fields, relations, .. } => {
                 for f in fields.iter_mut() { f.canonicalize(); }
@@ -135,7 +144,8 @@ impl Expr {
             }
             ExprKind::Ternary { cond, then_branch, else_branch } => { cond.canonicalize(); then_branch.canonicalize(); else_branch.canonicalize(); }
             ExprKind::Unary { expr, .. } | ExprKind::AnonSet(expr) | ExprKind::Spread(expr) | ExprKind::Structural(expr) | ExprKind::Complement(expr) => { expr.canonicalize(); }
-            ExprKind::List(items) => { for i in items { i.canonicalize(); } }
+            ExprKind::List(items) | ExprKind::Tuple(items) => { for i in items { i.canonicalize(); } }
+            ExprKind::Poset(relations) => { relations.sort_by_key(|r| format!("{:?}{:?}{:?}", r.left, r.op, r.right)); }
             ExprKind::Interpolated(parts) => { for part in parts { if let StringPart::Interpolated(e) = part { e.canonicalize(); } } }
             ExprKind::Range { start, end, step } => { start.canonicalize(); end.canonicalize(); if let Some(s) = step { s.canonicalize(); } }
             _ => {}
@@ -161,7 +171,7 @@ impl Expr {
                 for r in relations {
                     let ls = r.left.to_string_canonical();
                     let rs = r.right.to_string_canonical();
-                    let os = match r.op { RelOp::Lt => "<", RelOp::Gt => ">", RelOp::Lte => "<=", RelOp::Gte => ">=" };
+                    let os = match r.op { RelOp::Lt => "<", RelOp::Gt => ">", RelOp::Lte => "<=", RelOp::Gte => ">=", RelOp::Eq => "=" };
                     s.push_str(&format!("  {}{} {} {}\n", pad, ls, os, rs));
                 }
                 s.push_str(&format!("{}}}", pad)); if *closed { s.push('}'); }
@@ -183,9 +193,22 @@ impl Expr {
             ExprKind::Gt(a, b) => format!("({} > {})", a.to_nlang(indent), b.to_nlang(indent)),
             ExprKind::Lte(a, b) => format!("({} <= {})", a.to_nlang(indent), b.to_nlang(indent)),
             ExprKind::Gte(a, b) => format!("({} >= {})", a.to_nlang(indent), b.to_nlang(indent)),
+            ExprKind::LatticeEq(a, b) => format!("({} = {})", a.to_nlang(indent), b.to_nlang(indent)),
+            ExprKind::Probe(a, b) => format!("({} <=> {})", a.to_nlang(indent), b.to_nlang(indent)),
             ExprKind::TypeAnnotation(v, t) => format!("{}: {}", t.to_nlang(indent), v.to_nlang(indent)),
             ExprKind::Unary { op, expr } => { let s = match op { UnaryOp::Not => "!", UnaryOp::Neg => "-" }; format!("{}{}", s, expr.to_nlang(indent)) }
             ExprKind::List(items) => { let parts: Vec<_> = items.iter().map(|i| i.to_nlang(indent)).collect(); format!("[{}]", parts.join(", ")) }
+            ExprKind::Tuple(items) => {
+                let parts: Vec<_> = items.iter().map(|i| i.to_nlang(indent)).collect();
+                if parts.len() == 1 { format!("({},)", parts[0]) } else { format!("({})", parts.join(", ")) }
+            }
+            ExprKind::Poset(relations) => {
+                let parts: Vec<_> = relations.iter().map(|r| {
+                    let os = match r.op { RelOp::Lt => "<", RelOp::Gt => ">", RelOp::Lte => "<=", RelOp::Gte => ">=", RelOp::Eq => "=" };
+                    format!("{} {} {}", r.left.to_string_canonical(), os, r.right.to_string_canonical())
+                }).collect();
+                format!("#{{ {} }}", parts.join(", "))
+            }
             ExprKind::Lens(obj, key) => {
                 let mut os = obj.to_nlang(indent);
                 if matches!(obj.kind, ExprKind::Apply(..) | ExprKind::Add(..) | ExprKind::Sub(..) | ExprKind::Mul(..) | ExprKind::Div(..) | ExprKind::Rem(..) | ExprKind::Eq(..) | ExprKind::Ne(..)) { os = format!("({})", os); }
@@ -199,7 +222,7 @@ impl Expr {
                     format!("{}.{}", os, key.to_nlang(indent))
                 }
             }
-            ExprKind::AnonSet(e) => format!("#{{ {} }}", e.to_nlang(indent)),
+            ExprKind::AnonSet(e) => format!("@{{ {} }}", e.to_nlang(indent)),
             ExprKind::Interpolated(parts) => {
                 let mut s = "`".to_string();
                 for part in parts { match part { StringPart::Literal(l) => s.push_str(l), StringPart::Interpolated(e) => s.push_str(&format!("${{{}}}", e.to_nlang(indent))) } }
@@ -208,7 +231,7 @@ impl Expr {
             ExprKind::Range { start, end, step } => { let mut res = format!("{}..{}", start.to_nlang(indent), end.to_nlang(indent)); if let Some(s) = step { res.push_str(&format!("..{}", s.to_nlang(indent))); } res }
             ExprKind::Context => "$".to_string(),
             ExprKind::Spread(e) => format!("...{}", e.to_nlang(indent)),
-            ExprKind::Structural(e) => format!("<{}>", e.to_nlang(indent)),
+            ExprKind::Structural(e) => format!("<<{}>>", e.to_nlang(indent)),
         }
     }
 }

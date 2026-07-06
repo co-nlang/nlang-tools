@@ -256,7 +256,7 @@ impl PartialEq for ComboVal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RelOp { Lt, Gt, Lte, Gte }
+pub enum RelOp { Lt, Gt, Lte, Gte, Eq }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValRelation {

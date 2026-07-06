@@ -2,7 +2,7 @@
 ;; @expect: test_res == #true
 
 ;; 1. 定義帶錨點的偏序空間
-~Heading: { #_|_ < #h1 < #h2 < #h3 < #_ }
+~Heading: #{ #_|_ < #h1 < #h2 < #h3 < #_ }
 
 ;; 2. 初始編號狀態
 ~initial_state: {
@@ -18,7 +18,7 @@
         {
             counts: { 
                 "#h1": (b.type == ~Heading.#h1) ? state.counts["#h1"] + 1 : state.counts["#h1"],
-                "#h2": (b.type == ~Heading.#h1) ? 0 : (b.type == ~Heading.#h2) ? state.counts["#h2"] + 1 : state.counts["#h2"],
+                "#h2": (b.type == ~Heading.#h1) ? 0 : ((b.type == ~Heading.#h2) ? state.counts["#h2"] + 1 : state.counts["#h2"]),
                 "#h3": (b.type == ~Heading.#h3) ? state.counts["#h3"] + 1 : 0
             },
             last_level: b.type

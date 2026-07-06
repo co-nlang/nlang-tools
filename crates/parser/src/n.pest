@@ -1,4 +1,4 @@
-// n.pest - RECONSTRUCTION 14 (Fixing missing rules)
+// n.pest - RECONSTRUCTION 15 (SPEC_14 sync, 2026-07-05: ENGINE_SYNC #1-#7, #9-#13)
 WHITESPACE = _{ " " | "\t" | "\n" | "\r\n" | "\r" }
 COMMENT = _{ ";;" ~ (!("\n" | "\r\n" | "\r") ~ ANY)* }
 
@@ -14,7 +14,9 @@ prefix_meta    = @{ "%" }
 prefix_system  = @{ "~%" }
 prefix_local   = @{ "~" }
 
-prefix = @{ (prefix_system | prefix_local | prefix_meta | prefix_type | prefix_logic)+ }
+// Structured prefixes (SPEC_14 §2.2): eight legal forms —
+// (none), @, /, %, ~%, ~, ~@, ~/. Free stacking (e.g. %@a) is rejected.
+prefix = @{ prefix_system | prefix_meta | (prefix_local ~ (prefix_type | prefix_logic)?) | prefix_type | prefix_logic }
 
 numeric_key = @{ numeric }
 
@@ -26,26 +28,35 @@ named_key = @{
 
 quoted_key = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
-field_key = { anon_set | path | named_key | quoted_key | tag | interp_str } 
+// interp_str is not a legal field key (SYNTAX_03 §4.10); tag keys are canonical
+field_key = { anon_set | anchored_path | path | named_key | quoted_key | tag }
 field = { (field_key ~ ":" ~ expr) | spread_expr }
 
 expr = { morphism_expr }
 morphism_expr = { ternary_expr ~ (!field_start ~ morphism_op ~ ternary_expr)* }
 morphism_op = { "->" }
-ternary_expr  = { pipe_expr ~ (!field_start ~ "?" ~ expr ~ ":" ~ expr)? }
+ternary_expr  = { pipe_expr ~ (!field_start ~ "?" ~ pipe_expr ~ ":" ~ pipe_expr)? }
 pipe_expr = { join_expr ~ (!field_start ~ pipe_op ~ join_expr)* }
 pipe_op = { "|>" }
-join_expr = { meet_expr ~ (!field_start ~ join_op ~ meet_expr)* }
+join_expr = { cmp_expr ~ (!field_start ~ join_op ~ cmp_expr)* }
 join_op = { "|" | "\\" }
-meet_expr = { cmp_expr ~ (!field_start ~ meet_op ~ cmp_expr)* }
+// Level 11: comparison — non-chaining; & (L10) binds tighter than cmp (anti-C, SPEC_14 §2.3)
+cmp_expr = { meet_expr ~ (!field_start ~ cmp_op ~ meet_expr)? }
+// two families: lattice/set < <= = >= > (non-collapsing) vs atomic == != (collapsing);
+// <=> direction probe (returns tag union; SYNTAX_10) — longest match first
+cmp_op = { "<=>" | "<=" | ">=" | "==" | "!=" | "=" | "<" | ">" }
+meet_expr = { add_expr ~ (!field_start ~ meet_op ~ add_expr)* }
 meet_op = { "&" }
-cmp_expr = { add_expr ~ (!field_start ~ cmp_op ~ add_expr)? }
-cmp_op = { "<=" | ">=" | "==" | "!=" | "<" | ">" }
 add_expr = { mul_expr ~ (!field_start ~ add_op ~ mul_expr)* }
 add_op = { "+" | "-" }
-mul_expr = { apply_expr ~ (!field_start ~ mul_op ~ apply_expr)* }
+mul_expr = { infix_expr ~ (!field_start ~ mul_op ~ infix_expr)* }
 mul_op = @{ "*" | ("/" ~ !ident) | ("%" ~ !ident) }
-apply_expr = { unary_expr ~ (!field_start ~ !add_op ~ !mul_op ~ !cmp_op ~ unary_expr)* }
+// Level 7: infix logic — `a /f b` (no space between / and ident); `a / b` is division
+infix_expr = { apply_expr ~ (!field_start ~ logic_infix ~ apply_expr)* }
+logic_infix = @{ "/" ~ ident }
+// !logic_infix: `a /f b` must reach the L7 infix level — juxtaposition may not
+// swallow /f as an operand (authority fix, reverse-adopted into SPEC_14 2026-07-05)
+apply_expr = { unary_expr ~ (!field_start ~ !add_op ~ !mul_op ~ !cmp_op ~ !logic_infix ~ unary_expr)* }
 unary_expr = { (unary_op ~ unary_expr) | spread_expr | type_ann_expr }
 unary_op = { "!" }
 spread_expr = { "..." ~ type_ann_expr }
@@ -63,19 +74,16 @@ primary = {
     | complex_lit
     | context
     | structural
+    | tuple
     | "(" ~ expr ~ ")"
     | combo
     | cocoon
     | anon_set
+    | poset_lit
     | list
     | interp_str
-    | float_lit
-    | int_lit
-    | str_lit
-    | tag
-    | bottom
-    | top
-    | unit
+    | anchored_path
+    | atom
     | path
 }
 
@@ -89,11 +97,22 @@ range_step = { range_bound }
 range_bound = { atom | path }
 
 context = { "$" }
-structural = { "<" ~ expr ~ ">" }
-combo = { "{" ~ WHITESPACE* ~ ( (field | order_relation) ~ field_sep? )* ~ "}" }
-cocoon = { "{{" ~ WHITESPACE* ~ ( (field | order_relation) ~ field_sep? )* ~ "}}" }
-order_relation = { atom ~ (cmp_op ~ atom)+ }
+// crystal brackets: double angles (2026-06 revision); << longest-matches before <
+structural = { "<<" ~ expr ~ ">>" }
+combo = { "{" ~ WHITESPACE* ~ ( field ~ field_sep? )* ~ "}" }
+cocoon = { "{{" ~ WHITESPACE* ~ ( field ~ field_sep? )* ~ "}}" }
 anon_set = { "@{" ~ expr ~ "}" }
+
+// Poset literal (SYNTAX_10; discussion/008): bare order chains live ONLY here
+poset_lit   = { "#{" ~ WHITESPACE* ~ (order_chain ~ field_sep?)* ~ "}" }
+order_chain = { poset_node ~ (order_op ~ poset_node)+ }
+order_op    = { "<=" | ">=" | "=" | "<" | ">" }
+poset_node  = { tag_start | tag_end | tag }
+
+// tuple is delimited by "at least one separator": (x) is grouping, (x,) is a 1-tuple
+tuple = { "(" ~ WHITESPACE* ~ expr ~ list_sep ~ (expr ~ (list_sep ~ expr)* ~ list_sep?)? ~ WHITESPACE* ~ ")" }
+list = { "[" ~ WHITESPACE* ~ (expr ~ (list_sep ~ expr)* ~ list_sep?)? ~ WHITESPACE* ~ "]" }
+list_sep = _{ "," | ";" }
 
 atom = {
     bottom
@@ -118,7 +137,7 @@ float_lit = @{
     "-"? ~ numeric ~ "." ~ numeric
     ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )?
 }
-complex_lit = @{ 
+complex_lit = @{
     ( "-"? ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? )
     ~ ("+" | "-") ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i"
     | "-"? ~ numeric ~ ("." ~ numeric)? ~ ( ("e" | "E") ~ ("+" | "-")? ~ numeric )? ~ "i"
@@ -136,7 +155,7 @@ bytes_lit  = @{ "b\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 uri_lit    = @{ "u\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 time_lit   = @{ "t\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 multiline_str = @{
-    "\"\"\"" ~ (!"\"\"\"" ~ ANY)* ~ "\"\"\""
+    "\"\"\"" ~ ( ("\\" ~ "\"\"\"") | (!"\"\"\"" ~ ANY) )* ~ "\"\"\""
 }
 str_lit = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 tag = @{ "#" ~ !("_|_" | "_" ~ !ident) ~ ident }
@@ -146,11 +165,10 @@ interp_part = { interp_expr | interp_literal }
 interp_expr    = !{ "${" ~ expr ~ "}" }
 interp_literal = @{ (!("`" | "${") ~ ANY)+ }
 
-path = { (anchor_root | anchor_parent | anchor_current )? ~ path_segments }
-path_segments = { (named_key | tag_start | tag_end | tag) ~ ( "." ~ (named_key | tag_start | tag_end | tag | meta_key) )* }
+// anchored: segments optional — bare `_.` is the root universe, `^.` one parent up.
+// Tried before `atom` in primary (otherwise top `_` shadows `_.`); bare paths after.
+anchored_path = { (anchor_root | anchor_parent) ~ path_segments? }
+path = { path_segments }
+path_segments = { (named_key | tag_start | tag_end | tag) ~ ( "." ~ (named_key | tag_start | tag_end | tag) )* }
 anchor_root = { "_." }
-anchor_current = { "^." }
 anchor_parent = @{ "^"+ ~ "." }
-meta_key = @{ "%" ~ ident }
-
-list = { "[" ~ WHITESPACE* ~ (expr ~ ("," ~ expr)*)? ~ "]" }

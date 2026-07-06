@@ -59,32 +59,57 @@ impl Ouroboros {
     fn compute_ranks(&self, relations: &[ValRelation]) -> HashMap<String, i64> {
         let mut adj = HashMap::new();
         let mut nodes = HashSet::new();
+        let mut eqs: Vec<(String, String)> = Vec::new();
+        let mut has_incoming = HashSet::new();
         for r in relations {
             nodes.insert(r.left.clone());
             nodes.insert(r.right.clone());
             match r.op {
                 ValRelOp::Lt | ValRelOp::Lte => {
                     adj.entry(r.left.clone()).or_insert(Vec::new()).push(r.right.clone());
+                    has_incoming.insert(r.right.clone());
                 }
                 ValRelOp::Gt | ValRelOp::Gte => {
                     adj.entry(r.right.clone()).or_insert(Vec::new()).push(r.left.clone());
+                    has_incoming.insert(r.left.clone());
                 }
+                ValRelOp::Eq => eqs.push((r.left.clone(), r.right.clone())),
             }
         }
         let mut ranks = HashMap::new();
         let start_node = "#_|_".to_string();
+        let mut queue = VecDeque::new();
         if nodes.contains(&start_node) {
-            let mut queue = VecDeque::new();
             queue.push_back((start_node.clone(), 0i64));
             ranks.insert(start_node, 0);
-            while let Some((u, r)) = queue.pop_front() {
-                if let Some(neighbors) = adj.get(&u) {
-                    for v in neighbors {
-                        let new_r = r + 1;
-                        let cur_r = ranks.entry(v.clone()).or_insert(new_r);
-                        if new_r > *cur_r { *cur_r = new_r; }
-                        queue.push_back((v.clone(), *cur_r));
-                    }
+        } else {
+            // implicit boxing (SYNTAX_10 §4.7): #_|_ <= every member — seed the sources at rank 1
+            for n in &nodes {
+                if !has_incoming.contains(n) {
+                    queue.push_back((n.clone(), 1i64));
+                    ranks.insert(n.clone(), 1);
+                }
+            }
+        }
+        while let Some((u, r)) = queue.pop_front() {
+            if let Some(neighbors) = adj.get(&u) {
+                for v in neighbors {
+                    let new_r = r + 1;
+                    let cur_r = ranks.entry(v.clone()).or_insert(new_r);
+                    if new_r > *cur_r { *cur_r = new_r; }
+                    queue.push_back((v.clone(), *cur_r));
+                }
+            }
+        }
+        // same-rank declarations (`=`): propagate known ranks across eq pairs
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (a, b) in &eqs {
+                match (ranks.get(a).copied(), ranks.get(b).copied()) {
+                    (Some(ra), None) => { ranks.insert(b.clone(), ra); changed = true; }
+                    (None, Some(rb)) => { ranks.insert(a.clone(), rb); changed = true; }
+                    _ => {}
                 }
             }
         }
@@ -115,6 +140,7 @@ impl Ouroboros {
                             nlang_parser::ast::RelOp::Gt => ValRelOp::Gt,
                             nlang_parser::ast::RelOp::Lte => ValRelOp::Lte,
                             nlang_parser::ast::RelOp::Gte => ValRelOp::Gte,
+                            nlang_parser::ast::RelOp::Eq => ValRelOp::Eq,
                         },
                         right: rt.clone(),
                     });
@@ -372,6 +398,111 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
             }
             ExprKind::Spread(e) => self.eval(e, ctx),
+            // Tuple (a, b): fixed-arity "numeric cocoon" — closed combo with positional keys (SYNTAX_04 §2.4/§2.5)
+            ExprKind::Tuple(items) => {
+                if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                }
+                let mut rf = IndexMap::new();
+                for (i, it) in items.iter().enumerate() {
+                    rf.insert(i.to_string(), self.eval(it, ctx));
+                }
+                Value::Combo(ComboVal::new(rf, true, IndexMap::new(), EffectTag::Pure, vec![]))
+            }
+            // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
+            ExprKind::Poset(relations) => {
+                if let Err(e) = ctx.check_resources(10 + (relations.len() as u64) * 2) {
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                }
+                let mut rf = IndexMap::new();
+                let mut rv = Vec::new();
+                for r in relations {
+                    let lt = Value::Atom(r.left.clone(), EffectTag::Pure, None).to_string_plain();
+                    let rt = Value::Atom(r.right.clone(), EffectTag::Pure, None).to_string_plain();
+                    rv.push(ValRelation {
+                        left: lt.clone(),
+                        op: match r.op {
+                            nlang_parser::ast::RelOp::Lt => ValRelOp::Lt,
+                            nlang_parser::ast::RelOp::Gt => ValRelOp::Gt,
+                            nlang_parser::ast::RelOp::Lte => ValRelOp::Lte,
+                            nlang_parser::ast::RelOp::Gte => ValRelOp::Gte,
+                            nlang_parser::ast::RelOp::Eq => ValRelOp::Eq,
+                        },
+                        right: rt.clone(),
+                    });
+                    if !rf.contains_key(&lt) { rf.insert(lt, Value::Atom(r.left.clone(), EffectTag::Pure, None)); }
+                    if !rf.contains_key(&rt) { rf.insert(rt, Value::Atom(r.right.clone(), EffectTag::Pure, None)); }
+                }
+                let ranks = self.compute_ranks(&rv);
+                for (tag_name, rank) in ranks {
+                    if let Some(v) = rf.get_mut(&tag_name) {
+                        if let Value::Atom(ak, ae, _) = v.clone() {
+                            rf.insert(tag_name, Value::Atom(ak, ae, Some(rank)));
+                        }
+                    }
+                }
+                Value::Combo(ComboVal::new(rf, false, IndexMap::new(), EffectTag::Pure, rv))
+            }
+            // Lattice-family equality `=`: non-collapsing structural comparison (partial impl; SYNTAX_06/10)
+            ExprKind::LatticeEq(a, b) => {
+                let va = self.eval(a, ctx);
+                if let Value::Bottom(_) = va { return va; }
+                let vb = self.eval(b, ctx);
+                if let Value::Bottom(_) = vb { return vb; }
+                let res_e = va.effect().max(vb.effect());
+                let eq = match (&va, &vb) {
+                    (Value::Atom(x, _, _), Value::Atom(y, _, _)) => x == y,
+                    _ => va == vb,
+                };
+                Value::Atom(AtomKind::Tag(if eq { "true".to_string() } else { "false".to_string() }), res_e, None)
+            }
+            // Direction probe `<=>`: returns an order tag, never a boolean (SYNTAX_10 §2.3)
+            ExprKind::Probe(a, b) => {
+                let va = self.eval(a, ctx);
+                if let Value::Bottom(_) = va { return va; }
+                let vb = self.eval(b, ctx);
+                if let Value::Bottom(_) = vb { return vb; }
+                let res_e = va.effect().max(vb.effect());
+                let ca = va.collapse().clone();
+                let cb = vb.collapse().clone();
+                if ca.is_top() || cb.is_top() { return Value::Top; }
+                if let Value::Bottom(d) = ca { return Value::Bottom(d); }
+                if let Value::Bottom(d) = cb { return Value::Bottom(d); }
+                let dir_tag = |o: Option<std::cmp::Ordering>| -> Value {
+                    match o {
+                        Some(std::cmp::Ordering::Less) => Value::Atom(AtomKind::Tag("lt".to_string()), res_e, None),
+                        Some(std::cmp::Ordering::Greater) => Value::Atom(AtomKind::Tag("gt".to_string()), res_e, None),
+                        Some(std::cmp::Ordering::Equal) => Value::Atom(AtomKind::Tag("eq".to_string()), res_e, None),
+                        None => Value::Atom(AtomKind::Tag("un".to_string()), res_e, None),
+                    }
+                };
+                let as_f64 = |k: &AtomKind| -> Option<f64> {
+                    match k {
+                        AtomKind::Int(i) => i.to_f64(),
+                        AtomKind::Float(f) => Some(*f),
+                        _ => None,
+                    }
+                };
+                match (&ca, &cb) {
+                    (Value::Atom(xk, _, rx), Value::Atom(yk, _, ry)) => {
+                        if let (Some(x), Some(y)) = (as_f64(xk), as_f64(yk)) {
+                            return dir_tag(x.partial_cmp(&y));
+                        }
+                        if let (AtomKind::Str(x), AtomKind::Str(y)) = (xk, yk) {
+                            return dir_tag(Some(x.cmp(y)));
+                        }
+                        let x_tagish = matches!(xk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
+                        let y_tagish = matches!(yk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
+                        if x_tagish && y_tagish {
+                            if xk == yk { return dir_tag(Some(std::cmp::Ordering::Equal)); }
+                            if let (Some(x), Some(y)) = (rx, ry) { return dir_tag(Some(x.cmp(y))); }
+                            return dir_tag(None); // no shared order info: incomparable
+                        }
+                        BottomCause::Conflict.into()
+                    }
+                    _ => BottomCause::Conflict.into(),
+                }
+            }
             _ => BottomCause::Conflict.into(),
         }
     }

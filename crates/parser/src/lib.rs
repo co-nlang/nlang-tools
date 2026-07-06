@@ -28,22 +28,23 @@ pub fn parse_field(pair: pest::iterators::Pair<Rule>) -> Result<Field, Box<dyn E
     Ok(Field { key, value, span })
 }
 
-fn parse_order_relation(pair: pest::iterators::Pair<Rule>) -> Result<Vec<Relation>, Box<dyn Error>> {
+fn parse_order_chain(pair: pest::iterators::Pair<Rule>) -> Result<Vec<Relation>, Box<dyn Error>> {
     let span = Span::new(pair.as_span().start(), pair.as_span().end());
     let mut inner = pair.into_inner();
     let mut relations = Vec::new();
-    
-    let mut left_atom = parse_atom(inner.next().ok_or("Empty order relation")?.into_inner().next().ok_or("Empty atom")?)?;
-    
+
+    let mut left_atom = parse_atom(inner.next().ok_or("Empty order chain")?.into_inner().next().ok_or("Empty poset node")?)?;
+
     while let Some(op_pair) = inner.next() {
         let op = match op_pair.as_str() {
             "<" => RelOp::Lt,
             ">" => RelOp::Gt,
             "<=" => RelOp::Lte,
             ">=" => RelOp::Gte,
+            "=" => RelOp::Eq,
             _ => return Err(format!("Unsupported order operator: {}", op_pair.as_str()).into()),
         };
-        let right_atom = parse_atom(inner.next().ok_or("Order relation missing right operand")?.into_inner().next().ok_or("Empty atom")?)?;
+        let right_atom = parse_atom(inner.next().ok_or("Order chain missing right operand")?.into_inner().next().ok_or("Empty poset node")?)?;
         relations.push(Relation { left: left_atom.clone(), op, right: right_atom.clone(), span });
         left_atom = right_atom;
     }
@@ -65,14 +66,9 @@ fn parse_field_key(pair: pest::iterators::Pair<Rule>) -> Result<FieldKey, Box<dy
         }
         Rule::quoted_key => Ok(FieldKey::Quoted(inner.as_str()[1..inner.as_str().len()-1].to_string())),
         Rule::tag => Ok(FieldKey::Pattern(Expr::new(ExprKind::Atom(AtomKind::Tag(inner.as_str()[1..].to_string())), Span::new(inner.as_span().start(), inner.as_span().end())))),
-        Rule::path => Ok(FieldKey::Path(parse_path(inner)?)),
-        Rule::anon_set | Rule::interp_str => {
-            let rule = inner.as_rule();
-            let expr = if rule == Rule::anon_set {
-                parse_expr(inner.into_inner().next().ok_or("Empty anon_set")?)?
-            } else {
-                parse_expr(inner)?
-            };
+        Rule::path | Rule::anchored_path => Ok(FieldKey::Path(parse_path(inner)?)),
+        Rule::anon_set => {
+            let expr = parse_expr(inner.into_inner().next().ok_or("Empty anon_set")?)?;
             Ok(FieldKey::Pattern(expr))
         }
         _ => Err(format!("Unsupported field key rule: {:?}", inner.as_rule()).into()),
@@ -110,8 +106,8 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
             }
             Ok(res)
         }
-        Rule::pipe_expr | Rule::join_expr | Rule::meet_expr | 
-        Rule::cmp_expr | Rule::add_expr | Rule::mul_expr | Rule::type_ann_expr => {
+        Rule::pipe_expr | Rule::join_expr | Rule::meet_expr |
+        Rule::cmp_expr | Rule::add_expr | Rule::mul_expr | Rule::infix_expr | Rule::type_ann_expr => {
             let inner: Vec<_> = pair.into_inner().collect();
             if inner.len() == 1 { return parse_expr(inner[0].clone()); }
             
@@ -129,12 +125,19 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
                     Rule::cmp_op => match op_pair.as_str() {
                         "==" => ExprKind::Eq(Box::new(left), Box::new(right)),
                         "!=" => ExprKind::Ne(Box::new(left), Box::new(right)),
+                        "<=>" => ExprKind::Probe(Box::new(left), Box::new(right)),
+                        "=" => ExprKind::LatticeEq(Box::new(left), Box::new(right)),
                         "<" => ExprKind::Lt(Box::new(left), Box::new(right)),
                         ">" => ExprKind::Gt(Box::new(left), Box::new(right)),
                         "<=" => ExprKind::Lte(Box::new(left), Box::new(right)),
                         ">=" => ExprKind::Gte(Box::new(left), Box::new(right)),
                         _ => unreachable!(),
                     },
+                    Rule::logic_infix => {
+                        let op_span = Span::new(op_pair.as_span().start(), op_pair.as_span().end());
+                        let f = Expr::new(ExprKind::Path(Path { anchor: PathAnchor::Bare, segments: vec![op_pair.as_str().to_string()], span: op_span }), op_span);
+                        ExprKind::Apply(Box::new(Expr::new(ExprKind::Apply(Box::new(f), Box::new(left)), span)), Box::new(right))
+                    }
                     Rule::add_op => if op_pair.as_str() == "+" { ExprKind::Add(Box::new(left), Box::new(right)) } else { ExprKind::Sub(Box::new(left), Box::new(right)) },
                     Rule::mul_op => match op_pair.as_str() { "*" => ExprKind::Mul(Box::new(left), Box::new(right)), "/" => ExprKind::Div(Box::new(left), Box::new(right)), "%" => ExprKind::Rem(Box::new(left), Box::new(right)), _ => unreachable!() },
                     _ => return Err(format!("Unexpected operator: {} ({:?})", op_pair.as_str(), op_pair.as_rule()).into()),
@@ -209,19 +212,26 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
         Rule::float_lit => Ok(Expr::new(ExprKind::Atom(AtomKind::Float(pair.as_str().parse()?)), span)),
         Rule::str_lit => Ok(Expr::new(ExprKind::Atom(AtomKind::Str(pair.as_str()[1..pair.as_str().len()-1].to_string())), span)),
         Rule::tag => Ok(Expr::new(ExprKind::Atom(AtomKind::Tag(pair.as_str()[1..].to_string())), span)),
-        Rule::path => Ok(Expr::new(ExprKind::Path(parse_path(pair)?), span)),
+        Rule::path | Rule::anchored_path => Ok(Expr::new(ExprKind::Path(parse_path(pair)?), span)),
         Rule::combo | Rule::cocoon => {
             let is_closed = pair.as_rule() == Rule::cocoon;
             let mut fields = Vec::new();
+            for item in pair.into_inner() {
+                if item.as_rule() == Rule::field { fields.push(parse_field(item)?); }
+            }
+            Ok(Expr::new(ExprKind::Combo { fields, relations: Vec::new(), closed: is_closed }, span))
+        }
+        Rule::poset_lit => {
             let mut relations = Vec::new();
             for item in pair.into_inner() {
-                match item.as_rule() {
-                    Rule::field => fields.push(parse_field(item)?),
-                    Rule::order_relation => relations.extend(parse_order_relation(item)?),
-                    _ => {}
-                }
+                if item.as_rule() == Rule::order_chain { relations.extend(parse_order_chain(item)?); }
             }
-            Ok(Expr::new(ExprKind::Combo { fields, relations, closed: is_closed }, span))
+            Ok(Expr::new(ExprKind::Poset(relations), span))
+        }
+        Rule::tuple => {
+            let mut items = Vec::new();
+            for e in pair.into_inner() { if e.as_rule() == Rule::expr { items.push(parse_expr(e)?); } }
+            Ok(Expr::new(ExprKind::Tuple(items), span))
         }
         Rule::list => {
             let mut items = Vec::new();
@@ -330,7 +340,6 @@ fn parse_path(pair: pest::iterators::Pair<Rule>) -> Result<Path, Box<dyn Error>>
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::anchor_root => anchor = PathAnchor::Root,
-            Rule::anchor_current => anchor = PathAnchor::Current,
             Rule::anchor_parent => anchor = PathAnchor::Parent((p.as_str().matches('^').count() as u32).saturating_sub(1)),
             Rule::path_segments => {
                 for seg_pair in p.into_inner() {
@@ -343,20 +352,42 @@ fn parse_path(pair: pest::iterators::Pair<Rule>) -> Result<Path, Box<dyn Error>>
     Ok(Path { anchor, segments, span })
 }
 
+// The 16-level precedence chain makes recursive descent stack-hungry on deeply
+// nested programs (debug-build test threads default to 2 MiB) — run parse entry
+// points on a dedicated thread with generous stack.
+const PARSER_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+fn with_parser_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(PARSER_STACK_BYTES)
+            .spawn_scoped(s, f)
+            .expect("failed to spawn parser thread")
+            .join()
+            .expect("parser thread panicked")
+    })
+}
+
 pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>> {
-    let mut pairs = NParser::parse(Rule::expr, input)?;
-    parse_expr(pairs.next().unwrap())
+    with_parser_stack(|| {
+        let mut pairs = NParser::parse(Rule::expr, input).map_err(|e| e.to_string())?;
+        parse_expr(pairs.next().unwrap()).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| e.into())
 }
 
 pub fn parse_program(input: &str) -> Result<Program, Box<dyn Error>> {
-    let mut pairs = NParser::parse(Rule::program, input)?;
-    let mut fields = Vec::new();
-    if let Some(p) = pairs.next() {
-        for f in p.into_inner() {
-            if f.as_rule() == Rule::field {
-                fields.push(parse_field(f)?);
+    with_parser_stack(|| {
+        let mut pairs = NParser::parse(Rule::program, input).map_err(|e| e.to_string())?;
+        let mut fields = Vec::new();
+        if let Some(p) = pairs.next() {
+            for f in p.into_inner() {
+                if f.as_rule() == Rule::field {
+                    fields.push(parse_field(f).map_err(|e| e.to_string())?);
+                }
             }
         }
-    }
-    Ok(Program { fields })
+        Ok(Program { fields })
+    })
+    .map_err(|e: String| e.into())
 }
