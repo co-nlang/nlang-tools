@@ -1,0 +1,6 @@
+;; omega_fixture.n — 4 combos pairwise sharing a coordinate → ω(G) = 4
+
+a: { shared: 1, a_only: 10 }
+b: { shared: 2, b_only: 20 }
+c: { shared: 3, c_only: 30 }
+d: { shared: 4, d_only: 40 }

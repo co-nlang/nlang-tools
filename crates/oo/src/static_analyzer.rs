@@ -1,7 +1,12 @@
 // static_analyzer.rs
-// 靜態違規檢測器 - 實作 SPEC_15 反模式檢測
+// 靜態違規檢測器 - 實作 SPEC_15 反模式檢測（靜態部分）
+//
+// 注意：本檔的動態測試部分（run_single_test / TestResult / TestCase 等）在
+// 先前版本從未被編譯（孤兒檔），且對到已過時的 interpreter API（ComboVal.fields /
+// Value::Atom 單欄 / with_timeout）。nlint Tier 1 只用靜態分析部分（handover §6
+// 非目標：不做求值／不依賴 interpreter crate 的 eval），動態部分已移除。
 
-use nlang_parser::ast::{Expr, ExprKind, AtomKind, Path, PathAnchor, Field, FieldKey, Prefix};
+use nlang_parser::ast::{Expr, ExprKind, AtomKind, Path, PathAnchor, Field, FieldKey};
 use std::collections::HashSet;
 
 /// 靜態違規類型
@@ -281,13 +286,6 @@ impl StaticAnalyzer {
             ExprKind::Unary { expr, .. } => {
                 self.analyze_expr(expr, in_test);
             }
-            ExprKind::Infix { left, right, .. } => {
-                self.analyze_expr(left, in_test);
-                self.analyze_expr(right, in_test);
-            }
-            ExprKind::Structural(inner) => {
-                self.analyze_expr(inner, in_test);
-            }
             ExprKind::Lens(obj, key) => {
                 self.analyze_expr(obj, in_test);
                 self.analyze_expr(key, in_test);
@@ -296,13 +294,20 @@ impl StaticAnalyzer {
                 self.analyze_expr(expr, in_test);
                 self.analyze_expr(ty, in_test);
             }
-            ExprKind::AnonSet(expr) | ExprKind::Spread(expr) | ExprKind::Complement(expr) => {
+            ExprKind::AnonSet(expr) | ExprKind::Spread(expr) | ExprKind::Complement(expr) | ExprKind::Structural(expr) => {
                 self.analyze_expr(expr, in_test);
             }
             ExprKind::Range { start, end, step } => {
                 self.analyze_expr(start, in_test);
                 self.analyze_expr(end, in_test);
                 if let Some(s) = step { self.analyze_expr(s, in_test); }
+            }
+            ExprKind::Tuple(items) => {
+                for item in items { self.analyze_expr(item, in_test); }
+            }
+            ExprKind::LatticeEq(a, b) | ExprKind::Probe(a, b) => {
+                self.analyze_expr(a, in_test);
+                self.analyze_expr(b, in_test);
             }
 
             ExprKind::Interpolated(parts) => {
@@ -434,7 +439,7 @@ fn path_to_string(path: &Path) -> String {
     format!("{}{}", anchor, segments)
 }
 
-/// 測試結果
+/// 測試結果（靜態部分）
 #[derive(Debug)]
 pub struct TestResult {
     pub file: String,
@@ -449,151 +454,7 @@ impl TestResult {
     }
 }
 
-/// 測試案例資訊
-#[derive(Debug, Clone)]
-pub struct TestCase {
-    pub name: String,
-    pub line: usize,
-    pub expr: nlang_parser::ast::Expr,
-}
-
-/// 動態測試結果
-#[derive(Debug)]
-pub struct DynamicTestResult {
-    pub name: String,
-    pub passed: bool,
-    pub output: String,
-    pub error: Option<String>,
-    pub duration_ms: u64,
-}
-
-/// 發現測試案例
-pub fn discover_tests(program: &nlang_parser::ast::Program) -> Vec<TestCase> {
-    let mut tests = Vec::new();
-
-    for field in &program.fields {
-        let name = match &field.key {
-            FieldKey::Named { name, .. } => name.clone(),
-            FieldKey::Path(p) if !p.segments.is_empty() => p.segments.join("."),
-            _ => String::new(),
-        };
-
-        let is_test = name.starts_with("test_") || name.starts_with("~%test");
-
-        if is_test && !name.is_empty() {
-            tests.push(TestCase {
-                name,
-                line: field.span.start,
-                expr: field.value.clone(),
-            });
-        }
-    }
-
-    tests
-}
-
-/// 執行單個測試
-pub fn run_single_test(
-    test: &TestCase,
-    engine: &nlang_interpreter::Ouroboros,
-) -> DynamicTestResult {
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
-    use nlang_interpreter::{EvalContext, ComboVal, Value, BottomCause, EffectTag};
-    use indexmap::IndexMap;
-
-    let start = Instant::now();
-
-    // 創建評估上下文（帶資源限制）
-    let root = ComboVal {
-        fields: IndexMap::new(),
-        closed: false,
-        local_fields: IndexMap::new(),
-        effect: EffectTag::Pure,
-    };
-    let mut ctx = EvalContext::new(root)
-        .with_fuel(10000)  // 限制遞迴深度
-        .with_timeout(5000); // 5秒超時
-
-    // 執行測試表達式
-    let result = engine.eval(&test.expr, &mut ctx);
-
-    let duration = start.elapsed().as_millis() as u64;
-
-    // 判斷測試結果
-    match result {
-        Value::Atom(nlang_parser::ast::AtomKind::Tag(t)) if t == "true" || t == "pass" => {
-            DynamicTestResult {
-                name: test.name.clone(),
-                passed: true,
-                output: "#true".to_string(),
-                error: None,
-                duration_ms: duration,
-            }
-        }
-        Value::Atom(nlang_parser::ast::AtomKind::Tag(t)) if t == "false" || t == "fail" => {
-            DynamicTestResult {
-                name: test.name.clone(),
-                passed: false,
-                output: "#false".to_string(),
-                error: Some("Test assertion failed".to_string()),
-                duration_ms: duration,
-            }
-        }
-        Value::Bottom(detail) if detail.cause == BottomCause::FuelExhausted => {
-            DynamicTestResult {
-                name: test.name.clone(),
-                passed: false,
-                output: "_|_".to_string(),
-                error: Some("Fuel exhausted (infinite recursion?)".to_string()),
-                duration_ms: duration,
-            }
-        }
-        Value::Bottom(detail) if detail.cause == BottomCause::Timeout => {
-            DynamicTestResult {
-                name: test.name.clone(),
-                passed: false,
-                output: "_|_".to_string(),
-                error: Some("Timeout (test took too long)".to_string()),
-                duration_ms: duration,
-            }
-        }
-        Value::Bottom(cause) => {
-            DynamicTestResult {
-                name: test.name.clone(),
-                passed: false,
-                output: "_|_".to_string(),
-                error: Some(format!("Bottom: {:?}", cause)),
-                duration_ms: duration,
-            }
-        }
-        other => {
-            // 其他值視為通過（非 Bottom 即成功）
-            DynamicTestResult {
-                name: test.name.clone(),
-                passed: true,
-                output: format!("{}", value_to_string(&other)),
-                error: None,
-                duration_ms: duration,
-            }
-        }
-    }
-}
-
-fn value_to_string(val: &nlang_interpreter::Value) -> String {
-    use nlang_interpreter::Value;
-    match val {
-        Value::Atom(nlang_parser::ast::AtomKind::Int(i)) => i.to_string(),
-        Value::Atom(nlang_parser::ast::AtomKind::Float(f)) => f.to_string(),
-        Value::Atom(nlang_parser::ast::AtomKind::Str(s)) => format!("\"{}\"", s),
-        Value::Atom(nlang_parser::ast::AtomKind::Tag(t)) => format!("#{}", t),
-        Value::Atom(nlang_parser::ast::AtomKind::Unit) => "()".to_string(),
-        Value::Top => "_".to_string(),
-        Value::Bottom(_) => "_|_".to_string(),
-        _ => format!("{:?}", val),
-    }
-}
-
-/// 執行靜態測試
+/// 執行靜態測試（純靜態分析，不做求值）
 pub fn run_static_tests(files: &[std::path::PathBuf], pattern: Option<&str>) -> Vec<TestResult> {
     let mut results = Vec::new();
 

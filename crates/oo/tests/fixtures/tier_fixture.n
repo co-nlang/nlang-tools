@@ -1,0 +1,11 @@
+;; tier_fixture.n — one pipe each of tier C, M, Q (transformer form)
+;; assertions: classification + demotion reason
+
+;; Tier C: $-free transformer (idempotent nucleus)
+c_pipe: { a: 1 } |> { b: 2 }
+
+;; Tier M: positive fragment with $ — monotone + shrinking, not idempotent
+m_pipe: { k: 1 } |> { w: $ }
+
+;; Tier Q: outside positive fragment (arithmetic on $)
+q_pipe: { k: 1 } |> { v: $.k + 1 }

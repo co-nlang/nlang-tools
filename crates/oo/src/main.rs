@@ -42,6 +42,14 @@ enum Commands {
         /// CAID string (hash:sha256:v2:...)
         caid: String,
     },
+    /// Tier 1 linter (pure syntax / pure graph theory) — see docs/linter_tier1_handover.md
+    Lint {
+        /// .n file or directory (recursive)
+        path: PathBuf,
+        /// emit JSON (tier1-v1 schema)
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -59,6 +67,10 @@ fn main() -> anyhow::Result<()> {
         Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
         Commands::Eval { expr } => run_eval(expr),
         Commands::Inspect { caid } => run_inspect(caid),
+        Commands::Lint { path, json } => {
+            let code = oo::nlint::run_cli(&path, json);
+            std::process::exit(code);
+        }
     }
 }
 
