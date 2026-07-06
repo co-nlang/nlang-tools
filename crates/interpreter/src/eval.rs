@@ -156,6 +156,54 @@ impl Ouroboros {
         Ok((res, me))
     }
 
+    // One pipe step for a single (non-superposed) input value: binds $ := lv,
+    // evaluates the RHS, then dispatches on its form — morphism application
+    // (with list functor-lifting fallback), transformer merge, or passthrough.
+    fn pipe_apply(&self, lv: Value, r: &Expr, ctx: &mut EvalContext) -> Value {
+        let mut call_ctx = self.sub_context(ctx);
+        call_ctx.context_value = Some(lv.clone());
+        let rv = self.eval(r, &mut call_ctx);
+        ctx.fuel = call_ctx.fuel;
+        if rv.is_morphism() {
+            let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
+            if matches!(res, Value::Bottom(_) | Value::Top) {
+                if let Value::Combo(ref cv) = lv {
+                    if self.is_list(&lv, ctx) {
+                        let mut res_fields = IndexMap::new();
+                        let mut max_e = lv.effect();
+                        let mut lifted = false;
+                        for (k, v) in &cv.fields() {
+                            if k.parse::<usize>().is_ok() {
+                                let item = self.force(v.clone(), ctx);
+                                let item_res = self.apply_morphism(rv.clone(), item, ctx);
+                                if !matches!(item_res, Value::Bottom(_)) {
+                                    let solidified = self.force_recursive(item_res, ctx);
+                                    max_e = max_e.max(solidified.effect());
+                                    res_fields.insert(k.clone(), solidified);
+                                    lifted = true;
+                                }
+                            } else {
+                                res_fields.insert(k.clone(), v.clone());
+                            }
+                        }
+                        if lifted {
+                            res_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                            return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), max_e, vec![]));
+                        }
+                    }
+                }
+            }
+            res
+        } else if let Value::Combo(rc) = rv {
+            self.unify_internal(lv, Value::Combo(rc), ctx)
+        } else {
+            // atomic collapse (SPEC_07 §4.1 form 3): forced intersection with
+            // the RHS value — was a passthrough that discarded the input
+            // (`5 |> #ok` returned #ok instead of _|_; ENGINE_SYNC #18)
+            self.unify_internal(lv, rv, ctx)
+        }
+    }
+
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         if let Err(e) = ctx.check_resources(1) {
             return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
@@ -283,45 +331,24 @@ impl Ouroboros {
             ExprKind::Pipe(l, r) => {
                 let lv = self.eval(l, ctx);
                 if let Value::Bottom(_) = lv { return lv; }
-                let mut call_ctx = self.sub_context(ctx);
-                call_ctx.context_value = Some(lv.clone());
-                let rv = self.eval(r, &mut call_ctx);
-                ctx.fuel = call_ctx.fuel;
-                if rv.is_morphism() {
-                    let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
-                    if matches!(res, Value::Bottom(_) | Value::Top) {
-                        if let Value::Combo(ref cv) = lv {
-                            if self.is_list(&lv, ctx) {
-                                let mut res_fields = IndexMap::new();
-                                let mut max_e = lv.effect();
-                                let mut lifted = false;
-                                for (k, v) in &cv.fields() {
-                                    if k.parse::<usize>().is_ok() {
-                                        let item = self.force(v.clone(), ctx);
-                                        let item_res = self.apply_morphism(rv.clone(), item, ctx);
-                                        if !matches!(item_res, Value::Bottom(_)) {
-                                            let solidified = self.force_recursive(item_res, ctx);
-                                            max_e = max_e.max(solidified.effect());
-                                            res_fields.insert(k.clone(), solidified);
-                                            lifted = true;
-                                        }
-                                    } else {
-                                        res_fields.insert(k.clone(), v.clone());
-                                    }
-                                }
-                                if lifted {
-                                    res_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                                    return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), max_e, vec![]));
-                                }
-                            }
+                // bind additivity (SPEC_07 §4 疊加態平等演化; ENGINE_SYNC #18):
+                // a superposed input evolves branchwise with its OWN $ binding —
+                // (A|B) |> f ≡ (A|>f) | (B|>f); ⊥ branches prune (| identity)
+                if let Value::Union(branches) = lv {
+                    let mut out = Vec::new();
+                    for b in branches {
+                        let res = self.pipe_apply(b, r, ctx);
+                        if !matches!(res, Value::Bottom(_)) && !matches!(res, Value::Atom(AtomKind::Bottom, _, _)) {
+                            out.push(res);
                         }
                     }
-                    return res;
-                } else if let Value::Combo(rc) = rv {
-                    self.unify_internal(lv, Value::Combo(rc), ctx)
-                } else {
-                    rv
+                    return match out.len() {
+                        0 => BottomCause::Conflict.into(),
+                        1 => out.into_iter().next().unwrap(),
+                        _ => Value::Union(out),
+                    };
                 }
+                self.pipe_apply(lv, r, ctx)
             }
             ExprKind::Morphism { param, body } => {
                 let pk = match &param.kind {

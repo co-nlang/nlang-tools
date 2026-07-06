@@ -770,6 +770,22 @@ let mut refl_fields = IndexMap::new();
     pub fn apply_morphism(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
         let f = self.force(f, ctx); if let Value::Bottom(_) = f { return f; } if let Value::Top = f { return Value::Top; }
         let arg = self.force(arg, ctx); if let Value::Bottom(_) = arg { return arg; }
+        // bind additivity (SPEC_07 §4, ENGINE_SYNC #18): a superposed argument
+        // evolves branchwise — f(A|B) = f(A) | f(B); ⊥ branches prune (| identity)
+        if let Value::Union(branches) = arg {
+            let mut out = Vec::new();
+            for b in branches {
+                let res = self.apply_morphism(f.clone(), b, ctx);
+                if !matches!(res, Value::Bottom(_)) && !matches!(res, Value::Atom(nlang_parser::ast::AtomKind::Bottom, _, _)) {
+                    out.push(res);
+                }
+            }
+            return match out.len() {
+                0 => BottomCause::Conflict.into(),
+                1 => out.into_iter().next().unwrap(),
+                _ => Value::Union(out),
+            };
+        }
         if !f.is_morphism() { if arg.is_morphism() { return self.apply_morphism(arg, f, ctx); } }
         match f {
             Value::Combo(ref c) => {
