@@ -116,6 +116,46 @@ impl Ouroboros {
         ranks
     }
 
+    // Element-position evaluation with spread splicing (ENGINE_SYNC #17;
+    // SPEC_03 §3.1 / SYNTAX_04 §4.8): `[...xs, y]` splices the numeric-keyed
+    // public fields of xs in index order, reindexed into the target. Unboxing
+    // discards the shell and releases inner effect tags; values with no
+    // numeric-keyed fields (atoms, Top — no shell to discard) contribute
+    // nothing; a Bottom spread source collapses the whole container.
+    fn eval_elements(&self, items: &[Expr], ctx: &mut EvalContext) -> std::result::Result<(IndexMap<String, Value>, EffectTag), Value> {
+        let mut res = IndexMap::new();
+        let mut me = EffectTag::Pure;
+        let mut idx = 0usize;
+        for item in items {
+            if let ExprKind::Spread(inner) = &item.kind {
+                let sv = self.force(self.eval(inner, ctx), ctx);
+                // both bottom representations collapse the container:
+                // runtime Value::Bottom (with cause) and the literal _|_ atom
+                if matches!(sv, Value::Bottom(_)) || matches!(sv, Value::Atom(AtomKind::Bottom, _, _)) {
+                    return Err(sv);
+                }
+                me = me.max(sv.effect());
+                if let Value::Combo(cv) = sv {
+                    let mut keys: Vec<usize> = cv.data.keys().filter_map(|k| k.parse::<usize>().ok()).collect();
+                    keys.sort_unstable();
+                    for k in keys {
+                        if let Some(v) = cv.data.get(&k.to_string()) {
+                            me = me.max(v.effect());
+                            res.insert(idx.to_string(), v.clone());
+                            idx += 1;
+                        }
+                    }
+                }
+                continue;
+            }
+            let val = self.eval(item, ctx);
+            me = me.max(val.effect());
+            res.insert(idx.to_string(), val);
+            idx += 1;
+        }
+        Ok((res, me))
+    }
+
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         if let Err(e) = ctx.check_resources(1) {
             return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
@@ -362,15 +402,13 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             ExprKind::Lte(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Lte),
             ExprKind::Gte(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Gte),
             ExprKind::List(items) => {
-                let mut res = IndexMap::new();
-                let mut me = EffectTag::Pure;
-                for (i, item) in items.iter().enumerate() {
-                    let val = self.eval(item, ctx);
-                    me = me.max(val.effect());
-                    res.insert(i.to_string(), val);
+                match self.eval_elements(items, ctx) {
+                    Err(bottom) => bottom,
+                    Ok((mut res, me)) => {
+                        res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                        Value::Combo(ComboVal::new(res, false, IndexMap::new(), me, vec![]))
+                    }
                 }
-                res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                Value::Combo(ComboVal::new(res, false, IndexMap::new(), me, vec![]))
             }
             ExprKind::Lens(obj, key) => {
                 let ov = self.eval(obj, ctx);
@@ -416,14 +454,10 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
                     return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
                 }
-                let mut rf = IndexMap::new();
-                let mut me = EffectTag::Pure;
-                for (i, it) in items.iter().enumerate() {
-                    let v = self.eval(it, ctx);
-                    me = me.max(v.effect());
-                    rf.insert(i.to_string(), v);
+                match self.eval_elements(items, ctx) {
+                    Err(bottom) => bottom,
+                    Ok((rf, me)) => Value::Combo(ComboVal::new(rf, true, IndexMap::new(), me, vec![])),
                 }
-                Value::Combo(ComboVal::new(rf, true, IndexMap::new(), me, vec![]))
             }
             // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
             ExprKind::Poset(relations) => {

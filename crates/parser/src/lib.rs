@@ -173,15 +173,17 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
             }
         }
 
-        // 5. Positional: Spread (... expr)
+        // 5. Positional: Spread (... expr) — the "..." literal produces no pest
+        // pair, so detect it on the rule's own span (the old first.as_str()
+        // check never fired and silently dropped the dots)
         Rule::spread_expr => {
-            let mut inner = pair.into_inner();
-            let first = inner.next().ok_or("Empty spread")?;
-            if first.as_str() == "..." {
-                let expr = parse_expr(inner.next().ok_or("Spread missing expr")?)?;
+            let is_spread = pair.as_str().trim_start().starts_with("...");
+            let inner_pair = pair.into_inner().next().ok_or("Empty spread")?;
+            let expr = parse_expr(inner_pair)?;
+            if is_spread {
                 Ok(Expr::new(ExprKind::Spread(Box::new(expr)), span))
             } else {
-                parse_expr(first)
+                Ok(expr)
             }
         }
 

@@ -133,6 +133,21 @@ fn pinned_edge_cases() {
     assert!(matches!(parse_expr_only("i - 1").unwrap().kind, ExprKind::Sub(_, _))); // spaced: complex minus int
 }
 
+// #17: element-position spread builds a real Spread node (the "..." literal
+// produces no pest pair; the old builder silently dropped the dots)
+#[test]
+fn spread_node_in_element_position() {
+    match parse_expr_only("[...xs, 1]").unwrap().kind {
+        ExprKind::List(items) => {
+            assert!(matches!(items[0].kind, ExprKind::Spread(_)), "first element must be Spread, got {:?}", items[0].kind);
+            assert_eq!(items.len(), 2);
+        }
+        other => panic!("expected List, got {:?}", other),
+    }
+    // bare expr untouched
+    assert!(matches!(parse_expr_only("[xs, 1]").unwrap().kind, ExprKind::List(_)));
+}
+
 // deep nesting must not blow the stack (test_enum_auto_number.n shape, regression)
 #[test]
 fn deep_nesting_regression() {
