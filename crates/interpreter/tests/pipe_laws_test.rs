@@ -122,3 +122,31 @@ fn atomic_form_conflicts_incompatible() {
     let v = eval_one("r: 5 |> #ok");
     assert!(matches!(v, Value::Bottom(_)), "5 & #ok must be ⊥, got {:?}", v);
 }
+
+// —— refinement-arrow tiers (docs/discussion/019) ————————————————————
+
+#[test]
+fn constant_refinement_is_idempotent() {
+    // Tier C: $-free transformers are nuclei — rerun-safe
+    let once = eval_one("r: { a: 1 } |> { b: 2 }");
+    let twice = eval_one("r: { a: 1 } |> { b: 2 } |> { b: 2 }");
+    assert_eq!(once, twice, "constant transformer must be rerun-safe");
+}
+
+#[test]
+fn self_referential_refinement_deepens() {
+    // Tier M: monotone but self-referential — each rerun refines strictly
+    // (the infinite-descent archetype; %fuel is the honest horizon)
+    let once = eval_one("r: { k: 1 } |> { w: $ }");
+    let twice = eval_one("r: { k: 1 } |> { w: $ } |> { w: $ }");
+    assert_ne!(once, twice, "self-referential transformer must NOT be idempotent");
+}
+
+#[test]
+fn projection_refinement_preserves_meet() {
+    // meet-homomorphic t: (x & y) |> {t} = (x |> {t}) & (y |> {t}) —
+    // the shard-locality property (evolve locally, merge later)
+    let lhs = eval_one("r: ({ k: 1, a: 2 } & { k: 1, b: 3 }) |> { v: $.k }");
+    let rhs = eval_one("r: ({ k: 1, a: 2 } |> { v: $.k }) & ({ k: 1, b: 3 } |> { v: $.k })");
+    assert_eq!(lhs, rhs);
+}
