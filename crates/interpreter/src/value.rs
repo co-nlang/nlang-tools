@@ -316,6 +316,7 @@ impl BottomDetail {
             BottomCause::H1Split => "#h1_split",
             BottomCause::H2Split => "#h2_split",
             BottomCause::SemanticEclipse => "#semantic_eclipse",
+            BottomCause::NoContext => "#no_context",
         };
         fields.insert("%type".to_string(), Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None));
         if let Some(ref p) = self.path {
@@ -380,7 +381,7 @@ impl BottomDetail {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub enum BottomCause { #[default] Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split, SemanticEclipse }
+pub enum BottomCause { #[default] Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split, SemanticEclipse, NoContext }
 
 impl BottomCause {
     pub fn as_tag(&self) -> &str {
@@ -397,6 +398,7 @@ impl BottomCause {
             BottomCause::H1Split => "h1_split",
             BottomCause::H2Split => "h2_split",
             BottomCause::SemanticEclipse => "semantic_eclipse",
+            BottomCause::NoContext => "no_context",
         }
     }
 }

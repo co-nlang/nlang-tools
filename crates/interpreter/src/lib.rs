@@ -955,6 +955,7 @@ let mut refl_fields = IndexMap::new();
                         BottomCause::H1Split => "h1_split",
                         BottomCause::H2Split => "h2_split",
                         BottomCause::SemanticEclipse => "semantic_eclipse",
+                        BottomCause::NoContext => "no_context",
                     };
                     return Value::Atom(AtomKind::Tag(type_tag.to_string()), EffectTag::Pure, None).with_effect(accumulated_effect);
                 }

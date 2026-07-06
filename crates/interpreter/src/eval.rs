@@ -309,7 +309,17 @@ impl Ouroboros {
                 fields.insert("%rules".to_string(), Value::Combo(ComboVal::new(rules, true, IndexMap::new(), te, vec![])));
                 Value::Combo(ComboVal::new(fields, true, IndexMap::new(), te, vec![]))
             }
-            ExprKind::Context => ctx.context_value.clone().unwrap_or(Value::Top),
+            // $ rules P1-P5 (SPEC_07 §4.2, 2026-07-05): bound only at evolution
+            // boundaries (pipe / morphism application); a free $ observed without
+            // an enclosing evolution collapses to _|_ #no_context (P3)
+            ExprKind::Context => match &ctx.context_value {
+                Some(v) => v.clone(),
+                None => Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::NoContext,
+                    message: Some("free `$` observed without an enclosing evolution (P3)".to_string()),
+                    ..Default::default()
+                })),
+            },
             ExprKind::Ternary { cond, then_branch, else_branch } => {
                 let cv = self.eval(cond, ctx).collapse().clone();
                 match cv {
