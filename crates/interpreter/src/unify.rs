@@ -97,6 +97,18 @@ impl Ouroboros {
             // i.e. exactly the A-case semantics the C ruling rejected.
             (Value::Top, Value::Ref(_)) => return b,
             (Value::Ref(_), Value::Top) => return a,
+            // F3 (§3-fix, hygiene note): Ref vs any non-Top concrete value
+            // (Combo, Atom, Union, Thunk, etc.) is NOT preserved here — the
+            // match falls through to the force path. In an evolve-context
+            // (where the caller's ctx is engine-level with a clean system
+            // root), force dereferences the Ref against the system root,
+            // producing an A-case snapshot. Currently, this path cannot be
+            // triggered for legal Ref-bearing unify pairs: evolven fields
+            // arrive as combos with Thunk values, not bare Refs; the C-case
+            // pipe result (bare Ref) is only unified against Top via the
+            // arms above. If future grammar produces (Ref, Atom) or (Ref,
+            // Combo) pairs at evolve time, this path should either defer
+            // (wrap in Thunk) or receive an explicit spec ruling.
             _ => {}
         }
 

@@ -899,7 +899,17 @@ let mut refl_fields = IndexMap::new();
             ctx.depth -= 1;
             return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
         }
+        // F1 (§3-fix): when force_recursive deref's a Ref, the resolved value
+        // becomes the $ binding for all thunks forced in the subtree (SYNTAX_07
+        // §2.4: "binding occurs at observation time"). Scope via save/restore
+        // so sibling observations are not polluted.
+        let is_ref = matches!(&val, Value::Ref(_));
         let val = self.force(val, ctx);
+        let old_ctx_val = if is_ref {
+            let old = ctx.context_value.take();
+            ctx.context_value = Some(val.clone());
+            old
+        } else { None };
         let res = match val {
             // Stage 2: force may return a Thunk if the underlying eval hit a
             // navigate_segments that returned an unforced field thunk (GUIDE_03
@@ -918,6 +928,7 @@ let mut refl_fields = IndexMap::new();
             Value::Union(branches) => Value::Union(branches.into_iter().map(|b| self.force_recursive(b, ctx)).collect()),
             _ => val
         };
+        if is_ref { ctx.context_value = old_ctx_val; }
         ctx.depth -= 1;
         res
     }
@@ -979,7 +990,31 @@ let mut refl_fields = IndexMap::new();
                 }
                 if found.is_none() { if let Some(ref s) = ctx.staged { if let Some(val) = s.get_field(name).or_else(|| s.get_local_field(name)) { found = Some(val.clone()); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = s.get_field(&alt_name).or_else(|| s.get_local_field(&alt_name)) { found = Some(val.clone()); break; } } } } }
                 if found.is_none() { if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { found = Some(val.clone()); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { found = Some(val.clone()); break; } } } }
-                match found { Some(v) => { let forced = self.force(v, ctx); if path.segments.len() > 1 { return self.navigate_segments(forced, &path.segments[1..], ctx); } forced } None => Value::Top }
+                match found { Some(v) => {
+                    let is_ref = matches!(&v, Value::Ref(_));
+                    let forced = self.force(v, ctx);
+                    if path.segments.len() > 1 {
+                        // F1 (§3-fix): when resolving through a Ref, the deref'd
+                        // value becomes the $ binding for thunks forced in the
+                        // remaining path traversal (SYNTAX_07 §2.4: "binding
+                        // occurs at observation time"). Scoped to the deref
+                        // subtree — saved/restored so sibling observations are
+                        // not polluted.
+                        let old_ctx_val = if is_ref {
+                            let old = ctx.context_value.take();
+                            ctx.context_value = Some(forced.clone());
+                            old
+                        } else { None };
+                        let res = self.navigate_segments(forced, &path.segments[1..], ctx);
+                        if is_ref { ctx.context_value = old_ctx_val; }
+                        return res;
+                    }
+                    // Single-segment: no navigation subtree — return deref'd
+                    // value directly, no context scoping needed. But if this
+                    // Ref observation feeds into force_recursive, the recursion
+                    // needs the deref context (handled in force_recursive F1).
+                    forced
+                } None => Value::Top }
             }
             PathAnchor::Parent(count) => { let len = ctx.scopes.len(); if len > count as usize { Value::Combo(ctx.scopes[len - 1 - (count as usize)].clone()) } else { return BottomCause::InvalidPath.into(); } }
             PathAnchor::Current => { if let Some(top) = ctx.scopes.last() { Value::Combo(top.clone()) } else { Value::Combo(ctx.root.clone()) } }
@@ -1079,6 +1114,15 @@ let mut refl_fields = IndexMap::new();
     }
 
     pub fn sub_context(&self, ctx: &EvalContext) -> EvalContext {
+        // F2 (§3-fix, open): ctx.clone() deep-copies root (ComboVal). Each
+        // force(thunk) creates a sub_context; in a self-referential Ref chain
+        // (observe v with v:<<_.>>), force_recursive iterates root's N fields,
+        // each thunk-force cloning root again — O(depth × N × |root|) memory.
+        // The probe test uses a minimal-root build_universe_with(dir, true)
+        // and passes. With stdlib-heavy root (build_universe_with(dir, false)),
+        // memory exhaustion outruns the fuel horizon. Fix: share root via
+        // Arc<ComboVal> so sub_context clones are cheap; requires making
+        // root access patterns Arc-compatible (tests mutate root directly).
         let mut sub = ctx.clone(); sub.computing.clear(); sub.call_history.clear(); sub
     }
 

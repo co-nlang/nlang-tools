@@ -82,10 +82,8 @@ fn probe_evolve_stores_live_ref_not_snapshot() {
 }
 
 // Vector line 4: observe v.w.x.a → "Logic" (path-directed, finite).
-// REMEDIATION PENDING: deref re-entry does not yet bind the resolved root as
-// the dynamic $ frame for downstream thunks — currently #no_context.
+// REMEDIATION COMPLETE (F1): deref re-entry supplies the $ frame.
 #[test]
-#[ignore = "Stage 3 remediation: deref re-entry must supply the $ frame (handover 3-fix)"]
 fn probe_v_w_x_a_yields_logic() {
     let dir = tmp_dir("nav");
     let (engine, universe) = build_universe(&dir);
