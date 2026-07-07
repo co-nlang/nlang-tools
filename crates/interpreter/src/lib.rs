@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use indexmap::IndexMap;
 use nlang_parser::ast::{Path, PathAnchor, AtomKind, Expr};
+use nlang_parser::tier::{Tier, classify_tier};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::path::PathBuf;
@@ -103,10 +104,21 @@ pub enum Peer {
     Remote(String), // TCP address
 }
 
+/// Force-memo key (Stage 4): (expr CAID, frame CAID, context CAID | #open, root CAID).
+/// Pre-hashed for fast lookup; equality means identical observable result.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ForceMemoKey {
+    pub expr_caid: ContentHash,
+    pub frame_caid: ContentHash,
+    pub context_caid: Option<ContentHash>,
+    pub root_caid: ContentHash,
+}
+
 pub struct Ouroboros {
     pub store: ObjectStore,
     pub base_dir: Option<PathBuf>,
     pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), Value>>,
+    pub force_memo: RwLock<HashMap<ForceMemoKey, Value>>,
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
     pub identity: crate::value::Identity,
@@ -130,7 +142,7 @@ impl Ouroboros {
         let local_pk_hex = hex::encode(&identity.public_key);
         let mut architects = std::collections::HashSet::new();
         architects.insert(local_pk_hex);
-        Self { store, base_dir: None, unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) }
+        Self { store, base_dir: None, unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) }
     }
 
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
@@ -143,7 +155,7 @@ impl Ouroboros {
         if let Ok(persisted) = store.load_architects(base_dir) {
             architects.extend(persisted);
         }
-        let mut oo = Self { store, base_dir: Some(base_dir.to_path_buf()), unify_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
+        let mut oo = Self { store, base_dir: Some(base_dir.to_path_buf()), unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
         Ok(oo)
     }
     
@@ -860,19 +872,71 @@ let mut refl_fields = IndexMap::new();
     pub fn force(&self, val: Value, ctx: &mut EvalContext) -> Value {
         match val {
             Value::Thunk { expr, closure, context, effect } => {
+                // Stage 4 (§4b): force-level memo — check tier classification
+                // and memo cache before eval. C and M tiers are memoable across
+                // observations; Q and U are not. key = (expr CAID, frame CAID,
+                // context CAID | #open, root CAID).
+                let tier: Option<Tier> = classify_tier(&expr).0.into();
+                let should_memo = matches!(tier, Some(Tier::C) | Some(Tier::M));
+                let memo_key = if should_memo {
+                    let expr_caid = {
+                        let mut h = sha2::Sha256::new();
+                        h.update(expr.to_nlang(0).as_bytes());
+                        ContentHash::v1(h.finalize().to_vec())
+                    };
+                    let frame_caid = {
+                        let cv = Value::Combo(ComboVal::new(
+                            closure.iter().enumerate().flat_map(|(i, cv)| {
+                                vec![(i.to_string(), Value::Combo(cv.clone()))]
+                            }).collect(),
+                            true, IndexMap::new(), EffectTag::Pure, vec![]));
+                        cv.content_hash()
+                    };
+                    let context_caid = context.as_ref().map(|b| b.content_hash());
+                    let root_caid = Value::Combo((*ctx.root).clone()).content_hash();
+                    Some(ForceMemoKey { expr_caid, frame_caid, context_caid, root_caid })
+                } else { None };
+
+                if let Some(ref k) = memo_key {
+                    if let Ok(memo) = self.force_memo.read() {
+                        if let Some(cached) = memo.get(k) {
+                            // Apply effect upgrade to cached value (same logic
+                            // as the miss path below).
+                            let mut res = cached.clone();
+                            res = match res {
+                                Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
+                                Value::Combo(mut cv) if cv.effect < effect => { cv.effect = effect; Value::Combo(cv) },
+                                _ if res.effect() < effect => Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%val".to_string(), res)]), true, IndexMap::new(), effect, vec![])),
+                                _ => res,
+                            };
+                            return res;
+                        }
+                    }
+                }
+
                 let mut call_ctx = self.sub_context(ctx);
                 call_ctx.scopes = closure;
-                // P1/P3 binding rule (GUIDE_03 §11.2): thunk's own context wins,
-                // else the observer's dynamic binding, else $ evaluates to
-                // _|_ #no_context (handled at Context eval via NoContext).
                 call_ctx.context_value = context.map(|b| *b).or(ctx.context_value.clone());
                 let res = self.eval(&expr, &mut call_ctx); ctx.fuel = call_ctx.fuel;
-                match res {
+                let res = match res {
                     Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
                     Value::Combo(mut cv) if cv.effect < effect => { cv.effect = effect; Value::Combo(cv) },
                     _ if res.effect() < effect => Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%val".to_string(), res)]), true, IndexMap::new(), effect, vec![])),
                     _ => res,
+                };
+
+                // Insert into force_memo (Route A three guards: no Bottom,
+                // no Blur, effect < NonDet; capacity cap + generational clear).
+                if let Some(ref k) = memo_key {
+                    if !matches!(res, Value::Bottom(_)) && !res.contains_blur() && res.effect() < EffectTag::NonDet {
+                        if let Ok(mut memo) = self.force_memo.write() {
+                            const FORCE_MEMO_CAP: usize = 100_000;
+                            if memo.len() >= FORCE_MEMO_CAP { memo.clear(); }
+                            memo.insert(k.clone(), res.clone());
+                        }
+                    }
                 }
+                res
             }
             Value::Blur(_) => val,
             Value::Ref(path) => {
