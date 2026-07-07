@@ -30,10 +30,10 @@ fn test_lexical_scoping_shadowing() {
     let mut ctx = EvalContext::new(root_val);
 
     let a_val = oo.eval_observed(&program.fields[0].value, &mut ctx);
-    ctx.root.insert_field("a", a_val);
+    std::sync::Arc::make_mut(&mut ctx.root).insert_field("a", a_val);
 
     let inner_val = oo.eval_observed(&program.fields[1].value, &mut ctx);
-    ctx.root.insert_field("inner", inner_val.clone());
+    std::sync::Arc::make_mut(&mut ctx.root).insert_field("inner", inner_val.clone());
 
     if let Value::Combo(cv) = inner_val {
         assert_eq!(cv.get_field("b").unwrap(), &Value::Atom(AtomKind::Int(BigInt::from(2)), EffectTag::Pure, None));
@@ -56,7 +56,7 @@ fn test_absolute_path() {
     for f in &program.fields {
         let name = field_name(&f.key);
         let val = oo.eval_observed(&f.value, &mut ctx);
-        ctx.root.insert_field(&name, val);
+        std::sync::Arc::make_mut(&mut ctx.root).insert_field(&name, val);
     }
 
     let inner = ctx.root.get_field("inner").unwrap();
@@ -75,7 +75,7 @@ fn test_deep_navigation() {
     for f in &program.fields {
         let name = field_name(&f.key);
         let val = oo.eval_observed(&f.value, &mut ctx);
-        ctx.root.insert_field(&name, val);
+        std::sync::Arc::make_mut(&mut ctx.root).insert_field(&name, val);
     }
 
     assert_eq!(ctx.root.get_field("app_port").unwrap(), &Value::Atom(AtomKind::Int(BigInt::from(8080)), EffectTag::Pure, None));

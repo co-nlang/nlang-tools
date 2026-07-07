@@ -61,7 +61,14 @@ fn contains_horizon(v: &Value) -> bool {
             BlurCause::FuelExhausted | BlurCause::StackOverflow),
         Value::Bottom(d) => matches!(d.cause,
             BottomCause::FuelExhausted | BottomCause::Divergent),
-        Value::Combo(cv) => cv.all_fields_iter().any(|(_, f)| contains_horizon(&f)),
+        // walk by reference: all_fields_iter() yields OWNED clones, which on a
+        // horizon-deep nested chain is O(depth x total_size) memory — the
+        // helper OOMs on a value the engine produced just fine.
+        Value::Combo(cv) => cv.data.values()
+            .chain(cv.types.values()).chain(cv.rules.values())
+            .chain(cv.meta.values()).chain(cv.system.values())
+            .chain(cv.local.values())
+            .any(contains_horizon),
         Value::Union(items) => items.iter().any(contains_horizon),
         _ => false,
     }
@@ -100,11 +107,24 @@ fn probe_v_w_x_a_yields_logic() {
 // test-thread stack under fat debug frames (production main thread is 8MiB).
 #[test]
 fn probe_v_full_hits_fuel_horizon() {
+    run_full_v_probe("full", true);
+}
+
+// F2 acceptance: same probe against the stdlib-heavy root. Pre-Arc this was
+// SIGKILL (OOM): sub_context deep-copied the whole root on every thunk force,
+// O(depth × N_fields × |root|). With root behind Arc the clone is a refcount
+// bump and the horizon engages before memory does.
+#[test]
+fn probe_v_full_stdlib_root_hits_horizon_no_oom() {
+    run_full_v_probe("full-stdlib", false);
+}
+
+fn run_full_v_probe(tag: &'static str, minimal: bool) {
     let handle = std::thread::Builder::new()
         .stack_size(32 * 1024 * 1024)
-        .spawn(|| {
-            let dir = tmp_dir("full");
-            let (engine, universe) = build_universe(&dir);
+        .spawn(move || {
+            let dir = tmp_dir(tag);
+            let (engine, universe) = build_universe_with(&dir, minimal);
             let obs = universe.observe(&engine, &path_of(&["v"]));
             assert!(contains_horizon(&obs),
                 "full observation of self-referential v should truncate at the horizon, got a {} without horizon markers",

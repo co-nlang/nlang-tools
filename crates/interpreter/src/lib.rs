@@ -35,7 +35,11 @@ pub enum ResourceExhausted { FuelExhausted, Timeout, StackOverflow }
 
 #[derive(Debug, Clone)]
 pub struct EvalContext {
-    pub root: ComboVal,
+    // F2 (Stage 3-fix): Arc so EvalContext::clone (sub_context on every thunk
+    // force) bumps a refcount instead of deep-copying the universe — the
+    // O(depth x N_fields x |root|) amplifier in self-referential observation.
+    // Reads deref transparently; the engine never mutates root mid-eval.
+    pub root: Arc<ComboVal>,
     pub scopes: Vec<ComboVal>,
     pub staged: Option<ComboVal>,
     pub computing: HashSet<String>,
@@ -63,7 +67,7 @@ impl EvalContext {
         hasher.update(b"default");
         let salt = ContentHash::v1(hasher.finalize().to_vec());
         Self { 
-            root, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
+            root: Arc::new(root), scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_math_op: false, context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
@@ -977,7 +981,7 @@ let mut refl_fields = IndexMap::new();
 
     fn resolve_path_internal(&self, path: &Path, ctx: &mut EvalContext) -> Value {
         let start_val: Value = match path.anchor {
-            PathAnchor::Root => Value::Combo(ctx.root.clone()),
+            PathAnchor::Root => Value::Combo((*ctx.root).clone()),
             PathAnchor::Bare => {
                 let name = if !path.segments.is_empty() { path.segments[0].trim() } else { "" };
                 let mut found = None;
@@ -1017,7 +1021,7 @@ let mut refl_fields = IndexMap::new();
                 } None => Value::Top }
             }
             PathAnchor::Parent(count) => { let len = ctx.scopes.len(); if len > count as usize { Value::Combo(ctx.scopes[len - 1 - (count as usize)].clone()) } else { return BottomCause::InvalidPath.into(); } }
-            PathAnchor::Current => { if let Some(top) = ctx.scopes.last() { Value::Combo(top.clone()) } else { Value::Combo(ctx.root.clone()) } }
+            PathAnchor::Current => { if let Some(top) = ctx.scopes.last() { Value::Combo(top.clone()) } else { Value::Combo((*ctx.root).clone()) } }
         };
         if !path.segments.is_empty() && !matches!(path.anchor, PathAnchor::Bare) { self.navigate_segments(start_val, &path.segments, ctx) } else { start_val }
     }
