@@ -33,7 +33,14 @@ impl Universe {
                     evolved_coords.push(trimmed);
                 } else {
                     let p = match prefix { Some(Prefix::Logic) => "/", Some(Prefix::Type) => "@", Some(Prefix::Meta) => "%", Some(Prefix::System) => "~%", _ => "" };
-                    rf.insert(format!("{}{}", p, trimmed), val);
+                    let stored = format!("{}{}", p, trimmed);
+                    rf.insert(stored.clone(), val);
+                    // Stage 5 acceptance fix: dependency recording uses stored
+                    // (prefixed) names, so invalidate by BOTH forms. Measured:
+                    // `/name:` source keys through the Quoted/Path arms (bare
+                    // form already correct there); whichever key form reaches
+                    // this arm, pushing both is sound over-approximation.
+                    evolved_coords.push(stored);
                     evolved_coords.push(trimmed);
                 }
             }

@@ -60,6 +60,12 @@ pub struct EvalContext {
     /// staged context). Nested thunk forces install a fresh collector and
     /// merge deps back into the outer one.
     pub dep_collector: Option<HashSet<String>>,
+    /// Stage 5 acceptance fix: memo participation is restricted to
+    /// observation contexts. Engine-internal contexts (eval_context: unify
+    /// merges, formatting) run against the pristine system root with no
+    /// collector — letting them insert produces deps-less "permanent"
+    /// entries computed against the wrong root.
+    pub memo_enabled: bool,
     pub horizon_salt: ContentHash,
     pub strategy: ObservationStrategy,
     pub max_branches: usize,
@@ -80,7 +86,7 @@ impl EvalContext {
         Self { 
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_math_op: false, context_value: None, 
-            fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, 
+            fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, memo_enabled: true, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
             refine_map_active: false,
@@ -810,6 +816,7 @@ let mut refl_fields = IndexMap::new();
     pub fn eval_context(&self) -> EvalContext {
         let sys_root = self.root_with_system();
         let mut ctx = EvalContext::new(sys_root.clone());
+        ctx.memo_enabled = false; // engine-internal: wrong root for memo (see field doc)
         if let Some(Value::Combo(ref cfg)) = sys_root.get_field("~%Config").cloned() {
             if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%fuel").cloned() {
                 if let Some(f) = n.to_u64() { ctx.fuel = f; }
@@ -938,7 +945,7 @@ let mut refl_fields = IndexMap::new();
                 let effective_context: Option<Value> = context.map(|b| *b).or(ctx.context_value.clone());
                 let tier: Option<Tier> = classify_tier(&expr).0.into();
                 let should_memo = matches!(tier, Some(Tier::C) | Some(Tier::M));
-                let staged_ok = ctx.staged.is_none();
+                let staged_ok = ctx.staged.is_none() && ctx.memo_enabled;
                 let memo_key = if should_memo && staged_ok {
                     let expr_caid = {
                         let mut h = sha2::Sha256::new();
@@ -960,6 +967,14 @@ let mut refl_fields = IndexMap::new();
                 if let Some(ref k) = memo_key {
                     if let Ok(memo) = self.force_memo.read() {
                         if let Some(entry) = memo.get(k) {
+                            // Stage 5 acceptance fix: a HIT must float the
+                            // entry's deps into the active outer collector —
+                            // an outer entry built over this hit embeds this
+                            // value, so it inherits these invalidation edges
+                            // (probe p1_hit_path_must_float_transitive_deps).
+                            if let Some(ref mut c) = ctx.dep_collector {
+                                c.extend(entry.deps.iter().cloned());
+                            }
                             let mut res = entry.value.clone();
                             res = match res {
                                 Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
