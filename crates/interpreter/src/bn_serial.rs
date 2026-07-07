@@ -57,6 +57,17 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
         Value::Combo(cv) => serialize_combo(cv, buf),
         Value::Union(items) => serialize_union(items, buf),
         Value::Code(expr) => { buf.push(TAG_ATOM); encode_string(&format!("{:?}", expr), buf); }
+        Value::Ref(path) => {
+            buf.push(TAG_REF);
+            match path.anchor {
+                nlang_parser::ast::PathAnchor::Bare => buf.push(0x00),
+                nlang_parser::ast::PathAnchor::Root => buf.push(0x01),
+                nlang_parser::ast::PathAnchor::Parent(n) => { buf.push(0x02); buf.extend_from_slice(&n.to_le_bytes()); }
+                nlang_parser::ast::PathAnchor::Current => buf.push(0x03),
+            }
+            encode_unsigned_leb128(path.segments.len() as u64, buf);
+            for seg in &path.segments { encode_string(seg, buf); }
+        }
         // Stage 2: full Thunk serialization — expr (canonical) + closure
         // (frame) + context (binding | #open) + effect. The context slot is
         // load-bearing: without it, `Thunk{$, ctx=lv1}` and `Thunk{$, ctx=j1}`

@@ -478,7 +478,17 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
                 Value::Atom(AtomKind::Str(res), max_e, None)
             }
-            ExprKind::Structural(e) => self.eval(e, ctx),
+            ExprKind::Structural(e) => {
+                // Stage 3 (§3a): structural form <<path>> — symbolic reference.
+                // The structural brackets are "this is a reference, don't evaluate
+                // it yet." Non-path operands keep current geometric semantics
+                // (SYNTAX_07 §2.2).
+                if let ExprKind::Path(p) = &e.kind {
+                    Value::Ref(p.clone())
+                } else {
+                    self.eval(e, ctx)
+                }
+            },
             ExprKind::Unary { op, expr } => {
                 let v = self.eval(expr, ctx).collapse().clone();
                 match op {

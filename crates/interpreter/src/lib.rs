@@ -871,6 +871,15 @@ let mut refl_fields = IndexMap::new();
                 }
             }
             Value::Blur(_) => val,
+            Value::Ref(path) => {
+                // Stage 3 (§3a): dereference — resolve path against ctx.root
+                // at observation time. fuel charged here (force = observation
+                // primitive, GUIDE_03 §11.4).
+                if let Err(e) = ctx.check_resources(1) {
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                }
+                self.resolve_path_internal(&path, ctx)
+            }
             _ => val,
         }
     }
@@ -973,9 +982,11 @@ let mut refl_fields = IndexMap::new();
             let mut current = self.force(val, ctx);
             accumulated_effect = accumulated_effect.max(current.effect());
             while let Value::Combo(ref c) = current {
-                if let Some(inner) = c.get_field("%val") {
-                    current = self.force(inner.clone(), ctx);
-                    accumulated_effect = accumulated_effect.max(current.effect());
+                if c.is_pure_wrapper() {
+                    if let Some(inner) = c.get_field("%val") {
+                        current = self.force(inner.clone(), ctx);
+                        accumulated_effect = accumulated_effect.max(current.effect());
+                    } else { break; }
                 } else { break; }
             }
             if seg == "%id" { return Value::Atom(AtomKind::Str(current.content_hash_with_salt(&ctx.horizon_salt).to_string()), EffectTag::Pure, None).with_effect(accumulated_effect); }

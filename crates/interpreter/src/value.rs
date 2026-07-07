@@ -1,4 +1,4 @@
-use nlang_parser::ast::{Expr, AtomKind};
+use nlang_parser::ast::{Expr, AtomKind, Path, PathAnchor};
 use indexmap::IndexMap;
 use sha2::{Sha256, Digest};
 use std::fmt;
@@ -29,6 +29,7 @@ pub enum Value {
         context: Option<Box<Value>>,
         effect: EffectTag,
     },
+    Ref(Path),
     Bottom(Box<BottomDetail>),
     Blur(BlurDetail),
 }
@@ -154,6 +155,13 @@ impl ComboVal {
     pub fn get_local_field(&self, name: &str) -> Option<&Value> {
         let name_trimmed = name.trim().trim_start_matches('~');
         self.local.get(name_trimmed)
+    }
+
+    pub fn is_pure_wrapper(&self) -> bool {
+        self.meta.contains_key("val")
+            && self.data.is_empty()
+            && self.types.is_empty()
+            && self.rules.is_empty()
     }
 
     pub fn get_field_mut(&mut self, key: &str) -> Option<&mut Value> {
@@ -677,6 +685,7 @@ impl Value {
             Value::Union(branches) => branches.iter().map(|b| b.bits()).sum(),
             Value::Code(_) | Value::Thunk { .. } => 256,
             Value::Bottom(d) => d.bits(),
+            Value::Ref(_) => 64,
             Value::Blur(bd) => {
                 128 + bd.partial.as_ref().map(|p| p.bits()).unwrap_or(0)
             },
@@ -688,7 +697,7 @@ impl Value {
             Value::Top => 0,
             Value::Bottom(_) => TROPICAL_INFINITY,
             Value::Atom(_, _, _) => 1,
-            Value::Thunk { .. } | Value::Code(_) => 1,
+            Value::Thunk { .. } | Value::Code(_) | Value::Ref(_) => 1,
             Value::Union(branches) => branches.iter().map(|b| b.tropical_weight()).min().unwrap_or(TROPICAL_INFINITY),
             Value::Combo(c) => c.all_fields_iter().map(|(_, v)| v.tropical_weight()).fold(0u64, |acc, w| acc.saturating_add(w)),
             Value::Blur(_) => 64,
@@ -744,14 +753,18 @@ impl Value {
             _ => EffectTag::Pure 
         }
     }
-    pub fn collapse(&self) -> &Value { match self { Value::Combo(c) => c.get_field("%val").map(|v| v.collapse()).unwrap_or(self), _ => self } }
+    pub fn collapse(&self) -> &Value { match self { Value::Combo(c) if c.is_pure_wrapper() => c.get_field("%val").map(|v| v.collapse()).unwrap_or(self), _ => self } }
     
     pub fn collapse_with_effect(&self) -> (Value, EffectTag) {
         match self {
             Value::Combo(c) => {
-                if let Some(v) = c.get_field("%val") {
-                    let (inner, inner_e) = v.collapse_with_effect();
-                    (inner, inner_e.max(c.effect))
+                if c.is_pure_wrapper() {
+                    if let Some(v) = c.get_field("%val") {
+                        let (inner, inner_e) = v.collapse_with_effect();
+                        (inner, inner_e.max(c.effect))
+                    } else {
+                        (self.clone(), c.effect)
+                    }
                 } else {
                     (self.clone(), c.effect)
                 }
@@ -787,7 +800,7 @@ impl Value {
             },
             Value::Top => "_".to_string(),
             Value::Bottom(d) => format!("_|_ (%cause: {:?})", d.cause),
-            Value::Combo(c) => { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } "{...}".to_string() }
+            Value::Combo(c) => { if c.is_pure_wrapper() { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } } "{...}".to_string() }
             Value::Union(_) => "(...|...)".to_string(),
             Value::Blur(bd) => format!("#blur({})", bd.cause.as_str()),
             _ => format!("{:?}", self),
@@ -978,6 +991,16 @@ impl Value {
                 hasher.update(&[*effect as u8]);
             }
             Value::Code(expr) => { hasher.update([0x06]); hasher.update(format!("{:?}", expr).as_bytes()); }
+            Value::Ref(path) => {
+                hasher.update([0x07]);
+                match path.anchor {
+                    PathAnchor::Bare => hasher.update([0x00]),
+                    PathAnchor::Root => hasher.update([0x01]),
+                    PathAnchor::Parent(n) => { hasher.update([0x02]); hasher.update(&n.to_le_bytes()); }
+                    PathAnchor::Current => hasher.update([0x03]),
+                }
+                for seg in &path.segments { hasher.update(seg.as_bytes()); }
+            }
         }
     }
 }
