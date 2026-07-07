@@ -41,6 +41,10 @@ pub struct EvalContext {
     // O(depth x N_fields x |root|) amplifier in self-referential observation.
     // Reads deref transparently; the engine never mutates root mid-eval.
     pub root: Arc<ComboVal>,
+    /// Stage 4: lazily computed CAID of `root`, shared through sub_context
+    /// clones. Sound because the engine never mutates root mid-observation
+    /// (tests that mutate via Arc::make_mut do so before any force).
+    pub root_caid_cache: Option<ContentHash>,
     pub scopes: Vec<ComboVal>,
     pub staged: Option<ComboVal>,
     pub computing: HashSet<String>,
@@ -68,7 +72,7 @@ impl EvalContext {
         hasher.update(b"default");
         let salt = ContentHash::v1(hasher.finalize().to_vec());
         Self { 
-            root: Arc::new(root), scopes: Vec::new(), staged: None, computing: HashSet::new(), 
+            root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_math_op: false, context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
@@ -78,6 +82,15 @@ impl EvalContext {
             disc_routing_visited: std::collections::HashSet::new(),
             disc_routing_hops: 0,
         }
+    }
+    /// Root CAID for memo keys — computed once per root version, then cached
+    /// (the cache rides along sub_context clones). Avoids the per-force
+    /// deep-clone + full re-hash of the universe.
+    pub fn root_caid(&mut self) -> ContentHash {
+        if let Some(ref h) = self.root_caid_cache { return h.clone(); }
+        let h = Value::Combo((*self.root).clone()).content_hash();
+        self.root_caid_cache = Some(h.clone());
+        h
     }
     pub fn with_fuel(mut self, fuel: u64) -> Self { self.fuel = fuel; self }
     pub fn with_strategy(mut self, strategy: ObservationStrategy) -> Self { self.strategy = strategy; self }
@@ -878,6 +891,14 @@ let mut refl_fields = IndexMap::new();
                 // context CAID | #open, root CAID).
                 let tier: Option<Tier> = classify_tier(&expr).0.into();
                 let should_memo = matches!(tier, Some(Tier::C) | Some(Tier::M));
+                // P1/P3 binding rule (GUIDE_03 §11.2): thunk's own context wins,
+                // else the observer's dynamic binding, else $ evaluates to
+                // _|_ #no_context (handled at Context eval via NoContext).
+                // The memo key MUST use this same EFFECTIVE binding: keying on
+                // the thunk's own slot alone lets a frame-bound result (F1
+                // deref re-entry, pipe binding) poison the open observation of
+                // the same thunk — red-line probe stage4_redline_test.rs.
+                let effective_context: Option<Value> = context.map(|b| *b).or(ctx.context_value.clone());
                 let memo_key = if should_memo {
                     let expr_caid = {
                         let mut h = sha2::Sha256::new();
@@ -892,8 +913,8 @@ let mut refl_fields = IndexMap::new();
                             true, IndexMap::new(), EffectTag::Pure, vec![]));
                         cv.content_hash()
                     };
-                    let context_caid = context.as_ref().map(|b| b.content_hash());
-                    let root_caid = Value::Combo((*ctx.root).clone()).content_hash();
+                    let context_caid = effective_context.as_ref().map(|v| v.content_hash());
+                    let root_caid = ctx.root_caid();
                     Some(ForceMemoKey { expr_caid, frame_caid, context_caid, root_caid })
                 } else { None };
 
@@ -916,7 +937,7 @@ let mut refl_fields = IndexMap::new();
 
                 let mut call_ctx = self.sub_context(ctx);
                 call_ctx.scopes = closure;
-                call_ctx.context_value = context.map(|b| *b).or(ctx.context_value.clone());
+                call_ctx.context_value = effective_context;
                 let res = self.eval(&expr, &mut call_ctx); ctx.fuel = call_ctx.fuel;
                 let res = match res {
                     Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
