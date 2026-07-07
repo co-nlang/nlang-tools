@@ -874,8 +874,12 @@ let mut refl_fields = IndexMap::new();
             Value::Ref(path) => {
                 // Stage 3 (§3a): dereference — resolve path against ctx.root
                 // at observation time. fuel charged here (force = observation
-                // primitive, GUIDE_03 §11.4).
-                if let Err(e) = ctx.check_resources(1) {
+                // primitive, GUIDE_03 §11.4). Cost scales with what the deref
+                // materializes: a root deref clones the whole universe, and
+                // pricing it at 1 lets a self-referential chain outrun the fuel
+                // horizon into the stack instead (3c: horizon must engage first).
+                let cost = if path.segments.is_empty() { 32 } else { 1 + path.segments.len() as u64 };
+                if let Err(e) = ctx.check_resources(cost) {
                     return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
                 }
                 self.resolve_path_internal(&path, ctx)
@@ -885,8 +889,18 @@ let mut refl_fields = IndexMap::new();
     }
 
     pub fn force_recursive(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        // Stage 3 (§3c): solidification must participate in depth accounting —
+        // a self-referential Ref chain (v: <<_.>>) recurses through here, not
+        // through eval, so without this guard the Rust stack dies before the
+        // fuel horizon ever engages. Depth exhaustion is the same semantic
+        // truncation as fuel: the horizon, not an error.
+        ctx.depth += 1;
+        if let Err(e) = ctx.check_resources(0) {
+            ctx.depth -= 1;
+            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+        }
         let val = self.force(val, ctx);
-        match val {
+        let res = match val {
             // Stage 2: force may return a Thunk if the underlying eval hit a
             // navigate_segments that returned an unforced field thunk (GUIDE_03
             // §11.4 — path-directed observe forces only path nodes, not the
@@ -903,7 +917,9 @@ let mut refl_fields = IndexMap::new();
             }
             Value::Union(branches) => Value::Union(branches.into_iter().map(|b| self.force_recursive(b, ctx)).collect()),
             _ => val
-        }
+        };
+        ctx.depth -= 1;
+        res
     }
 
     pub fn resolve_path(&self, path: &Path, ctx: &mut EvalContext) -> Value {

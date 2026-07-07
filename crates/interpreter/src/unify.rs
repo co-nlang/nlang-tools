@@ -91,6 +91,12 @@ impl Ouroboros {
         match (&a, &b) {
             (Value::Top, Value::Thunk { .. }) => return b,
             (Value::Thunk { .. }, Value::Top) => return a,
+            // Stage 3 (§3a/§3b): a Ref must survive unify un-dereferenced — the
+            // force below runs in the *caller's* context (engine-level at evolve
+            // field-merge), and dereferencing there is evolve-time snapshotting,
+            // i.e. exactly the A-case semantics the C ruling rejected.
+            (Value::Top, Value::Ref(_)) => return b,
+            (Value::Ref(_), Value::Top) => return a,
             _ => {}
         }
 

@@ -999,7 +999,12 @@ impl Value {
                     PathAnchor::Parent(n) => { hasher.update([0x02]); hasher.update(&n.to_le_bytes()); }
                     PathAnchor::Current => hasher.update([0x03]),
                 }
-                for seg in &path.segments { hasher.update(seg.as_bytes()); }
+                // length-delimited: <<a.bc>> and <<ab.c>> are different geometry
+                // and must not collide (CAID equality drives lazy-unify early-out)
+                for seg in &path.segments {
+                    hasher.update((seg.len() as u64).to_le_bytes());
+                    hasher.update(seg.as_bytes());
+                }
             }
         }
     }
