@@ -22,7 +22,13 @@ pub fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Top, Atom(AtomKind, EffectTag, Option<i64>), Combo(ComboVal), Union(Vec<Value>), Code(Box<Expr>),
-    Thunk { expr: Box<Expr>, closure: Vec<ComboVal>, effect: EffectTag },
+    Thunk {
+        expr: Box<Expr>,
+        closure: Vec<ComboVal>,
+        #[serde(default)]
+        context: Option<Box<Value>>,
+        effect: EffectTag,
+    },
     Bottom(Box<BottomDetail>),
     Blur(BlurDetail),
 }
@@ -35,7 +41,9 @@ impl PartialEq for Value {
             (Value::Combo(c1), Value::Combo(c2)) => c1 == c2,
             (Value::Union(u1), Value::Union(u2)) => u1 == u2,
             (Value::Code(c1), Value::Code(c2)) => c1 == c2,
-            (Value::Thunk { expr: ex1, closure: cl1, effect: ef1 }, Value::Thunk { expr: ex2, closure: cl2, effect: ef2 }) => ex1 == ex2 && cl1 == cl2 && ef1 == ef2,
+            (Value::Thunk { expr: ex1, closure: cl1, context: c1, effect: ef1 },
+             Value::Thunk { expr: ex2, closure: cl2, context: c2, effect: ef2 }) =>
+                ex1 == ex2 && cl1 == cl2 && c1 == c2 && ef1 == ef2,
             (Value::Bottom(b1), Value::Bottom(b2)) => b1 == b2,
             (Value::Blur(b1), Value::Blur(b2)) => b1 == b2,
             _ => false,
@@ -710,7 +718,7 @@ impl Value {
             Value::Atom(ak, old_e, r) => Value::Atom(ak, old_e.max(e), r),
             Value::Combo(mut cv) => { cv.effect = cv.effect.max(e); Value::Combo(cv) },
             Value::Union(branches) => Value::Union(branches.into_iter().map(|b| b.with_effect(e)).collect()),
-            Value::Thunk { expr, closure, effect } => Value::Thunk { expr, closure, effect: effect.max(e) },
+            Value::Thunk { expr, closure, context, effect } => Value::Thunk { expr, closure, context, effect: effect.max(e) },
             _ => self
         }
     }
@@ -944,7 +952,31 @@ impl Value {
                 hasher.update(&bd.horizon.fuel_remaining.to_le_bytes());
                 hasher.update(&bd.horizon.salt.digest);
             }
-            Value::Thunk { expr, .. } => { hasher.update([0x05]); hasher.update(format!("{:?}", expr).as_bytes()); }
+            Value::Thunk { expr, closure, context, effect } => {
+                // GUIDE_03 §11.3 memo key: (expr CAID, frame CAID, context CAID | #open).
+                // Must be deterministic and evaluation-independent.
+                hasher.update([0x05]);
+                // expr: canonical serialization (to_nlang) rather than Debug format,
+                // so structurally-equivalent exprs hash identically regardless of
+                // internal span/field-order differences that canonicalize() resolves.
+                hasher.update(expr.to_nlang(0).as_bytes());
+                // frame (closure scopes): hash each ComboVal in the scope stack.
+                hasher.update(b"|frame:");
+                for cv in closure.iter() {
+                    let cv_hash = Value::Combo(cv.clone()).content_hash();
+                    hasher.update(&cv_hash.digest);
+                }
+                // context: None = open term (#open); Some(v) = v's content hash.
+                match context {
+                    None => hasher.update(b"|#open"),
+                    Some(v) => {
+                        hasher.update(b"|ctx:");
+                        let ch = v.content_hash();
+                        hasher.update(&ch.digest);
+                    }
+                }
+                hasher.update(&[*effect as u8]);
+            }
             Value::Code(expr) => { hasher.update([0x06]); hasher.update(format!("{:?}", expr).as_bytes()); }
         }
     }

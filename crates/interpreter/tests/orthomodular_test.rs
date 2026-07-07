@@ -11,7 +11,7 @@ fn eval_expr(input: &str) -> Value {
     let program = parse_program(input).unwrap();
     let oo = Ouroboros::new_in_memory();
     let mut ctx = fresh_ctx();
-    oo.eval(&program.fields[0].value, &mut ctx)
+    oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
 fn parse_single_expr(input: &str) -> ExprKind {

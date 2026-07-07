@@ -2,7 +2,7 @@ pub mod universe; pub use universe::Universe;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use indexmap::IndexMap;
-use nlang_parser::ast::{Path, PathAnchor, AtomKind};
+use nlang_parser::ast::{Path, PathAnchor, AtomKind, Expr};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::path::PathBuf;
@@ -839,10 +839,29 @@ let mut refl_fields = IndexMap::new();
         }
     }
 
+    /// Evaluate an expression and force the result recursively — the
+    /// **observation** view. This mirrors `universe.observe`'s solidification
+    /// of the return value (GUIDE_03 §11.5): eval returns thunks for
+    /// unevaluated fields, force_recursive solidifies them.
+    ///
+    /// Call this from test harnesses, REPL, and any site that consumes the
+    /// *value* of an expression (rather than its structure). `oo.eval` is the
+    /// pre-observation API; `oo.eval_observed` is the observation API. The
+    /// distinction is now part of the engine's public surface.
+    pub fn eval_observed(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
+        let v = self.eval(expr, ctx);
+        self.force_recursive(v, ctx)
+    }
+
     pub fn force(&self, val: Value, ctx: &mut EvalContext) -> Value {
         match val {
-            Value::Thunk { expr, closure, effect } => {
-                let mut call_ctx = self.sub_context(ctx); call_ctx.scopes = closure;
+            Value::Thunk { expr, closure, context, effect } => {
+                let mut call_ctx = self.sub_context(ctx);
+                call_ctx.scopes = closure;
+                // P1/P3 binding rule (GUIDE_03 §11.2): thunk's own context wins,
+                // else the observer's dynamic binding, else $ evaluates to
+                // _|_ #no_context (handled at Context eval via NoContext).
+                call_ctx.context_value = context.map(|b| *b).or(ctx.context_value.clone());
                 let res = self.eval(&expr, &mut call_ctx); ctx.fuel = call_ctx.fuel;
                 match res {
                     Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
@@ -859,11 +878,18 @@ let mut refl_fields = IndexMap::new();
     pub fn force_recursive(&self, val: Value, ctx: &mut EvalContext) -> Value {
         let val = self.force(val, ctx);
         match val {
-            Value::Combo(c) => { 
+            // Stage 2: force may return a Thunk if the underlying eval hit a
+            // navigate_segments that returned an unforced field thunk (GUIDE_03
+            // §11.4 — path-directed observe forces only path nodes, not the
+            // final field). force_recursive must keep forcing until non-Thunk.
+            Value::Thunk { .. } => self.force_recursive(val, ctx),
+            Value::Combo(c) => {
                 let mut new_c = ComboVal::default();
                 new_c.closed = c.closed;
                 new_c.effect = c.effect;
                 for (k, v) in c.all_fields_iter() { new_c.insert_field(&k, self.force_recursive(v, ctx)); }
+                // also force local fields (all_fields_iter skips them)
+                for (k, v) in c.local.iter() { new_c.local.insert(k.clone(), self.force_recursive(v.clone(), ctx)); }
                 Value::Combo(new_c)
             }
             Value::Union(branches) => Value::Union(branches.into_iter().map(|b| self.force_recursive(b, ctx)).collect()),

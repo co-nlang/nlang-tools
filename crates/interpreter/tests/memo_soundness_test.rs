@@ -33,6 +33,10 @@ fn blur_partial_is_not_memoized() {
     let chain = format!("{{ {} }}", (0..50).map(|i| format!("f{}: {}", i, i)).collect::<Vec<_>>().join(", "));
     let program = nlang_parser::parse_program(&format!("r: {{ \"k\": {} }}", chain)).unwrap();
     let mut build_ctx = EvalContext::new(ComboVal::default());
+    // NOTE: use eval (structural), NOT eval_observed — this test needs the
+    // thunked field to probe force-induced blur mid-unify. eval_observed would
+    // solidify the thunk away. The structural/observation API split (Stage 2)
+    // is exactly what makes this distinction expressible.
     let a = oo.eval(&program.fields[0].value, &mut build_ctx);
     assert!(matches!(&a, Value::Combo(cv) if matches!(cv.data.get("k"), Some(Value::Thunk{..}))),
         "fixture must hold a thunked field, got {:?}", kind_of(&a));
@@ -48,13 +52,19 @@ fn blur_partial_is_not_memoized() {
     let second = oo.unify(a.clone(), b.clone());
     match &second {
         Value::Combo(cv) => {
-            let k = cv.data.get("k").cloned().expect("k present");
-            assert!(!k.contains_blur(),
+            let k_raw = cv.data.get("k").cloned().expect("k present");
+            assert!(!k_raw.contains_blur(),
                 "full-fuel unify must not replay a starved Blur partial; k = {:?} (starved run: {:?})",
-                kind_of(&k), kind_of(&first));
+                kind_of(&k_raw), kind_of(&first));
+            // Stage 2 (call-by-observation): unify is lazy — k may still be a
+            // Thunk. Force it here to verify the observed value is the exact
+            // 50-field combo (this is the observation-side check; the memo
+            // soundness is already verified by !contains_blur above).
+            let mut obs_ctx = EvalContext::new(ComboVal::default());
+            let k = oo.force_recursive(k_raw, &mut obs_ctx);
             match &k {
                 Value::Combo(kc) => assert_eq!(kc.data.len(), 50, "k must be the exact 50-field combo"),
-                other => panic!("k must be a combo, got {:?}", kind_of(other)),
+                other => panic!("k must be a combo after force, got {:?}", kind_of(other)),
             }
         }
         other => panic!("expected Combo, got {:?}", kind_of(other)),

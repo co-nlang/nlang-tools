@@ -19,7 +19,7 @@ fn test_int_value_meet_int_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("123 & @int = {:?}", val);
     match val {
         Value::Atom(AtomKind::Int(i), _, _) if i == BigInt::from(123) => {}
@@ -35,7 +35,7 @@ fn test_int_value_meet_str_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("123 & @str = {:?}", val);
     match val {
         Value::Bottom(_) => {}
@@ -50,7 +50,7 @@ fn test_str_value_meet_str_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("\"hello\" & @str = {:?}", val);
     match val {
         Value::Atom(AtomKind::Str(s), _, _) if s == "hello" => {}
@@ -65,7 +65,7 @@ fn test_float_value_meet_float_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("3.14 & @float = {:?}", val);
     match val {
         Value::Atom(AtomKind::Float(_), _, _) => {}
@@ -80,7 +80,7 @@ fn test_int_value_meet_num_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("42 & @num = {:?}", val);
     match val {
         Value::Atom(AtomKind::Int(i), _, _) if i == BigInt::from(42) => {}
@@ -95,7 +95,7 @@ fn test_bool_value_meet_bool_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("#true & @bool = {:?}", val);
     match val {
         Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "true" => {}
@@ -110,7 +110,7 @@ fn test_int_value_meet_float_type_projects() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("123 & @float = {:?}", val);
     match val {
         Value::Atom(AtomKind::Float(f), _, _) if f == 123.0 => {}
@@ -126,7 +126,7 @@ fn test_float_value_meet_complex_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("3.14 & @complex = {:?}", val);
     match val {
         Value::Atom(AtomKind::Float(_), _, _) => {}
@@ -141,7 +141,7 @@ fn test_int_value_meet_complex_type() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("42 & @complex = {:?}", val);
     match val {
         Value::Atom(AtomKind::Int(_), _, _) => {}
@@ -156,7 +156,7 @@ fn test_subtype_int_not_le_float() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("@int <= @float = {:?}", val);
     match val {
         Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "false" => {}
@@ -174,7 +174,7 @@ fn test_subtype_float_le_complex() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("@float <= @complex = {:?}", val);
     match val {
         Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "true" => {}

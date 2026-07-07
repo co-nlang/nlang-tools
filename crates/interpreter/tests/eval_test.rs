@@ -16,7 +16,7 @@ fn test_simple_eval() {
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
     // 取得第一個欄位的值
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     
     assert_eq!(val, Value::Atom(AtomKind::Int(BigInt::from(1)), EffectTag::Pure, None));
 }
@@ -28,7 +28,7 @@ fn test_combo_eval() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     
     if let Value::Combo(cv) = val {
         assert_eq!(cv.get_field("name").unwrap(), &Value::Atom(AtomKind::Str("Alice".to_string()), EffectTag::Pure, None));
@@ -45,7 +45,7 @@ fn test_join_eval() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     assert_eq!(val, Value::Union(vec![
         Value::Atom(AtomKind::Int(BigInt::from(1)), EffectTag::Pure, None),
         Value::Atom(AtomKind::Int(BigInt::from(2)), EffectTag::Pure, None)
@@ -59,7 +59,7 @@ fn test_math_eval() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     // 預期 1 + (2 * 3) = 7 (Pest 已處理運算子優先權)
     assert_eq!(val, Value::Atom(AtomKind::Int(BigInt::from(7)), EffectTag::Pure, None));
 }
@@ -71,7 +71,7 @@ fn test_cmp_eval() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     assert_eq!(val, Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
 }
 
@@ -83,7 +83,7 @@ fn test_pipe_morphism() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     assert_eq!(val, Value::Atom(AtomKind::Int(BigInt::from(2)), EffectTag::Pure, None));
 }
 
@@ -95,7 +95,7 @@ fn test_pipe_transformer_combo() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("test_pipe_transformer_combo: val = {:?}", val);
     if let Value::Combo(cv) = val {
         assert_eq!(cv.get_field("a").unwrap(), &Value::Atom(AtomKind::Int(BigInt::from(1)), EffectTag::Pure, None));
@@ -113,7 +113,7 @@ fn test_functor_lifting_list() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     
     if let Value::Combo(cv) = val {
         assert_eq!(cv.get_field("0").unwrap(), &Value::Atom(AtomKind::Int(BigInt::from(1)), EffectTag::Pure, None));

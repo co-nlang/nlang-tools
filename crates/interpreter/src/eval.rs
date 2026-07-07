@@ -195,7 +195,14 @@ impl Ouroboros {
             }
             res
         } else if let Value::Combo(rc) = rv {
-            self.unify_internal(lv, Value::Combo(rc), ctx)
+            // Stage 2 (§3.3): the transformer arm must unify with call_ctx, not
+            // the outer ctx. In the eager era this was immaterial; with lazy unify,
+            // thunks forced mid-merge must bind `$` to the pipe input (P3: nearest
+            // enclosing evolution), not the observer's context. call_ctx.context_value
+            // was set to lv above (line 164).
+            let res = self.unify_internal(lv, Value::Combo(rc), &mut call_ctx);
+            ctx.fuel = call_ctx.fuel;
+            res
         } else {
             // atomic collapse (SPEC_07 §4.1 form 3): forced intersection with
             // the RHS value — was a passthrough that discarded the input
@@ -248,7 +255,7 @@ impl Ouroboros {
                         FieldKey::Named { name, prefix } => {
                             let is_p = matches!(prefix, Some(Prefix::Private));
                             let te = self.predict_effect(&f.value, ctx);
-                            let mut val = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), effect: te };
+                            let mut val = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
                             if matches!(prefix, Some(Prefix::Logic)) {
                                 val = Value::Combo(ComboVal::new(
                                     IndexMap::from_iter(vec![
@@ -273,7 +280,7 @@ impl Ouroboros {
                         }
                         FieldKey::Quoted(name) => {
                             let te = self.predict_effect(&f.value, ctx);
-                            let thunk = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), effect: te };
+                            let thunk = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
                             if !*closed { me = me.max(te); }
                             rf.insert(name.trim().to_string(), thunk);
                         }
@@ -281,7 +288,7 @@ impl Ouroboros {
                             let pk = self.eval(pe, ctx).to_string_plain().trim().to_string();
                             let te = self.predict_effect(&f.value, ctx);
                             let rb = Value::Combo(ComboVal::new(
-                                IndexMap::from_iter(vec![("%val".to_string(), Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), effect: te })]),
+                                IndexMap::from_iter(vec![("%val".to_string(), Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te })]),
                                 true,
                                 IndexMap::new(),
                                 te,
@@ -291,8 +298,20 @@ impl Ouroboros {
                             rf.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
                         }
                         FieldKey::Path(p) => {
-                            let val = self.eval(&f.value, ctx);
-                            if !*closed { me = me.max(val.effect()); }
+                            // Stage 2 (call-by-observation): build a Thunk carrying the
+                            // current ctx.context_value (P1 binding) and scopes. In a
+                            // closed (cocoon) context, force immediately — cocoon is a
+                            // solidification boundary (GUIDE_03 §11.5). In an open combo,
+                            // leave the thunk lazy — evolve stores it, observe forces it.
+                            let te = self.predict_effect(&f.value, ctx);
+                            let thunk = Value::Thunk {
+                                expr: Box::new(f.value.clone()),
+                                closure: ctx.scopes.clone(),
+                                context: ctx.context_value.clone().map(Box::new),
+                                effect: te,
+                            };
+                            let val = if *closed { self.force(thunk, ctx) } else { thunk };
+                            if !*closed { me = me.max(te); } else { me = me.max(val.effect()); }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
                             let _ = self.inject_path(&mut tmp, &p.segments, val);
                             rf.extend(tmp.fields());
@@ -587,9 +606,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
     fn eval_math<FI, FF, FS>(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: MathOp, op_i: FI, op_f: FF, op_s: Option<FS>) -> Value
         where FI: Fn(&BigInt, &BigInt) -> BigInt, FF: Fn(f64, f64) -> f64, FS: Fn(&str, &str) -> String
     {
-        let va = self.eval(a, ctx);
+        // Stage 2 (紀律 2): value-judgment point — force thunks before arithmetic.
+        // `$.a + 1` inside a pipe transformer evals `$.a` to a Thunk (the field
+        // is lazily stored); arithmetic needs the actual value.
+        let va = self.force(self.eval(a, ctx), ctx);
         if let Value::Bottom(_) = va { return va; }
-        let vb = self.eval(b, ctx);
+        let vb = self.force(self.eval(b, ctx), ctx);
         if let Value::Bottom(_) = vb { return vb; }
         let res_e = va.effect().max(vb.effect());
         let ca = va.collapse();
@@ -685,9 +707,10 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
     }
 
     fn eval_binary_cmp(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: CmpOp) -> Value {
-        let va = self.eval(a, ctx);
+        // Stage 2 (紀律 2): value-judgment point — force thunks before comparison.
+        let va = self.force(self.eval(a, ctx), ctx);
         if let Value::Bottom(_) = va { return va; }
-        let vb = self.eval(b, ctx);
+        let vb = self.force(self.eval(b, ctx), ctx);
         if let Value::Bottom(_) = vb { return vb; }
         let res_e = va.effect().max(vb.effect());
         let ca = va.collapse();

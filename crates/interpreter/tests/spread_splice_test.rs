@@ -16,7 +16,7 @@ fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
-    oo.eval(&program.fields[0].value, &mut ctx)
+    oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
 fn int(v: i64) -> Value { Value::Atom(AtomKind::Int(BigInt::from(v)), EffectTag::Pure, None) }
@@ -97,6 +97,6 @@ fn splice_releases_effect_tags() {
     root.insert_field("xs", Value::Combo(seq));
     let mut ctx = EvalContext::new(root);
     let program = parse_program("r: [...xs, 1]").unwrap();
-    let v = oo.eval(&program.fields[0].value, &mut ctx);
+    let v = oo.eval_observed(&program.fields[0].value, &mut ctx);
     assert_eq!(v.effect(), EffectTag::IO, "spliced element effect must surface, got {:?}", v);
 }

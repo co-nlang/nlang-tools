@@ -20,7 +20,8 @@ fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
-    oo.eval(&program.fields[0].value, &mut ctx)
+    // Stage 2: eval_observed = eval + force_recursive (the observation API).
+    oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
 fn int(v: i64) -> Value { Value::Atom(AtomKind::Int(BigInt::from(v)), EffectTag::Pure, None) }

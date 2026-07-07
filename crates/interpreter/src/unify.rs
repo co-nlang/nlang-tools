@@ -82,14 +82,27 @@ impl Ouroboros {
     }
 
     pub fn unify_internal(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
+        // Stage 2 (call-by-observation): lazy unify — CAID early-out, Top/Thunk
+        // preserve thunk, force only when value-judgment needed.
+        let id_a = a.content_hash();
+        let id_b = b.content_hash();
+        if id_a == id_b { return a; }
+
+        match (&a, &b) {
+            (Value::Top, Value::Thunk { .. }) => return b,
+            (Value::Thunk { .. }, Value::Top) => return a,
+            _ => {}
+        }
+
+        if let (Value::Atom(AtomKind::Tag(ta), _, _), Value::Atom(AtomKind::Tag(tb), _, _)) = (&a, &b) {
+            if ta.trim_start_matches('#') == tb.trim_start_matches('#') { return a.clone(); }
+        }
+
         let a = self.force(a, ctx).collapse().clone();
         let b = self.force(b, ctx).collapse().clone();
         let id_a = a.content_hash(); let id_b = b.content_hash();
         if id_a == id_b { return a; }
-        if let (Value::Atom(AtomKind::Tag(ta), _, _), Value::Atom(AtomKind::Tag(tb), _, _)) = (&a, &b) { 
-            if ta.trim_start_matches('#') == tb.trim_start_matches('#') { return a.clone(); } 
-        }
-        
+
         if let (Value::Combo(ac), Value::Combo(bc)) = (&a, &b) {
             if is_type_constraint_combo(ac) && !is_type_constraint_combo(bc) {
                 if let Some(type_name) = get_type_constraint_name(ac) {
@@ -102,23 +115,16 @@ impl Ouroboros {
                 }
             }
         }
-        
-        match (&a, &b) { 
-            (Value::Top, Value::Union(_)) => {} 
+
+        match (&a, &b) {
+            (Value::Top, Value::Union(_)) => {}
             (Value::Union(_), Value::Top) => {}
-            (Value::Top, _) => return b, 
-            (_, Value::Top) => return a, 
-            (Value::Bottom(c), _) => return Value::Bottom(c.clone()), 
-            (_, Value::Bottom(c)) => return Value::Bottom(c.clone()), 
-            _ => {} 
+            (Value::Top, _) => return b,
+            (_, Value::Top) => return a,
+            (Value::Bottom(c), _) => return Value::Bottom(c.clone()),
+            (_, Value::Bottom(c)) => return Value::Bottom(c.clone()),
+            _ => {}
         }
-        // Route-A memo (GUIDE_03 §2A) with soundness guards (2026-07-07):
-        // - #nondet operands bypass the cache entirely (§2A.3 — replaying
-        //   nondeterminism is a semantic lie)
-        // - only EXACT results are memoized: the key carries no horizon
-        //   params, so Blur partials would poison later full-fuel calls
-        //   (§2A.1; reachable via thunked fields forced mid-unify)
-        // - crude generation reset at capacity (placeholder for LRU-K, §2A.2)
         let nondet = a.effect() >= EffectTag::NonDet || b.effect() >= EffectTag::NonDet;
         let cache_key = if id_a.digest <= id_b.digest { (id_a, id_b) } else { (id_b, id_a) };
         if !nondet {

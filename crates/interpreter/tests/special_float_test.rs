@@ -20,7 +20,7 @@ fn test_division_by_zero_int() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("1 / 0 = {:?}", val);
     match val {
         Value::Atom(AtomKind::Int(i), _, _) if i == BigInt::zero() => {}
@@ -35,7 +35,7 @@ fn test_division_by_zero_float() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("1.0 / 0.0 = {:?}", val);
     match val {
         Value::Atom(AtomKind::TagEnd, _, _) => {}
@@ -50,7 +50,7 @@ fn test_negative_division_by_zero() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("-1.0 / 0.0 = {:?}", val);
     match val {
         Value::Atom(AtomKind::TagStart, _, _) => {}
@@ -65,7 +65,7 @@ fn test_zero_divided_by_zero() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("0.0 / 0.0 = {:?}", val);
     match val {
         Value::Bottom(d) => {
@@ -82,7 +82,7 @@ fn test_sqrt_negative() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("sqrt(-1.0) = {:?}", val);
 }
 
@@ -105,7 +105,7 @@ fn test_inf_arithmetic_prohibited() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("#_ + 1 = {:?}", val);
     match val {
         Value::Bottom(_) => {}

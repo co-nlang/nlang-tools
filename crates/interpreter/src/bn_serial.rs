@@ -28,6 +28,11 @@ const TAG_COMPLEX: u8 = 0x14;
 const TAG_BOOL:   u8 = 0x15;
 #[allow(dead_code)]
 const TAG_REF:    u8 = 0x16;
+// Stage 2: Thunk serializes expr (canonical to_nlang) + closure frames
+// (each ComboVal) + context (#open or content hash) + effect — the full
+// GUIDE_03 §11.3 memo-key triple. Without context, two thunks with the
+// same expr but different bindings collide (deepen-memo bug).
+const TAG_THUNK:  u8 = 0x17;
 
 // ── Public API ────────────────────────────────────────────────
 
@@ -52,7 +57,26 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
         Value::Combo(cv) => serialize_combo(cv, buf),
         Value::Union(items) => serialize_union(items, buf),
         Value::Code(expr) => { buf.push(TAG_ATOM); encode_string(&format!("{:?}", expr), buf); }
-        Value::Thunk { expr, .. } => { buf.push(TAG_ATOM); encode_string(&format!("{:?}", expr), buf); }
+        // Stage 2: full Thunk serialization — expr (canonical) + closure
+        // (frame) + context (binding | #open) + effect. The context slot is
+        // load-bearing: without it, `Thunk{$, ctx=lv1}` and `Thunk{$, ctx=j1}`
+        // hash identically and lazy unify's CAID early-out collapses the
+        // self-referential deepening (019 prop 3). GUIDE_03 §11.3 memo key.
+        Value::Thunk { expr, closure, context, effect } => {
+            buf.push(TAG_THUNK);
+            encode_string(&expr.to_nlang(0), buf);
+            // closure: scope stack — each frame serialized via serialize_combo
+            encode_unsigned_leb128(closure.len() as u64, buf);
+            for cv in closure.iter() {
+                serialize_combo(cv, buf);
+            }
+            // context: None = #open; Some(v) = recursive serialize_value
+            match context {
+                None => { buf.push(0x00); }
+                Some(v) => { buf.push(0x01); serialize_value(v, buf); }
+            }
+            buf.push(*effect as u8);
+        }
         Value::Blur(bd) => {
             buf.push(0xFD);
             let cause_bytes = bd.cause.as_bytes();

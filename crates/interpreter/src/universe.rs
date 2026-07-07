@@ -11,12 +11,14 @@ impl Universe {
     pub fn load(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<Self> { let head = engine.store.get_head(base_dir)?; match head { Some(h) => { let commit = engine.store.get_commit(&h)?; let root_val = engine.store.get_value(&commit.root)?; if let Value::Combo(root) = root_val { Ok(Self::new(Some(h), root)) } else { Err(anyhow::anyhow!("Invalid root")) } } None => Ok(Self::new(None, engine.root_with_system())), } }
     
     pub fn evolve(&mut self, engine: &Ouroboros, field: &Field) -> std::result::Result<(), BottomCause> {
-        let mut ctx = EvalContext::new(self.root.clone()); 
-        ctx.staged = Some(self.staged.clone()); 
+        let mut ctx = EvalContext::new(self.root.clone());
+        ctx.staged = Some(self.staged.clone());
         ctx.horizon_salt = engine.store.get_horizon_salt();
+        // Stage 2 (§3.4): do NOT force_recursive at evolve time. Open terms are
+        // stored as thunks (P3: open terms may be stored; the binding is supplied
+        // at observation). Solidification moves to observe.
         let val = engine.eval(&field.value, &mut ctx);
-        let solidified = engine.force_recursive(val, &mut ctx);
-        let val_effect = solidified.effect();
+        let val_effect = val.effect();
 
         let mut rf = IndexMap::new();
         let mut rl = IndexMap::new();
@@ -26,14 +28,14 @@ impl Universe {
                 let is_p = matches!(prefix, Some(Prefix::Private) | Some(Prefix::Local));
                 let trimmed = name.trim().to_string();
                 if is_p {
-                    rl.insert(trimmed, solidified);
+                    rl.insert(trimmed, val);
                 } else {
                     let p = match prefix { Some(Prefix::Logic) => "/", Some(Prefix::Type) => "@", Some(Prefix::Meta) => "%", Some(Prefix::System) => "~%", _ => "" };
-                    rf.insert(format!("{}{}", p, trimmed), solidified);
+                    rf.insert(format!("{}{}", p, trimmed), val);
                 }
             }
-            FieldKey::Quoted(name) => { rf.insert(name.trim().to_string(), solidified); }
-            FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => { rf.insert(p.segments[0].trim().to_string(), solidified); }
+            FieldKey::Quoted(name) => { rf.insert(name.trim().to_string(), val); }
+            FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => { rf.insert(p.segments[0].trim().to_string(), val); }
             _ => { self.is_dirty = true; return Ok(()); }
         };
 
@@ -84,7 +86,12 @@ impl Universe {
         if let Value::Combo(r) = current {
             let mut ctx = EvalContext::new(r);
             ctx.refine_map_active = true;
-            engine.resolve_path(path, &mut ctx)
+            // Stage 2 (§3.4): force_recursive on the *return value* — solidification
+            // moved from evolve to observe (GUIDE_03 §11.5). REPL observes return
+            // values, so interactive experience is unchanged; path-directed observe
+            // (navigate_segments) forces only the path (§11.4).
+            let res = engine.resolve_path(path, &mut ctx);
+            engine.force_recursive(res, &mut ctx)
         } else { BottomCause::Conflict.into() }
     }
 
