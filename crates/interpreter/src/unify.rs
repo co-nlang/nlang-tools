@@ -112,12 +112,28 @@ impl Ouroboros {
             (_, Value::Bottom(c)) => return Value::Bottom(c.clone()), 
             _ => {} 
         }
+        // Route-A memo (GUIDE_03 §2A) with soundness guards (2026-07-07):
+        // - #nondet operands bypass the cache entirely (§2A.3 — replaying
+        //   nondeterminism is a semantic lie)
+        // - only EXACT results are memoized: the key carries no horizon
+        //   params, so Blur partials would poison later full-fuel calls
+        //   (§2A.1; reachable via thunked fields forced mid-unify)
+        // - crude generation reset at capacity (placeholder for LRU-K, §2A.2)
+        let nondet = a.effect() >= EffectTag::NonDet || b.effect() >= EffectTag::NonDet;
         let cache_key = if id_a.digest <= id_b.digest { (id_a, id_b) } else { (id_b, id_a) };
-        if let Ok(memo) = self.unify_memo.read() { if let Some(cached_res) = memo.get(&cache_key) { return cached_res.clone(); } }
-        let mut result = self.do_unify(a.clone(), b.clone(), ctx); 
+        if !nondet {
+            if let Ok(memo) = self.unify_memo.read() { if let Some(cached_res) = memo.get(&cache_key) { return cached_res.clone(); } }
+        }
+        let mut result = self.do_unify(a.clone(), b.clone(), ctx);
         let combined_effect = a.effect().max(b.effect());
         if let Value::Combo(ref mut cv) = result { cv.effect = cv.effect.max(combined_effect); }
-        if !matches!(result, Value::Bottom(_)) { if let Ok(mut memo) = self.unify_memo.write() { memo.insert(cache_key, result.clone()); } }
+        if !nondet && !matches!(result, Value::Bottom(_)) && !result.contains_blur() {
+            if let Ok(mut memo) = self.unify_memo.write() {
+                const UNIFY_MEMO_CAP: usize = 100_000;
+                if memo.len() >= UNIFY_MEMO_CAP { memo.clear(); }
+                memo.insert(cache_key, result.clone());
+            }
+        }
         result
     }
 

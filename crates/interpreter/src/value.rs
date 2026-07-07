@@ -688,6 +688,23 @@ impl Value {
     }
 
     pub fn is_top(&self) -> bool { matches!(self, Value::Top) }
+
+    /// True if the value embeds any Blur (fuel-horizon partial) — such values
+    /// are observation-relative and must not enter horizon-blind caches
+    /// (GUIDE_03 §2A.1: cache keys lack horizon params, so only exact results
+    /// may be memoized). Thunks count as exact: unevaluated, not partial.
+    pub fn contains_blur(&self) -> bool {
+        match self {
+            Value::Blur(_) => true,
+            Value::Combo(cv) => {
+                cv.data.values().chain(cv.types.values()).chain(cv.rules.values())
+                    .chain(cv.meta.values()).chain(cv.system.values()).chain(cv.local.values())
+                    .any(|v| v.contains_blur())
+            }
+            Value::Union(branches) => branches.iter().any(|b| b.contains_blur()),
+            _ => false,
+        }
+    }
     pub fn with_effect(self, e: EffectTag) -> Self {
         match self {
             Value::Atom(ak, old_e, r) => Value::Atom(ak, old_e.max(e), r),
