@@ -10,6 +10,7 @@ use pest::Parser;
 pub struct NParser;
 
 pub mod ast;
+pub mod tier;
 use crate::ast::{Expr, ExprKind, Field, FieldKey, AtomKind, Path, PathAnchor, Span, Prefix, UnaryOp, StringPart, Relation, RelOp, Program};
 
 pub fn parse_field(pair: pest::iterators::Pair<Rule>) -> Result<Field, Box<dyn Error>> {
