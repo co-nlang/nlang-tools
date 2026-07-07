@@ -43,7 +43,6 @@ fn int_of(v: &Value) -> Option<i64> {
 // observe again — fuel must STILL be reduced (entry not wiped by the
 // unrelated root change).
 #[test]
-#[ignore = "Stage 5 target: un-ignore = Route B acceptance (baseline 2026-07-08: fails, root-CAID wholesale miss)"]
 fn stage5_r1_memo_survives_unrelated_evolve() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());
@@ -90,7 +89,6 @@ fn stage5_r2_related_evolve_still_invalidates() {
 
 // R3 (C₀ permanence): a $-free path-free thunk's entry survives any evolve.
 #[test]
-#[ignore = "Stage 5 target: un-ignore = C0 permanent-tier acceptance (baseline 2026-07-08: fails)"]
 fn stage5_r3_c0_survives_any_evolve() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());

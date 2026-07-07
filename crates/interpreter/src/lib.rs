@@ -54,6 +54,12 @@ pub struct EvalContext {
     pub fuel: u64,
     pub timeout_deadline: Option<u64>,
     pub depth: u32,
+    /// Stage 5 (§5a): dependency collector for Route B per-coordinate
+    /// invalidation. When Some, coordinate reads are recorded here. None
+    /// means dependency tracking is disabled (no memo miss in progress or
+    /// staged context). Nested thunk forces install a fresh collector and
+    /// merge deps back into the outer one.
+    pub dep_collector: Option<HashSet<String>>,
     pub horizon_salt: ContentHash,
     pub strategy: ObservationStrategy,
     pub max_branches: usize,
@@ -74,7 +80,7 @@ impl EvalContext {
         Self { 
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_math_op: false, context_value: None, 
-            fuel: 10000, timeout_deadline: None, depth: 0, 
+            fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
             refine_map_active: false,
@@ -92,6 +98,7 @@ impl EvalContext {
         self.root_caid_cache = Some(h.clone());
         h
     }
+
     pub fn with_fuel(mut self, fuel: u64) -> Self { self.fuel = fuel; self }
     pub fn with_strategy(mut self, strategy: ObservationStrategy) -> Self { self.strategy = strategy; self }
     pub fn check_resources(&mut self, cost: u64) -> Result<(), ResourceExhausted> { 
@@ -117,21 +124,31 @@ pub enum Peer {
     Remote(String), // TCP address
 }
 
-/// Force-memo key (Stage 4): (expr CAID, frame CAID, context CAID | #open, root CAID).
-/// Pre-hashed for fast lookup; equality means identical observable result.
+/// Force-memo key (Stage 5): (expr CAID, frame CAID, context CAID | #open).
+/// root_caid removed — invalidation is now per-coordinate (Route B, deps).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForceMemoKey {
     pub expr_caid: ContentHash,
     pub frame_caid: ContentHash,
     pub context_caid: Option<ContentHash>,
-    pub root_caid: ContentHash,
+}
+
+/// Force-memo entry (Stage 5): cached value + coordinate dependencies.
+#[derive(Debug, Clone)]
+pub struct MemoEntry {
+    pub value: Value,
+    /// Coordinates (top-level root field names) read during evaluation.
+    /// Empty set = C₀ (path-free, $-free — permanent tier).
+    pub deps: HashSet<String>,
 }
 
 pub struct Ouroboros {
     pub store: ObjectStore,
     pub base_dir: Option<PathBuf>,
     pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), Value>>,
-    pub force_memo: RwLock<HashMap<ForceMemoKey, Value>>,
+    pub force_memo: RwLock<HashMap<ForceMemoKey, MemoEntry>>,
+    /// Reverse index: coord → memo keys that read this coord.
+    pub force_memo_rev: RwLock<HashMap<String, HashSet<ForceMemoKey>>>,
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
     pub identity: crate::value::Identity,
@@ -144,6 +161,36 @@ pub struct Ouroboros {
 pub enum CmpOp { Eq, Ne, Lt, Gt, Lte, Gte }
 
 impl Ouroboros {
+    /// Stage 5 (§5b): invalidate all memo entries that depend on any of the
+    /// given coordinates. `"*"` entries are cleared on every call.
+    pub fn invalidate_coords(&self, coords: &[String]) {
+        if let Ok(mut rev) = self.force_memo_rev.write() {
+            if let Ok(mut memo) = self.force_memo.write() {
+                for coord in coords {
+                    if let Some(keys) = rev.remove(coord) {
+                        for k in keys { memo.remove(&k); }
+                    }
+                }
+                if let Some(wildcard_keys) = rev.remove("*") {
+                    for k in wildcard_keys { memo.remove(&k); }
+                }
+            }
+        }
+    }
+
+    /// Stage 5 (§5b): full clear for coarse events (commit/load/refine).
+    pub fn clear_force_memo(&self) {
+        if let Ok(mut memo) = self.force_memo.write() { memo.clear(); }
+        if let Ok(mut rev) = self.force_memo_rev.write() { rev.clear(); }
+    }
+
+    /// Stage 5 (§5a): record a coordinate dependency in the active collector.
+    fn record_dep(&self, ctx: &mut EvalContext, coord: &str) {
+        if let Some(ref mut deps) = ctx.dep_collector {
+            deps.insert(coord.to_string());
+        }
+    }
+
     pub fn new_in_memory() -> Self {
         use ring::rand::SecureRandom;
         let mut bytes = [0u8; 8];
@@ -155,7 +202,7 @@ impl Ouroboros {
         let local_pk_hex = hex::encode(&identity.public_key);
         let mut architects = std::collections::HashSet::new();
         architects.insert(local_pk_hex);
-        Self { store, base_dir: None, unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) }
+        Self { store, base_dir: None, unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), force_memo_rev: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) }
     }
 
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
@@ -168,7 +215,7 @@ impl Ouroboros {
         if let Ok(persisted) = store.load_architects(base_dir) {
             architects.extend(persisted);
         }
-        let mut oo = Self { store, base_dir: Some(base_dir.to_path_buf()), unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
+        let mut oo = Self { store, base_dir: Some(base_dir.to_path_buf()), unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), force_memo_rev: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
         Ok(oo)
     }
     
@@ -885,21 +932,14 @@ let mut refl_fields = IndexMap::new();
     pub fn force(&self, val: Value, ctx: &mut EvalContext) -> Value {
         match val {
             Value::Thunk { expr, closure, context, effect } => {
-                // Stage 4 (§4b): force-level memo — check tier classification
-                // and memo cache before eval. C and M tiers are memoable across
-                // observations; Q and U are not. key = (expr CAID, frame CAID,
-                // context CAID | #open, root CAID).
+                // Stage 4 (§4b): force-level memo with tier strategy.
+                // Stage 5 (§5-pre): staged gate — evolve-time forces read
+                // staged, which the key does not include.
+                let effective_context: Option<Value> = context.map(|b| *b).or(ctx.context_value.clone());
                 let tier: Option<Tier> = classify_tier(&expr).0.into();
                 let should_memo = matches!(tier, Some(Tier::C) | Some(Tier::M));
-                // P1/P3 binding rule (GUIDE_03 §11.2): thunk's own context wins,
-                // else the observer's dynamic binding, else $ evaluates to
-                // _|_ #no_context (handled at Context eval via NoContext).
-                // The memo key MUST use this same EFFECTIVE binding: keying on
-                // the thunk's own slot alone lets a frame-bound result (F1
-                // deref re-entry, pipe binding) poison the open observation of
-                // the same thunk — red-line probe stage4_redline_test.rs.
-                let effective_context: Option<Value> = context.map(|b| *b).or(ctx.context_value.clone());
-                let memo_key = if should_memo {
+                let staged_ok = ctx.staged.is_none();
+                let memo_key = if should_memo && staged_ok {
                     let expr_caid = {
                         let mut h = sha2::Sha256::new();
                         h.update(expr.to_nlang(0).as_bytes());
@@ -914,16 +954,13 @@ let mut refl_fields = IndexMap::new();
                         cv.content_hash()
                     };
                     let context_caid = effective_context.as_ref().map(|v| v.content_hash());
-                    let root_caid = ctx.root_caid();
-                    Some(ForceMemoKey { expr_caid, frame_caid, context_caid, root_caid })
+                    Some(ForceMemoKey { expr_caid, frame_caid, context_caid })
                 } else { None };
 
                 if let Some(ref k) = memo_key {
                     if let Ok(memo) = self.force_memo.read() {
-                        if let Some(cached) = memo.get(k) {
-                            // Apply effect upgrade to cached value (same logic
-                            // as the miss path below).
-                            let mut res = cached.clone();
+                        if let Some(entry) = memo.get(k) {
+                            let mut res = entry.value.clone();
                             res = match res {
                                 Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
                                 Value::Combo(mut cv) if cv.effect < effect => { cv.effect = effect; Value::Combo(cv) },
@@ -935,10 +972,23 @@ let mut refl_fields = IndexMap::new();
                     }
                 }
 
+                // Stage 5 (§5a): nested dep_collector propagation.
+                // Install fresh collector in call_ctx; after eval, merge
+                // inner deps into outer collector (inner result embeds
+                // inner deps — they must float up).
+                let had_inner_collector = ctx.dep_collector.is_some();
+                let inner_collector = if should_memo && staged_ok {
+                    Some(HashSet::new())
+                } else { None };
+
                 let mut call_ctx = self.sub_context(ctx);
                 call_ctx.scopes = closure;
                 call_ctx.context_value = effective_context;
-                let res = self.eval(&expr, &mut call_ctx); ctx.fuel = call_ctx.fuel;
+                call_ctx.dep_collector = inner_collector;
+                let res = self.eval(&expr, &mut call_ctx);
+                ctx.fuel = call_ctx.fuel;
+                let inner_deps = call_ctx.dep_collector.take();
+
                 let res = match res {
                     Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
                     Value::Combo(mut cv) if cv.effect < effect => { cv.effect = effect; Value::Combo(cv) },
@@ -946,14 +996,25 @@ let mut refl_fields = IndexMap::new();
                     _ => res,
                 };
 
-                // Insert into force_memo (Route A three guards: no Bottom,
-                // no Blur, effect < NonDet; capacity cap + generational clear).
+                let deps = inner_deps.unwrap_or_default();
+
+                // Merge inner deps into outer collector.
+                if let Some(ref mut outer) = ctx.dep_collector {
+                    for d in &deps { outer.insert(d.clone()); }
+                }
+
+                // Stage 5 (§5b): insert into force_memo with deps + reverse index.
                 if let Some(ref k) = memo_key {
                     if !matches!(res, Value::Bottom(_)) && !res.contains_blur() && res.effect() < EffectTag::NonDet {
                         if let Ok(mut memo) = self.force_memo.write() {
                             const FORCE_MEMO_CAP: usize = 100_000;
-                            if memo.len() >= FORCE_MEMO_CAP { memo.clear(); }
-                            memo.insert(k.clone(), res.clone());
+                            if memo.len() >= FORCE_MEMO_CAP { memo.clear(); if let Ok(mut rev) = self.force_memo_rev.write() { rev.clear(); } }
+                            if let Ok(mut rev) = self.force_memo_rev.write() {
+                                for dep in &deps {
+                                    rev.entry(dep.clone()).or_default().insert(k.clone());
+                                }
+                            }
+                            memo.insert(k.clone(), MemoEntry { value: res.clone(), deps });
                         }
                     }
                 }
@@ -963,10 +1024,11 @@ let mut refl_fields = IndexMap::new();
             Value::Ref(path) => {
                 // Stage 3 (§3a): dereference — resolve path against ctx.root
                 // at observation time. fuel charged here (force = observation
-                // primitive, GUIDE_03 §11.4). Cost scales with what the deref
-                // materializes: a root deref clones the whole universe, and
-                // pricing it at 1 lets a self-referential chain outrun the fuel
-                // horizon into the stack instead (3c: horizon must engage first).
+                // primitive, GUIDE_03 §11.4).
+                // Stage 5 (§5a): deref is a universal root read — any evolve
+                // invalidates (conservative over-approximation, correct for
+                // self-referential chains).
+                self.record_dep(ctx, "*");
                 let cost = if path.segments.is_empty() { 32 } else { 1 + path.segments.len() as u64 };
                 if let Err(e) = ctx.check_resources(cost) {
                     return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
@@ -1057,7 +1119,7 @@ let mut refl_fields = IndexMap::new();
                 }
             }
             if let Some(ref s) = ctx.staged { if let Some(val) = s.get_field(name).or_else(|| s.get_local_field(name)) { return self.force(val.clone(), ctx); } let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = s.get_field(&alt_name).or_else(|| s.get_local_field(&alt_name)) { return self.force(val.clone(), ctx); } } }
-            if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { return self.force(val.clone(), ctx); }
+            if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { let v = val.clone(); self.record_dep(ctx, name); return self.force(v, ctx); }
             let prefixes = vec!["/", "@", "~", "~%"];
             for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { return self.force(val.clone(), ctx); } }
         }
@@ -1077,8 +1139,8 @@ let mut refl_fields = IndexMap::new();
                     for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = scope.get_field(&alt_name) { found = Some(val.clone()); break; } if let Some(val) = scope.get_local_field(&alt_name) { found = Some(val.clone()); break; } }
                     if found.is_some() { break; }
                 }
-                if found.is_none() { if let Some(ref s) = ctx.staged { if let Some(val) = s.get_field(name).or_else(|| s.get_local_field(name)) { found = Some(val.clone()); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = s.get_field(&alt_name).or_else(|| s.get_local_field(&alt_name)) { found = Some(val.clone()); break; } } } } }
-                if found.is_none() { if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { found = Some(val.clone()); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { found = Some(val.clone()); break; } } } }
+                if found.is_none() { if let Some(ref s) = ctx.staged { if let Some(val) = s.get_field(name).or_else(|| s.get_local_field(name)) { found = Some(val.clone()); self.record_dep(ctx, name); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = s.get_field(&alt_name).or_else(|| s.get_local_field(&alt_name)) { found = Some(val.clone()); self.record_dep(ctx, &alt_name); break; } } } } }
+                if found.is_none() { if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { found = Some(val.clone()); self.record_dep(ctx, name); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { found = Some(val.clone()); self.record_dep(ctx, &alt_name); break; } } } }
                 match found { Some(v) => {
                     let is_ref = matches!(&v, Value::Ref(_));
                     let forced = self.force(v, ctx);

@@ -8,38 +8,47 @@ use anyhow::Result;
 pub struct Universe { pub head: Option<ContentHash>, pub root: ComboVal, pub staged: ComboVal, pub is_dirty: bool }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self { Self { head, root, staged: ComboVal::default(), is_dirty: false } }
-    pub fn load(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<Self> { let head = engine.store.get_head(base_dir)?; match head { Some(h) => { let commit = engine.store.get_commit(&h)?; let root_val = engine.store.get_value(&commit.root)?; if let Value::Combo(root) = root_val { Ok(Self::new(Some(h), root)) } else { Err(anyhow::anyhow!("Invalid root")) } } None => Ok(Self::new(None, engine.root_with_system())), } }
+    pub fn load(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<Self> {
+        engine.clear_force_memo();
+        let head = engine.store.get_head(base_dir)?; match head { Some(h) => { let commit = engine.store.get_commit(&h)?; let root_val = engine.store.get_value(&commit.root)?; if let Value::Combo(root) = root_val { Ok(Self::new(Some(h), root)) } else { Err(anyhow::anyhow!("Invalid root")) } } None => Ok(Self::new(None, engine.root_with_system())), } }
     
     pub fn evolve(&mut self, engine: &Ouroboros, field: &Field) -> std::result::Result<(), BottomCause> {
         let mut ctx = EvalContext::new(self.root.clone());
         ctx.staged = Some(self.staged.clone());
         ctx.horizon_salt = engine.store.get_horizon_salt();
-        // Stage 2 (§3.4): do NOT force_recursive at evolve time. Open terms are
-        // stored as thunks (P3: open terms may be stored; the binding is supplied
-        // at observation). Solidification moves to observe.
         let val = engine.eval(&field.value, &mut ctx);
         let val_effect = val.effect();
 
         let mut rf = IndexMap::new();
         let mut rl = IndexMap::new();
+        // Stage 5 (§5b): collect field keys for per-coordinate invalidation.
+        let mut evolved_coords: Vec<String> = Vec::new();
 
         match &field.key {
             FieldKey::Named { name, prefix } => {
                 let is_p = matches!(prefix, Some(Prefix::Private) | Some(Prefix::Local));
                 let trimmed = name.trim().to_string();
                 if is_p {
-                    rl.insert(trimmed, val);
+                    rl.insert(trimmed.clone(), val);
+                    evolved_coords.push(trimmed);
                 } else {
                     let p = match prefix { Some(Prefix::Logic) => "/", Some(Prefix::Type) => "@", Some(Prefix::Meta) => "%", Some(Prefix::System) => "~%", _ => "" };
                     rf.insert(format!("{}{}", p, trimmed), val);
+                    evolved_coords.push(trimmed);
                 }
             }
-            FieldKey::Quoted(name) => { rf.insert(name.trim().to_string(), val); }
-            FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => { rf.insert(p.segments[0].trim().to_string(), val); }
+            FieldKey::Quoted(name) => { let t = name.trim().to_string(); rf.insert(t.clone(), val); evolved_coords.push(t); }
+            FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => { let t = p.segments[0].trim().to_string(); rf.insert(t.clone(), val); evolved_coords.push(t); }
             _ => { self.is_dirty = true; return Ok(()); }
         };
 
         let incoming = Value::Combo(ComboVal::new(rf, false, rl, val_effect, vec![]));
+        // Stage 5 (§5b): invalidate memo entries that depend on the evolved
+        // coordinates. Called before the merge succeeds so entries reading
+        // staged values are cleared.
+        if !evolved_coords.is_empty() {
+            engine.invalidate_coords(&evolved_coords);
+        }
         let res = engine.unify(Value::Combo(self.staged.clone()), incoming);
         match res {
             Value::Combo(m) => { self.staged = m; self.is_dirty = true; Ok(()) }
@@ -66,6 +75,7 @@ impl Universe {
     }
 
     pub fn commit(&mut self, engine: &Ouroboros, base_dir: &std::path::Path, meta: crate::value::CommitMeta) -> Result<ContentHash> {
+        engine.clear_force_memo();
         let res = engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone()));
         match res { Value::Combo(new_root) => { 
             let root_hash = engine.store.put_value(&Value::Combo(new_root.clone()))?; 
@@ -105,6 +115,7 @@ impl Universe {
         authority: Option<AuthorityInfo>,
         meta: crate::value::CommitMeta,
     ) -> Result<ContentHash> {
+        engine.clear_force_memo();
         // Step 1: verify geometric monotonicity (new & old = new)
         for src in &source_caids {
             for tgt in &target_caids {
