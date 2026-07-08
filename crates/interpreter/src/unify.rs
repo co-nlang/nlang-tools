@@ -91,6 +91,9 @@ impl Ouroboros {
         match (&a, &b) {
             (Value::Top, Value::Thunk { .. }) => return b,
             (Value::Thunk { .. }, Value::Top) => return a,
+            // Atom(Top) alias — the literal `_` evaluates to Value::Top (eval
+            // normalization), but manually constructed Atom(Top) still exists.
+            (Value::Atom(AtomKind::Top, _, _), other) | (other, Value::Atom(AtomKind::Top, _, _)) => return other.clone(),
             // Stage 3 (§3a/§3b): a Ref must survive unify un-dereferenced — the
             // force below runs in the *caller's* context (engine-level at evolve
             // field-merge), and dereferencing there is evolve-time snapshotting,

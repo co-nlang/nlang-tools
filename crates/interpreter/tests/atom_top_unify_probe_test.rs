@@ -1,8 +1,6 @@
 // Atom(Top) unify probes (2026-07-08, pre-committed by work order —
 // docs/atom_top_unify_handover.md). Top is the lattice identity: `x & _ = x`
-// for every x. The engine has TWO spellings of Top — the Value::Top variant
-// and Atom(AtomKind::Top) (what the literal `_` evaluates to) — and unify's
-// identity arms only match the former, so the law breaks for the literal.
+// for every x. Fixed by normalizing Atom(Top) → Value::Top at eval sources.
 //
 // Acceptance = remove the #[ignore]s, everything green, no other suite breaks.
 
@@ -20,9 +18,7 @@ fn eval_one(src: &str) -> Value {
     oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
-// Law: `_ & x = x` at the literal level.
 #[test]
-#[ignore = "Atom(Top) unify bug: un-ignore = acceptance (baseline 2026-07-08: Conflict via do_unify atom-mismatch arm)"]
 fn top_literal_meet_is_identity() {
     let v = eval_one("r: _ & 5");
     match &v {
@@ -31,9 +27,7 @@ fn top_literal_meet_is_identity() {
     }
 }
 
-// Law: unify(Atom(Top), x) = x — engine-level, both operand orders.
 #[test]
-#[ignore = "Atom(Top) unify bug: un-ignore = acceptance (baseline 2026-07-08: Conflict via do_unify atom-mismatch arm)"]
 fn engine_unify_atom_top_is_identity() {
     let oo = Ouroboros::new_in_memory();
     let top = Value::Atom(AtomKind::Top, EffectTag::Pure, None);
@@ -44,10 +38,7 @@ fn engine_unify_atom_top_is_identity() {
     assert_eq!(r2.content_hash(), five.content_hash(), "unify(5, _) must be 5, got {:?}", r2);
 }
 
-// The original field-evolution repro: declaring a coordinate at Top and
-// refining it later is the canonical monotone evolution — it must not Conflict.
 #[test]
-#[ignore = "Atom(Top) unify bug: un-ignore = acceptance (baseline 2026-07-08: Conflict via do_unify atom-mismatch arm)"]
 fn evolve_can_refine_from_top_literal() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());

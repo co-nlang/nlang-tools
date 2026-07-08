@@ -216,7 +216,10 @@ impl Ouroboros {
             return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
         }
         match &expr.kind {
-            ExprKind::Atom(kind) => Value::Atom(kind.clone(), EffectTag::Pure, None),
+            ExprKind::Atom(kind) => match kind.clone() {
+                AtomKind::Top => Value::Top,
+                k => Value::Atom(k, EffectTag::Pure, None),
+            },
             ExprKind::Combo { fields, relations, closed } => {
                 if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
                     return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);

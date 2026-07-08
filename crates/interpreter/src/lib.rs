@@ -1106,7 +1106,7 @@ let mut refl_fields = IndexMap::new();
         if path.anchor == PathAnchor::Bare && path.segments.len() == 1 {
             if name == "#_|_" { return Value::Atom(AtomKind::TagStart, EffectTag::Pure, None); }
             if name == "#_" { return Value::Atom(AtomKind::TagEnd, EffectTag::Pure, None); }
-            if name == "_" { return Value::Atom(AtomKind::Top, EffectTag::Pure, None); }
+            if name == "_" { return Value::Top; }
             if name == "_|_" { return Value::Atom(AtomKind::Bottom, EffectTag::Pure, None); }
             
             if TypeConstraint::is_type_constraint_path(name) {
