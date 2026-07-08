@@ -93,7 +93,15 @@ impl Ouroboros {
             (Value::Thunk { .. }, Value::Top) => return a,
             // Atom(Top) alias — the literal `_` evaluates to Value::Top (eval
             // normalization), but manually constructed Atom(Top) still exists.
-            (Value::Atom(AtomKind::Top, _, _), other) | (other, Value::Atom(AtomKind::Top, _, _)) => return other.clone(),
+            // Re-enter as Value::Top rather than short-circuiting `other.clone()`:
+            // a bare return would skip the Value::Top-specific handling below —
+            // notably the (Top, Union) fall-through to do_unify, which sorts and
+            // caps branches — so Atom(Top) & Union would yield an un-normalized
+            // union with a different content_hash than Value::Top & Union. The
+            // recursion makes Atom(Top) a *faithful* alias (it cannot re-hit this
+            // arm: `other` is the non-Top operand).
+            (Value::Atom(AtomKind::Top, _, _), other) | (other, Value::Atom(AtomKind::Top, _, _)) =>
+                return self.unify_internal(Value::Top, other.clone(), ctx),
             // Stage 3 (§3a/§3b): a Ref must survive unify un-dereferenced — the
             // force below runs in the *caller's* context (engine-level at evolve
             // field-merge), and dereferencing there is evolve-time snapshotting,
