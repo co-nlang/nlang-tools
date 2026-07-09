@@ -3,6 +3,9 @@ WHITESPACE = _{ " " | "\t" | "\n" | "\r\n" | "\r" }
 COMMENT = _{ ";;" ~ (!("\n" | "\r\n" | "\r") ~ ANY)* }
 
 program = { SOI ~ WHITESPACE* ~ (field ~ field_sep?)* ~ EOI }
+// Top-level expression entry: must consume the whole input (no silent trailing drop).
+// Bare `expr` is used nested; this wrapper is for parse_expr_only only.
+expr_toplevel = { SOI ~ expr ~ EOI }
 field_sep = _{ "," | ";" | WHITESPACE+ }
 
 ident = @{ (XID_START | "_") ~ (XID_CONTINUE | "_" | "-")* }

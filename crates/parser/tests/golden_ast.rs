@@ -152,51 +152,200 @@ fn golden_prefix_keys() {
 }
 
 // ---------------------------------------------------------------------------
-// SYNTAX_06–12 highlights
+// SYNTAX_06 — comparison / subtyping precedence
 // ---------------------------------------------------------------------------
 
 #[test]
 fn golden_ops_and_precedence() {
-    // meet tighter than cmp (SPEC_14 / ENGINE_SYNC #1)
+    // meet tighter than cmp (SPEC_14 / ENGINE_SYNC #1 / SYNTAX_06 §4.8)
     assert_shape("a < b & c", "Lt(Path(Bare:a), Meet(Path(Bare:b), Path(Bare:c)))");
+    assert_shape("a & b = a", "LatticeEq(Meet(Path(Bare:a), Path(Bare:b)), Path(Bare:a))");
+    // set ops looser than cmp — bare form is almost never intended (SYNTAX_06 §4.9)
+    assert_shape(
+        "a \\ b = c",
+        "Diff(Path(Bare:a), LatticeEq(Path(Bare:b), Path(Bare:c)))",
+    );
+    assert_shape(
+        "(a \\ b) = c",
+        "LatticeEq(Diff(Path(Bare:a), Path(Bare:b)), Path(Bare:c))",
+    );
     assert_shape("a = b", "LatticeEq(Path(Bare:a), Path(Bare:b))");
     assert_shape("a <=> b", "Probe(Path(Bare:a), Path(Bare:b))");
     assert_shape("a == b", "Eq(Path(Bare:a), Path(Bare:b))");
+    assert_shape("a != b", "Ne(Path(Bare:a), Path(Bare:b))");
     assert_shape("a | b", "Join(Path(Bare:a), Path(Bare:b))");
     assert_shape("a \\ b", "Diff(Path(Bare:a), Path(Bare:b))");
+    assert_shape("a >= b", "Gte(Path(Bare:a), Path(Bare:b))");
+    assert_shape("3 <= 5", "Lte(Atom(Int(3)), Atom(Int(5)))");
     // grammar: unary_op = "!" → Unary(Not, …); Complement is a semantic alias
     assert_shape("!x", "Unary(Not, Path(Bare:x))");
 }
 
+// ---------------------------------------------------------------------------
+// SYNTAX_07 — observation duality (structural brackets)
+// ---------------------------------------------------------------------------
+
 #[test]
-fn golden_pipe_morphism_structural_context() {
-    assert_shape("x |> /f", "Pipe(Path(Bare:x), Path(Bare:/f))");
-    assert_shape("x -> x", "Morphism(Path(Bare:x), Path(Bare:x))");
+fn golden_structural() {
     assert_shape("<<x>>", "Structural(Path(Bare:x))");
-    assert_shape("$", "Context");
+    assert_shape("<<a & b>>", "Structural(Meet(Path(Bare:a), Path(Bare:b)))");
+    // postfix after >> is ordinary Lens, not "structural field" (SYNTAX_07 §4.6)
+    assert_shape(
+        "<<x>>.foo",
+        "Lens(Structural(Path(Bare:x)), Atom(Str(foo)))",
+    );
+    assert_shape(
+        "<<a>>.%cause",
+        "Lens(Structural(Path(Bare:a)), Atom(Str(%cause)))",
+    );
+    // whole-path structuralization
+    assert_shape("<<a.%cause>>", "Structural(Path(Bare:a.%cause))");
+    assert_shape("<<x>> <= x", "Lte(Structural(Path(Bare:x)), Path(Bare:x))");
 }
 
-#[test]
-fn golden_poset() {
-    assert_shape(
-        "#{ #draft <= #review < #publish }",
-        "Poset([Tag(draft)<=Tag(review), Tag(review)<Tag(publish)])",
-    );
-    assert_shape("#{ #a = #b }", "Poset([Tag(a)=Tag(b)])");
-}
+// ---------------------------------------------------------------------------
+// SYNTAX_08 / paths — metadata access
+// ---------------------------------------------------------------------------
 
 #[test]
-fn golden_ternary_and_infix_logic() {
+fn golden_metadata_paths() {
+    // %len as path segment (meta key), not Rem
+    assert_shape("a.%len", "Path(Bare:a.%len)");
+    assert_shape("a % b", "Rem(Path(Bare:a), Path(Bare:b))");
+    assert_shape("$.val", "Lens(Context, Atom(Str(val)))");
+}
+
+// ---------------------------------------------------------------------------
+// SYNTAX_09 — morphism application
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_application() {
+    // apply tighter than meet (SYNTAX_09 §4.3)
     assert_shape(
-        "a ? b : c",
-        "Ternary(Path(Bare:a), Path(Bare:b), Path(Bare:c))",
+        "/func a & b",
+        "Meet(Apply(Path(Bare:/func), Path(Bare:a)), Path(Bare:b))",
     );
-    // a /f b → Apply(Apply(/f, a), b)
+    assert_shape(
+        "/func (a & b)",
+        "Apply(Path(Bare:/func), Meet(Path(Bare:a), Path(Bare:b)))",
+    );
+    // whitespace optional for apply (SYNTAX_09 §4.1)
+    assert_shape("/func ()", "Apply(Path(Bare:/func), Atom(Unit))");
+    assert_shape("/func()", "Apply(Path(Bare:/func), Atom(Unit))");
+    // binary `-` wins over apply; negative args need parens (SYNTAX_09 §4.9)
+    assert_shape("f -1", "Sub(Path(Bare:f), Atom(Int(1)))");
+    assert_shape("f (-1)", "Apply(Path(Bare:f), Atom(Int(-1)))");
+    // morphism-as-arg needs parens so logic_infix does not steal
+    assert_shape("f (/g)", "Apply(Path(Bare:f), Path(Bare:/g))");
+    // three-way `/` (SYNTAX_09 §4.7)
     assert_shape(
         "a /f b",
         "Apply(Apply(Path(Bare:/f), Path(Bare:a)), Path(Bare:b))",
     );
     assert_shape("a / b", "Div(Path(Bare:a), Path(Bare:b))");
+}
+
+// ---------------------------------------------------------------------------
+// SYNTAX_10 — enum / poset
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_poset() {
+    assert_shape("#{}", "Poset([])");
+    assert_shape(
+        "#{ #draft <= #review < #publish }",
+        "Poset([Tag(draft)<=Tag(review), Tag(review)<Tag(publish)])",
+    );
+    assert_shape("#{ #a = #b }", "Poset([Tag(a)=Tag(b)])");
+    // mixed-direction chain (SYNTAX_10 §4.2)
+    assert_shape(
+        "#{ #a < #c > #b }",
+        "Poset([Tag(a)<Tag(c), Tag(c)>Tag(b)])",
+    );
+    // enum member as path segment
+    assert_shape("Status.#draft", "Path(Bare:Status.#draft)");
+}
+
+// ---------------------------------------------------------------------------
+// SYNTAX_11 — morphism definition
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_morphism_definition() {
+    // bare join of arrows nests wrong (SYNTAX_11 §4.1) — pin the bad shape
+    assert_shape(
+        "A -> B | C -> D",
+        "Morphism(Path(Bare:A), Morphism(Join(Path(Bare:B), Path(Bare:C)), Path(Bare:D)))",
+    );
+    // canonical: parenthesize each branch
+    assert_shape(
+        "(A -> B) | (C -> D)",
+        "Join(Morphism(Path(Bare:A), Path(Bare:B)), Morphism(Path(Bare:C), Path(Bare:D)))",
+    );
+    // pipe tighter than arrow (SYNTAX_11 §4.2)
+    assert_shape(
+        "x -> x |> /g",
+        "Morphism(Path(Bare:x), Pipe(Path(Bare:x), Path(Bare:/g)))",
+    );
+    assert_shape(
+        "data |> (x -> x + 1)",
+        "Pipe(Path(Bare:data), Morphism(Path(Bare:x), Add(Path(Bare:x), Atom(Int(1)))))",
+    );
+    // curried params = apply on LHS; tuple param is one arg
+    assert_shape(
+        "x y -> x",
+        "Morphism(Apply(Path(Bare:x), Path(Bare:y)), Path(Bare:x))",
+    );
+    assert_shape(
+        "(x, y) -> x",
+        "Morphism(Tuple([Path(Bare:x), Path(Bare:y)]), Path(Bare:x))",
+    );
+    // type annotation on param (op is @, not :)
+    assert_shape(
+        "x @int -> x",
+        "Morphism(TypeAnnotation(Path(Bare:x), Path(Bare:int)), Path(Bare:x))",
+    );
+    assert_shape(
+        "x@int -> x",
+        "Morphism(TypeAnnotation(Path(Bare:x), Path(Bare:int)), Path(Bare:x))",
+    );
+    assert_shape(
+        "x @ int",
+        "TypeAnnotation(Path(Bare:x), Path(Bare:int))",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SYNTAX_12 — pipe / ternary / context
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_pipe_ternary_context() {
+    assert_shape("x |> /f", "Pipe(Path(Bare:x), Path(Bare:/f))");
+    assert_shape("x -> x", "Morphism(Path(Bare:x), Path(Bare:x))");
+    assert_shape("$", "Context");
+    assert_shape(
+        "a ? b : c",
+        "Ternary(Path(Bare:a), Path(Bare:b), Path(Bare:c))",
+    );
+    assert_shape(
+        "a ? b : (c ? d : e)",
+        "Ternary(Path(Bare:a), Path(Bare:b), Ternary(Path(Bare:c), Path(Bare:d), Path(Bare:e)))",
+    );
+    // | tighter than |> (SYNTAX_12 §4.3)
+    assert_shape(
+        "1 | 2 |> /f",
+        "Pipe(Join(Atom(Int(1)), Atom(Int(2))), Path(Bare:/f))",
+    );
+    // open ranges (SYNTAX_04, re-checked here as expression primaries)
+    assert_shape("..", "Range(Atom(Top), Atom(Top))");
+    assert_shape("..10", "Range(Atom(Top), Atom(Int(10)))");
+    assert_shape("1..", "Range(Atom(Int(1)), Atom(Top))");
+    assert_shape(
+        "-5..5..1",
+        "Range(Atom(Int(-5)), Atom(Int(5)), Atom(Int(1)))",
+    );
 }
 
 #[test]
@@ -223,6 +372,26 @@ fn golden_rejections() {
     assert!(
         parse_expr_only("{ #a < #b }").is_err(),
         "bare order chain in combo must reject"
+    );
+    // single tag is not a poset chain (SYNTAX_10 §4.2)
+    assert!(
+        parse_expr_only("#{ #a }").is_err(),
+        "singleton tag in poset must reject"
+    );
+    // non-associative cmp — trailing second probe must not be silently dropped
+    // (fixed: parse_expr_only now uses expr_toplevel with EOI)
+    assert!(
+        parse_expr_only("a <=> b <=> c").is_err(),
+        "chained <=> must reject (was silent partial parse)"
+    );
+    assert!(
+        parse_expr_only("a < b < c").is_err(),
+        "chained < must reject"
+    );
+    // trailing junk after a complete expr must fail
+    assert!(
+        parse_expr_only("x: leftover").is_err(),
+        "trailing after expr must reject"
     );
 }
 

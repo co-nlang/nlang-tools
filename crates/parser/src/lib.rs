@@ -441,8 +441,17 @@ fn with_parser_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 
 pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>> {
     with_parser_stack(|| {
-        let mut pairs = NParser::parse(Rule::expr, input).map_err(|e| e.to_string())?;
-        parse_expr(pairs.next().unwrap()).map_err(|e| e.to_string())
+        // expr_toplevel = SOI ~ expr ~ EOI — rejects trailing junk that the bare
+        // `expr` rule would silently leave unparsed (e.g. `a <=> b <=> c`,
+        // `x: leftover`). Silent partial parse is the same bug class as
+        // grammar-accept / AST-deform.
+        let mut pairs = NParser::parse(Rule::expr_toplevel, input).map_err(|e| e.to_string())?;
+        let top = pairs.next().ok_or_else(|| "empty expr_toplevel".to_string())?;
+        let inner = top
+            .into_inner()
+            .next()
+            .ok_or_else(|| "expr_toplevel missing expr".to_string())?;
+        parse_expr(inner).map_err(|e| e.to_string())
     })
     .map_err(|e: String| e.into())
 }

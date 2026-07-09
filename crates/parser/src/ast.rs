@@ -347,9 +347,9 @@ impl Expr {
                 // juxtaposition: parenthesize either side when looser than apply
                 let fs = f.to_nlang_prec(indent, own);
                 let mut as_ = a.to_nlang_prec(indent, own + 1); // right side: tighter demand
-                // Leading `-` on the arg would be re-lexed as binary Sub (`f -1`);
-                // force grouping so negative atoms stay apply-args (SYNTAX_02 §4.3).
-                if as_.starts_with('-') {
+                // Leading `-` → binary Sub (`f -1`); leading `/ident` → logic_infix
+                // (`f /g` incomplete). Force grouping (SYNTAX_02 §4.3 / SYNTAX_09 §4.9).
+                if as_.starts_with('-') || as_.starts_with('/') {
                     as_ = format!("({as_})");
                 }
                 format!("{fs} {as_}")
@@ -413,6 +413,8 @@ impl Expr {
             ExprKind::Complement(e) => {
                 format!("!{}", e.to_nlang_prec(indent, own))
             }
+            // Non-associative: bare `a ? b : c ? d : e` is illegal (SYNTAX_12 §4.1).
+            // All three children demand tighter prec so nested ternaries keep parens.
             ExprKind::Ternary {
                 cond,
                 then_branch,
@@ -421,7 +423,7 @@ impl Expr {
                 "{} ? {} : {}",
                 cond.to_nlang_prec(indent, own + 1),
                 then_branch.to_nlang_prec(indent, own + 1),
-                else_branch.to_nlang_prec(indent, own)
+                else_branch.to_nlang_prec(indent, own + 1)
             ),
             ExprKind::Add(a, b) => format!(
                 "{} + {}",
@@ -490,9 +492,10 @@ impl Expr {
                 a.to_nlang_prec(indent, own + 1),
                 b.to_nlang_prec(indent, own + 1)
             ),
+            // type_ann_op = "@" (not ":"); colon is field assignment only.
             ExprKind::TypeAnnotation(v, t) => format!(
-                "{}: {}",
-                v.to_nlang_prec(indent, own),
+                "{} @ {}",
+                v.to_nlang_prec(indent, own + 1),
                 t.to_nlang_prec(indent, own + 1)
             ),
             ExprKind::Unary { op, expr } => {

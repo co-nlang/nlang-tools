@@ -116,7 +116,7 @@ fn gen_expr(rng: &mut Rng, depth: usize) -> Expr {
         };
     }
 
-    match rng.gen_range(0, 22) {
+    match rng.gen_range(0, 24) {
         0 => atom(gen_atom(rng)),
         1 => path(&[&gen_ident(rng)]),
         2 => path(&[&gen_ident(rng), &gen_ident(rng)]),
@@ -134,9 +134,7 @@ fn gen_expr(rng: &mut Rng, depth: usize) -> Expr {
         14 => bin(ExprKind::Pipe, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
         15 => {
             let n = rng.gen_range(0, 4);
-            let items: Vec<_> = (0..n).map(|_| gen_expr(rng, depth - 1)).collect();
-            // inject spread sometimes
-            let mut items = items;
+            let mut items: Vec<_> = (0..n).map(|_| gen_expr(rng, depth - 1)).collect();
             if n > 0 && rng.chance(1, 3) {
                 items[0] = Expr::new(
                     ExprKind::Spread(Box::new(path(&[&gen_ident(rng)]))),
@@ -146,7 +144,7 @@ fn gen_expr(rng: &mut Rng, depth: usize) -> Expr {
             Expr::new(ExprKind::List(items), sp())
         }
         16 => {
-            let n = rng.gen_range(1, 3); // 1- or 2-tuple
+            let n = rng.gen_range(1, 3);
             let items: Vec<_> = (0..n).map(|_| gen_expr(rng, depth - 1)).collect();
             Expr::new(ExprKind::Tuple(items), sp())
         }
@@ -169,8 +167,24 @@ fn gen_expr(rng: &mut Rng, depth: usize) -> Expr {
             },
             sp(),
         ),
+        21 => bin(
+            ExprKind::TypeAnnotation,
+            path(&[&gen_ident(rng)]),
+            path(&[rng.pick(&["int", "str", "bool"])]),
+        ),
+        22 => Expr::new(
+            ExprKind::Range {
+                start: Box::new(atom(AtomKind::Int((rng.gen_range(0, 10) as i64 - 3).into()))),
+                end: Box::new(atom(AtomKind::Int((rng.gen_range(0, 20) as i64).into()))),
+                step: if rng.chance(1, 2) {
+                    Some(Box::new(atom(AtomKind::Int(1.into()))))
+                } else {
+                    None
+                },
+            },
+            sp(),
+        ),
         _ => {
-            // poset of two tags
             let left = AtomKind::Tag(rng.pick(&["a", "b", "c"]).to_string());
             let right = AtomKind::Tag(rng.pick(&["a", "b", "c", "d"]).to_string());
             let op = *rng.pick(&[RelOp::Lt, RelOp::Lte, RelOp::Eq]);
