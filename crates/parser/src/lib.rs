@@ -243,10 +243,54 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
         }
         Rule::context => Ok(Expr::new(ExprKind::Context, span)),
         Rule::structural => Ok(Expr::new(ExprKind::Structural(Box::new(parse_expr(pair.into_inner().next().ok_or("Empty structural")?)?)), span)),
+        // range was accepted by the grammar but never built into an AST node
+        // (silent failure: "Unexpected rule: range") — SYNTAX_04 §4.5
+        Rule::range => {
+            let mut start: Option<Expr> = None;
+            let mut end: Option<Expr> = None;
+            let mut step: Option<Expr> = None;
+            for part in pair.into_inner() {
+                match part.as_rule() {
+                    Rule::range_start => {
+                        let b = part.into_inner().next().ok_or("Empty range_start")?;
+                        start = Some(parse_range_bound(b)?);
+                    }
+                    Rule::range_end => {
+                        let b = part.into_inner().next().ok_or("Empty range_end")?;
+                        end = Some(parse_range_bound(b)?);
+                    }
+                    Rule::range_step => {
+                        let b = part.into_inner().next().ok_or("Empty range_step")?;
+                        step = Some(parse_range_bound(b)?);
+                    }
+                    _ => {}
+                }
+            }
+            // Grammar allows open bounds; represent missing sides as Top (`_`).
+            let start = start.unwrap_or_else(|| Expr::new(ExprKind::Atom(AtomKind::Top), span));
+            let end = end.unwrap_or_else(|| Expr::new(ExprKind::Atom(AtomKind::Top), span));
+            Ok(Expr::new(
+                ExprKind::Range {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                    step: step.map(Box::new),
+                },
+                span,
+            ))
+        }
         Rule::anon_set => {
             let mut inner_it = pair.into_inner();
-            let expr = parse_expr(inner_it.next().ok_or("Empty anon_set")?)?;
-            Ok(Expr::new(ExprKind::AnonSet(Box::new(expr)), span))
+            // Empty `@{ }` / `@{}` (if grammar allows) ≡ Bottom per SYNTAX_02/04.
+            match inner_it.next() {
+                Some(inner) => {
+                    let expr = parse_expr(inner)?;
+                    Ok(Expr::new(ExprKind::AnonSet(Box::new(expr)), span))
+                }
+                None => Ok(Expr::new(
+                    ExprKind::AnonSet(Box::new(Expr::new(ExprKind::Atom(AtomKind::Bottom), span))),
+                    span,
+                )),
+            }
         }
         Rule::atom => parse_atom(pair.into_inner().next().ok_or("Empty atom")?).map(|ak| Expr::new(ExprKind::Atom(ak), span)),
         Rule::bottom => Ok(Expr::new(ExprKind::Atom(AtomKind::Bottom), span)),
@@ -334,6 +378,30 @@ fn parse_complex(s: &str) -> Result<AtomKind, Box<dyn Error>> {
     }
     
     Err(format!("Invalid complex literal: {}", s).into())
+}
+
+fn parse_range_bound(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>> {
+    let span = Span::new(pair.as_span().start(), pair.as_span().end());
+    match pair.as_rule() {
+        Rule::range_bound => {
+            let inner = pair.into_inner().next().ok_or("Empty range_bound")?;
+            parse_range_bound(inner)
+        }
+        Rule::atom => {
+            let ak = parse_atom(pair.into_inner().next().ok_or("Empty atom")?)?;
+            Ok(Expr::new(ExprKind::Atom(ak), span))
+        }
+        Rule::path | Rule::anchored_path => Ok(Expr::new(ExprKind::Path(parse_path(pair)?), span)),
+        // atom alternatives may surface directly
+        Rule::int_lit | Rule::float_lit | Rule::complex_lit | Rule::str_lit | Rule::tag
+        | Rule::top | Rule::bottom | Rule::unit | Rule::tag_start | Rule::tag_end
+        | Rule::regex_lit | Rule::path_lit | Rule::bytes_lit | Rule::uri_lit | Rule::time_lit
+        | Rule::multiline_str => {
+            let ak = parse_atom(pair)?;
+            Ok(Expr::new(ExprKind::Atom(ak), span))
+        }
+        _ => Err(format!("Unexpected range_bound rule: {:?}", pair.as_rule()).into()),
+    }
 }
 
 fn parse_path(pair: pest::iterators::Pair<Rule>) -> Result<Path, Box<dyn Error>> {

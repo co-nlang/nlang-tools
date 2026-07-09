@@ -101,7 +101,8 @@ context = { "$" }
 structural = { "<<" ~ expr ~ ">>" }
 combo = { "{" ~ WHITESPACE* ~ ( field ~ field_sep? )* ~ "}" }
 cocoon = { "{{" ~ WHITESPACE* ~ ( field ~ field_sep? )* ~ "}}" }
-anon_set = { "@{" ~ expr ~ "}" }
+// Empty body allowed: `@{}` ≡ `_|_` (SYNTAX_02 §4.1 / SYNTAX_04 §4.3)
+anon_set = { "@{" ~ expr? ~ "}" }
 
 // Poset literal (SYNTAX_10; discussion/008): bare order chains live ONLY here
 poset_lit   = { "#{" ~ WHITESPACE* ~ (order_chain ~ field_sep?)* ~ "}" }

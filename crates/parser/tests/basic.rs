@@ -58,7 +58,7 @@ fn test_arithmetic_and_logic() {
 #[test]
 fn test_complex_numbers() {
     use nlang_parser::parse_expr_only;
-    use nlang_parser::ast::{ExprKind, AtomKind, UnaryOp};
+    use nlang_parser::ast::{AtomKind, ExprKind};
     
     // Direct complex numbers without leading negation
     let tests = vec![
