@@ -1,7 +1,8 @@
 # nlang 引擎架構概覽
 
-> 最後更新：2026-05-25（Phase 39 完成後）  
-> 供新貢獻者快速定位切入點。
+> 最後更新：2026-07-11（v0.2.0-beta 定版整備；含惰性引擎與增量收斂）  
+> 供新貢獻者快速定位切入點。求值模型的施工圖見 nlang-spec
+> `GUIDE_03 §11`（Call-by-Observation）；逐案決策背景見 `docs/worknotes/`。
 
 ---
 
@@ -11,9 +12,10 @@
 nlang-tools/
 ├── crates/
 │   ├── parser/          # AST 與語法解析
-│   │   ├── src/lib.rs   # Parser 入口（Pest）
-│   │   ├── src/ast.rs   # AST 類型定義（含 AtomKind::Bytes）
-│   │   └── src/n.pest   # Pest 語法定義
+│   │   ├── src/lib.rs   # Parser 入口（Pest；expr_toplevel=SOI~expr~EOI 護欄）
+│   │   ├── src/ast.rs   # AST 類型定義（含 strip_spans/shape 指紋、to_nlang 正規列印）
+│   │   ├── src/tier.rs  # 019 tier 分類器（C/M/Q/U；memo 策略與 linter 共用）
+│   │   └── src/n.pest   # Pest 語法定義（SPEC_14 定稿全同步）
 │   │
 │   ├── interpreter/     # 核心 runtime 引擎
 │   │   ├── src/lib.rs            # Ouroboros 引擎、EvalContext、root_with_system()
@@ -52,13 +54,14 @@ nlang-tools/
 │   │
 │   └── oo/              # CLI 工具入口
 │       ├── src/main.rs          # CLI 命令處理
+│       ├── src/nlint.rs         # Linter Tier 1（R1/R2/R3 + context graph ω(G)）
 │       └── src/static_analyzer.rs # 靜態分析
 │
 └── docs/                # 文件目錄
     ├── implementation-status.md  # 實作狀態
     ├── engine-architecture.md    # 本文件
     ├── feature-roadmap.md        # 功能路線圖
-    └── phase-N-handover.md       # Phase 1–39 交接文件
+    └── worknotes/                # 交接與工單存檔（phase-N + *_handover）
 ```
 
 ---
@@ -126,6 +129,7 @@ pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>>
 | `oo refine --source <caid> --target <caid> [--sign]` | 宣告格論精炼 |
 | `oo fmt <file>` | 格式化源碼 |
 | `oo serve [--port N]` | NDP 網路服務 |
+| `oo lint <path> [--json]` | Linter Tier 1：R1/R2/R3 靜態規則＋ω(G)/K4/K5 candidate sites |
 
 ---
 
@@ -151,9 +155,15 @@ Value (enum)
 │   └── Bytes(Vec<u8>)                  # 二進位（Phase 30）
 ├── Combo(ComboVal)                      # 組合結構 {}
 ├── Union(Vec<Value>)                    # 聯集 A | B
-├── Thunk { expr, closure, effect }      # 惰性求值
+├── Range { start, end, step }           # 閉閉區間集合 [a,b]（SPEC_02 §3；bn_serial 0x18）
+├── Ref(Path)                            # 活引用（<<path>> C 案：觀測期對當下宇宙解引用）
+├── Thunk { expr, closure, context, effect }  # 惰性求值（GUIDE_03 §11 四欄）
 └── Code(Box<Expr>)                      # 未執行程式碼
 ```
+
+> 字面量 `_`／`_|_` 於求值端**正規化**為 `Value::Top`／`Value::Bottom`
+> （unify 另有忠實別名臂兜底手構形態）；`Atom(TagStart/TagEnd)` 是序位錨點
+> （順序極值），與資訊格極值是**不同格**，勿混用。
 
 ### 3.2 ComboVal 結構
 
@@ -197,6 +207,8 @@ pub struct Ouroboros {
     pub store:              ObjectStore,
     pub base_dir:           Option<PathBuf>,
     pub unify_memo:         RwLock<HashMap<(ContentHash, ContentHash), Value>>,
+    pub force_memo:         RwLock<HashMap<ForceMemoKey, MemoEntry>>, // Stage 4 觀測 memo
+    pub force_memo_rev:     RwLock<HashMap<String, HashSet<ForceMemoKey>>>, // Stage 5 反向索引：coord → keys
     pub builtin_registry:   HashMap<String, Arc<BuiltinFn>>,
     pub peers:              RwLock<HashMap<String, Peer>>,
     pub identity:           Identity,
@@ -204,23 +216,30 @@ pub struct Ouroboros {
     pub gbb_registry:       RwLock<HashMap<String, GBB>>,
     pub architect_registry: RwLock<HashSet<String>>,
 }
+// ForceMemoKey = (expr CAID, frame CAID, 有效綁定 context CAID | #open, root CAID)
+// MemoEntry   = { value, deps: HashSet<String> }；deps=∅ ⇒ C₀ 天然永久
+// evolve → invalidate_coords(逐座標＋"*")；commit/load/refine → 全清
 ```
 
-### 3.5 EvalContext
+### 3.5 EvalContext（惰性引擎後）
 
 ```rust
 pub struct EvalContext {
-    pub root:                    ComboVal,           // 作用域根（含所有 ~%* 模組）
-    pub scopes:                  Vec<ComboVal>,
-    pub fuel:                    u64,                // 預設 10000（~%Config）
-    pub strategy:                ObservationStrategy, // Blur/Strict/Approximate
-    pub max_branches:            usize,              // 64
-    pub max_unification_depth:   usize,              // 256
-    pub max_pattern_nodes:       usize,              // 1024
-    pub timeout_deadline:        Option<u64>,        // Unix ms
-    pub had_nondistrib_event:    bool,               // OML 非分配性旗標
+    pub root:              Arc<ComboVal>,        // F2：sub_context 只 bump 引用計數
+    pub root_caid_cache:   Option<ContentHash>,  // Stage 4：root CAID 惰性快取
+    pub scopes:            Vec<ComboVal>,
+    pub staged:            Option<ComboVal>,     // 暫存區可見性
+    pub context_value:     Option<Value>,        // `$` 綁定（pipe/dispatch/deref 框架）
+    pub dep_collector:     Option<HashSet<String>>, // Stage 5：Route B 依賴收集
+    pub memo_enabled:      bool,                 // Stage 5：engine 內部語境（eval_context）關閉
+    pub fuel:              u64,                  // 預設 10000（~%Config）
+    pub depth:             u32,
+    pub timeout_deadline:  Option<u64>,
+    // …（strategy / max_* / had_nondistrib_event 等資源與策略欄位同前）
 }
-// 建構：Ouroboros::eval_context()（讀取 ~%Config）
+// 建構：Ouroboros::eval_context()（讀取 ~%Config；memo_enabled=false）
+// force() 為觀測原語：tier 分類（C/M memo、Q/U 旁路）→ 有效綁定
+// （thunk.context ∨ ctx.context_value）一次計算、key 與 call_ctx 共用
 ```
 
 ---
@@ -233,17 +252,24 @@ pub struct EvalContext {
 
 ```
 unify(A, B):
-  1. hash(A) == hash(B)      → A（memoized）
-  2. A == Top                → B
-  3. Bottom                  → Bottom
-  4. Blur                    → Blur 傳播規則
-  5. Atom × Atom             → 相等則 A，否則 Bottom
-  6. Combo × Combo           → phase_merge_decision
-     H² MASA 不相容          → Bottom(H2Split)
-     θ >= ε_coherent（目前恆 0.0）→ Bottom(H1Split)
+  1. hash(A) == hash(B)          → A（memoized；NonDet 旁路）
+  2. Top × Thunk/Ref             → 保留 Thunk/Ref（惰性：不解引用——evolve 期
+                                    deref = A 案快照，Stage 3 教訓）
+  3. Atom(Top)/Atom(Bottom) 別名 → 重入 Value::Top / Value::Bottom（忠實別名）
+  4. A == Top                    → B
+  5. Bottom                      → Bottom
+  6. Blur                        → Blur 傳播規則
+  7. Range 臂（僅認 Range×Range、Atom×Range；其餘 DECLINE 放行下游——
+     臂序教訓：catch-all 預設讓位，勿搶 Union 分配）
+     Atom × Range               → 成員判定（閉端＋步進）
+     Range × Range（無步進）     → 交集（空→⊥、單點→塌縮為原子）
+  8. Atom × Atom                 → 相等則 A，否則 Bottom
+  9. Combo × Combo               → phase_merge_decision
+     H² MASA 不相容              → Bottom(H2Split)
+     θ >= ε_coherent             → Bottom(H1Split)
      否則遞迴合併欄位
-  7. Atom × Combo            → Trinity Isomorphism（{%val: atom}）
-  8. Union                   → 極小元素篩選
+  10. Atom × Combo               → Trinity Isomorphism（{%val: atom}）
+  11. Union                      → 逐支分配 + ⊥ 剪枝 + 極小元素篩選
 ```
 
 ### 4.2 求值流程
@@ -252,13 +278,18 @@ unify(A, B):
 
 | ExprKind | 處理 |
 |:---------|:-----|
-| `Atom` | 直接返回 Value |
-| `Path` | 在 root/scopes 中觀測路徑 |
-| `Apply` | 呼叫 apply_morphism |
-| `Pipe` | `a \|> b = b(a)` |
+| `Atom` | 返回 Value（`Top`/`Bottom` 正規化為格極值） |
+| `Path` | 在 root/staged/scopes 中觀測路徑（惰性：欄位值為 Thunk，force 時求值） |
+| `Structural`（`<<path>>`） | `Value::Ref` 活引用（觀測期對當下宇宙解引用） |
+| `Apply` | 呼叫 apply_morphism（Union 入口逐支分配） |
+| `Pipe` | `a \|> b`＝疊加 monad Kleisli bind（Union 逐支、⊥ 剪枝、`$` 逐支綁定） |
 | `Morphism` | 建立閉包 |
 | `Combo` | 構建 ComboVal |
 | `Meet/Join/Complement` | 呼叫 unify/eval/complement |
+| `Eq/Ne` vs `Lt/Gt/Lte/Gte` | **兩家族分流**：原子家族吸收 ⊥/⊤；集合家族乾淨布林（極值真值表） |
+| `LatticeEq`（`=`） | 非塌縮結構等值；⊥ 為空集運算元（不吸收） |
+| `Range` | 界求值＋force → `Value::Range`（變數界於觀測期解析） |
+| `AnonSet`（`@{e}`） | 透明 ≡ `e`（`@{}` ≡ `_\|_`） |
 | `List` | 構建 List Combo（numeric keys + `%kind:#list`） |
 
 ### 4.3 態射派發
@@ -396,16 +427,23 @@ EffectTag 在 Value 傳播時取 `max`（最高效果勝出）。
 
 ### 7.1 Rust 整合測試（tests/*.rs）
 
-~439 tests，0 failed。主要覆蓋：
+**667 passed / 0 failed / 3 ignored（106 套件）**。主要覆蓋：
 
-- **格論**：unify, complement, oml, orthomodular
-- **CAID**：caid, lattice_sketch_v2（17 固定向量）
+- **格論**：unify, complement, oml, orthomodular；Top/Bottom 正規化格律探針
+- **CAID**：caid, lattice_sketch_v2（17 固定向量）、genesis 種子穩定性
 - **#refine**：refine, authority, shadow
 - **Blur**：blur（11 tests）
-- **標準庫**：eval, dispatch, cond_match, math_branch, type_constraint
-- **LADD**：ladd, nerve_routing
-- **Phase 25–34**：list/str/bytes/regex/json/io 各專項測試套件
-- **Phase 35–39**：list/math Round 2、env/process/path、nerve 精確交集、engine.equivalence_map
+- **標準庫**：eval, dispatch, cond_match, math_branch, type_constraint ＋ Phase 25–47 各專項
+- **LADD**：ladd, nerve_routing, semantic_eclipse, disc_multihop
+- **SPEC_14 同步/`$`**：spec14_sync（parser）、context_dollar_test
+- **惰性/增量收斂**：stage1–5（fuel、open term、綁定傳播、memo 紅線、Route B 失效）、memo_soundness
+- **語義格律探針（工單預置制）**：atom_top_unify、bottom_spelling、cmp_extremes、range_eval（＋parser range_bounds）
+- **parser 防回歸**：golden_ast（SYNTAX_01–12 §4 形狀凍結）、fuzz_roundtrip（種子 800×d3）、roundtrip 冪等
+- **linter**：oo::nlint（24 tests）
+
+> 慣例：`*_probe_test` / `*_redline_test` 為工單預置的驗收探針轉永久迴歸守衛——
+> **不得弱化**；`#[ignore]` 三項為既存已知議題（深 thunk 堆疊、sibling 解析、
+> 隔離語境絕對路徑）。
 
 ### 7.2 Genesis 穩定性測試
 
@@ -441,22 +479,26 @@ cargo test --manifest-path crates/interpreter/Cargo.toml seed_caids_are_stable -
 | 規格章節 | 引擎對應 |
 |:---------|:---------|
 | SPEC_01（格論基礎） | `value.rs`, `unify.rs`, `complement.rs`, `oml.rs` |
-| SPEC_06（統一化邏輯） | `unify.rs`, `dispatch.rs`, `observation.rs` |
-| SPEC_09（標準庫） | `builtins/*.rs`（13 個模組），`type_constraint.rs` |
+| SPEC_02/SPEC_14（詞法與權威文法） | `parser/n.pest`, `parser/lib.rs`；防回歸＝`golden_ast`/`fuzz_roundtrip`；同步清單＝nlang-spec `meta/ENGINE_SYNC.md` |
+| SPEC_06（統一化邏輯；SYNTAX_06 兩家族） | `unify.rs`, `dispatch.rs`, `observation.rs`, `eval.rs:eval_binary_cmp` |
+| SPEC_07（邏輯與管道） | `eval.rs:Pipe`＋`dispatch.rs`（Kleisli/疊加分配；`pipe_laws_test`） |
+| SPEC_09（標準庫） | `builtins/*.rs`（21 個模組），`type_constraint.rs` |
 | SPEC_10（演化與 Commit） | `universe.rs`, `storage.rs`, `authority.rs` |
 | SPEC_13（OODP）| `builtins/disc.rs`, `ladd.rs`, `lattice_sketch.rs`, `bn_serial.rs` |
 | REAL_03（CAID 協議） | `value.rs:content_hash()`, `bn_serial.rs`, `lattice_sketch.rs` |
+| GUIDE_03 §11（Call-by-Observation／增量收斂） | `lib.rs:force/force_memo/dep_collector`, `universe.rs:invalidate_coords`, `parser/tier.rs` |
 | APP_05（LADD） | `ladd.rs`, `builtins/disc.rs` |
-| SPEC_17（自我演化） | 未實作 |
+| SPEC_17（自我演化） | 未實作（規格書 Combo 化前提） |
 
 ---
 
 ## 10. 快速入門建議
 
-1. 先讀 `value.rs` — 理解 `Value` enum，尤其 `Blur`、`Bottom`、`Combo`、`Bytes`
-2. 再讀 `unify.rs` — 理解 Meet 運算、H¹/H² obstruction
-3. 讀 `eval.rs` — 理解求值流程
-4. 讀 `builtins/json.rs` 或 `builtins/bytes.rs` — 最清晰的模組實作範本
-5. 看 `genesis.rs` + `lib.rs:root_with_system()` — 理解模組系統結構
-6. 用 `cargo test -p nlang-interpreter` 驗證（~439 tests all pass）
-7. 參考 `docs/phase-N-handover.md` — 了解各功能的決策背景
+1. 先讀 `value.rs` — 理解 `Value` enum，尤其 `Thunk`（四欄）、`Ref`、`Range`、`Blur`、`Bottom`
+2. 再讀 `unify.rs` — 理解 Meet 運算、臂序（Top/Bottom 別名 → Range → do_unify/Union）、H¹/H² obstruction
+3. 讀 `lib.rs:force()` — 觀測原語：tier 分類、有效綁定、memo/依賴收集（GUIDE_03 §11 對照）
+4. 讀 `eval.rs` — 求值流程與比較兩家族分流
+5. 讀 `builtins/json.rs` 或 `builtins/set.rs` — 最清晰的模組實作範本
+6. 看 `genesis.rs` + `lib.rs:root_with_system()` — 理解模組系統結構
+7. 用 `cargo test --workspace` 驗證（667 passed / 3 ignored）
+8. 參考 `docs/worknotes/` — 各功能的工單、驗收記錄與決策背景

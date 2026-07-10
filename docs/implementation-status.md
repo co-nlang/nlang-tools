@@ -1,7 +1,8 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-05-25（Phase 47 完成後）  
-> 測試數量：~514 tests passing（69+ 個測試套件）
+> 最後更新：2026-07-11（v0.2.0-beta 定版整備；2026-06/07 語義波後）  
+> 測試數量：**667 passed / 0 failed / 3 ignored（106 個測試套件）**  
+> 版號政策：與規格共用 major.minor（nlang-spec `meta/VERSIONING.md`）；裸核版須過 REAL_05 門檻
 
 ---
 
@@ -9,12 +10,36 @@
 
 | 規格章節 | 完整度 | 關鍵剩餘差距 |
 |:---------|:------:|:------------|
-| SPEC_01（格論基礎） | **95%** | ArithmeticOnAnchor 未在所有算術路徑攔截 |
-| SPEC_06（統一化邏輯） | **98%** | `approximate_phase_diff` ✓；視界震盪防禦（P3） |
+| SPEC_01（格論基礎） | **98%** | ArithmeticOnAnchor 未在所有算術路徑攔截 |
+| SPEC_02/SPEC_14（詞法與權威文法） | **100%** | SYNTAX_01–12 定稿全同步（ENGINE_SYNC #1–15）＋golden/fuzz 防回歸 |
+| SPEC_06（統一化邏輯） | **99%** | `=` 真格論相等（互 `<=`）待做；`<=>` 非嚴格聯集態 |
+| SPEC_07（邏輯與管道） | **100%** | 管道代數律（Kleisli/疊加分配）已驗證落地 |
 | SPEC_09（標準庫） | **100%** | — |
 | SPEC_10（演化與 Commit） | **99%** | — |
 | SPEC_13（OODP） | **80%** | GPP/CIP 零知識證明（P3，研究級） |
-| SPEC_17（自我演化） | **0%** | N-1 自舉算法（長期目標） |
+| GUIDE_03 §11（Call-by-Observation ＋ 增量收斂） | **100%** | 惰性 Stage 1–5＋force memo＋Route B 每座標失效全落地 |
+| SPEC_17（自我演化） | **0%** | N-1 自舉算法（長期目標）；規格書 Combo 化的前提 |
+
+---
+
+## 1a. 2026-06/07 語義波（ENGINE_SYNC #1–19；Phase 制之後的規格同步期）
+
+> 完整驗收記錄：nlang-spec `meta/ENGINE_SYNC.md`；工單/交接：`docs/worknotes/`。
+
+| 主題 | 內容 | 關鍵位置 |
+|:-----|:-----|:---------|
+| SPEC_14 權威文法同步（#1–15） | 優先序反 C、`<=>`/`=` 入 cmp、`<<expr>>` 雙角、tuple/poset 字面量、apply/mul 護欄、`anchored_path`、complex_lit 護欄 | `parser/n.pest`, `ast.rs` |
+| `$` 語義 P1–P5（#16） | 自由 `$` → `_\|_ #no_context`；超級惰性成為語義要求 | `lib.rs`, `context_dollar_test.rs` |
+| 惰性引擎 Stage 1–3（#16a/b） | call-by-observation：Thunk 四欄、Ref 活引用（C 案晚綁定）、deref-`$` 框架、視界護欄 | `lib.rs:force/force_recursive`, `unify.rs` Ref 保留臂 |
+| 觀測 memo Stage 4（#16c） | force 層 memo，key＝(expr, frame, **有效綁定** context, root) CAID；C/M 入、Q/U 旁路 | `lib.rs:force_memo` |
+| 增量收斂 Route B Stage 5（#16d） | `dep_collector` 依賴收集＋反向索引＋evolve 逐座標失效；C₀ 空依賴永久；`memo_enabled` 閘 | `lib.rs`, `universe.rs` |
+| 元素位 spread splice（#17） | `[...xs, y]`／`(...xs, y)` 根因修復 | `parser`, `eval.rs` |
+| 管道代數律（#18） | `\|>`＝疊加 monad Kleisli bind；疊加平等演化、原子交集 | `eval.rs:Pipe`, `pipe_laws_test.rs` |
+| Parser fuzz／golden 掃描（#19） | golden 向量（SYNTAX_01–12 §4）＋種子 fuzz roundtrip＋`expr_toplevel` EOI 護欄＋印表機正規化 | `parser/tests/` |
+| `Atom(Top)`/`Atom(Bottom)` 正規化 | 求值端正規化 `_`→`Value::Top`、`_\|_`→`Value::Bottom`；unify 忠實別名臂；吸收律（SYNTAX_06 §4.1）修正 | `eval.rs`, `lib.rs`, `unify.rs` |
+| 比較兩家族極值端 | `==`/`!=` 吸收 vs `<`/`<=`/`>`/`>=` 乾淨布林（⊥＝空集、⊤＝全集）；`eval_binary_cmp` 按家族分流 | `eval.rs:eval_binary_cmp` |
+| Range／`@{e}` 求值 | `Value::Range` 閉閉區間集合（非迴圈）；成員判定＋無步進交集；`@{e} ≡ e` 透明；缺界＝序位錨點；bn_serial `TAG_RANGE=0x18` | `value.rs`, `eval.rs`, `unify.rs` |
+| Linter Tier 1 | `oo lint`：R1/R2/R3 靜態規則＋context graph ω(G)＋K4/K5 candidate sites（JSON tier1-v1） | `oo/nlint.rs`, `parser/tier.rs` |
 
 ---
 
@@ -219,8 +244,8 @@
 
 ```
 Value (enum)
-├── Top                              # 萬有子空間 _
-├── Bottom(Box<BottomDetail>)        # 矛盾 _|_ + 原因
+├── Top                              # 萬有子空間 _（字面量 `_` 求值即此，經正規化）
+├── Bottom(Box<BottomDetail>)        # 矛盾 _|_ + 原因（字面量 `_|_` 求值即此，經正規化）
 ├── Blur(BlurDetail)                 # 視界模糊（Phase 9）
 ├── Atom(AtomKind, EffectTag, Option<i64>)
 │   ├── Int(BigInt)                  # 任意精度整數
@@ -228,11 +253,13 @@ Value (enum)
 │   ├── Complex(f64, f64)            # 複數
 │   ├── Str(String)                  # 字串
 │   ├── Tag(String)                  # #true, #false 等
-│   ├── TagStart / TagEnd            # 序位錨點
+│   ├── TagStart / TagEnd            # 序位錨點 #_|_ / #_（亦為 Range 缺界預設）
 │   └── Bytes(Vec<u8>)              # 二進位資料（Phase 30）
 ├── Combo(ComboVal)                  # 組合結構
 ├── Union(Vec<Value>)                # 聯集 A | B
-├── Thunk { expr, closure, effect }  # 惰性求值
+├── Range { start, end, step }       # 閉閉區間集合 [a,b]（2026-07；bn_serial tag 0x18）
+├── Ref(Path)                        # 活引用（C 案晚綁定；惰性 Stage 3）
+├── Thunk { expr, closure, context, effect }  # 惰性求值（四欄；GUIDE_03 §11）
 └── Code(Box<Expr>)                  # 未執行程式碼
 ```
 
@@ -261,7 +288,7 @@ pub struct ComboVal {
 
 ---
 
-## 8. 測試套件現況（50+ 個測試套件）
+## 8. 測試套件現況（106 個測試套件）
 
 ### 核心引擎測試
 
@@ -316,4 +343,18 @@ pub struct ComboVal {
 | `url_p47_test` | parse 分解 scheme/host/path、encode/decode roundtrip、query_params |
 | `toml_p47_test` | parse 基本、parse 巢狀 table、parse 錯誤→Bottom |
 
-**總計：~514 tests, 0 failed**
+### 語義波測試（2026-06/07；含驗收探針永久套件）
+
+| 測試套件 | 覆蓋 |
+|:---------|:-----|
+| `spec14_sync`（parser）, `context_dollar_test` | SPEC_14 同步 12 項、`$` P1–P5（13 項） |
+| `pipe_laws_test` | 管道代數律 10 項（可加性、零、單位、合成、原子交集） |
+| `stage1_fuel` / `stage2_open_term` / `stage3_probe`＋`stage3_acceptance` | call-by-observation、Ref 活引用、視界護欄、銜尾蛇向量 |
+| `stage4_redline_test`, `stage5_redline_test`, `stage5_acceptance_probe_test`, `memo_soundness_test` | force memo key 健全性（有效綁定）、Route B 失效紅線 R1/R2/R3、C₀ 永久性 |
+| `atom_top_unify_probe_test`, `bottom_spelling_probe_test` | Top/Bottom 正規化格律（么元、吸收、`=` 家族乾淨布林） |
+| `cmp_extremes_probe_test` | 集合家族 ⊥/⊤ 極值真值表＋有限側護欄 |
+| `range_eval_probe_test`, `range_bounds_probe`（parser） | Range 語義全套＋缺界錨點預設 |
+| `golden_ast`, `fuzz_roundtrip`, `roundtrip`（parser） | SYNTAX_01–12 §4 形狀凍結＋種子 fuzz＋印表機冪等 |
+| `nlint`（oo, 24 項） | Linter Tier 1：R1/R2/R3、ω(G)、K4/K5 candidate sites |
+
+**總計：667 passed / 0 failed / 3 ignored（3 = 既存已知議題：深 thunk 堆疊、sibling 解析、隔離語境絕對路徑）**

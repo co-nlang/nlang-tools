@@ -1,7 +1,9 @@
 # nlang 功能路線圖
 
-> 最後更新：2026-05-25（Phase 47 完成後）  
-> 開發模式：由 "project brain" AI 出規劃，執行 AI 實作，逐 Phase 交接
+> 最後更新：2026-07-11（v0.2.0-beta 定版整備）  
+> 開發模式：由 "project brain" AI 出規劃，執行 AI 實作；Phase 制（1–47）之後轉入
+> **規格同步波**（工單＋預置探針驗收制，記錄見 nlang-spec `meta/ENGINE_SYNC.md`
+> 與 `docs/worknotes/`）
 
 ---
 
@@ -143,9 +145,38 @@
 
 ---
 
+## 1b. 規格同步波（2026-06/07，Phase 制之後）
+
+> 詳表見 `docs/implementation-status.md` §1a；逐案驗收記錄在 nlang-spec
+> `meta/ENGINE_SYNC.md` #1–19 與其後之附列。
+
+| 主題 | 狀態 |
+|:-----|:-----|
+| SPEC_14 權威文法全同步（SYNTAX_01–12 定稿對齊） | ✅ |
+| `$` 語義 P1–P5（`#no_context`；超級惰性＝語義要求） | ✅ |
+| 惰性引擎 Stage 1–5（call-by-observation → force memo → Route B 每座標失效） | ✅ 增量收斂全線落地 |
+| 管道代數律（Kleisli bind、疊加平等演化） | ✅ |
+| Parser fuzz／golden-AST 掃描＋EOI 護欄 | ✅ |
+| `Atom(Top)`/`Atom(Bottom)` 正規化＋吸收律 | ✅ |
+| 比較兩家族極值端（SYNTAX_06 §4.1/§4.2） | ✅ |
+| Range／`@{e}` 求值（閉閉區間集合；`Value::Range`） | ✅ |
+| Linter Tier 1（`oo lint`：R1/R2/R3＋ω(G)） | ✅ |
+
 ## 2. 剩餘 Backlog
 
-### P2：已全部完成（Phase 35–39）✓
+### 近期（已立案或裁決明文另案）
+
+| 功能 | 說明 | 出處 |
+|:-----|:-----|:-----|
+| 步進∩步進區間交集 | 等差數列交集（CRT）；現誠實 ⊥ | Range 工單非目標 |
+| Range 子集比較（`1..5 <= 1..10`） | 集合家族 cmp 對 Range 值的自然延伸 | cmp/Range 另案 |
+| `<=>` 非嚴格聯集態＋跨容器 ⊥ | 容器歸屬追蹤 | ENGINE_SYNC 附帶事項 |
+| `=` 真格論相等（互 `<=`） | 現為非塌縮結構等值 | 同上 |
+| `3 <= 5` 數值序 vs 子集語義 | 規格 §4.10 為子集；引擎數值序＝記錄在案的刻意偏離，需獨立裁決＋遷移 | SYNTAX_06 §4.10 |
+| field_key path-vs-named 語意 | fuzz 掃描殘留 | ENGINE_SYNC #19 |
+| `.n` 語料清理 | `tests/unit/` 11 個引擎開發期舊期望值失敗（canonical/entropy/federation/ladd/reflection；非引擎回歸，Rust 套件同域全綠） | tests/README.md 已標注 |
+| cargo-fuzz 外掛 | 可選強化 | 同上 |
+| REAL_05 合規測試矩陣 | 裸核版門檻（VERSIONING §3）；v0.2.0-beta → v0.2.0 的必經之路 | REAL_05 |
 
 ### P3：長期目標
 
@@ -153,10 +184,9 @@
 |:-----|:-----|:---------|
 | GPP 幾何概率零知識證明 | 基於 Lattice Sketch | APP_05 §5 |
 | CIP 因果完整性證明 | 分布式計算委託 | APP_05 §6 |
-| GPP 幾何概率零知識證明 | 基於 Lattice Sketch | APP_05 §5 |
-| CIP 因果完整性證明 | 分布式計算委託 | APP_05 §6 |
-| SPEC_17 自我演化 | N-1 自舉算法、%promoter | SPEC_17 全章 |
+| SPEC_17 自我演化 | N-1 自舉算法、%promoter；規格書 Combo 化前提 | SPEC_17 全章 |
 | WASM 舊版引擎模組 | 語義虛擬化掛載 | SPEC_17 §1.4.3 |
+| Linter Tier 2（真 ω/q） | 需 CAID v2 symplectic fingerprint（SPEC_13 §1.3） | linter_tier1_handover §7 |
 
 ---
 
@@ -173,7 +203,11 @@ Phase 43：~%Query 模組（select/where/pluck/deep_merge，含 parse_path/get_a
 Phase 44：~%Diff 模組（diff/patch/is_compatible，set_at_path + collect_diffs 遞歸）→ ~474 tests  
 Phase 45：A 組擴充（~%Math +8, ~%List +5, ~%String +5, ~%Time +5）→ ~492 tests  
 Phase 46：~%Set（8）+ ~%Stat（6）零 dep 新模組 → ~504 tests  
-Phase 47：~%Csv（手寫）+ ~%Url（url crate）+ ~%Toml（toml crate）→ ~514 tests
+Phase 47：~%Csv（手寫）+ ~%Url（url crate）+ ~%Toml（toml crate）→ ~514 tests  
+語義同步波（2026-06/07）：SPEC_14 全同步 → `$` P1–P5 → 惰性 Stage 1–5＋memo＋Route B
+→ fuzz/golden → Top/Bottom 正規化 → cmp 極值 → Range → **667 tests（106 套件）**
 
 每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
-零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。
+零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。  
+語義波起的驗收制：工單附**預置校準紅線探針**（`#[ignore]`，unignore＝驗收）＋活護欄
+釘邊界兩側；「根因」宣稱須附量測。範本見 `docs/worknotes/*_handover.md`。

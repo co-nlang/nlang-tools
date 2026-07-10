@@ -1,11 +1,29 @@
-;; 1. 型別約束 (等價於 &)
-type_ok: 100 @ 100
-type_fail: 100 @ 200
+;; n/ 快覽（v0.2.0-beta；SYNTAX_01–12 定稿語法）
 
-;; 2. 元資訊
-list_len: [10, 20, 30].%len
-str_len: "Ouroboros".%len
+;; 1. 型別約束（@ 等價於 &）
+type_ok: 100 @ 100
+
+;; 2. 標準庫態射（tuple 傳參）
+list_len: ~%List./len [10, 20, 30]
+str_len: ~%String./len "Ouroboros"
 
 ;; 3. 前綴原子
 my_regex: r"^[0-9]+$"
 my_path: p"_.user.id"
+
+;; 4. Range ＝ 閉閉區間集合（不是迴圈；物化用 ~%List./range）
+in_range: 5 & 1..10           ;; → 5（成員判定，含兩端）
+narrowed: 1..10 & 5..20       ;; → 5..10（區間交集）
+pick: (1 | 7) & 1..3          ;; → 1（疊加逐支分配）
+age: 30..40                   ;; 宣告可能性空間，之後可單調精煉為單值
+seq: ~%List./range (0, 3)     ;; → [0, 1, 2]（態射 API 維持半開 [start, end)）
+
+;; 5. 比較兩家族（SYNTAX_06）
+atomic_eq: 1 == 1             ;; → #true（原子家族：塌縮、_|_ 吸收）
+clean_bool: _|_ = 3           ;; → #false（集合家族：乾淨布林，_|_ 是空集）
+subset: 3 <= 5                ;; → #true
+
+;; 6. 態射與管道（|> ＝ Kleisli bind）
+/double: x -> x * 2
+piped: 21 |> /double          ;; → 42
+mapped: ~%List./map ([1, 2, 3], (x -> x + 1))   ;; → [2, 3, 4]
