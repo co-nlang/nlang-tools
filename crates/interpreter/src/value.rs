@@ -1,4 +1,4 @@
-use nlang_parser::ast::{Expr, AtomKind};
+use nlang_parser::ast::{Expr, AtomKind, Path, PathAnchor};
 use indexmap::IndexMap;
 use sha2::{Sha256, Digest};
 use std::fmt;
@@ -15,15 +15,30 @@ impl fmt::Display for EffectTag {
     }
 }
 
-fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
+pub fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
     Arc::new(RwLock::new(None))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Top, Atom(AtomKind, EffectTag, Option<i64>), Combo(ComboVal), Union(Vec<Value>), Code(Box<Expr>),
-    Thunk { expr: Box<Expr>, closure: Vec<ComboVal>, effect: EffectTag },
+    Thunk {
+        expr: Box<Expr>,
+        closure: Vec<ComboVal>,
+        #[serde(default)]
+        context: Option<Box<Value>>,
+        effect: EffectTag,
+    },
+    Ref(Path),
     Bottom(Box<BottomDetail>),
+    Blur(BlurDetail),
+    /// Closed interval set [start, end] (optionally stepped). Symbolic lattice
+    /// value — observation neither materializes nor collapses it (SPEC_02 §3).
+    Range {
+        start: Box<Value>,
+        end: Box<Value>,
+        step: Option<Box<Value>>,
+    },
 }
 
 impl PartialEq for Value {
@@ -34,8 +49,16 @@ impl PartialEq for Value {
             (Value::Combo(c1), Value::Combo(c2)) => c1 == c2,
             (Value::Union(u1), Value::Union(u2)) => u1 == u2,
             (Value::Code(c1), Value::Code(c2)) => c1 == c2,
-            (Value::Thunk { expr: ex1, closure: cl1, effect: ef1 }, Value::Thunk { expr: ex2, closure: cl2, effect: ef2 }) => ex1 == ex2 && cl1 == cl2 && ef1 == ef2,
+            (Value::Thunk { expr: ex1, closure: cl1, context: c1, effect: ef1 },
+             Value::Thunk { expr: ex2, closure: cl2, context: c2, effect: ef2 }) =>
+                ex1 == ex2 && cl1 == cl2 && c1 == c2 && ef1 == ef2,
             (Value::Bottom(b1), Value::Bottom(b2)) => b1 == b2,
+            (Value::Blur(b1), Value::Blur(b2)) => b1 == b2,
+            (
+                Value::Range { start: s1, end: e1, step: st1 },
+                Value::Range { start: s2, end: e2, step: st2 },
+            ) => s1 == s2 && e1 == e2 && st1 == st2,
+            (Value::Ref(p1), Value::Ref(p2)) => p1 == p2,
             _ => false,
         }
     }
@@ -52,6 +75,7 @@ pub struct ComboVal {
     pub closed: bool,
     pub effect: EffectTag,
     pub relations: Vec<ValRelation>,
+    pub masa_ref: MasaRef,
     #[serde(skip, default = "default_cache_id")]
     pub cache_id: Arc<RwLock<Option<ContentHash>>>,
     #[serde(skip, default)]
@@ -72,6 +96,7 @@ impl Default for ComboVal {
             closed: false,
             effect: EffectTag::Pure,
             relations: vec![],
+            masa_ref: MasaRef::Top,
             cache_id: default_cache_id(),
             legacy_fields: IndexMap::new(),
             legacy_local: IndexMap::new(),
@@ -144,6 +169,13 @@ impl ComboVal {
         self.local.get(name_trimmed)
     }
 
+    pub fn is_pure_wrapper(&self) -> bool {
+        self.meta.contains_key("val")
+            && self.data.is_empty()
+            && self.types.is_empty()
+            && self.rules.is_empty()
+    }
+
     pub fn get_field_mut(&mut self, key: &str) -> Option<&mut Value> {
         let key_trimmed = key.trim();
         if key_trimmed.starts_with("~%") {
@@ -214,6 +246,23 @@ impl ComboVal {
         self.get_field(key).is_some()
     }
 
+    pub fn remove_field(&mut self, key: &str) {
+        let key_trimmed = key.trim();
+        if key_trimmed.starts_with("~%") {
+            self.system.shift_remove(&key_trimmed[2..]);
+        } else if key_trimmed.starts_with('/') {
+            self.rules.shift_remove(&key_trimmed[1..]);
+        } else if key_trimmed.starts_with('@') {
+            self.types.shift_remove(&key_trimmed[1..]);
+        } else if key_trimmed.starts_with('%') {
+            self.meta.shift_remove(&key_trimmed[1..]);
+        } else if key_trimmed.starts_with('~') {
+            self.local.shift_remove(&key_trimmed[1..]);
+        } else {
+            self.data.shift_remove(key_trimmed);
+        }
+    }
+
     pub fn bits(&self) -> u64 {
         let mut b = 64u64;
         for (k, v) in &self.data { b += (k.len() as u64) * 8 + v.bits(); }
@@ -235,7 +284,7 @@ impl PartialEq for ComboVal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RelOp { Lt, Gt, Lte, Gte }
+pub enum RelOp { Lt, Gt, Lte, Gte, Eq }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValRelation {
@@ -245,6 +294,12 @@ pub struct ValRelation {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Holonomy {
+    Phase(f64),
+    NegI,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct BottomDetail {
     pub cause: BottomCause, 
     pub path: Option<String>, 
@@ -252,18 +307,29 @@ pub struct BottomDetail {
     pub expected: Option<Value>,
     pub found: Option<Value>,
     pub involved: Vec<ContentHash>,
+    pub obstruction_degree: Option<u8>,
+    pub holonomy: Option<Holonomy>,
 }
 
 impl BottomDetail {
+    /// Construct a BottomDetail with default None for obstruction fields
+    pub fn new(cause: BottomCause, path: Option<String>, message: Option<String>,
+               expected: Option<Value>, found: Option<Value>, involved: Vec<ContentHash>) -> Self {
+        BottomDetail { cause, path, message, expected, found, involved, obstruction_degree: None, holonomy: None }
+    }
+
     pub fn bits(&self) -> u64 {
         let mut b = 128u64;
         if let Some(ref p) = self.path { b += (p.len() as u64) * 8; }
         if let Some(ref m) = self.message { b += (m.len() as u64) * 8; }
         b += (self.involved.len() as u64) * 256;
+        if self.obstruction_degree.is_some() { b += 64; }
+        if self.holonomy.is_some() { b += 64; }
         b
     }
 
     pub fn as_cause_combo(&self) -> Value {
+        use num_bigint::BigInt;
         let mut fields = IndexMap::new();
         let type_tag = match self.cause {
             BottomCause::Conflict => "#conflict",
@@ -275,6 +341,10 @@ impl BottomDetail {
             BottomCause::PrivateAccessViolation => "#private_access_violation",
             BottomCause::NumericalError => "#numerical_error",
             BottomCause::ArithmeticOnAnchor => "#arithmetic_on_anchor",
+            BottomCause::H1Split => "#h1_split",
+            BottomCause::H2Split => "#h2_split",
+            BottomCause::SemanticEclipse => "#semantic_eclipse",
+            BottomCause::NoContext => "#no_context",
         };
         fields.insert("%type".to_string(), Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None));
         if let Some(ref p) = self.path {
@@ -297,16 +367,152 @@ impl BottomDetail {
             involved_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
             fields.insert("%involved".to_string(), Value::Combo(ComboVal::new(involved_fields, false, IndexMap::new(), EffectTag::Pure, vec![])));
         }
+
+        // Phase NEW: cocycle format (SPEC_06 §1.3.2)
+        if let Some(degree) = self.obstruction_degree {
+            fields.insert("%degree".to_string(), Value::Atom(AtomKind::Int(BigInt::from(degree)), EffectTag::Pure, None));
+            let obs_tag = match degree { 1 => "h1_phase", 2 => "h2_sign", 3 => "h3_gerbe", 4 => "h4_sybil", _ => "unknown" };
+            fields.insert("%obstruction".to_string(), Value::Atom(AtomKind::Tag(obs_tag.to_string()), EffectTag::Pure, None));
+
+            // %cocycle: build from involved
+            if !self.involved.is_empty() {
+                let mut cyc = IndexMap::new();
+                cyc.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                for (i, h) in self.involved.iter().enumerate() {
+                    cyc.insert(i.to_string(), Value::Atom(AtomKind::Str(h.to_string()), EffectTag::Pure, None));
+                }
+                // H²: pad to 4 positions (spec requires 4-cycle)
+                if degree == 2 && self.involved.len() == 2 {
+                    cyc.insert("2".to_string(), Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None));
+                    cyc.insert("3".to_string(), Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None));
+                }
+                fields.insert("%cocycle".to_string(), Value::Combo(ComboVal::new(cyc, false, IndexMap::new(), EffectTag::Pure, vec![])));
+            }
+
+            // %holonomy
+            if let Some(ref h) = self.holonomy {
+                let hv = match h {
+                    Holonomy::Phase(theta) => Value::Atom(AtomKind::Float(*theta), EffectTag::Pure, None),
+                    Holonomy::NegI => Value::Atom(AtomKind::Tag("neg_I".to_string()), EffectTag::Pure, None),
+                };
+                fields.insert("%holonomy".to_string(), hv);
+            }
+
+            // %branches: H²
+            if degree == 2 {
+                fields.insert("%branches".to_string(), Value::Atom(AtomKind::Int(2u8.into()), EffectTag::Pure, None));
+            }
+        }
+
         Value::Combo(ComboVal::new(fields, true, IndexMap::new(), EffectTag::Pure, vec![]))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum BottomCause { Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum BottomCause { #[default] Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split, SemanticEclipse, NoContext }
+
+impl BottomCause {
+    pub fn as_tag(&self) -> &str {
+        match self {
+            BottomCause::Conflict => "conflict",
+            BottomCause::MissingKey => "missing_key",
+            BottomCause::FuelExhausted => "fuel_exhausted",
+            BottomCause::Timeout => "timeout",
+            BottomCause::Divergent => "divergent",
+            BottomCause::InvalidPath => "invalid_path",
+            BottomCause::PrivateAccessViolation => "private_access_violation",
+            BottomCause::NumericalError => "numerical_error",
+            BottomCause::ArithmeticOnAnchor => "arithmetic_on_anchor",
+            BottomCause::H1Split => "h1_split",
+            BottomCause::H2Split => "h2_split",
+            BottomCause::SemanticEclipse => "semantic_eclipse",
+            BottomCause::NoContext => "no_context",
+        }
+    }
+}
 
 impl From<BottomCause> for Value {
     fn from(cause: BottomCause) -> Self {
-        Value::Bottom(Box::new(BottomDetail { cause, path: None, message: None, expected: None, found: None, involved: vec![] }))
+        Value::Bottom(Box::new(BottomDetail { cause, path: None, message: None, expected: None, found: None, involved: vec![], obstruction_degree: None, holonomy: None }))
+    }
+}
+
+// ── ObservationStrategy (moved from observation.rs to break circular dep) ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ObservationStrategy {
+    Blur,
+    Strict,
+    Approximate,
+}
+
+impl Default for ObservationStrategy {
+    fn default() -> Self {
+        ObservationStrategy::Blur
+    }
+}
+
+// ── Blur types (Phase 9: first-class #blur) ──
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BlurCause {
+    FuelExhausted,
+    Timeout,
+    StackOverflow,
+    MathSingularity(String),
+}
+
+impl BlurCause {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            BlurCause::FuelExhausted => b"fuel_exhausted",
+            BlurCause::Timeout => b"timeout",
+            BlurCause::StackOverflow => b"stack_overflow",
+            BlurCause::MathSingularity(s) => s.as_bytes(),
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        match self {
+            BlurCause::FuelExhausted => "fuel_exhausted",
+            BlurCause::Timeout => "timeout",
+            BlurCause::StackOverflow => "stack_overflow",
+            BlurCause::MathSingularity(s) => s.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HorizonParams {
+    pub fuel_remaining: u64,
+    pub strategy: ObservationStrategy,
+    pub salt: ContentHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlurDetail {
+    pub cause: BlurCause,
+    pub horizon: HorizonParams,
+    pub partial: Option<Box<Value>>,
+    pub effect: EffectTag,
+}
+
+impl BlurDetail {
+    pub fn blur_caid(&self) -> ContentHash {
+        let mut hasher = Sha256::new();
+        hasher.update(b"blur:");
+        hasher.update(self.cause.as_bytes());
+        hasher.update(b":fuel=");
+        hasher.update(&self.horizon.fuel_remaining.to_le_bytes());
+        hasher.update(b":strategy=");
+        let strat_byte: u8 = match self.horizon.strategy {
+            ObservationStrategy::Blur => 0,
+            ObservationStrategy::Strict => 1,
+            ObservationStrategy::Approximate => 2,
+        };
+        hasher.update(&[strat_byte]);
+        hasher.update(b":salt=");
+        hasher.update(&self.horizon.salt.digest);
+        ContentHash::v1(hasher.finalize().to_vec())
     }
 }
 
@@ -314,31 +520,119 @@ impl From<BottomCause> for Value {
 pub enum HashAlgorithm { Sha256 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ContentHash { pub algorithm: HashAlgorithm, pub digest: Vec<u8> }
+pub enum CaidVersion { V1, V2 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MasaRef {
+    Top,
+    Digest(Vec<u8>),
+}
+
+impl fmt::Display for MasaRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MasaRef::Top => write!(f, "_"),
+            MasaRef::Digest(d) => write!(f, "{}", hex::encode(d)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ContentHash {
+    pub algorithm: HashAlgorithm,
+    pub version: CaidVersion,
+    pub masa_ref: MasaRef,
+    pub lattice_sketch: String,
+    pub digest: Vec<u8>,
+}
 
 impl fmt::Display for ContentHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "hash:sha256:{}", hex::encode(&self.digest))
+        let algo = "sha256";
+        let digest_hex = hex::encode(&self.digest);
+        match self.version {
+            CaidVersion::V1 => write!(f, "hash:{}:v1:{}", algo, digest_hex),
+            CaidVersion::V2 => write!(f, "hash:{}:v2:{}:{}:{}", algo, self.masa_ref, self.lattice_sketch, digest_hex),
+        }
     }
 }
 
 impl ContentHash {
+    /// Convenience constructor for internal hashing (v1 format, Top MASA)
+    pub fn v1(digest: Vec<u8>) -> Self {
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V1,
+            masa_ref: MasaRef::Top,
+            lattice_sketch: String::new(),
+            digest,
+        }
+    }
+
     pub fn parse(s: &str) -> anyhow::Result<Self> {
         let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 3 || parts[0] != "hash" || parts[1] != "sha256" { return Err(anyhow::anyhow!("Invalid CAID format")); }
-        let digest = hex::decode(parts[2])?;
-        Ok(ContentHash { algorithm: HashAlgorithm::Sha256, digest })
+        if parts.len() < 4 || parts[0] != "hash" || parts[1] != "sha256" {
+            return Err(anyhow::anyhow!("Invalid CAID format"));
+        }
+        match parts[2] {
+            "v1" => Ok(ContentHash {
+                algorithm: HashAlgorithm::Sha256,
+                version: CaidVersion::V1,
+                masa_ref: MasaRef::Top,
+                lattice_sketch: String::new(),
+                digest: hex::decode(parts[3])?,
+            }),
+            "v2" => {
+                if parts.len() < 6 {
+                    return Err(anyhow::anyhow!("Invalid v2 CAID: needs 6 colon-delimited parts"));
+                }
+                let masa_ref = if parts[3] == "_" { MasaRef::Top } else { MasaRef::Digest(hex::decode(parts[3])?) };
+                Ok(ContentHash {
+                    algorithm: HashAlgorithm::Sha256,
+                    version: CaidVersion::V2,
+                    masa_ref,
+                    lattice_sketch: parts[4].to_string(),
+                    digest: hex::decode(parts[5])?,
+                })
+            }
+            _ => Err(anyhow::anyhow!("Unknown CAID version: {}", parts[2])),
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommitMeta { pub author: Option<String>, pub timestamp: u64, pub message: Option<String> }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitKind { Refine, #[serde(other)] Standard }
+impl Default for CommitKind { fn default() -> Self { Self::Standard } }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthorityInfo {
+    pub signer_pubkey_hex: String,
+    pub signature_hex: String,
+    pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RefineInfo {
+    pub source_caids: Vec<ContentHash>,
+    pub target_caids: Vec<ContentHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<AuthorityInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadow_affected: Vec<ContentHash>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commit {
     pub parent: Option<ContentHash>,
     pub root: ContentHash,
     pub meta: CommitMeta,
+    #[serde(default)]
+    pub kind: CommitKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_info: Option<RefineInfo>,
     #[serde(skip, default = "default_cache_id")]
     pub cache_id: Arc<RwLock<Option<ContentHash>>>,
 }
@@ -347,8 +641,10 @@ impl Default for Commit {
     fn default() -> Self {
         Self {
             parent: None,
-            root: ContentHash { algorithm: HashAlgorithm::Sha256, digest: vec![0; 32] },
+            root: ContentHash::v1(vec![0; 32]),
             meta: CommitMeta { author: None, timestamp: 0, message: None },
+            kind: CommitKind::Standard,
+            refine_info: None,
             cache_id: default_cache_id(),
         }
     }
@@ -357,12 +653,13 @@ impl Default for Commit {
 impl PartialEq for Commit {
     fn eq(&self, other: &Self) -> bool {
         self.parent == other.parent && self.root == other.root && self.meta == other.meta
+            && self.kind == other.kind && self.refine_info == other.refine_info
     }
 }
 
 impl Commit {
     pub fn new(parent: Option<ContentHash>, root: ContentHash, meta: CommitMeta) -> Self {
-        Self { parent, root, meta, cache_id: default_cache_id() }
+        Self { parent, root, meta, kind: CommitKind::Standard, refine_info: None, cache_id: default_cache_id() }
     }
 }
 
@@ -393,12 +690,22 @@ impl Value {
                 AtomKind::TagStart | AtomKind::TagEnd => 32,
                 AtomKind::Top => 0,
                 AtomKind::Bottom => 128,
+                AtomKind::Bytes(b) => (b.len() as u64) * 8,
                 _ => 128,
             },
             Value::Combo(c) => c.bits(),
             Value::Union(branches) => branches.iter().map(|b| b.bits()).sum(),
             Value::Code(_) | Value::Thunk { .. } => 256,
             Value::Bottom(d) => d.bits(),
+            Value::Ref(_) => 64,
+            Value::Blur(bd) => {
+                128 + bd.partial.as_ref().map(|p| p.bits()).unwrap_or(0)
+            },
+            Value::Range { start, end, step } => {
+                start.bits()
+                    + end.bits()
+                    + step.as_ref().map(|s| s.bits()).unwrap_or(0)
+            }
         }
     }
 
@@ -407,19 +714,37 @@ impl Value {
             Value::Top => 0,
             Value::Bottom(_) => TROPICAL_INFINITY,
             Value::Atom(_, _, _) => 1,
-            Value::Thunk { .. } | Value::Code(_) => 1,
+            Value::Thunk { .. } | Value::Code(_) | Value::Ref(_) | Value::Range { .. } => 1,
             Value::Union(branches) => branches.iter().map(|b| b.tropical_weight()).min().unwrap_or(TROPICAL_INFINITY),
             Value::Combo(c) => c.all_fields_iter().map(|(_, v)| v.tropical_weight()).fold(0u64, |acc, w| acc.saturating_add(w)),
+            Value::Blur(_) => 64,
         }
     }
 
     pub fn is_top(&self) -> bool { matches!(self, Value::Top) }
+
+    /// True if the value embeds any Blur (fuel-horizon partial) — such values
+    /// are observation-relative and must not enter horizon-blind caches
+    /// (GUIDE_03 §2A.1: cache keys lack horizon params, so only exact results
+    /// may be memoized). Thunks count as exact: unevaluated, not partial.
+    pub fn contains_blur(&self) -> bool {
+        match self {
+            Value::Blur(_) => true,
+            Value::Combo(cv) => {
+                cv.data.values().chain(cv.types.values()).chain(cv.rules.values())
+                    .chain(cv.meta.values()).chain(cv.system.values()).chain(cv.local.values())
+                    .any(|v| v.contains_blur())
+            }
+            Value::Union(branches) => branches.iter().any(|b| b.contains_blur()),
+            _ => false,
+        }
+    }
     pub fn with_effect(self, e: EffectTag) -> Self {
         match self {
             Value::Atom(ak, old_e, r) => Value::Atom(ak, old_e.max(e), r),
             Value::Combo(mut cv) => { cv.effect = cv.effect.max(e); Value::Combo(cv) },
             Value::Union(branches) => Value::Union(branches.into_iter().map(|b| b.with_effect(e)).collect()),
-            Value::Thunk { expr, closure, effect } => Value::Thunk { expr, closure, effect: effect.max(e) },
+            Value::Thunk { expr, closure, context, effect } => Value::Thunk { expr, closure, context, effect: effect.max(e) },
             _ => self
         }
     }
@@ -439,19 +764,32 @@ impl Value {
         match self { 
             Value::Combo(c) => c.effect, 
             Value::Atom(_, e, None) => *e,
+            Value::Atom(_, e, Some(_)) => *e,
             Value::Thunk { effect, .. } => *effect, 
             Value::Union(b) => b.iter().map(|v| v.effect()).max().unwrap_or(EffectTag::Pure), 
+            Value::Blur(bd) => bd.effect,
+            Value::Range { start, end, step } => {
+                let mut e = start.effect().max(end.effect());
+                if let Some(s) = step {
+                    e = e.max(s.effect());
+                }
+                e
+            }
             _ => EffectTag::Pure 
         }
     }
-    pub fn collapse(&self) -> &Value { match self { Value::Combo(c) => c.get_field("%val").map(|v| v.collapse()).unwrap_or(self), _ => self } }
+    pub fn collapse(&self) -> &Value { match self { Value::Combo(c) if c.is_pure_wrapper() => c.get_field("%val").map(|v| v.collapse()).unwrap_or(self), _ => self } }
     
     pub fn collapse_with_effect(&self) -> (Value, EffectTag) {
         match self {
             Value::Combo(c) => {
-                if let Some(v) = c.get_field("%val") {
-                    let (inner, inner_e) = v.collapse_with_effect();
-                    (inner, inner_e.max(c.effect))
+                if c.is_pure_wrapper() {
+                    if let Some(v) = c.get_field("%val") {
+                        let (inner, inner_e) = v.collapse_with_effect();
+                        (inner, inner_e.max(c.effect))
+                    } else {
+                        (self.clone(), c.effect)
+                    }
                 } else {
                     (self.clone(), c.effect)
                 }
@@ -462,6 +800,7 @@ impl Value {
                 let max_e = branches.iter().map(|b| b.effect()).max().unwrap_or(EffectTag::Pure);
                 (self.clone(), max_e)
             }
+            Value::Blur(bd) => (self.clone(), bd.effect),
             _ => (self.clone(), EffectTag::Pure),
         }
     }
@@ -481,12 +820,21 @@ impl Value {
                 AtomKind::TagEnd => "#_".to_string(),
                 AtomKind::Top => "_".to_string(),
                 AtomKind::Bottom => "_|_".to_string(),
-                _ => format!("{:?}", kind) 
+                AtomKind::Bytes(b) => format!("b\"{:?}\"", b),
+                _ => format!("{:?}", kind),
             },
             Value::Top => "_".to_string(),
             Value::Bottom(d) => format!("_|_ (%cause: {:?})", d.cause),
-            Value::Combo(c) => { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } "{...}".to_string() }
+            Value::Combo(c) => { if c.is_pure_wrapper() { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } } "{...}".to_string() }
             Value::Union(_) => "(...|...)".to_string(),
+            Value::Blur(bd) => format!("#blur({})", bd.cause.as_str()),
+            Value::Range { start, end, step } => {
+                let mut s = format!("{}..{}", start.to_string_plain(), end.to_string_plain());
+                if let Some(st) = step {
+                    s.push_str(&format!("..{}", st.to_string_plain()));
+                }
+                s
+            }
             _ => format!("{:?}", self),
         }
     }
@@ -507,6 +855,7 @@ impl Value {
                     AtomKind::Tag(t) => format!("#{}", t),
                     AtomKind::TagStart => "#_|_".to_string(),
                     AtomKind::TagEnd => "#_".to_string(),
+                    AtomKind::Bytes(b) => format!("b\"{:?}\"", b),
                     _ => format!("{:?}", kind),
                 };
                 if let Some(r) = rank { s.push_str(&format!("  ;; %rank: {}", r)); }
@@ -536,6 +885,18 @@ impl Value {
             }
             Value::Union(branches) => { let parts: Vec<String> = branches.iter().map(|b| b.to_nlang(indent)).collect(); parts.join(" | ") }
             Value::Bottom(d) => { let mut s = "_|_".to_string(); if let Some(ref m) = d.message { s.push_str(&format!("  ;; {}", m)); } s }
+            Value::Blur(bd) => {
+                let caid = bd.blur_caid().to_string();
+                format!("#blur {{ %cause: #{}, %caid: \"{}\" }}", bd.cause.as_str(), caid)
+            }
+            // Canonical print: `a..b` / `a..b..s`, no spaces (range_eval probes).
+            Value::Range { start, end, step } => {
+                let mut s = format!("{}..{}", start.to_nlang(0), end.to_nlang(0));
+                if let Some(st) = step {
+                    s.push_str(&format!("..{}", st.to_nlang(0)));
+                }
+                s
+            }
             _ => format!("{:?}", self),
         }
     }
@@ -544,17 +905,35 @@ impl Value {
         let mut hasher = Sha256::new(); 
         if self.effect() > EffectTag::Pure { hasher.update(b"HORIZON_SALT_V1"); hasher.update(&salt.digest); }
         self.hash_recursive_with_salt(&mut hasher, salt);
-        ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() }
+        ContentHash::v1(hasher.finalize().to_vec())
     }
     
     pub fn content_hash(&self) -> ContentHash {
-        match self {
-            Value::Combo(c) => c.content_hash(),
-            _ => {
-                let mut hasher = Sha256::new();
-                self.hash_recursive_with_salt(&mut hasher, &ContentHash { algorithm: HashAlgorithm::Sha256, digest: vec![] });
-                ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() }
-            }
+        let _bn_bytes = crate::bn_serial::serialize_bn(self);
+        let digest = crate::bn_serial::content_digest(self);
+        let sketch = crate::lattice_sketch::compute_sketch_v2(self);
+        let masa_ref = match self {
+            Value::Combo(c) => c.masa_ref.clone(),
+            _ => MasaRef::Top,
+        };
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V2,
+            masa_ref,
+            lattice_sketch: sketch,
+            digest: digest.to_vec(),
+        }
+    }
+
+    /// v1 format for genesis commit only
+    pub fn content_hash_v1(&self) -> ContentHash {
+        let digest = crate::bn_serial::content_digest(self);
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V1,
+            masa_ref: MasaRef::Top,
+            lattice_sketch: String::new(),
+            digest: digest.to_vec(),
         }
     }
 
@@ -586,6 +965,7 @@ impl Value {
                     AtomKind::Tag(t) => { hasher.update([0x03]); hasher.update(t.as_bytes()); }
                     AtomKind::TagStart => { hasher.update([0x04]); }
                     AtomKind::TagEnd => { hasher.update([0x05]); }
+                    AtomKind::Bytes(b) => { hasher.update([0x09]); hasher.update(b); }
                     _ => { hasher.update([0x06]); hasher.update(format!("{:?}", kind).as_bytes()); }
                 }
                 if let Some(r) = rank { hasher.update(r.to_le_bytes()); }
@@ -619,52 +999,92 @@ impl Value {
                 for d in digests { hasher.update(&d); }
             }
             Value::Bottom(d) => { hasher.update([0x04]); hasher.update([d.cause as u8]); }
-            Value::Thunk { expr, .. } => { hasher.update([0x05]); hasher.update(format!("{:?}", expr).as_bytes()); }
+            Value::Blur(bd) => {
+                hasher.update([0xFD]);
+                hasher.update(bd.cause.as_bytes());
+                hasher.update(&bd.horizon.fuel_remaining.to_le_bytes());
+                hasher.update(&bd.horizon.salt.digest);
+            }
+            Value::Thunk { expr, closure, context, effect } => {
+                // GUIDE_03 §11.3 memo key: (expr CAID, frame CAID, context CAID | #open).
+                // Must be deterministic and evaluation-independent.
+                hasher.update([0x05]);
+                // expr: canonical serialization (to_nlang) rather than Debug format,
+                // so structurally-equivalent exprs hash identically regardless of
+                // internal span/field-order differences that canonicalize() resolves.
+                hasher.update(expr.to_nlang(0).as_bytes());
+                // frame (closure scopes): hash each ComboVal in the scope stack.
+                hasher.update(b"|frame:");
+                for cv in closure.iter() {
+                    let cv_hash = Value::Combo(cv.clone()).content_hash();
+                    hasher.update(&cv_hash.digest);
+                }
+                // context: None = open term (#open); Some(v) = v's content hash.
+                match context {
+                    None => hasher.update(b"|#open"),
+                    Some(v) => {
+                        hasher.update(b"|ctx:");
+                        let ch = v.content_hash();
+                        hasher.update(&ch.digest);
+                    }
+                }
+                hasher.update(&[*effect as u8]);
+            }
             Value::Code(expr) => { hasher.update([0x06]); hasher.update(format!("{:?}", expr).as_bytes()); }
+            Value::Ref(path) => {
+                hasher.update([0x07]);
+                match path.anchor {
+                    PathAnchor::Bare => hasher.update([0x00]),
+                    PathAnchor::Root => hasher.update([0x01]),
+                    PathAnchor::Parent(n) => { hasher.update([0x02]); hasher.update(&n.to_le_bytes()); }
+                    PathAnchor::Current => hasher.update([0x03]),
+                }
+                // length-delimited: <<a.bc>> and <<ab.c>> are different geometry
+                // and must not collide (CAID equality drives lazy-unify early-out)
+                for seg in &path.segments {
+                    hasher.update((seg.len() as u64).to_le_bytes());
+                    hasher.update(seg.as_bytes());
+                }
+            }
+            Value::Range { start, end, step } => {
+                hasher.update([0x08]);
+                start.hash_recursive_with_salt(hasher, salt);
+                end.hash_recursive_with_salt(hasher, salt);
+                match step {
+                    None => hasher.update([0x00]),
+                    Some(s) => {
+                        hasher.update([0x01]);
+                        s.hash_recursive_with_salt(hasher, salt);
+                    }
+                }
+            }
         }
     }
 }
 
 impl ComboVal {
     pub fn content_hash(&self) -> ContentHash {
-        if let Ok(cache) = self.cache_id.read() {
-            if let Some(h) = &*cache { return h.clone(); }
-        }
-        let mut hasher = Sha256::new();
-        hasher.update([0x02]);
-        hasher.update([if self.closed { 1 } else { 0 }]);
-        hasher.update([self.effect as u8]);
-        let fields = self.fields();
-        let mut keys: Vec<_> = fields.keys().collect(); keys.sort();
-        for k in keys {
-            hasher.update(k.as_bytes());
-            hasher.update(&fields.get(k).unwrap().content_hash().digest);
-        }
-        let local = self.local_fields();
-        let mut lkeys: Vec<_> = local.keys().collect();
-        lkeys.sort();
-        for k in lkeys {
-            hasher.update(b"local:");
-            hasher.update(k.as_bytes());
-            hasher.update(&local.get(k).unwrap().content_hash().digest);
-        }
-        let res = ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() };
-        if let Ok(mut cache) = self.cache_id.write() { *cache = Some(res.clone()); }
-        res
+        let v = Value::Combo(self.clone());
+        v.content_hash()
     }
 }
 
 impl Commit {
     pub fn content_hash(&self) -> ContentHash {
-        if let Ok(cache) = self.cache_id.read() {
-            if let Some(h) = &*cache { return h.clone(); }
+        let mut buf = Vec::new();
+        if let Some(p) = &self.parent {
+            buf.extend_from_slice(&p.digest);
         }
-        let mut hasher = Sha256::new();
-        if let Some(p) = &self.parent { hasher.update(&p.digest); }
-        hasher.update(&self.root.digest);
-        hasher.update(format!("{:?}", self.meta).as_bytes());
-        let res = ContentHash { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() };
-        if let Ok(mut cache) = self.cache_id.write() { *cache = Some(res.clone()); }
-        res
+        buf.extend_from_slice(&self.root.digest);
+        buf.push(match self.kind { CommitKind::Standard => 0, CommitKind::Refine => 1 });
+        if let Some(ref ri) = self.refine_info {
+            for src in &ri.source_caids { buf.extend_from_slice(&src.digest); }
+            for tgt in &ri.target_caids { buf.extend_from_slice(&tgt.digest); }
+        }
+        let meta_bytes = format!("{:?}", self.meta);
+        crate::bn_serial::encode_unsigned_leb128(meta_bytes.len() as u64, &mut buf);
+        buf.extend_from_slice(meta_bytes.as_bytes());
+        let digest = Sha256::digest(&buf).to_vec();
+        ContentHash::v1(digest)
     }
 }

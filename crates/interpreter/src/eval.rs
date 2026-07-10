@@ -59,47 +59,174 @@ impl Ouroboros {
     fn compute_ranks(&self, relations: &[ValRelation]) -> HashMap<String, i64> {
         let mut adj = HashMap::new();
         let mut nodes = HashSet::new();
+        let mut eqs: Vec<(String, String)> = Vec::new();
+        let mut has_incoming = HashSet::new();
         for r in relations {
             nodes.insert(r.left.clone());
             nodes.insert(r.right.clone());
             match r.op {
                 ValRelOp::Lt | ValRelOp::Lte => {
                     adj.entry(r.left.clone()).or_insert(Vec::new()).push(r.right.clone());
+                    has_incoming.insert(r.right.clone());
                 }
                 ValRelOp::Gt | ValRelOp::Gte => {
                     adj.entry(r.right.clone()).or_insert(Vec::new()).push(r.left.clone());
+                    has_incoming.insert(r.left.clone());
                 }
+                ValRelOp::Eq => eqs.push((r.left.clone(), r.right.clone())),
             }
         }
         let mut ranks = HashMap::new();
         let start_node = "#_|_".to_string();
+        let mut queue = VecDeque::new();
         if nodes.contains(&start_node) {
-            let mut queue = VecDeque::new();
             queue.push_back((start_node.clone(), 0i64));
             ranks.insert(start_node, 0);
-            while let Some((u, r)) = queue.pop_front() {
-                if let Some(neighbors) = adj.get(&u) {
-                    for v in neighbors {
-                        let new_r = r + 1;
-                        let cur_r = ranks.entry(v.clone()).or_insert(new_r);
-                        if new_r > *cur_r { *cur_r = new_r; }
-                        queue.push_back((v.clone(), *cur_r));
-                    }
+        } else {
+            // implicit boxing (SYNTAX_10 §4.7): #_|_ <= every member — seed the sources at rank 1
+            for n in &nodes {
+                if !has_incoming.contains(n) {
+                    queue.push_back((n.clone(), 1i64));
+                    ranks.insert(n.clone(), 1);
+                }
+            }
+        }
+        while let Some((u, r)) = queue.pop_front() {
+            if let Some(neighbors) = adj.get(&u) {
+                for v in neighbors {
+                    let new_r = r + 1;
+                    let cur_r = ranks.entry(v.clone()).or_insert(new_r);
+                    if new_r > *cur_r { *cur_r = new_r; }
+                    queue.push_back((v.clone(), *cur_r));
+                }
+            }
+        }
+        // same-rank declarations (`=`): propagate known ranks across eq pairs
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (a, b) in &eqs {
+                match (ranks.get(a).copied(), ranks.get(b).copied()) {
+                    (Some(ra), None) => { ranks.insert(b.clone(), ra); changed = true; }
+                    (None, Some(rb)) => { ranks.insert(a.clone(), rb); changed = true; }
+                    _ => {}
                 }
             }
         }
         ranks
     }
 
+    // Element-position evaluation with spread splicing (ENGINE_SYNC #17;
+    // SPEC_03 §3.1 / SYNTAX_04 §4.8): `[...xs, y]` splices the numeric-keyed
+    // public fields of xs in index order, reindexed into the target. Unboxing
+    // discards the shell and releases inner effect tags; values with no
+    // numeric-keyed fields (atoms, Top — no shell to discard) contribute
+    // nothing; a Bottom spread source collapses the whole container.
+    fn eval_elements(&self, items: &[Expr], ctx: &mut EvalContext) -> std::result::Result<(IndexMap<String, Value>, EffectTag), Value> {
+        let mut res = IndexMap::new();
+        let mut me = EffectTag::Pure;
+        let mut idx = 0usize;
+        for item in items {
+            if let ExprKind::Spread(inner) = &item.kind {
+                let sv = self.force(self.eval(inner, ctx), ctx);
+                // both bottom representations collapse the container:
+                // runtime Value::Bottom (with cause) and the literal _|_ atom
+                if matches!(sv, Value::Bottom(_)) || matches!(sv, Value::Atom(AtomKind::Bottom, _, _)) {
+                    return Err(sv);
+                }
+                me = me.max(sv.effect());
+                if let Value::Combo(cv) = sv {
+                    let mut keys: Vec<usize> = cv.data.keys().filter_map(|k| k.parse::<usize>().ok()).collect();
+                    keys.sort_unstable();
+                    for k in keys {
+                        if let Some(v) = cv.data.get(&k.to_string()) {
+                            me = me.max(v.effect());
+                            res.insert(idx.to_string(), v.clone());
+                            idx += 1;
+                        }
+                    }
+                }
+                continue;
+            }
+            let val = self.eval(item, ctx);
+            me = me.max(val.effect());
+            res.insert(idx.to_string(), val);
+            idx += 1;
+        }
+        Ok((res, me))
+    }
+
+    // One pipe step for a single (non-superposed) input value: binds $ := lv,
+    // evaluates the RHS, then dispatches on its form — morphism application
+    // (with list functor-lifting fallback), transformer merge, or passthrough.
+    fn pipe_apply(&self, lv: Value, r: &Expr, ctx: &mut EvalContext) -> Value {
+        let mut call_ctx = self.sub_context(ctx);
+        call_ctx.context_value = Some(lv.clone());
+        let rv = self.eval(r, &mut call_ctx);
+        ctx.fuel = call_ctx.fuel;
+        if rv.is_morphism() {
+            let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
+            if matches!(res, Value::Bottom(_) | Value::Top) {
+                if let Value::Combo(ref cv) = lv {
+                    if self.is_list(&lv, ctx) {
+                        let mut res_fields = IndexMap::new();
+                        let mut max_e = lv.effect();
+                        let mut lifted = false;
+                        for (k, v) in &cv.fields() {
+                            if k.parse::<usize>().is_ok() {
+                                let item = self.force(v.clone(), ctx);
+                                let item_res = self.apply_morphism(rv.clone(), item, ctx);
+                                if !matches!(item_res, Value::Bottom(_)) {
+                                    let solidified = self.force_recursive(item_res, ctx);
+                                    max_e = max_e.max(solidified.effect());
+                                    res_fields.insert(k.clone(), solidified);
+                                    lifted = true;
+                                }
+                            } else {
+                                res_fields.insert(k.clone(), v.clone());
+                            }
+                        }
+                        if lifted {
+                            res_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                            return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), max_e, vec![]));
+                        }
+                    }
+                }
+            }
+            res
+        } else if let Value::Combo(rc) = rv {
+            // Stage 2 (§3.3): the transformer arm must unify with call_ctx, not
+            // the outer ctx. In the eager era this was immaterial; with lazy unify,
+            // thunks forced mid-merge must bind `$` to the pipe input (P3: nearest
+            // enclosing evolution), not the observer's context. call_ctx.context_value
+            // was set to lv above (line 164).
+            let res = self.unify_internal(lv, Value::Combo(rc), &mut call_ctx);
+            ctx.fuel = call_ctx.fuel;
+            res
+        } else {
+            // atomic collapse (SPEC_07 §4.1 form 3): forced intersection with
+            // the RHS value — was a passthrough that discarded the input
+            // (`5 |> #ok` returned #ok instead of _|_; ENGINE_SYNC #18)
+            self.unify_internal(lv, rv, ctx)
+        }
+    }
+
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         if let Err(e) = ctx.check_resources(1) {
-            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, EffectTag::Pure);
+            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
         }
         match &expr.kind {
-            ExprKind::Atom(kind) => Value::Atom(kind.clone(), EffectTag::Pure, None),
+            ExprKind::Atom(kind) => match kind.clone() {
+                // Dual of Top (04df5c4): lattice bottom is Value::Bottom, not
+                // Atom(AtomKind::Bottom). Declared empty uses Conflict cause —
+                // same object as empty AnonSet `@{}` (eval wildcard → Conflict).
+                AtomKind::Top => Value::Top,
+                AtomKind::Bottom => BottomCause::Conflict.into(),
+                k => Value::Atom(k, EffectTag::Pure, None),
+            },
             ExprKind::Combo { fields, relations, closed } => {
                 if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, EffectTag::Pure);
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
                 }
                 let mut rf = IndexMap::new();
                 let mut rl = IndexMap::new();
@@ -115,6 +242,7 @@ impl Ouroboros {
                             nlang_parser::ast::RelOp::Gt => ValRelOp::Gt,
                             nlang_parser::ast::RelOp::Lte => ValRelOp::Lte,
                             nlang_parser::ast::RelOp::Gte => ValRelOp::Gte,
+                            nlang_parser::ast::RelOp::Eq => ValRelOp::Eq,
                         },
                         right: rt.clone(),
                     });
@@ -134,7 +262,7 @@ impl Ouroboros {
                         FieldKey::Named { name, prefix } => {
                             let is_p = matches!(prefix, Some(Prefix::Private));
                             let te = self.predict_effect(&f.value, ctx);
-                            let mut val = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), effect: te };
+                            let mut val = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
                             if matches!(prefix, Some(Prefix::Logic)) {
                                 val = Value::Combo(ComboVal::new(
                                     IndexMap::from_iter(vec![
@@ -159,7 +287,7 @@ impl Ouroboros {
                         }
                         FieldKey::Quoted(name) => {
                             let te = self.predict_effect(&f.value, ctx);
-                            let thunk = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), effect: te };
+                            let thunk = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
                             if !*closed { me = me.max(te); }
                             rf.insert(name.trim().to_string(), thunk);
                         }
@@ -167,7 +295,7 @@ impl Ouroboros {
                             let pk = self.eval(pe, ctx).to_string_plain().trim().to_string();
                             let te = self.predict_effect(&f.value, ctx);
                             let rb = Value::Combo(ComboVal::new(
-                                IndexMap::from_iter(vec![("%val".to_string(), Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), effect: te })]),
+                                IndexMap::from_iter(vec![("%val".to_string(), Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te })]),
                                 true,
                                 IndexMap::new(),
                                 te,
@@ -177,8 +305,20 @@ impl Ouroboros {
                             rf.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
                         }
                         FieldKey::Path(p) => {
-                            let val = self.eval(&f.value, ctx);
-                            if !*closed { me = me.max(val.effect()); }
+                            // Stage 2 (call-by-observation): build a Thunk carrying the
+                            // current ctx.context_value (P1 binding) and scopes. In a
+                            // closed (cocoon) context, force immediately — cocoon is a
+                            // solidification boundary (GUIDE_03 §11.5). In an open combo,
+                            // leave the thunk lazy — evolve stores it, observe forces it.
+                            let te = self.predict_effect(&f.value, ctx);
+                            let thunk = Value::Thunk {
+                                expr: Box::new(f.value.clone()),
+                                closure: ctx.scopes.clone(),
+                                context: ctx.context_value.clone().map(Box::new),
+                                effect: te,
+                            };
+                            let val = if *closed { self.force(thunk, ctx) } else { thunk };
+                            if !*closed { me = me.max(te); } else { me = me.max(val.effect()); }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
                             let _ = self.inject_path(&mut tmp, &p.segments, val);
                             rf.extend(tmp.fields());
@@ -208,7 +348,7 @@ impl Ouroboros {
             ExprKind::Path(p) => self.resolve_path(p, ctx),
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(5) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, None, EffectTag::Pure);
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
                 }
                 let fv = self.eval(f, ctx);
                 let av = self.eval(a, ctx);
@@ -217,45 +357,24 @@ impl Ouroboros {
             ExprKind::Pipe(l, r) => {
                 let lv = self.eval(l, ctx);
                 if let Value::Bottom(_) = lv { return lv; }
-                let mut call_ctx = self.sub_context(ctx);
-                call_ctx.context_value = Some(lv.clone());
-                let rv = self.eval(r, &mut call_ctx);
-                ctx.fuel = call_ctx.fuel;
-                if rv.is_morphism() {
-                    let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
-                    if matches!(res, Value::Bottom(_) | Value::Top) {
-                        if let Value::Combo(ref cv) = lv {
-                            if self.is_list(&lv, ctx) {
-                                let mut res_fields = IndexMap::new();
-                                let mut max_e = lv.effect();
-                                let mut lifted = false;
-                                for (k, v) in &cv.fields() {
-                                    if k.parse::<usize>().is_ok() {
-                                        let item = self.force(v.clone(), ctx);
-                                        let item_res = self.apply_morphism(rv.clone(), item, ctx);
-                                        if !matches!(item_res, Value::Bottom(_)) {
-                                            let solidified = self.force_recursive(item_res, ctx);
-                                            max_e = max_e.max(solidified.effect());
-                                            res_fields.insert(k.clone(), solidified);
-                                            lifted = true;
-                                        }
-                                    } else {
-                                        res_fields.insert(k.clone(), v.clone());
-                                    }
-                                }
-                                if lifted {
-                                    res_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                                    return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), max_e, vec![]));
-                                }
-                            }
+                // bind additivity (SPEC_07 §4 疊加態平等演化; ENGINE_SYNC #18):
+                // a superposed input evolves branchwise with its OWN $ binding —
+                // (A|B) |> f ≡ (A|>f) | (B|>f); ⊥ branches prune (| identity)
+                if let Value::Union(branches) = lv {
+                    let mut out = Vec::new();
+                    for b in branches {
+                        let res = self.pipe_apply(b, r, ctx);
+                        if !matches!(res, Value::Bottom(_)) && !matches!(res, Value::Atom(AtomKind::Bottom, _, _)) {
+                            out.push(res);
                         }
                     }
-                    return res;
-                } else if let Value::Combo(rc) = rv {
-                    self.unify_internal(lv, Value::Combo(rc), ctx)
-                } else {
-                    rv
+                    return match out.len() {
+                        0 => BottomCause::Conflict.into(),
+                        1 => out.into_iter().next().unwrap(),
+                        _ => Value::Union(out),
+                    };
                 }
+                self.pipe_apply(lv, r, ctx)
             }
             ExprKind::Morphism { param, body } => {
                 let pk = match &param.kind {
@@ -283,7 +402,17 @@ impl Ouroboros {
                 fields.insert("%rules".to_string(), Value::Combo(ComboVal::new(rules, true, IndexMap::new(), te, vec![])));
                 Value::Combo(ComboVal::new(fields, true, IndexMap::new(), te, vec![]))
             }
-            ExprKind::Context => ctx.context_value.clone().unwrap_or(Value::Top),
+            // $ rules P1-P5 (SPEC_07 §4.2, 2026-07-05): bound only at evolution
+            // boundaries (pipe / morphism application); a free $ observed without
+            // an enclosing evolution collapses to _|_ #no_context (P3)
+            ExprKind::Context => match &ctx.context_value {
+                Some(v) => v.clone(),
+                None => Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::NoContext,
+                    message: Some("free `$` observed without an enclosing evolution (P3)".to_string()),
+                    ..Default::default()
+                })),
+            },
             ExprKind::Ternary { cond, then_branch, else_branch } => {
                 let cv = self.eval(cond, ctx).collapse().clone();
                 match cv {
@@ -326,15 +455,13 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             ExprKind::Lte(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Lte),
             ExprKind::Gte(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Gte),
             ExprKind::List(items) => {
-                let mut res = IndexMap::new();
-                let mut me = EffectTag::Pure;
-                for (i, item) in items.iter().enumerate() {
-                    let val = self.eval(item, ctx);
-                    me = me.max(val.effect());
-                    res.insert(i.to_string(), val);
+                match self.eval_elements(items, ctx) {
+                    Err(bottom) => bottom,
+                    Ok((mut res, me)) => {
+                        res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                        Value::Combo(ComboVal::new(res, false, IndexMap::new(), me, vec![]))
+                    }
                 }
-                res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                Value::Combo(ComboVal::new(res, false, IndexMap::new(), me, vec![]))
             }
             ExprKind::Lens(obj, key) => {
                 let ov = self.eval(obj, ctx);
@@ -358,7 +485,17 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
                 Value::Atom(AtomKind::Str(res), max_e, None)
             }
-            ExprKind::Structural(e) => self.eval(e, ctx),
+            ExprKind::Structural(e) => {
+                // Stage 3 (§3a): structural form <<path>> — symbolic reference.
+                // The structural brackets are "this is a reference, don't evaluate
+                // it yet." Non-path operands keep current geometric semantics
+                // (SYNTAX_07 §2.2).
+                if let ExprKind::Path(p) = &e.kind {
+                    Value::Ref(p.clone())
+                } else {
+                    self.eval(e, ctx)
+                }
+            },
             ExprKind::Unary { op, expr } => {
                 let v = self.eval(expr, ctx).collapse().clone();
                 match op {
@@ -372,6 +509,145 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
             }
             ExprKind::Spread(e) => self.eval(e, ctx),
+            // Tuple (a, b): fixed-arity positional packet — closed combo with numeric keys.
+            // The seal is the ARITY seal only (SYNTAX_04 §2.5): no new fields. Effect
+            // shielding is Cocoon-exclusive — tuple effect = max over elements
+            // (2026-07-06 ruling: decoupled from the cocoon analogy).
+            ExprKind::Tuple(items) => {
+                if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                }
+                match self.eval_elements(items, ctx) {
+                    Err(bottom) => bottom,
+                    Ok((rf, me)) => Value::Combo(ComboVal::new(rf, true, IndexMap::new(), me, vec![])),
+                }
+            }
+            // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
+            ExprKind::Poset(relations) => {
+                if let Err(e) = ctx.check_resources(10 + (relations.len() as u64) * 2) {
+                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                }
+                let mut rf = IndexMap::new();
+                let mut rv = Vec::new();
+                for r in relations {
+                    let lt = Value::Atom(r.left.clone(), EffectTag::Pure, None).to_string_plain();
+                    let rt = Value::Atom(r.right.clone(), EffectTag::Pure, None).to_string_plain();
+                    rv.push(ValRelation {
+                        left: lt.clone(),
+                        op: match r.op {
+                            nlang_parser::ast::RelOp::Lt => ValRelOp::Lt,
+                            nlang_parser::ast::RelOp::Gt => ValRelOp::Gt,
+                            nlang_parser::ast::RelOp::Lte => ValRelOp::Lte,
+                            nlang_parser::ast::RelOp::Gte => ValRelOp::Gte,
+                            nlang_parser::ast::RelOp::Eq => ValRelOp::Eq,
+                        },
+                        right: rt.clone(),
+                    });
+                    if !rf.contains_key(&lt) { rf.insert(lt, Value::Atom(r.left.clone(), EffectTag::Pure, None)); }
+                    if !rf.contains_key(&rt) { rf.insert(rt, Value::Atom(r.right.clone(), EffectTag::Pure, None)); }
+                }
+                let ranks = self.compute_ranks(&rv);
+                for (tag_name, rank) in ranks {
+                    if let Some(v) = rf.get_mut(&tag_name) {
+                        if let Value::Atom(ak, ae, _) = v.clone() {
+                            rf.insert(tag_name, Value::Atom(ak, ae, Some(rank)));
+                        }
+                    }
+                }
+                Value::Combo(ComboVal::new(rf, false, IndexMap::new(), EffectTag::Pure, rv))
+            }
+            // Closed interval set [start, end] (SPEC_02 §3 / SYNTAX_04 §4.5).
+            // Bounds evaluated at observation time (variable bounds free).
+            ExprKind::Range { start, end, step } => {
+                let vs = self.force(self.eval(start, ctx), ctx);
+                if let Value::Bottom(_) = &vs {
+                    return vs;
+                }
+                let ve = self.force(self.eval(end, ctx), ctx);
+                if let Value::Bottom(_) = &ve {
+                    return ve;
+                }
+                let vst = match step {
+                    Some(s) => {
+                        let v = self.force(self.eval(s, ctx), ctx);
+                        if let Value::Bottom(_) = &v {
+                            return v;
+                        }
+                        Some(Box::new(v))
+                    }
+                    None => None,
+                };
+                Value::Range {
+                    start: Box::new(vs),
+                    end: Box::new(ve),
+                    step: vst,
+                }
+            }
+            // `@{ e } ≡ e` (SYNTAX_04 §4.7); empty `@{}` is AnonSet(Bottom) → ⊥.
+            ExprKind::AnonSet(inner) => self.eval(inner, ctx),
+            // Lattice-family equality `=`: non-collapsing structural comparison (partial impl; SYNTAX_06/10)
+            ExprKind::LatticeEq(a, b) => {
+                // Set family does NOT absorb (SYNTAX_06 §4.1): `_|_` is an
+                // operand — the empty set — not a black hole. `_|_ = 3` →
+                // #false, `_|_ = _|_` → #true, both clean booleans.
+                let va = self.eval(a, ctx);
+                let vb = self.eval(b, ctx);
+                let res_e = va.effect().max(vb.effect());
+                let eq = match (&va, &vb) {
+                    (Value::Bottom(_), Value::Bottom(_)) => true,
+                    (Value::Bottom(_), _) | (_, Value::Bottom(_)) => false,
+                    (Value::Atom(x, _, _), Value::Atom(y, _, _)) => x == y,
+                    _ => va == vb,
+                };
+                Value::Atom(AtomKind::Tag(if eq { "true".to_string() } else { "false".to_string() }), res_e, None)
+            }
+            // Direction probe `<=>`: returns an order tag, never a boolean (SYNTAX_10 §2.3)
+            ExprKind::Probe(a, b) => {
+                let va = self.eval(a, ctx);
+                if let Value::Bottom(_) = va { return va; }
+                let vb = self.eval(b, ctx);
+                if let Value::Bottom(_) = vb { return vb; }
+                let res_e = va.effect().max(vb.effect());
+                let ca = va.collapse().clone();
+                let cb = vb.collapse().clone();
+                if ca.is_top() || cb.is_top() { return Value::Top; }
+                if let Value::Bottom(d) = ca { return Value::Bottom(d); }
+                if let Value::Bottom(d) = cb { return Value::Bottom(d); }
+                let dir_tag = |o: Option<std::cmp::Ordering>| -> Value {
+                    match o {
+                        Some(std::cmp::Ordering::Less) => Value::Atom(AtomKind::Tag("lt".to_string()), res_e, None),
+                        Some(std::cmp::Ordering::Greater) => Value::Atom(AtomKind::Tag("gt".to_string()), res_e, None),
+                        Some(std::cmp::Ordering::Equal) => Value::Atom(AtomKind::Tag("eq".to_string()), res_e, None),
+                        None => Value::Atom(AtomKind::Tag("un".to_string()), res_e, None),
+                    }
+                };
+                let as_f64 = |k: &AtomKind| -> Option<f64> {
+                    match k {
+                        AtomKind::Int(i) => i.to_f64(),
+                        AtomKind::Float(f) => Some(*f),
+                        _ => None,
+                    }
+                };
+                match (&ca, &cb) {
+                    (Value::Atom(xk, _, rx), Value::Atom(yk, _, ry)) => {
+                        if let (Some(x), Some(y)) = (as_f64(xk), as_f64(yk)) {
+                            return dir_tag(x.partial_cmp(&y));
+                        }
+                        if let (AtomKind::Str(x), AtomKind::Str(y)) = (xk, yk) {
+                            return dir_tag(Some(x.cmp(y)));
+                        }
+                        let x_tagish = matches!(xk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
+                        let y_tagish = matches!(yk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
+                        if x_tagish && y_tagish {
+                            if xk == yk { return dir_tag(Some(std::cmp::Ordering::Equal)); }
+                            if let (Some(x), Some(y)) = (rx, ry) { return dir_tag(Some(x.cmp(y))); }
+                            return dir_tag(None); // no shared order info: incomparable
+                        }
+                        BottomCause::Conflict.into()
+                    }
+                    _ => BottomCause::Conflict.into(),
+                }
+            }
             _ => BottomCause::Conflict.into(),
         }
     }
@@ -379,9 +655,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
     fn eval_math<FI, FF, FS>(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: MathOp, op_i: FI, op_f: FF, op_s: Option<FS>) -> Value
         where FI: Fn(&BigInt, &BigInt) -> BigInt, FF: Fn(f64, f64) -> f64, FS: Fn(&str, &str) -> String
     {
-        let va = self.eval(a, ctx);
+        // Stage 2 (紀律 2): value-judgment point — force thunks before arithmetic.
+        // `$.a + 1` inside a pipe transformer evals `$.a` to a Thunk (the field
+        // is lazily stored); arithmetic needs the actual value.
+        let va = self.force(self.eval(a, ctx), ctx);
         if let Value::Bottom(_) = va { return va; }
-        let vb = self.eval(b, ctx);
+        let vb = self.force(self.eval(b, ctx), ctx);
         if let Value::Bottom(_) = vb { return vb; }
         let res_e = va.effect().max(vb.effect());
         let ca = va.collapse();
@@ -395,7 +674,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 expected: None,
                 found: Some(if self.is_order_anchor(&ca) { ca.clone() } else { cb.clone() }),
                 involved: vec![],
-            }));
+             ..Default::default() }));
         }
         
         match (ca, cb) {
@@ -464,7 +743,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 expected: None,
                 found: None,
                 involved: vec![],
-            }));
+             ..Default::default() }));
         }
         if result.is_infinite() {
             if result.is_sign_positive() {
@@ -477,62 +756,234 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
     }
 
     fn eval_binary_cmp(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: CmpOp) -> Value {
-        let va = self.eval(a, ctx);
-        if let Value::Bottom(_) = va { return va; }
-        let vb = self.eval(b, ctx);
-        if let Value::Bottom(_) = vb { return vb; }
-        let res_e = va.effect().max(vb.effect());
-        let ca = va.collapse();
-        let cb = vb.collapse();
+        // Stage 2 (紀律 2): value-judgment point — force thunks before comparison.
+        // Always evaluate both sides so set-family effect max is honest and
+        // set-family never short-circuits on ⊥ (SYNTAX_06 §4.1/§4.2 two-family split).
+        let va = self.force(self.eval(a, ctx), ctx);
+        let vb = self.force(self.eval(b, ctx), ctx);
 
-        if ca.is_top() || cb.is_top() { return Value::Top; }
-        if let Value::Bottom(d) = ca { return Value::Bottom(d.clone()); }
-        if let Value::Bottom(d) = cb { return Value::Bottom(d.clone()); }
+        // ── Atomic family (`==` / `!=`): absorbing ⊥/⊤ (SYNTAX_06 §4.1) ──
+        // Policy unchanged from pre-split path: ⊥ before ⊤; return the lattice
+        // extreme, never a clean boolean when either side is extreme.
+        if matches!(op, CmpOp::Eq | CmpOp::Ne) {
+            if let Value::Bottom(_) = &va {
+                return va;
+            }
+            if let Value::Bottom(_) = &vb {
+                return vb;
+            }
+            let res_e = va.effect().max(vb.effect());
+            let ca = va.collapse();
+            let cb = vb.collapse();
+            if ca.is_top() || cb.is_top() {
+                return Value::Top;
+            }
+            if let Value::Bottom(d) = ca {
+                return Value::Bottom(d.clone());
+            }
+            if let Value::Bottom(d) = cb {
+                return Value::Bottom(d.clone());
+            }
+
+            let op_fn = |x: f64, y: f64| match op {
+                CmpOp::Eq => x == y,
+                CmpOp::Ne => x != y,
+                _ => unreachable!(),
+            };
+            match (ca.clone(), cb.clone()) {
+                (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }),
+                        res_e,
+                        None,
+                    );
+                }
+                (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x, y) { "true".into() } else { "false".into() }),
+                        res_e,
+                        None,
+                    );
+                }
+                (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }),
+                        res_e,
+                        None,
+                    );
+                }
+                (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x, y.to_f64().unwrap_or(0.0)) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }),
+                        res_e,
+                        None,
+                    );
+                }
+                _ => {}
+            }
+            return Value::Atom(
+                AtomKind::Tag(if matches!(op, CmpOp::Eq) {
+                    if ca == cb {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    }
+                } else if ca != cb {
+                    "true".into()
+                } else {
+                    "false".into()
+                }),
+                res_e,
+                None,
+            );
+        }
+
+        // ── Set family (`<` `<=` `>` `>=`): clean boolean, NON-absorbing ──
+        // SYNTAX_06 §4.2: ⊥ = empty set (⊆ everything), ⊤ = universe (⊇ everything).
+        let res_e = va.effect().max(vb.effect());
+        let ca = va.collapse().clone();
+        let cb = vb.collapse().clone();
+
+        let is_bot = |v: &Value| {
+            matches!(v, Value::Bottom(_)) || matches!(v, Value::Atom(AtomKind::Bottom, _, _))
+        };
+        let is_top = |v: &Value| {
+            v.is_top() || matches!(v, Value::Atom(AtomKind::Top, _, _))
+        };
+        // If Atom(Top)/Atom(Bottom) still appear here, they are dual-spelling
+        // leftovers (complement path etc.); treated as extremes — not expanded.
+        let bool_tag = |b: bool| {
+            Value::Atom(
+                AtomKind::Tag(if b { "true".into() } else { "false".into() }),
+                res_e,
+                None,
+            )
+        };
+        // Lte truth table at extremes (handover §修法). Finite×finite falls through.
+        let lte_extreme = |x: &Value, y: &Value| -> Option<bool> {
+            let xb = is_bot(x);
+            let xt = is_top(x);
+            let yb = is_bot(y);
+            let yt = is_top(y);
+            if !(xb || xt || yb || yt) {
+                return None;
+            }
+            // x = ⊥ → true; y = ⊤ → true; y = ⊥ → (x = ⊥); x = ⊤ → (y = ⊤)
+            if xb {
+                return Some(true);
+            }
+            if yt {
+                return Some(true);
+            }
+            if yb {
+                return Some(xb);
+            }
+            if xt {
+                return Some(yt);
+            }
+            None
+        };
+        // Strict subset: ⊥ < y ⟺ y ≠ ⊥; x < ⊤ ⟺ x ≠ ⊤; never ⊤ < · or · < ⊥.
+        let lt_extreme = |x: &Value, y: &Value| -> Option<bool> {
+            let xb = is_bot(x);
+            let xt = is_top(x);
+            let yb = is_bot(y);
+            let yt = is_top(y);
+            if !(xb || xt || yb || yt) {
+                return None;
+            }
+            if xb {
+                return Some(!yb);
+            }
+            if yt {
+                return Some(!xt);
+            }
+            if xt {
+                return Some(false);
+            }
+            if yb {
+                return Some(false);
+            }
+            None
+        };
+
+        match op {
+            CmpOp::Lte => {
+                if let Some(b) = lte_extreme(&ca, &cb) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Gte => {
+                // x >= y ≡ y <= x
+                if let Some(b) = lte_extreme(&cb, &ca) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Lt => {
+                if let Some(b) = lt_extreme(&ca, &cb) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Gt => {
+                if let Some(b) = lt_extreme(&cb, &ca) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Eq | CmpOp::Ne => unreachable!("atomic family handled above"),
+        }
 
         let op_fn = |x: f64, y: f64| match op {
-            CmpOp::Eq => x == y,
-            CmpOp::Ne => x != y,
             CmpOp::Lt => x < y,
             CmpOp::Gt => x > y,
             CmpOp::Lte => x <= y,
             CmpOp::Gte => x >= y,
+            CmpOp::Eq | CmpOp::Ne => unreachable!(),
         };
 
-        match (ca.clone(), cb.clone()) {
+        match (&ca, &cb) {
             (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)));
             }
             (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x, y) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(*x, *y));
             }
             (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(x.to_f64().unwrap_or(0.0), *y));
             }
             (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x, y.to_f64().unwrap_or(0.0)) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(*x, y.to_f64().unwrap_or(0.0)));
             }
             _ => {}
         }
 
-        match op {
-            CmpOp::Eq => return Value::Atom(AtomKind::Tag(if ca == cb { "true".to_string() } else { "false".to_string() }), res_e, None),
-            CmpOp::Ne => return Value::Atom(AtomKind::Tag(if ca != cb { "true".to_string() } else { "false".to_string() }), res_e, None),
-            _ => {}
-        }
-
-        if let (Value::Atom(ak, _, rx), Value::Atom(bk, _, ry)) = (ca, cb) {
-            if matches!(ak, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd) &&
-               matches!(bk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd) {
+        if let (Value::Atom(ak, _, rx), Value::Atom(bk, _, ry)) = (&ca, &cb) {
+            if matches!(ak, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
+                && matches!(bk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
+            {
                 if let (Some(rx_val), Some(ry_val)) = (rx, ry) {
-                    return Value::Atom(AtomKind::Tag(if op_fn(*rx_val as f64, *ry_val as f64) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                    return bool_tag(op_fn(*rx_val as f64, *ry_val as f64));
                 }
             }
         }
 
         if matches!(op, CmpOp::Lte | CmpOp::Gte) {
-            if let (Value::Combo(ac), Value::Combo(bc)) = (ca.clone(), cb.clone()) {
-                if is_type_constraint_combo(&ac) && is_type_constraint_combo(&bc) {
-                    if let (Some(na), Some(nb)) = (get_type_constraint_name(&ac), get_type_constraint_name(&bc)) {
+            if let (Value::Combo(ac), Value::Combo(bc)) = (&ca, &cb) {
+                if is_type_constraint_combo(ac) && is_type_constraint_combo(bc) {
+                    if let (Some(na), Some(nb)) =
+                        (get_type_constraint_name(ac), get_type_constraint_name(bc))
+                    {
                         let ta = TypeConstraint::from_name(&na);
                         let tb = TypeConstraint::from_name(&nb);
                         let result = match op {
@@ -540,7 +991,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                             CmpOp::Gte => self.check_subtype_relation(&tb, &ta),
                             _ => false,
                         };
-                        return Value::Atom(AtomKind::Tag(if result { "true".to_string() } else { "false".to_string() }), res_e, None);
+                        return bool_tag(result);
                     }
                 }
             }

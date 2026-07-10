@@ -1,0 +1,5 @@
+;; dollar_scan_fixture.n — $-scan boundary trap (handover §2 R1)
+;; outer pipe RHS = { b: 2 |> { c: $ } }; inner `$` belongs to inner pipe,
+;; so outer RHS is $-free → outer pipe is tier C.
+
+outer: { k: 1 } |> { b: 2 |> { c: $ } }

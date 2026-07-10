@@ -1,318 +1,213 @@
-# nlang 功能路线图
+# nlang 功能路線圖
 
-> 本文档规划 nlang-tools 引擎的未来开发方向，基于规格书要求与当前实现差距。
-
----
-
-## 1. 版本里程碑
-
-### v0.1 (当前)
-
-**状态**：基础引擎可运行
-
-**已完成**：
-- 基础格论运算 (Top, Bottom, Meet, Join, Complement)
-- 统一化算法核心
-- 8 个内置模块 (Math, Complex, List, Str, Cond, Time, Refl, Engine, Disc)
-- CLI 工具 (run, test, repl, commit, evolve)
-- 基础 CAID (SHA256)
+> 最後更新：2026-07-11（v0.2.0-beta 定版整備）  
+> 開發模式：由 "project brain" AI 出規劃，執行 AI 實作；Phase 制（1–47）之後轉入
+> **規格同步波**（工單＋預置探針驗收制，記錄見 nlang-spec `meta/ENGINE_SYNC.md`
+> 與 `docs/worknotes/`）
 
 ---
 
-### v0.2: CAID 基础设施
+## 1. 已完成功能（Phase 1–47）
 
-**目标**：符合 REAL_03 规格的 CAID 实现
+### 核心格論
 
-**功能清单**：
+| 功能 | Phase | 位置 |
+|:-----|:-----:|:-----|
+| Meet/Join/Complement 基礎 | 1a-1c | `unify.rs`, `complement.rs` |
+| H¹ phase obstruction（相位阻礙） | 7 | `unify.rs:make_h1_split_bottom` |
+| H² MASA obstruction（互補性違規） | 7 | `unify.rs:make_h2_split_bottom` |
+| `approximate_phase_diff` 量子距離（arccos） | 40 | `lattice_sketch.rs:phase_diff_between`, `unify.rs` |
+| 視界震盪防禦（#semantic_eclipse） | 41 | `disc.rs`, `value.rs:SemanticEclipse`, `lib.rs:EvalContext` |
+| `disc.find` 多跳迭代路由 | 42 | `disc.rs`（multi-hop loop + compute_mass/build_query_nerve） |
+| Orthomodular Law 驗證 | 7 | `oml.rs` |
+| Bohrification Q↔B | 7 | `lib.rs` |
+| `Value::Blur(BlurDetail)` 第一類公民 | 9 | `value.rs` |
+| Blur 傳播（Blur∧Top/Bottom/X）| 9 | `unify.rs` |
 
-| 功能 | 优先级 | 估计工作量 | 规格章节 |
-|:-----|:------:|:----------:|:---------|
-| BN/ 位元流序列化 | **P0** | 5-7 天 | REAL_03 §4 |
-| Lattice Sketch 计算 | **P0** | 3-5 天 | REAL_03 §3.5 |
-| 新 CAID 格式支持 | **P0** | 2 天 | REAL_03 §1 |
-| 规范化排序规则 | P1 | 2 天 | REAL_03 §3 |
-| 创世种子 CAID 确定 | P1 | 1 天 | SPEC_13 §3 |
-| 跨架构稳定性测试 | P2 | 3 天 | REAL_03 §4.5 |
+### CAID 基礎設施
 
-**关键技术点**：
-- LEB128 编码实现
-- 128-bit 定点数格式
-- Delta + ZigZag + LEB128 + Base64 压缩链
-- Gram-Schmidt 正交化
+| 功能 | Phase | 位置 |
+|:-----|:-----:|:-----|
+| BN/ 位元流序列化 | 3 | `bn_serial.rs` |
+| Lattice Sketch v2 | 3/13 | `lattice_sketch.rs` |
+| CAID v2 格式 | 3 | `value.rs` |
+| Genesis 種子 CAID | 12/13 | `genesis.rs` |
+| 跨架構穩定性測試 | 13 | `lattice_sketch_v2_test.rs` |
 
----
+### 演化 Commit（#refine）
 
-### v0.3: 标准库完善
+| 功能 | Phase | 位置 |
+|:-----|:-----:|:-----|
+| `Universe::refine()` 幾何單調性驗證 | 4 | `universe.rs` |
+| Ed25519 Authority 簽署 | 8 | `authority.rs` |
+| `bootstrap_exempt` Epoch 判定 | 10 | `universe.rs` |
+| `oo refine` CLI 子命令 | 10 | `crates/oo/src/main.rs` |
+| Architects 清單持久化（.oo/architects.json） | 11 | `storage.rs` |
+| Shadow Refinement（16-commit 回溯掃描） | 12 | `universe.rs` step 1c |
+| BFS Cycle Detection（環形 DAG 拒絕） | 15 | `universe.rs` step 1d |
 
-**目标**：符合 SPEC_09 规格的标准库
+### 標準庫 ~%Math
 
-**功能清单**：
+| 功能 | Phase |
+|:-----|:-----:|
+| 基礎算術：add/sub/mul/div/rem/abs/pow/bits | 早期 |
+| 位元運算：bitAnd/Or/Xor/Not/shl/shr | 早期 |
+| 超越函數：exp/ln/sin/cos/sqrt/eml | 早期 |
+| NonDet：random | 早期 |
+| `ln(0)` → Blur（MathSingularity） | 9 |
+| `%branch` Riemann 面（ln/sqrt/eml） | 13/14 |
+| min/max/floor/ceil/round/clamp | 19 |
+| gcd/lcm/sign/log2/log10 | 27 |
+| factorial/choose/is_prime/pow_mod | 35 |
+| atan2/hypot/sinh/cosh/tanh/trunc/fract/to_float | 45 |
 
-| 功能 | 优先级 | 估计工作量 | 规格章节 |
-|:-----|:------:|:----------:|:---------|
-| 创世预设值 (`%fuel`, `%max_*`) | **P0** | 1-2 天 | SPEC_09 §6 |
-| EML 派生函数 (`/exp`, `/ln`, `/sin`, `/cos`, `/sqrt`) | **P0** | 3-4 天 | SPEC_09 §3 |
-| 分支切割处理 (`ln(0)` → #blur) | P1 | 2 天 | SPEC_09 §3.4 |
-| `%branch` Riemann 面层级 | P2 | 2 天 | SPEC_09 §3.4 |
-| `@option` 标准定义 | P1 | 1 天 | SPEC_09 §2.7 |
-| `@result` 标准定义 | P1 | 1 天 | SPEC_09 §2.8 |
-| 代数介面元字段 (`%fmap`, `%fold`) | P2 | 2-3 天 | SPEC_09 §1 |
+### 標準庫 ~%List
 
-**关键技术点**：
-- 复数域运算 (IEEE 754 + 数学精度)
-- 错误状态编码 (%cause 结构)
-- 标准型别 CAID 确定
+| 功能 | Phase |
+|:-----|:-----:|
+| len/at/concat/reverse/slice/zip/sort/map/fold/filter | 早期 |
+| flat_map | 17 |
+| any/all/find/head/tail/take/drop | 18 |
+| count/zip_with | 19 |
+| partition/flatten/sum/min_by/max_by | 22 |
+| unique/range/reduce；@list genesis seed | 25 |
+| group_by/chunk/window | 28 |
+| enumerate/sort_by/dedup/intersperse | 35 |
+| scan/take_while/drop_while/product/transpose | 45 |
 
----
+### 標準庫 ~%String
 
-### v0.4: 精炼机制
+| 功能 | Phase |
+|:-----|:-----:|
+| concat/split/join/trim/len/replace/to_lower/to_upper/starts_with/ends_with/contains | 早期 |
+| parse_int/from_int/repeat | 19 |
+| format（位置佔位符 `{}` `{0}`） | 21 |
+| char_at/chars | 25 |
+| index_of/pad_left/pad_right/trim_start/trim_end | 27 |
+| format 命名佔位符 `{name}` | 29 |
+| reverse/count/slice/is_empty/parse_float/lines | 32 |
+| encode_uri/decode_uri/levenshtein/word_count/title_case | 45 |
 
-**目标**：实现 #refine 演化 Commit
+### 標準庫 @option / @result
 
-**功能清单**：
+| 功能 | Phase |
+|:-----|:-----:|
+| option.map / result.map / result.map_err | 15 |
+| @option %fmap / @result %fmap %map_err（genesis seed） | 15 |
+| option.and_then / result.and_then | 16 |
+| option.or/unwrap_or/filter | 17 |
+| result.unwrap/expect / option.expect | 18 |
+| option.zip/flatten / result.and/or/flatten | 26 |
 
-| 功能 | 优先级 | 估计工作量 | 规格章节 |
-|:-----|:------:|:----------:|:---------|
-| #refine Commit 类型 | **P0** | 3 天 | SPEC_10 §2.5, SPEC_13 §5 |
-| 等价映射合成算法 | **P0** | 3-4 天 | SPEC_17 §1.3 |
-| 观测窗口自动重定向 | **P0** | 2-3 天 | SPEC_13 §5.2 |
-| 几何单调性验证 ($ID_{new} \sqsubseteq ID_{old}$) | P1 | 2-3 天 | SPEC_10 §2.5 |
-| 权威签署验证 | P1 | 2 天 | SPEC_10 §2.5 |
-| 循环阻断检测 | P2 | 1 天 | SPEC_13 §5.2 |
-| 影子精炼测试 | P3 | 2 天 | SPEC_13 §5.2 |
+### 標準庫 ~%Reflection
 
-**关键技术点**：
-- Ed25519 签名验证
-- CAID 子集判定算法
-- Commit DAG遍历
+| 功能 | Phase |
+|:-----|:-----:|
+| keys/has/is_cocoon/type_of | 早期 |
+| is_blur/is_bottom/is_some/is_none/is_ok/is_err/to_str/bottom_cause | 16 |
+| get/set/delete/values/entries | 17 |
 
----
+### 標準庫 新模組
 
-### v0.5: 正交模格完善
+| 模組 | Phase | 態射數 | 說明 |
+|:-----|:-----:|:------:|:-----|
+| ~%Time | 早期 + 45 | 9 | now/format/diff/add_ms/parse/to_iso8601/add_days/add_hours/weekday |
+| ~%Complex | 早期 | 4 | conj/phase/real/imag |
+| ~%Cond | 早期 + 14 | 3 | if/cond/match（真實模式匹配） |
+| ~%Bytes | 30 + 32 | 12 | 二進位 + sha256/base64/hmac_sha256 |
+| ~%Regex | 31 | 4 | match/find/replace/split |
+| ~%Json | 33 | 4 | parse/stringify/get/keys |
+| ~%Io | 34 | 4 | read_file/write_file/exists/append_file（IO） |
+| ~%Env | 36 | 3 | get/args/cwd（IO） |
+| ~%Process | 36 | 2 | exit/pid（IO） |
+| ~%Path | 37 | 5 | join/dirname/basename/extension/is_absolute（Pure） |
+| ~%Query | 43 | 4 | select/where/pluck/deep_merge（巢狀 Combo 讀取） |
+| ~%Diff | 44 | 3 | diff/patch/is_compatible（Value 樹差異與修補） |
+| ~%Set | 46 | 8 | from_list/union/intersection/difference/is_subset/is_superset/is_disjoint/contains |
+| ~%Stat | 46 | 6 | mean/variance/std_dev/median/percentile/histogram |
+| ~%Csv | 47 | 4 | parse/parse_with_headers/stringify/read_csv（手寫 RFC 4180） |
+| ~%Url | 47 | 5 | parse/encode/decode/join/query_params（url crate） |
+| ~%Toml | 47 | 2 | parse/stringify（toml crate） |
 
-**目标**：量子化格论的完整实现
+### 引擎基礎設施
 
-**功能清单**：
-
-| 功能 | 优先级 | 估计工作量 | 规格章节 |
-|:-----|:------:|:----------:|:---------|
-| 正交模律验证 | **P0** | 2-3 天 | SPEC_01 §2.5.1 |
-| Bohrification 视角检测 | P1 | 4-5 天 | SPEC_01 §5, SPEC_06 §1.3 |
-| 非分配性警告 | P1 | 2 天 | SPEC_01 §2.5.1 |
-| 德摩根定律完善 | P2 | 1 天 | SPEC_01 §2.5 |
-| 策略切换 (#blur/#strict/#approximate) | P1 | 3 天 | SPEC_06 §1.3 |
-| 组合爆炸保护 (%max_pattern_nodes) | P2 | 2 天 | SPEC_06 §1.3 |
-
-**关键技术点**：
-- 交换子代数检测
-- 视角切换机制
-- 资源限制处理
-
----
-
-### v0.6: LADD 基础路由
-
-**目标**：OODP L3-L5 的谱几何优化
-
-**功能清单**：
-
-| 功能 | 优先级 | 估计工作量 | 规格章节 |
-|:-----|:------:|:----------:|:---------|
-| 几何广告 (AdvertiseGeometry) | **P0** | 3-4 天 | APP_05 §2.2 |
-| 几何查询 (DiscoverRequest) | **P0** | 2-3 天 | APP_05 §2.3 |
-| 几何质量计算 (Trace) | **P0** | 2 天 | APP_05 §3.1 |
-| 谜距离计算 ($d_L$) | **P0** | 3-4 天 | APP_05 §3.2 |
-| 引力路由权重 | P1 | 2-3 天 | APP_05 §4.1 |
-| 视界震盪 (随机跳出) | P2 | 2 天 | APP_05 §4.2, SPEC_13 §7.2 |
-| `/find` 引力导航态射 | P1 | 2 天 | SPEC_13 §6.2 |
-
-**关键技术点**：
-- 投影算子特征值分解
-- 谜距离计算
-- 分布式路由协议
-
----
-
-### v0.7: GPP/CIP 证明 (可选)
-
-**目标**：零知识验证机制
-
-**功能清单**：
-
-| 功能 | 优先级 | 估计工作量 | 规格章节 |
-|:-----|:------:|:----------:|:---------|
-| GPP 证明结构 | P2 | 5-7 天 | APP_05 §5 |
-| CIP 证明结构 | P2 | 5-7 天 | APP_05 §6 |
-| STARK 证明集成 | P3 | 10+ 天 | APP_05 §5-6 |
-| 几何预言机接口 | P3 | 3-4 天 | APP_05 §6.1 |
-
-**关键技术点**：
-- STARK 证明系统
-- 谜重叠积分计算
-- 分布式计算委托
-
----
-
-### v1.0: 自我演化 (长期目标)
-
-**目标**：实现 N-1 自举与版本切换
-
-**功能清单**：
-
-| 功能 | 优先级 | 估计工作量 | 规格章节 |
-|:-----|:------:|:----------:|:---------|
-| 双重身份锚定 | P2 | 5 天 | SPEC_17 §1.2 |
-| %promoter 迁移引导 | P2 | 3 天 | SPEC_17 §1.2 |
-| 退化封套布局 | P2 | 3-4 天 | SPEC_17 §1.4.2 |
-| 语义虚拟化挂载 | P3 | 7-10 天 | SPEC_17 §1.4.3 |
-| %compat 相容性验证 | P2 | 2 天 | SPEC_17 §1.5, §2.2 |
-| WASM 旧版引擎模块 | P3 | 10+ 天 | SPEC_17 §1.4.3 |
+| 功能 | Phase |
+|:-----|:-----:|
+| `~%Config` genesis 預設值 | 13 |
+| `Ouroboros::eval_context()` | 14 |
+| `cond.match` 真實模式匹配 | 14 |
+| `%timeout` → `timeout_deadline` 動態設定 | 15 |
+| `d_l_approx` cosine similarity | 16 |
+| `oo eval` + `oo inspect` CLI 子命令 | 23 |
+| NerveEntry.field_keys 精確交集（語義 key 過濾） | 38 |
+| `~%Engine.equivalence_map` 動態視圖 | 39 |
+| `~%Engine.resolve` CAID 鏈尾追蹤 | 39 |
 
 ---
 
-## 2. 优先级矩阵
+## 1b. 規格同步波（2026-06/07，Phase 制之後）
 
-### 高优先级 (P0) - v0.2 ~ v0.4
+> 詳表見 `docs/implementation-status.md` §1a；逐案驗收記錄在 nlang-spec
+> `meta/ENGINE_SYNC.md` #1–19 與其後之附列。
 
-| 功能 | 版本 | 累计工作量 |
-|:-----|:-----|:----------:|
-| BN/ 序列化 | v0.2 | 5-7 天 |
-| Lattice Sketch | v0.2 | 3-5 天 |
-| 创世预设值 | v0.3 | 1-2 天 |
-| EML 派生函数 | v0.3 | 3-4 天 |
-| #refine Commit | v0.4 | 3 天 |
-| 等价映射合成 | v0.4 | 3-4 天 |
-| 正交模律验证 | v0.5 | 2-3 天 |
+| 主題 | 狀態 |
+|:-----|:-----|
+| SPEC_14 權威文法全同步（SYNTAX_01–12 定稿對齊） | ✅ |
+| `$` 語義 P1–P5（`#no_context`；超級惰性＝語義要求） | ✅ |
+| 惰性引擎 Stage 1–5（call-by-observation → force memo → Route B 每座標失效） | ✅ 增量收斂全線落地 |
+| 管道代數律（Kleisli bind、疊加平等演化） | ✅ |
+| Parser fuzz／golden-AST 掃描＋EOI 護欄 | ✅ |
+| `Atom(Top)`/`Atom(Bottom)` 正規化＋吸收律 | ✅ |
+| 比較兩家族極值端（SYNTAX_06 §4.1/§4.2） | ✅ |
+| Range／`@{e}` 求值（閉閉區間集合；`Value::Range`） | ✅ |
+| Linter Tier 1（`oo lint`：R1/R2/R3＋ω(G)） | ✅ |
 
-**总计**：约 20-25 天核心开发
+## 2. 剩餘 Backlog
 
-### 中优先级 (P1) - v0.5 ~ v0.6
+### 近期（已立案或裁決明文另案）
 
-| 功能 | 版本 | 工作量 |
-|:-----|:-----|:------:|
-| Bohrification 视角检测 | v0.5 | 4-5 天 |
-| 策略切换 | v0.5 | 3 天 |
-| 几何广告/查询 | v0.6 | 5-7 天 |
-| 谜距离计算 | v0.6 | 3-4 天 |
+| 功能 | 說明 | 出處 |
+|:-----|:-----|:-----|
+| 步進∩步進區間交集 | 等差數列交集（CRT）；現誠實 ⊥ | Range 工單非目標 |
+| Range 子集比較（`1..5 <= 1..10`） | 集合家族 cmp 對 Range 值的自然延伸 | cmp/Range 另案 |
+| `<=>` 非嚴格聯集態＋跨容器 ⊥ | 容器歸屬追蹤 | ENGINE_SYNC 附帶事項 |
+| `=` 真格論相等（互 `<=`） | 現為非塌縮結構等值 | 同上 |
+| `3 <= 5` 數值序 vs 子集語義 | 規格 §4.10 為子集；引擎數值序＝記錄在案的刻意偏離，需獨立裁決＋遷移 | SYNTAX_06 §4.10 |
+| field_key path-vs-named 語意 | fuzz 掃描殘留 | ENGINE_SYNC #19 |
+| `.n` 語料清理 | `tests/unit/` 11 個引擎開發期舊期望值失敗（canonical/entropy/federation/ladd/reflection；非引擎回歸，Rust 套件同域全綠） | tests/README.md 已標注 |
+| cargo-fuzz 外掛 | 可選強化 | 同上 |
+| REAL_05 合規測試矩陣 | 裸核版門檻（VERSIONING §3）；v0.2.0-beta → v0.2.0 的必經之路 | REAL_05 |
 
-**总计**：约 15-20 天
+### P3：長期目標
 
-### 低优先级 (P2-P3) - v0.7+
-
-- GPP/CIP 证明
-- 自我演化机制
-- WASM 集成
-
----
-
-## 3. 技术依赖关系
-
-```
-BN/ 序列化 ─────┬──→ 新 CAID 格式 ──→ 创世种子 CAID
-                │
-                └──→ Lattice Sketch
-                         │
-                         └──→ 谜距离计算 ──→ LADD 路由
-                                              │
-                                              └──→ GPP/CIP 证明
-
-创世预设值 ────→ 标准库完善 ──→ #refine 精炼
-                     │              │
-                     └──→ 等价映射合成
-                              │
-                              └──→ 自我演化
-```
-
----
-
-## 4. 版本时间线 (建议)
-
-| 版本 | 内容 | 时间框架 |
+| 功能 | 說明 | 規格章節 |
 |:-----|:-----|:---------|
-| v0.2 | CAID 基础设施 | 2-3 周 |
-| v0.3 | 标准库完善 | 1-2 周 |
-| v0.4 | 精炼机制 | 2 周 |
-| v0.5 | 正交模格完善 | 1-2 周 |
-| v0.6 | LADD 基础 | 3-4 周 |
-| v0.7 | GPP/CIP | 2-4 周 (可选) |
-| v1.0 | 自我演化 | 长期目标 |
+| GPP 幾何概率零知識證明 | 基於 Lattice Sketch | APP_05 §5 |
+| CIP 因果完整性證明 | 分布式計算委託 | APP_05 §6 |
+| SPEC_17 自我演化 | N-1 自舉算法、%promoter；規格書 Combo 化前提 | SPEC_17 全章 |
+| WASM 舊版引擎模組 | 語義虛擬化掛載 | SPEC_17 §1.4.3 |
+| Linter Tier 2（真 ω/q） | 需 CAID v2 symplectic fingerprint（SPEC_13 §1.3） | linter_tier1_handover §7 |
 
 ---
 
-## 5. 开发者分工建议
+## 3. 開發速度參考
 
-### 核心开发 (需要深入规格理解)
+Phase 1–16：核心格論、CAID、#refine、基礎標準庫（~198 tests）  
+Phase 17–24：標準庫大幅擴展（option/result/list/refl 補全、cond.match、eval CLI）→ 274 tests  
+Phase 25–34：新模組（Bytes/Regex/Json/Io）+ 字串/數學/列表補全 → ~392 tests  
+Phase 35–39：P2 清空（List/Math Round 2、Env/Process/Path 模組、nerve 精確交集、Engine 視圖）→ ~439 tests  
+Phase 40：量子相位距離 arccos(Tr(P_A·P_B))（`phase_diff_between`，P3 第一項）→ ~446 tests  
+Phase 41：視界震盪防禦（SemanticEclipse + disc.find blacklist/tiebreaker）→ ~452 tests  
+Phase 42：disc.find 多跳迭代路由（multi-hop loop + compute_mass/build_query_nerve）→ ~458 tests  
+Phase 43：~%Query 模組（select/where/pluck/deep_merge，含 parse_path/get_at_path pub helpers）→ ~466 tests  
+Phase 44：~%Diff 模組（diff/patch/is_compatible，set_at_path + collect_diffs 遞歸）→ ~474 tests  
+Phase 45：A 組擴充（~%Math +8, ~%List +5, ~%String +5, ~%Time +5）→ ~492 tests  
+Phase 46：~%Set（8）+ ~%Stat（6）零 dep 新模組 → ~504 tests  
+Phase 47：~%Csv（手寫）+ ~%Url（url crate）+ ~%Toml（toml crate）→ ~514 tests  
+語義同步波（2026-06/07）：SPEC_14 全同步 → `$` P1–P5 → 惰性 Stage 1–5＋memo＋Route B
+→ fuzz/golden → Top/Bottom 正規化 → cmp 極值 → Range → **667 tests（106 套件）**
 
-| 任务 | 建议开发者类型 |
-|:-----|:---------------|
-| BN/ 序列化 | Rust + 位元级编程经验 |
-| Lattice Sketch | 数学背景 + Rust |
-| 正交模律验证 | 格论/量子逻辑知识 |
-| Bohrification | 数理逻辑 + 分布式系统 |
-
-### 功能开发 (相对独立)
-
-| 任务 | 建议开发者类型 |
-|:-----|:---------------|
-| 创世预设值 | 一般 Rust 开发 |
-| EML 派生函数 | 数学/数值计算 |
-| #refine Commit | 后端/数据结构 |
-| 等价映射合成 | 图算法/遍历 |
-
-### 协议开发 (网络背景)
-
-| 任务 | 建议开发者类型 |
-|:-----|:---------------|
-| LADD 路由 | P2P/分布式网络 |
-| GPP/CIP | 密码学/ZKP |
-
----
-
-## 6. 测试策略
-
-### 单元测试
-
-- BN/ 序列化：跨平台位元一致性
-- Lattice Sketch：特征值稳定性
-- 统一化：格论公设验证
-- 正交模律：几何自洽性
-
-### 集成测试
-
-- CAID 计算完整流程
-- #refine → 自动重定向
-- LADD 路由端到端
-
-### 规格验证
-
-- `oo caid-test-suite` (REAL_03 §8)
-- `lattice_sketch_test_suite` (APP_05 §3.5.4)
-- `bn_test_suite` (REAL_03 §4.5)
-
----
-
-## 7. 参考资源
-
-### 规格书优先阅读顺序
-
-1. **SPEC_01** - 格论基础 (核心概念)
-2. **REAL_03** - CAID 协议 (v0.2 关键)
-3. **SPEC_09** - 标准库 (v0.3 关键)
-4. **SPEC_10** - 演化与 Commit (v0.4 关键)
-5. **APP_05** - LADD (v0.6 关键)
-6. **SPEC_17** - 自我演化 (v1.0)
-
-### 理论背景
-
-- [Solèr Theorem](https://en.wikipedia.org/wiki/Sol%C3%A8r_theorem)
-- [Orthomodular Lattice](https://en.wikipedia.org/wiki/Orthomodular_lattice)
-- [Bohrification](https://arxiv.org/abs/1003.2136)
-- [EML Operator](https://arxiv.org/abs/2603.21852v2)
-
----
-
-## 8. 更新日志
-
-| 日期 | 更新内容 |
-|:-----|:---------|
-| 2026-04-23 | 初始版本，基于量子化后规格书 |
+每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
+零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。  
+語義波起的驗收制：工單附**預置校準紅線探針**（`#[ignore]`，unignore＝驗收）＋活護欄
+釘邊界兩側；「根因」宣稱須附量測。範本見 `docs/worknotes/*_handover.md`。

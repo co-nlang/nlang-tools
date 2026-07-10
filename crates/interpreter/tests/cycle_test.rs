@@ -9,7 +9,7 @@ fn test_static_cycle() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
-    let res = oo.eval(&program.fields[0].value, &mut ctx);
+    let res = oo.eval_observed(&program.fields[0].value, &mut ctx);
     if let Value::Combo(cv) = res {
         let a_val = cv.get_field("a").unwrap().clone();
         let forced_a = oo.force(a_val, &mut ctx);
@@ -28,7 +28,7 @@ fn test_fuel_exhausted_strict_mode() {
         .with_fuel(2)
         .with_strategy(ObservationStrategy::Strict);
 
-    let res = oo.eval(&program.fields[0].value, &mut ctx);
+    let res = oo.eval_observed(&program.fields[0].value, &mut ctx);
     match res {
         Value::Bottom(d) => {
             assert_eq!(d.cause, BottomCause::FuelExhausted);
@@ -47,7 +47,7 @@ fn test_fuel_exhausted_blur_mode() {
     let input = "x: 1 + 2";
     let program = parse_program(input).unwrap();
 
-    let res = oo.eval(&program.fields[0].value, &mut ctx);
+    let res = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("Blur mode result: {:?}", res);
     match res {
         Value::Combo(cv) => {

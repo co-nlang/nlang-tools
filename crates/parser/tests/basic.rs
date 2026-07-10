@@ -58,7 +58,7 @@ fn test_arithmetic_and_logic() {
 #[test]
 fn test_complex_numbers() {
     use nlang_parser::parse_expr_only;
-    use nlang_parser::ast::{ExprKind, AtomKind, UnaryOp};
+    use nlang_parser::ast::{AtomKind, ExprKind};
     
     // Direct complex numbers without leading negation
     let tests = vec![
@@ -89,30 +89,23 @@ fn test_complex_numbers() {
         }
     }
     
-    // -i and -3+4i are parsed as unary negation (eval will handle)
-    let unary_tests = vec![
-        ("-i", 0.0, 1.0),
-        ("-3+4i", 3.0, 4.0),
+    // W1-1 (2026-07-05): negatives are literal-embedded — -i and -3+4i are
+    // single complex atoms (unary_op no longer contains '-'; SYNTAX_02 §4.3)
+    let neg_literal_tests = vec![
+        ("-i", 0.0, -1.0),
+        ("-3+4i", -3.0, 4.0),
     ];
-    
-    for (input, inner_r, inner_i) in unary_tests {
+
+    for (input, expected_r, expected_i) in neg_literal_tests {
         let res = parse_expr_only(input);
         match res {
-            Ok(expr) => {
-                match expr.kind {
-                    ExprKind::Unary { op, expr: inner } => {
-                        assert!(matches!(op, UnaryOp::Neg), "{}: Expected Neg unary op", input);
-                        match inner.kind {
-                            ExprKind::Atom(AtomKind::Complex(r, i)) => {
-                                assert!((r - inner_r).abs() < 0.0001, "{}: Expected inner real {} but got {}", input, inner_r, r);
-                                assert!((i - inner_i).abs() < 0.0001, "{}: Expected inner imag {} but got {}", input, inner_i, i);
-                            },
-                            other => panic!("{}: Expected inner Complex but got {:?}", input, other),
-                        }
-                    },
-                    other => panic!("{}: Expected Unary but got {:?}", input, other),
+            Ok(expr) => match expr.kind {
+                ExprKind::Atom(AtomKind::Complex(r, i)) => {
+                    assert!((r - expected_r).abs() < 0.0001, "{}: Expected real {} but got {}", input, expected_r, r);
+                    assert!((i - expected_i).abs() < 0.0001, "{}: Expected imag {} but got {}", input, expected_i, i);
                 }
-            }
+                other => panic!("{}: Expected Complex atom but got {:?}", input, other),
+            },
             Err(e) => panic!("Failed to parse {}: {}", input, e),
         }
     }

@@ -29,11 +29,11 @@ fn test_lexical_scoping_shadowing() {
     let root_val = ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]);
     let mut ctx = EvalContext::new(root_val);
 
-    let a_val = oo.eval(&program.fields[0].value, &mut ctx);
-    ctx.root.insert_field("a", a_val);
+    let a_val = oo.eval_observed(&program.fields[0].value, &mut ctx);
+    std::sync::Arc::make_mut(&mut ctx.root).insert_field("a", a_val);
 
-    let inner_val = oo.eval(&program.fields[1].value, &mut ctx);
-    ctx.root.insert_field("inner", inner_val.clone());
+    let inner_val = oo.eval_observed(&program.fields[1].value, &mut ctx);
+    std::sync::Arc::make_mut(&mut ctx.root).insert_field("inner", inner_val.clone());
 
     if let Value::Combo(cv) = inner_val {
         assert_eq!(cv.get_field("b").unwrap(), &Value::Atom(AtomKind::Int(BigInt::from(2)), EffectTag::Pure, None));
@@ -41,7 +41,7 @@ fn test_lexical_scoping_shadowing() {
         panic!("Expected Combo");
     }
 
-    let outside_b = oo.eval(&program.fields[2].value, &mut ctx);
+    let outside_b = oo.eval_observed(&program.fields[2].value, &mut ctx);
     assert_eq!(outside_b, Value::Atom(AtomKind::Int(BigInt::from(2)), EffectTag::Pure, None));
 }
 
@@ -55,8 +55,8 @@ fn test_absolute_path() {
 
     for f in &program.fields {
         let name = field_name(&f.key);
-        let val = oo.eval(&f.value, &mut ctx);
-        ctx.root.insert_field(&name, val);
+        let val = oo.eval_observed(&f.value, &mut ctx);
+        std::sync::Arc::make_mut(&mut ctx.root).insert_field(&name, val);
     }
 
     let inner = ctx.root.get_field("inner").unwrap();
@@ -74,8 +74,8 @@ fn test_deep_navigation() {
 
     for f in &program.fields {
         let name = field_name(&f.key);
-        let val = oo.eval(&f.value, &mut ctx);
-        ctx.root.insert_field(&name, val);
+        let val = oo.eval_observed(&f.value, &mut ctx);
+        std::sync::Arc::make_mut(&mut ctx.root).insert_field(&name, val);
     }
 
     assert_eq!(ctx.root.get_field("app_port").unwrap(), &Value::Atom(AtomKind::Int(BigInt::from(8080)), EffectTag::Pure, None));

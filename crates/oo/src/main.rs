@@ -20,8 +20,36 @@ enum Commands {
     Test { #[arg(long)] static_only: bool, #[arg(short, long)] pattern: Option<String>, files: Vec<PathBuf> },
     Repl, Status, Log,
     Commit { #[arg(short, long)] message: Option<String> },
+    Refine {
+        #[arg(short, long, required = true, num_args = 1..)]
+        source: Vec<String>,
+        #[arg(short, long, required = true, num_args = 1..)]
+        target: Vec<String>,
+        #[arg(long)]
+        sign: bool,
+        #[arg(short, long)]
+        message: Option<String>,
+    },
     Fmt { file: PathBuf, #[arg(short, long)] write: bool },
     Serve { #[arg(short, long, default_value_t = 8080)] port: u16 },
+    /// Evaluate a nlang expression inline
+    Eval {
+        /// nlang expression to evaluate (wrap in quotes for shell safety)
+        expr: String,
+    },
+    /// Inspect a value in the local store by CAID
+    Inspect {
+        /// CAID string (hash:sha256:v2:...)
+        caid: String,
+    },
+    /// Tier 1 linter (pure syntax / pure graph theory) — see docs/linter_tier1_handover.md
+    Lint {
+        /// .n file or directory (recursive)
+        path: PathBuf,
+        /// emit JSON (tier1-v1 schema)
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -34,8 +62,15 @@ fn main() -> anyhow::Result<()> {
         Commands::Status => run_status(),
         Commands::Log => run_log(),
         Commands::Commit { message } => run_commit(message),
+        Commands::Refine { source, target, sign, message } => run_refine(source, target, sign, message),
         Commands::Repl => run_repl(),
         Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
+        Commands::Eval { expr } => run_eval(expr),
+        Commands::Inspect { caid } => run_inspect(caid),
+        Commands::Lint { path, json } => {
+            let code = oo::nlint::run_cli(&path, json);
+            std::process::exit(code);
+        }
     }
 }
 
@@ -131,6 +166,65 @@ fn run_commit(message: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn run_refine(
+    sources: Vec<String>,
+    targets: Vec<String>,
+    sign: bool,
+    message: Option<String>,
+) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    let mut universe = load_universe(&engine, &cur)?;
+
+    let source_caids: Vec<ContentHash> = sources
+        .iter()
+        .map(|s| ContentHash::parse(s)
+            .map_err(|e| anyhow::anyhow!("Invalid source CAID '{}': {}", s, e)))
+        .collect::<anyhow::Result<_>>()?;
+
+    let target_caids: Vec<ContentHash> = targets
+        .iter()
+        .map(|s| ContentHash::parse(s)
+            .map_err(|e| anyhow::anyhow!("Invalid target CAID '{}': {}", s, e)))
+        .collect::<anyhow::Result<_>>()?;
+
+    let authority = if sign {
+        let payload = nlang_interpreter::authority::compute_refine_payload(
+            &source_caids,
+            &target_caids,
+        );
+        let auth = nlang_interpreter::authority::sign_refine(&payload, &engine.identity)
+            .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
+        Some(auth)
+    } else {
+        None
+    };
+
+    let meta = CommitMeta {
+        message,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64,
+        author: Some("oo-cli".to_string()),
+    };
+
+    let hash = universe.refine(&engine, &cur, source_caids, target_caids, authority, meta)?;
+    println!("Refine commit: {}", hash);
+
+    // Report shadow-affected commits
+    if let Ok(commit) = engine.store.get_commit(&hash) {
+        if let Some(ri) = commit.refine_info {
+            if !ri.shadow_affected.is_empty() {
+                println!("Shadow: {} historical commit(s) will be semantically updated:", ri.shadow_affected.len());
+                for ch in &ri.shadow_affected {
+                    println!("  {}", ch);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_repl() -> anyhow::Result<()> {
     let engine = Ouroboros::init(&std::env::current_dir()?)?;
     let mut universe = load_universe(&engine, &std::env::current_dir()?)?;
@@ -220,6 +314,71 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     program.canonicalize();
     let formatted = program.to_nlang();
     if write { fs::write(file, formatted)?; } else { println!("{}", formatted); }
+    Ok(())
+}
+
+fn run_eval(expr: String) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)
+        .unwrap_or_else(|_| Ouroboros::new_in_memory());
+
+    let mut universe = Universe::new(None, engine.root_with_system());
+
+    let parsed_expr = nlang_parser::parse_expr_only(expr.trim())
+        .map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+
+    let field = nlang_parser::ast::Field {
+        key: nlang_parser::ast::FieldKey::Named {
+            prefix: None,
+            name: "__eval_result".to_string(),
+        },
+        value: parsed_expr,
+        span: nlang_parser::ast::Span { start: 0, end: 0 },
+    };
+
+    let program = nlang_parser::ast::Program {
+        fields: vec![field],
+    };
+
+    for f in &program.fields {
+        if let Err(e) = universe.evolve(&engine, f) {
+            anyhow::bail!("Eval error: {:?}", e);
+        }
+    }
+
+    let path = nlang_parser::ast::Path {
+        anchor: nlang_parser::ast::PathAnchor::Bare,
+        segments: vec!["__eval_result".to_string()],
+        span: nlang_parser::ast::Span { start: 0, end: 0 },
+    };
+    let result = universe.observe(&engine, &path);
+    println!("{}", result.to_nlang(0));
+    Ok(())
+}
+
+fn run_inspect(caid_str: String) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)
+        .unwrap_or_else(|_| Ouroboros::new_in_memory());
+
+    let hash = ContentHash::parse(&caid_str)
+        .map_err(|_| anyhow::anyhow!("Invalid CAID format: {}", caid_str))?;
+
+    let val = engine.store.get_value(&hash)
+        .map_err(|_| anyhow::anyhow!("CAID not found in local store: {}", caid_str))?;
+
+    println!("CAID:   {}", caid_str);
+    println!("MASA:   {}", hash.masa_ref);
+    if !hash.lattice_sketch.is_empty() {
+        let sketch_preview = if hash.lattice_sketch.len() > 32 {
+            format!("{}...", &hash.lattice_sketch[..32])
+        } else {
+            hash.lattice_sketch.clone()
+        };
+        println!("Sketch: {}", sketch_preview);
+    }
+    println!();
+    println!("{}", val.to_nlang(0));
     Ok(())
 }
 

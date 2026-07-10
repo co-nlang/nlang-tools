@@ -32,7 +32,7 @@ impl Ouroboros {
                 expected: None,
                 found: Some(forced),
                 involved: vec![],
-            })),
+             ..Default::default() })),
             
             Value::Combo(cv) => self.complement_combo(cv, ctx),
             
@@ -56,6 +56,10 @@ impl Ouroboros {
                 }
             }
             
+            Value::Blur(bd) => {
+                Value::Blur(bd)
+            }
+            
             Value::Thunk { .. } => {
                 let inner = self.force(forced, ctx);
                 self.orthocomplement(inner, ctx)
@@ -68,7 +72,7 @@ impl Ouroboros {
                 expected: None,
                 found: Some(forced),
                 involved: vec![],
-            })),
+             ..Default::default() })),
         }
     }
     
@@ -97,11 +101,8 @@ impl Ouroboros {
                 return Value::Atom(AtomKind::Top, cv.effect, None);
             }
             
-            let mut acc = all_complements[0].clone();
-            for c in all_complements.into_iter().skip(1) {
-                acc = self.unify_internal(acc, c, ctx);
-            }
-            acc
+            // De Morgan: !(A & B) = !A | !B for open Combos
+            Value::Union(all_complements)
         }
     }
 }

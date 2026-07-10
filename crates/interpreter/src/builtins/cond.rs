@@ -45,5 +45,32 @@ pub fn register_cond_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         Value::Top
     }) as Arc<BuiltinFn>);
 
-    m.insert("cond.match".to_string(), Arc::new(|arg: Value, _oo: &Ouroboros, _ctx: &mut EvalContext| { arg }));
+    m.insert("cond.match".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        if let Value::Combo(ref c) = arg {
+            if let (Some(val_v), Some(pats_v)) = (c.get_field("0"), c.get_field("1")) {
+                let val = oo.force(val_v.clone(), ctx);
+                let pats = oo.force(pats_v.clone(), ctx);
+                if let Value::Combo(ref pc) = pats.collapse() {
+                    let mut i = 0usize;
+                    while let Some(pair_v) = pc.get_field(&i.to_string()) {
+                        let pair = oo.force(pair_v.clone(), ctx);
+                        if let Value::Combo(ref pair_c) = pair.collapse() {
+                            if let (Some(pat), Some(action)) = (pair_c.get_field("0"), pair_c.get_field("1")) {
+                                let unified = oo.unify_internal(val.clone(), pat.clone(), ctx);
+                                if !matches!(unified, Value::Bottom(_)) {
+                                    // If action is Top, return unified directly (no transformation)
+                                    if matches!(action, Value::Top) {
+                                        return unified;
+                                    }
+                                    return oo.apply_morphism(action.clone(), unified, ctx);
+                                }
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+            }
+        }
+        Value::Top
+    }) as Arc<BuiltinFn>);
 }

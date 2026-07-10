@@ -20,7 +20,7 @@ fn test_division_by_zero_int() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("1 / 0 = {:?}", val);
     match val {
         Value::Atom(AtomKind::Int(i), _, _) if i == BigInt::zero() => {}
@@ -35,7 +35,7 @@ fn test_division_by_zero_float() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("1.0 / 0.0 = {:?}", val);
     match val {
         Value::Atom(AtomKind::TagEnd, _, _) => {}
@@ -50,7 +50,7 @@ fn test_negative_division_by_zero() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("-1.0 / 0.0 = {:?}", val);
     match val {
         Value::Atom(AtomKind::TagStart, _, _) => {}
@@ -65,7 +65,7 @@ fn test_zero_divided_by_zero() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("0.0 / 0.0 = {:?}", val);
     match val {
         Value::Bottom(d) => {
@@ -82,7 +82,7 @@ fn test_sqrt_negative() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("sqrt(-1.0) = {:?}", val);
 }
 
@@ -105,10 +105,81 @@ fn test_inf_arithmetic_prohibited() {
     let oo = setup();
     let mut ctx = empty_ctx();
 
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("#_ + 1 = {:?}", val);
     match val {
         Value::Bottom(_) => {}
         other => panic!("FAIL: expected _|_ (arithmetic on order anchor), got {:?}", other),
+    }
+}
+
+// ── Phase 13: %branch meta-field tests ──
+
+#[test]
+fn ln_principal_branch_neg_one() {
+    let oo = setup();
+    let mut ctx = empty_ctx();
+    let builtins = &oo.builtin_registry;
+    let ln_fn = builtins.get("math.ln").unwrap();
+    let arg = Value::Atom(AtomKind::Float(-1.0), EffectTag::Pure, None);
+    let result = ln_fn(arg, &oo, &mut ctx);
+    if let Value::Atom(AtomKind::Complex(r, i), _, _) = result {
+        assert!((r).abs() < 1e-10, "real part should be ~0, got {}", r);
+        assert!((i - std::f64::consts::PI).abs() < 1e-10, "imag part should be π, got {}", i);
+    } else {
+        panic!("ln(-1) should return Complex, got {:?}", result);
+    }
+}
+
+#[test]
+fn ln_branch_1_neg_one() {
+    let oo = setup();
+    let mut ctx = empty_ctx();
+    let builtins = &oo.builtin_registry;
+    let ln_fn = builtins.get("math.ln").unwrap();
+    let mut fields = IndexMap::new();
+    fields.insert("0".to_string(), Value::Atom(AtomKind::Float(-1.0), EffectTag::Pure, None));
+    fields.insert("%branch".to_string(), Value::Atom(AtomKind::Int(1i64.into()), EffectTag::Pure, None));
+    let arg = Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let result = ln_fn(arg, &oo, &mut ctx);
+    if let Value::Atom(AtomKind::Complex(r, i), _, _) = result {
+        assert!((r).abs() < 1e-10, "real part should be ~0, got {}", r);
+        let expected_i = 3.0 * std::f64::consts::PI;
+        assert!((i - expected_i).abs() < 1e-10, "imag should be 3π, got {}", i);
+    } else {
+        panic!("ln(-1) {{%branch: 1}} should return Complex, got {:?}", result);
+    }
+}
+
+#[test]
+fn sqrt_branch_0_is_positive() {
+    let oo = setup();
+    let mut ctx = empty_ctx();
+    let builtins = &oo.builtin_registry;
+    let sqrt_fn = builtins.get("math.sqrt").unwrap();
+    let arg = Value::Atom(AtomKind::Float(4.0), EffectTag::Pure, None);
+    let result = sqrt_fn(arg, &oo, &mut ctx);
+    if let Value::Atom(AtomKind::Float(f), _, _) = result {
+        assert!((f - 2.0).abs() < 1e-10, "sqrt(4) branch 0 = 2.0");
+    } else {
+        panic!("expected Float, got {:?}", result);
+    }
+}
+
+#[test]
+fn sqrt_branch_1_is_negative() {
+    let oo = setup();
+    let mut ctx = empty_ctx();
+    let builtins = &oo.builtin_registry;
+    let sqrt_fn = builtins.get("math.sqrt").unwrap();
+    let mut fields = IndexMap::new();
+    fields.insert("0".to_string(), Value::Atom(AtomKind::Float(4.0), EffectTag::Pure, None));
+    fields.insert("%branch".to_string(), Value::Atom(AtomKind::Int(1i64.into()), EffectTag::Pure, None));
+    let arg = Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let result = sqrt_fn(arg, &oo, &mut ctx);
+    if let Value::Atom(AtomKind::Float(f), _, _) = result {
+        assert!((f + 2.0).abs() < 1e-10, "sqrt(4) branch 1 = -2.0");
+    } else {
+        panic!("expected Float(-2.0), got {:?}", result);
     }
 }

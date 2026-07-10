@@ -12,6 +12,14 @@ fn empty_ctx() -> EvalContext {
     EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]))
 }
 
+// Stage 2 (call-by-observation): eval_observed is the observation API
+// (eval + force_recursive); eval returns pre-observation structure.
+fn eval_observed(oo: &Ouroboros, src: &str) -> Value {
+    let program = parse_program(src).unwrap();
+    let mut ctx = empty_ctx();
+    oo.eval_observed(&program.fields[0].value, &mut ctx)
+}
+
 #[test]
 fn test_dispatch_anonymous_morphism_basic() {
     let input = "res: (x -> x + 1) 5";
@@ -29,12 +37,7 @@ fn test_dispatch_anonymous_morphism_basic() {
 
 #[test]
 fn test_dispatch_no_match_returns_bottom() {
-    let input = "res: { 1: \"one\", 2: \"two\" } 3";
-    let program = parse_program(input).unwrap();
-    let oo = setup();
-    let mut ctx = empty_ctx();
-
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = eval_observed(&setup(), r#"res: { 1: "one", 2: "two" } 3"#);
     println!("no match = {:?}", val);
     match val {
         Value::Bottom(_) => {}
@@ -44,12 +47,7 @@ fn test_dispatch_no_match_returns_bottom() {
 
 #[test]
 fn test_dispatch_exact_key_lookup() {
-    let input = "res: { 1: \"one\", 2: \"two\" } 1";
-    let program = parse_program(input).unwrap();
-    let oo = setup();
-    let mut ctx = empty_ctx();
-
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = eval_observed(&setup(), r#"res: { 1: "one", 2: "two" } 1"#);
     println!("exact key lookup = {:?}", val);
     match val {
         Value::Atom(AtomKind::Str(s), _, _) if s == "one" => {}
@@ -59,12 +57,7 @@ fn test_dispatch_exact_key_lookup() {
 
 #[test]
 fn test_dispatch_it_fallback() {
-    let input = "res: { it: \"default\" } 42";
-    let program = parse_program(input).unwrap();
-    let oo = setup();
-    let mut ctx = empty_ctx();
-
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = eval_observed(&setup(), r#"res: { it: "default" } 42"#);
     println!("it fallback = {:?}", val);
     match val {
         Value::Atom(AtomKind::Str(s), _, _) if s == "default" => {}
@@ -74,12 +67,7 @@ fn test_dispatch_it_fallback() {
 
 #[test]
 fn test_dispatch_wildcard_fallback() {
-    let input = "res: { _: \"any\" } 42";
-    let program = parse_program(input).unwrap();
-    let oo = setup();
-    let mut ctx = empty_ctx();
-
-    let val = oo.eval(&program.fields[0].value, &mut ctx);
+    let val = eval_observed(&setup(), r#"res: { _: "any" } 42"#);
     println!("wildcard fallback = {:?}", val);
     match val {
         Value::Atom(AtomKind::Str(s), _, _) if s == "any" => {}

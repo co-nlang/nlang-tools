@@ -1,9 +1,76 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn, Peer};
-use crate::value::{Value, EffectTag, BottomCause, ContentHash};
+use crate::value::{Value, EffectTag, BottomCause, BottomDetail, ContentHash};
 use crate::storage::ObjectStore;
 use nlang_parser::ast::AtomKind;
+
+const MAX_ROUTING_HOPS: u32 = 16;
+
+fn base64_decode_sketch(s: &str) -> Vec<u8> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+    STANDARD_NO_PAD.decode(s).unwrap_or_default()
+}
+
+fn bottom_not_found() -> Value {
+    Value::Bottom(Box::new(BottomDetail {
+        cause: BottomCause::MissingKey, path: Some("disc.find".to_string()),
+        message: Some("No matching peers found".to_string()),
+        ..Default::default()
+    }))
+}
+
+/// Perturb gravitational weight with a deterministic session salt.
+/// Adds ±0.5% noise: enough to break ties, not enough to override strong gravity.
+fn perturb_weight(weight: f64, caid: &str, horizon_salt: &crate::value::ContentHash) -> f64 {
+    use sha2::{Sha256, Digest as Sha2Digest};
+    let mut h = Sha256::new();
+    h.update(&horizon_salt.digest);
+    h.update(caid.as_bytes());
+    let hash = h.finalize();
+    let salt_f = u64::from_be_bytes(hash[0..8].try_into().unwrap()) as f64 / u64::MAX as f64;
+    weight * (1.0 + (salt_f - 0.5) * 0.01)
+}
+
+/// Compute a MASA identifier from a Combo's field key set.
+/// Two Combos with the same field keys form the same MASA (classical sub-algebra).
+fn field_key_masa_id(cv: &crate::value::ComboVal) -> String {
+    use sha2::{Sha256, Digest};
+    let mut keys: Vec<String> = cv.all_fields_iter()
+        .map(|(k, _)| k)
+        .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
+        .collect();
+    keys.sort();
+    let joined = keys.join("\x00");
+    let digest = Sha256::digest(joined.as_bytes());
+    format!("masa:fk:{}", hex::encode(&digest[..8]))
+}
+
+/// Field count as GBB mass (capped at 100).
+fn compute_mass(val: &Value) -> f64 {
+    if let Value::Combo(ref cv) = val {
+        (cv.system.len() + cv.meta.len() + cv.types.len()
+         + cv.rules.len() + cv.data.len() + cv.local.len()) as f64
+    } else { 1.0 }.min(100.0)
+}
+
+/// Build the initial query nerve for disc.find (no overlapping MASA lookup).
+fn build_query_nerve(val: &Value) -> Vec<crate::ladd::NerveEntry> {
+    if let Value::Combo(ref cv) = val {
+        let keys: Vec<String> = cv.all_fields_iter()
+            .map(|(k, _)| k)
+            .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
+            .collect();
+        if keys.is_empty() { vec![] }
+        else {
+            vec![crate::ladd::NerveEntry {
+                masa_caid: field_key_masa_id(cv),
+                overlapping_masa_caids: vec![],
+                field_keys: keys,
+            }]
+        }
+    } else { vec![] }
+}
 
 pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("disc.connect".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
@@ -79,5 +146,151 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     
     m.insert("disc.identify".to_string(), Arc::new(|arg: Value, _oo: &Ouroboros, _ctx: &mut EvalContext| {
         Value::Atom(AtomKind::Str(arg.content_hash().to_string()), EffectTag::Pure, None)
+    }) as Arc<BuiltinFn>);
+
+    // Phase 4 / Phase 5: LADD advertise
+    m.insert("disc.advertise".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, _ctx: &mut EvalContext| {
+        let hash = arg.content_hash();
+        let mass = compute_mass(&arg);
+        let sketch_bytes = base64_decode_sketch(&hash.lattice_sketch);
+        let masa_ref = hash.masa_ref.clone();
+        // Phase 11: nerve_structure from field key MASA computation
+        // Phase 17: also store field_keys for dynamic intersection + compute overlapping
+        let nerve_structure: Vec<crate::ladd::NerveEntry> = if let Value::Combo(ref cv) = arg {
+            let keys: Vec<String> = cv.all_fields_iter()
+                .map(|(k, _)| k)
+                .filter(|k| !k.starts_with('%') && !k.starts_with("~%"))
+                .collect();
+            if keys.is_empty() {
+                vec![]
+            } else {
+                let my_masa = field_key_masa_id(cv);
+                let my_key_set: std::collections::HashSet<&str> = keys.iter().map(|s| s.as_str()).collect();
+                let overlapping: Vec<String> = if let Ok(reg) = oo.gbb_registry.read() {
+                    reg.values()
+                        .flat_map(|g| g.nerve_structure.iter())
+                        .filter(|ne| ne.masa_caid != my_masa)
+                        .filter(|ne| ne.field_keys.iter().any(|k| my_key_set.contains(k.as_str())))
+                        .map(|ne| ne.masa_caid.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .collect()
+                } else { vec![] };
+                vec![crate::ladd::NerveEntry {
+                    masa_caid: my_masa,
+                    overlapping_masa_caids: overlapping,
+                    field_keys: keys,
+                }]
+            }
+        } else {
+            vec![]
+        };
+        let gbb = crate::ladd::GBB { node_caid: hash.clone(), mass, sketch_bytes, masa_ref, nerve_structure };
+        if let Ok(mut reg) = oo.gbb_registry.write() {
+            reg.insert(hash.to_string(), gbb);
+        }
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
+    }) as Arc<BuiltinFn>);
+
+    // Phase 4 / Phase 5: LADD find
+    m.insert("disc.find".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+        // 1. Build initial query GBB
+        let query_hash = arg.content_hash();
+        let mut current_query = crate::ladd::GBB {
+            node_caid: query_hash.clone(),
+            mass: compute_mass(&arg),
+            sketch_bytes: base64_decode_sketch(&query_hash.lattice_sketch),
+            masa_ref: query_hash.masa_ref.clone(),
+            nerve_structure: build_query_nerve(&arg),
+        };
+
+        // 2. Extract explicit target CAID (optional direct-lookup mode)
+        let explicit_target: Option<String> = if let Value::Combo(ref c) = arg {
+            c.get_field("target").map(|v| oo.force(v.clone(), ctx).to_string_plain())
+        } else { None };
+
+        const EPSILON: f64 = 1e-6;
+
+        // 3. Multi-hop routing loop
+        loop {
+            // Safety: hard hop budget (Phase 41)
+            if ctx.disc_routing_hops >= MAX_ROUTING_HOPS {
+                return Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::SemanticEclipse,
+                    path: Some("disc.find".to_string()),
+                    message: Some(format!(
+                        "Routing budget exceeded after {} hops", MAX_ROUTING_HOPS
+                    )),
+                    ..Default::default()
+                }));
+            }
+
+            // Gravitational candidate scoring
+            let candidates: Vec<(f64, String)> = {
+                let reg = match oo.gbb_registry.read() {
+                    Ok(r) => r, Err(_) => return BottomCause::Conflict.into(),
+                };
+                reg.values()
+                    .filter(|g| crate::ladd::masa_compatible(&current_query, g))
+                    .filter(|g| crate::ladd::nerve_overlap(&current_query, g))
+                    .map(|g| {
+                        let w = crate::ladd::gravitational_weight(&current_query, g, EPSILON);
+                        (w, g.node_caid.to_string())
+                    })
+                    .collect()
+            };
+
+            if candidates.is_empty() { return bottom_not_found(); }
+
+            // Blacklist + horizon_salt tiebreaker (Phase 41)
+            let mut perturbed: Vec<(f64, String)> = candidates.iter()
+                .map(|(w, caid)| (perturb_weight(*w, caid, &ctx.horizon_salt), caid.clone()))
+                .collect();
+            perturbed.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            let chosen = if let Some((_, caid)) = perturbed.iter()
+                .find(|(_, c)| !ctx.disc_routing_visited.contains(c))
+            {
+                caid.clone()
+            } else {
+                perturbed[0].1.clone()
+            };
+
+            ctx.disc_routing_visited.insert(chosen.clone());
+            ctx.disc_routing_hops += 1;
+
+            // Determine which CAID to fetch at this hop
+            let fetch_target = explicit_target.as_deref().unwrap_or(chosen.as_str());
+
+            // Try local store, then connected peers
+            if let Ok(hash) = crate::value::ContentHash::parse(fetch_target) {
+                if let Ok(val) = oo.store.get_value(&hash) { return val; }
+                let peers_copy: Vec<_> = oo.peers.read()
+                    .map(|p| p.values().cloned().collect()).unwrap_or_default();
+                for peer in peers_copy {
+                    match peer {
+                        crate::Peer::Local(store) => {
+                            if let Ok(val) = store.get_value(&hash) { return val; }
+                        }
+                        crate::Peer::Remote(addr) => {
+                            if let Ok(val) = oo.remote_fetch(&addr, &hash) { return val; }
+                        }
+                    }
+                }
+            }
+
+            // Value not found at this hop — advance query to chosen GBB for next hop
+            let next_gbb = {
+                let reg = match oo.gbb_registry.read() {
+                    Ok(r) => r, Err(_) => return BottomCause::Conflict.into(),
+                };
+                reg.get(&chosen).cloned()
+            };
+
+            match next_gbb {
+                Some(gbb) => { current_query = gbb; }
+                None => { return bottom_not_found(); }
+            }
+        }
     }) as Arc<BuiltinFn>);
 }

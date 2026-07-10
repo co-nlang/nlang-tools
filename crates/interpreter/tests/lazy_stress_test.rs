@@ -48,6 +48,7 @@ let oo = empty_ouroboros();
         root.insert_field(&key, Value::Thunk {
             expr: Box::new(expr),
             closure: vec![],
+            context: None,
             effect: EffectTag::Pure,
         });
     }
@@ -89,6 +90,7 @@ fn test_sparse_combo_definition_speed() {
         root_fields.insert(format!("f{}", i), Value::Thunk {
             expr: Box::new(int_expr(i as i64)), // 雖然只是 int，但包裹在 Thunk 中
             closure: vec![],
+            context: None,
             effect: EffectTag::Pure,
         });
     }

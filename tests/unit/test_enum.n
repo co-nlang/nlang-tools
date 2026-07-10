@@ -1,4 +1,4 @@
-~Heading: { #_|_ < #h1 < #h2 < #h3 < #_ }
+~Heading: #{ #_|_ < #h1 < #h2 < #h3 < #_ }
 
 test_rank_h1: ~Heading.#h1.%rank == 1
 test_rank_h2: ~Heading.#h2.%rank == 2

@@ -1,0 +1,7 @@
+;; r3_fixture.n — R3 sealed x keyed = static ⊥
+
+;; triggers R3: tuple (sealed) + transformer adds key `s` not in {0,1}
+r3_trigger: (1, 2) |> { s: $.0 }
+
+;; does NOT trigger R3: LHS is open combo (not sealed) — spread unboxes first
+r3_safe: { ...(1, 2) } |> { s: $.0 }

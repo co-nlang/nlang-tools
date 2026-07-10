@@ -162,7 +162,7 @@ for (pattern_key, rule_val) in rules.all_fields_iter() {
             expected: None,
             found: Some(rule),
             involved: vec![],
-        }))
+         ..Default::default() }))
     }
 }
 
@@ -190,7 +190,7 @@ impl MorphismDispatchResult {
                 expected: None,
                 found: None,
                 involved: vec![],
-            })),
+             ..Default::default() })),
         }
     }
 }

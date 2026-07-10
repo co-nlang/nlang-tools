@@ -6,6 +6,20 @@ mod disc;
 mod reflection;
 mod engine;
 mod time;
+mod bytes;
+mod regex;
+mod json;
+mod io;
+mod env;
+mod process;
+mod path;
+mod query;
+mod diff;
+mod set;
+mod stat;
+mod csv;
+mod url;
+mod toml;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +37,20 @@ pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     reflection::register_reflection_builtins(&mut m);
     engine::register_engine_builtins(&mut m);
     time::register_time_builtins(&mut m);
+    bytes::register_bytes_builtins(&mut m);
+    regex::register_regex_builtins(&mut m);
+    json::register_json_builtins(&mut m);
+    io::register_io_builtins(&mut m);
+    env::register_env_builtins(&mut m);
+    process::register_process_builtins(&mut m);
+    path::register_path_builtins(&mut m);
+    query::register_query_builtins(&mut m);
+    diff::register_diff_builtins(&mut m);
+    set::register_set_builtins(&mut m);
+    stat::register_stat_builtins(&mut m);
+    csv::register_csv_builtins(&mut m);
+    url::register_url_builtins(&mut m);
+    toml::register_toml_builtins(&mut m);
     
     m
 }
