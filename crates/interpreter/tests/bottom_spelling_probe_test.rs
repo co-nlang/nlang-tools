@@ -102,28 +102,6 @@ fn lattice_eq_bottom_vs_bottom_is_clean_true() {
     assert_is_tag("r: @{} = _|_", "true");
 }
 
-// --- red lines: SYNTAX_06 §4.2 subtype extremes (pre-existing, separate case)
-// `<=` shares eval_binary_cmp with the absorbing ==/!= family, so the ⊥/⊤
-// extremes never followed §4.2 (measured at baseline e7d2fcb AND after
-// 9727f1a — not a regression, never implemented). Un-ignore = acceptance of
-// that future fix; requires splitting the two families' ⊥/⊤ policy inside
-// eval_binary_cmp.
-
-#[test]
-#[ignore = "SYNTAX_06 §4.2 not implemented: _|_ <= x must be #true (baseline+2026-07-10: ⊥Conflict)"]
-fn bottom_is_subtype_of_everything() {
-    assert_is_tag("r: _|_ <= 5", "true");
-    assert_is_tag("r: _|_ <= _|_", "true");
-}
-
-#[test]
-#[ignore = "SYNTAX_06 §4.2 not implemented: x <= _ must be #true (baseline+2026-07-10: _)"]
-fn everything_is_subtype_of_top() {
-    assert_is_tag("r: 5 <= _", "true");
-}
-
-#[test]
-#[ignore = "SYNTAX_06 §4.2 not implemented: _ <= _|_ must be #false (baseline: _; after 9727f1a: ⊥Conflict)"]
-fn top_is_not_subtype_of_bottom() {
-    assert_is_tag("r: _ <= _|_", "false");
-}
+// SYNTAX_06 §4.2 subtype-extreme red lines moved to
+// cmp_extremes_probe_test.rs (2026-07-10, work order
+// docs/cmp_extremes_handover.md) — expanded to Gte/Lt/Gt + finite guards.
