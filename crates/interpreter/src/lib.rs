@@ -1107,7 +1107,11 @@ let mut refl_fields = IndexMap::new();
             if name == "#_|_" { return Value::Atom(AtomKind::TagStart, EffectTag::Pure, None); }
             if name == "#_" { return Value::Atom(AtomKind::TagEnd, EffectTag::Pure, None); }
             if name == "_" { return Value::Top; }
-            if name == "_|_" { return Value::Atom(AtomKind::Bottom, EffectTag::Pure, None); }
+            // Dual of Top normalization: literal `_|_` is Value::Bottom
+            // (Conflict), not Atom(AtomKind::Bottom) — SYNTAX_06 §4.1 absorption.
+            if name == "_|_" {
+                return crate::value::BottomCause::Conflict.into();
+            }
             
             if TypeConstraint::is_type_constraint_path(name) {
                 let type_name = name.trim_start_matches('@');

@@ -217,7 +217,11 @@ impl Ouroboros {
         }
         match &expr.kind {
             ExprKind::Atom(kind) => match kind.clone() {
+                // Dual of Top (04df5c4): lattice bottom is Value::Bottom, not
+                // Atom(AtomKind::Bottom). Declared empty uses Conflict cause —
+                // same object as empty AnonSet `@{}` (eval wildcard → Conflict).
                 AtomKind::Top => Value::Top,
+                AtomKind::Bottom => BottomCause::Conflict.into(),
                 k => Value::Atom(k, EffectTag::Pure, None),
             },
             ExprKind::Combo { fields, relations, closed } => {

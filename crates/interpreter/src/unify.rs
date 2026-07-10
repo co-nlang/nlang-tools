@@ -102,6 +102,14 @@ impl Ouroboros {
             // arm: `other` is the non-Top operand).
             (Value::Atom(AtomKind::Top, _, _), other) | (other, Value::Atom(AtomKind::Top, _, _)) =>
                 return self.unify_internal(Value::Top, other.clone(), ctx),
+            // Atom(Bottom) alias — dual of Atom(Top). Literal `_|_` evaluates to
+            // Value::Bottom (eval normalization), but complement / manual
+            // construction still emit Atom(Bottom). Re-enter as declared-empty
+            // Bottom(Conflict) so absorption arms below run (SYNTAX_06 §4.1).
+            (Value::Atom(AtomKind::Bottom, _, _), other)
+            | (other, Value::Atom(AtomKind::Bottom, _, _)) => {
+                return self.unify_internal(BottomCause::Conflict.into(), other.clone(), ctx);
+            }
             // Stage 3 (§3a/§3b): a Ref must survive unify un-dereferenced — the
             // force below runs in the *caller's* context (engine-level at evolve
             // field-merge), and dereferencing there is evolve-time snapshotting,
