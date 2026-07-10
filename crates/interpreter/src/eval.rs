@@ -728,62 +728,233 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
 
     fn eval_binary_cmp(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: CmpOp) -> Value {
         // Stage 2 (紀律 2): value-judgment point — force thunks before comparison.
+        // Always evaluate both sides so set-family effect max is honest and
+        // set-family never short-circuits on ⊥ (SYNTAX_06 §4.1/§4.2 two-family split).
         let va = self.force(self.eval(a, ctx), ctx);
-        if let Value::Bottom(_) = va { return va; }
         let vb = self.force(self.eval(b, ctx), ctx);
-        if let Value::Bottom(_) = vb { return vb; }
-        let res_e = va.effect().max(vb.effect());
-        let ca = va.collapse();
-        let cb = vb.collapse();
 
-        if ca.is_top() || cb.is_top() { return Value::Top; }
-        if let Value::Bottom(d) = ca { return Value::Bottom(d.clone()); }
-        if let Value::Bottom(d) = cb { return Value::Bottom(d.clone()); }
+        // ── Atomic family (`==` / `!=`): absorbing ⊥/⊤ (SYNTAX_06 §4.1) ──
+        // Policy unchanged from pre-split path: ⊥ before ⊤; return the lattice
+        // extreme, never a clean boolean when either side is extreme.
+        if matches!(op, CmpOp::Eq | CmpOp::Ne) {
+            if let Value::Bottom(_) = &va {
+                return va;
+            }
+            if let Value::Bottom(_) = &vb {
+                return vb;
+            }
+            let res_e = va.effect().max(vb.effect());
+            let ca = va.collapse();
+            let cb = vb.collapse();
+            if ca.is_top() || cb.is_top() {
+                return Value::Top;
+            }
+            if let Value::Bottom(d) = ca {
+                return Value::Bottom(d.clone());
+            }
+            if let Value::Bottom(d) = cb {
+                return Value::Bottom(d.clone());
+            }
+
+            let op_fn = |x: f64, y: f64| match op {
+                CmpOp::Eq => x == y,
+                CmpOp::Ne => x != y,
+                _ => unreachable!(),
+            };
+            match (ca.clone(), cb.clone()) {
+                (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }),
+                        res_e,
+                        None,
+                    );
+                }
+                (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x, y) { "true".into() } else { "false".into() }),
+                        res_e,
+                        None,
+                    );
+                }
+                (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }),
+                        res_e,
+                        None,
+                    );
+                }
+                (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+                    return Value::Atom(
+                        AtomKind::Tag(if op_fn(x, y.to_f64().unwrap_or(0.0)) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }),
+                        res_e,
+                        None,
+                    );
+                }
+                _ => {}
+            }
+            return Value::Atom(
+                AtomKind::Tag(if matches!(op, CmpOp::Eq) {
+                    if ca == cb {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    }
+                } else if ca != cb {
+                    "true".into()
+                } else {
+                    "false".into()
+                }),
+                res_e,
+                None,
+            );
+        }
+
+        // ── Set family (`<` `<=` `>` `>=`): clean boolean, NON-absorbing ──
+        // SYNTAX_06 §4.2: ⊥ = empty set (⊆ everything), ⊤ = universe (⊇ everything).
+        let res_e = va.effect().max(vb.effect());
+        let ca = va.collapse().clone();
+        let cb = vb.collapse().clone();
+
+        let is_bot = |v: &Value| {
+            matches!(v, Value::Bottom(_)) || matches!(v, Value::Atom(AtomKind::Bottom, _, _))
+        };
+        let is_top = |v: &Value| {
+            v.is_top() || matches!(v, Value::Atom(AtomKind::Top, _, _))
+        };
+        // If Atom(Top)/Atom(Bottom) still appear here, they are dual-spelling
+        // leftovers (complement path etc.); treated as extremes — not expanded.
+        let bool_tag = |b: bool| {
+            Value::Atom(
+                AtomKind::Tag(if b { "true".into() } else { "false".into() }),
+                res_e,
+                None,
+            )
+        };
+        // Lte truth table at extremes (handover §修法). Finite×finite falls through.
+        let lte_extreme = |x: &Value, y: &Value| -> Option<bool> {
+            let xb = is_bot(x);
+            let xt = is_top(x);
+            let yb = is_bot(y);
+            let yt = is_top(y);
+            if !(xb || xt || yb || yt) {
+                return None;
+            }
+            // x = ⊥ → true; y = ⊤ → true; y = ⊥ → (x = ⊥); x = ⊤ → (y = ⊤)
+            if xb {
+                return Some(true);
+            }
+            if yt {
+                return Some(true);
+            }
+            if yb {
+                return Some(xb);
+            }
+            if xt {
+                return Some(yt);
+            }
+            None
+        };
+        // Strict subset: ⊥ < y ⟺ y ≠ ⊥; x < ⊤ ⟺ x ≠ ⊤; never ⊤ < · or · < ⊥.
+        let lt_extreme = |x: &Value, y: &Value| -> Option<bool> {
+            let xb = is_bot(x);
+            let xt = is_top(x);
+            let yb = is_bot(y);
+            let yt = is_top(y);
+            if !(xb || xt || yb || yt) {
+                return None;
+            }
+            if xb {
+                return Some(!yb);
+            }
+            if yt {
+                return Some(!xt);
+            }
+            if xt {
+                return Some(false);
+            }
+            if yb {
+                return Some(false);
+            }
+            None
+        };
+
+        match op {
+            CmpOp::Lte => {
+                if let Some(b) = lte_extreme(&ca, &cb) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Gte => {
+                // x >= y ≡ y <= x
+                if let Some(b) = lte_extreme(&cb, &ca) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Lt => {
+                if let Some(b) = lt_extreme(&ca, &cb) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Gt => {
+                if let Some(b) = lt_extreme(&cb, &ca) {
+                    return bool_tag(b);
+                }
+            }
+            CmpOp::Eq | CmpOp::Ne => unreachable!("atomic family handled above"),
+        }
 
         let op_fn = |x: f64, y: f64| match op {
-            CmpOp::Eq => x == y,
-            CmpOp::Ne => x != y,
             CmpOp::Lt => x < y,
             CmpOp::Gt => x > y,
             CmpOp::Lte => x <= y,
             CmpOp::Gte => x >= y,
+            CmpOp::Eq | CmpOp::Ne => unreachable!(),
         };
 
-        match (ca.clone(), cb.clone()) {
+        match (&ca, &cb) {
             (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)));
             }
             (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x, y) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(*x, *y));
             }
             (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(x.to_f64().unwrap_or(0.0), *y));
             }
             (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                return Value::Atom(AtomKind::Tag(if op_fn(x, y.to_f64().unwrap_or(0.0)) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                return bool_tag(op_fn(*x, y.to_f64().unwrap_or(0.0)));
             }
             _ => {}
         }
 
-        match op {
-            CmpOp::Eq => return Value::Atom(AtomKind::Tag(if ca == cb { "true".to_string() } else { "false".to_string() }), res_e, None),
-            CmpOp::Ne => return Value::Atom(AtomKind::Tag(if ca != cb { "true".to_string() } else { "false".to_string() }), res_e, None),
-            _ => {}
-        }
-
-        if let (Value::Atom(ak, _, rx), Value::Atom(bk, _, ry)) = (ca, cb) {
-            if matches!(ak, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd) &&
-               matches!(bk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd) {
+        if let (Value::Atom(ak, _, rx), Value::Atom(bk, _, ry)) = (&ca, &cb) {
+            if matches!(ak, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
+                && matches!(bk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
+            {
                 if let (Some(rx_val), Some(ry_val)) = (rx, ry) {
-                    return Value::Atom(AtomKind::Tag(if op_fn(*rx_val as f64, *ry_val as f64) { "true".to_string() } else { "false".to_string() }), res_e, None);
+                    return bool_tag(op_fn(*rx_val as f64, *ry_val as f64));
                 }
             }
         }
 
         if matches!(op, CmpOp::Lte | CmpOp::Gte) {
-            if let (Value::Combo(ac), Value::Combo(bc)) = (ca.clone(), cb.clone()) {
-                if is_type_constraint_combo(&ac) && is_type_constraint_combo(&bc) {
-                    if let (Some(na), Some(nb)) = (get_type_constraint_name(&ac), get_type_constraint_name(&bc)) {
+            if let (Value::Combo(ac), Value::Combo(bc)) = (&ca, &cb) {
+                if is_type_constraint_combo(ac) && is_type_constraint_combo(bc) {
+                    if let (Some(na), Some(nb)) =
+                        (get_type_constraint_name(ac), get_type_constraint_name(bc))
+                    {
                         let ta = TypeConstraint::from_name(&na);
                         let tb = TypeConstraint::from_name(&nb);
                         let result = match op {
@@ -791,7 +962,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                             CmpOp::Gte => self.check_subtype_relation(&tb, &ta),
                             _ => false,
                         };
-                        return Value::Atom(AtomKind::Tag(if result { "true".to_string() } else { "false".to_string() }), res_e, None);
+                        return bool_tag(result);
                     }
                 }
             }
