@@ -558,12 +558,15 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             }
             // Lattice-family equality `=`: non-collapsing structural comparison (partial impl; SYNTAX_06/10)
             ExprKind::LatticeEq(a, b) => {
+                // Set family does NOT absorb (SYNTAX_06 §4.1): `_|_` is an
+                // operand — the empty set — not a black hole. `_|_ = 3` →
+                // #false, `_|_ = _|_` → #true, both clean booleans.
                 let va = self.eval(a, ctx);
-                if let Value::Bottom(_) = va { return va; }
                 let vb = self.eval(b, ctx);
-                if let Value::Bottom(_) = vb { return vb; }
                 let res_e = va.effect().max(vb.effect());
                 let eq = match (&va, &vb) {
+                    (Value::Bottom(_), Value::Bottom(_)) => true,
+                    (Value::Bottom(_), _) | (_, Value::Bottom(_)) => false,
                     (Value::Atom(x, _, _), Value::Atom(y, _, _)) => x == y,
                     _ => va == vb,
                 };
