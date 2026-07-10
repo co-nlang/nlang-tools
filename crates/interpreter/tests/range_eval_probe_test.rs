@@ -115,6 +115,20 @@ fn range_variable_bound_resolves_at_observation() {
     assert_eq!(obs.to_nlang(0), "1..10", "bounds resolve against the observed universe");
 }
 
+// --- Union distributes over Range meet (SPEC_07 §4) ---------------------------
+// Acceptance guard for b8ce03b: range_unify's original catch-all preempted
+// Union distribution — `(1|7) & 1..3` measured Conflict instead of 1. Same
+// bug class as Atom(Top)&Union (5b501e5). Repaired at acceptance: range_unify
+// declines non-(Atom|Range) operands.
+
+#[test]
+fn union_distributes_over_range_meet() {
+    assert_int("r: (1 | 7) & 1..3", 1);
+    assert_int("r: 1..3 & (1 | 7)", 1);
+    let v = eval_one("r: (1 | 2) & 1..3"); // both branches survive
+    assert!(!matches!(v, Value::Bottom(_)), "(1|2) & 1..3 must keep the superposition, got {v:?}");
+}
+
 // --- @{ e } transparency -----------------------------------------------------
 
 #[test]

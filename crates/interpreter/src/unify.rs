@@ -386,7 +386,13 @@ impl Ouroboros {
 
 // ── Range lattice ops (closed-closed; anchors = ±∞) ─────────────────────────
 
-/// Returns Some(result) if either operand is a Range; None if neither is.
+/// Returns Some(result) only for the pairs this knife owns (Range×Range,
+/// Atom×Range). Everything else — Union, Thunk, Ref, Combo — must DECLINE
+/// (None) so the existing machinery runs: Union distribution (do_unify),
+/// thunk forcing, combo mismatch. The original Conflict catch-all here
+/// preempted Union distribution — `(1|7) & 1..3` measured Conflict instead
+/// of 1 (SPEC_07 §4 疊加態平等演化) — same bug class as Atom(Top)&Union
+/// (5b501e5): an early arm stealing operands from downstream normalization.
 fn range_unify(a: &Value, b: &Value) -> Option<Value> {
     match (a, b) {
         (Value::Range { .. }, Value::Range { .. }) => Some(range_intersect(a, b)),
@@ -394,8 +400,6 @@ fn range_unify(a: &Value, b: &Value) -> Option<Value> {
         | (Value::Range { start, end, step }, atom @ Value::Atom(_, _, _)) => {
             Some(range_membership(atom, start, end, step.as_deref()))
         }
-        // Non-numeric / non-range vs Range: honest unsupported
-        (Value::Range { .. }, _) | (_, Value::Range { .. }) => Some(BottomCause::Conflict.into()),
         _ => None,
     }
 }
