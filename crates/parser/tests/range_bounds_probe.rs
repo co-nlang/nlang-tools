@@ -19,19 +19,16 @@ fn shape(src: &str) -> String {
 }
 
 #[test]
-#[ignore = "missing bounds default to Top, spec says order anchors (baseline 2026-07-10)"]
 fn omitted_end_defaults_to_order_supremum() {
     assert_eq!(shape("1.."), "Range(Atom(Int(1)), Atom(TagEnd))");
 }
 
 #[test]
-#[ignore = "missing bounds default to Top, spec says order anchors (baseline 2026-07-10)"]
 fn omitted_start_defaults_to_order_infimum() {
     assert_eq!(shape("..10"), "Range(Atom(TagStart), Atom(Int(10)))");
 }
 
 #[test]
-#[ignore = "missing bounds default to Top, spec says order anchors (baseline 2026-07-10)"]
 fn full_range_defaults_to_both_anchors() {
     assert_eq!(shape(".."), "Range(Atom(TagStart), Atom(TagEnd))");
 }

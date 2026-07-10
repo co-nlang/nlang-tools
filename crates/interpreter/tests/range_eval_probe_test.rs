@@ -7,19 +7,9 @@
 // Meet = membership (atom & range) and intersection (stepless range & range;
 // empty → ⊥, singleton → collapses to the atom). `@{ e } ≡ e` (transparent).
 //
-// Baseline 2026-07-10 (`75a16c1`): every range/@{e} expression falls through
-// eval's wildcard arm to Bottom(Conflict) — all red lines below fail as ⊥ or
-// as hash mismatch against the ⊥.
-//
-// Canonical Value-level print (pre-ruled): `a..b` / `a..b..s`, no spaces —
-// print assertions below pin it.
-//
-// The finite/no-regression side of this boundary is guarded by EXISTING
-// suites (list_p25_test.rs pins `~%List./range` = half-open [start,end);
-// unify/cmp/absorption suites pin the untouched arms) — kept active, none
-// duplicated here.
-//
-// Acceptance = remove the #[ignore]s, everything green, no other suite breaks.
+// Landed: Value::Range + eval/unify arms (range_eval_handover.md).
+// Canonical print: `a..b` / `a..b..s`, no spaces.
+// No-regression side: list_p25 (`~%List./range` half-open), absorption/cmp suites.
 
 use nlang_interpreter::{Ouroboros, Universe, EvalContext, Value};
 use nlang_interpreter::value::{ComboVal, EffectTag};
@@ -54,20 +44,18 @@ fn assert_prints(src: &str, expect: &str) {
     assert_eq!(v.to_nlang(0), expect, "{src:?} canonical print");
 }
 
-// --- red lines: Range is a value (observe = itself, no collapse) ------------
+// --- Range is a value (observe = itself, no collapse) ------------------------
 
 #[test]
-#[ignore = "no Range eval arm: falls to wildcard ⊥Conflict (baseline 2026-07-10)"]
 fn range_literal_observes_as_itself() {
     assert_prints("x: 1..10", "1..10");
     assert_prints("x: 0..10..2", "0..10..2");
     assert_prints("x: 1..#_", "1..#_");
 }
 
-// --- red lines: membership meet (closed ends, steps, anchors) ---------------
+// --- membership meet (closed ends, steps, anchors) ---------------------------
 
 #[test]
-#[ignore = "no Range unify arm: membership meet ⊥s via wildcard (baseline 2026-07-10)"]
 fn range_membership_meet() {
     assert_int("r: 5 & 1..10", 5);
     assert_bottom("r: 12 & 1..10");
@@ -77,27 +65,24 @@ fn range_membership_meet() {
 }
 
 #[test]
-#[ignore = "no Range unify arm: step membership (baseline 2026-07-10)"]
 fn range_step_membership() {
     assert_int("r: 4 & 0..10..2", 4);
     assert_int("r: 10 & 0..10..2", 10); // closed end on-step
     assert_bottom("r: 3 & 0..10..2");
 }
 
-// --- red lines: stepless intersection ----------------------------------------
+// --- stepless intersection ---------------------------------------------------
 
 #[test]
-#[ignore = "no Range unify arm: intersection (baseline 2026-07-10)"]
 fn range_intersection() {
     assert_prints("r: 1..10 & 5..20", "5..10");
     assert_int("r: 3..5 & 5..8", 5);    // singleton collapses to the atom
     assert_bottom("r: 1..3 & 7..9");    // empty intersection
 }
 
-// --- red line: declare-range-then-refine (monotone evolution) ---------------
+// --- declare-range-then-refine (monotone evolution) --------------------------
 
 #[test]
-#[ignore = "no Range eval/unify arms: evolve from range ⊥s (baseline 2026-07-10)"]
 fn evolve_can_refine_from_range() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());
@@ -114,10 +99,9 @@ fn evolve_can_refine_from_range() {
     }
 }
 
-// --- red line: variable bound resolves at observation ------------------------
+// --- variable bound resolves at observation ----------------------------------
 
 #[test]
-#[ignore = "no Range eval arm: variable bound (baseline 2026-07-10)"]
 fn range_variable_bound_resolves_at_observation() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());
@@ -131,10 +115,9 @@ fn range_variable_bound_resolves_at_observation() {
     assert_eq!(obs.to_nlang(0), "1..10", "bounds resolve against the observed universe");
 }
 
-// --- red lines: @{ e } transparency ------------------------------------------
+// --- @{ e } transparency -----------------------------------------------------
 
 #[test]
-#[ignore = "AnonSet has no eval arm: @{e} ⊥s via wildcard instead of ≡ e (baseline 2026-07-10)"]
 fn anon_set_is_transparent() {
     assert_int("r: @{ 5 }", 5);
     assert_prints("r: @{ 1..10 }", "1..10");

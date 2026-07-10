@@ -32,6 +32,13 @@ pub enum Value {
     Ref(Path),
     Bottom(Box<BottomDetail>),
     Blur(BlurDetail),
+    /// Closed interval set [start, end] (optionally stepped). Symbolic lattice
+    /// value — observation neither materializes nor collapses it (SPEC_02 §3).
+    Range {
+        start: Box<Value>,
+        end: Box<Value>,
+        step: Option<Box<Value>>,
+    },
 }
 
 impl PartialEq for Value {
@@ -47,6 +54,11 @@ impl PartialEq for Value {
                 ex1 == ex2 && cl1 == cl2 && c1 == c2 && ef1 == ef2,
             (Value::Bottom(b1), Value::Bottom(b2)) => b1 == b2,
             (Value::Blur(b1), Value::Blur(b2)) => b1 == b2,
+            (
+                Value::Range { start: s1, end: e1, step: st1 },
+                Value::Range { start: s2, end: e2, step: st2 },
+            ) => s1 == s2 && e1 == e2 && st1 == st2,
+            (Value::Ref(p1), Value::Ref(p2)) => p1 == p2,
             _ => false,
         }
     }
@@ -689,6 +701,11 @@ impl Value {
             Value::Blur(bd) => {
                 128 + bd.partial.as_ref().map(|p| p.bits()).unwrap_or(0)
             },
+            Value::Range { start, end, step } => {
+                start.bits()
+                    + end.bits()
+                    + step.as_ref().map(|s| s.bits()).unwrap_or(0)
+            }
         }
     }
 
@@ -697,7 +714,7 @@ impl Value {
             Value::Top => 0,
             Value::Bottom(_) => TROPICAL_INFINITY,
             Value::Atom(_, _, _) => 1,
-            Value::Thunk { .. } | Value::Code(_) | Value::Ref(_) => 1,
+            Value::Thunk { .. } | Value::Code(_) | Value::Ref(_) | Value::Range { .. } => 1,
             Value::Union(branches) => branches.iter().map(|b| b.tropical_weight()).min().unwrap_or(TROPICAL_INFINITY),
             Value::Combo(c) => c.all_fields_iter().map(|(_, v)| v.tropical_weight()).fold(0u64, |acc, w| acc.saturating_add(w)),
             Value::Blur(_) => 64,
@@ -747,9 +764,17 @@ impl Value {
         match self { 
             Value::Combo(c) => c.effect, 
             Value::Atom(_, e, None) => *e,
+            Value::Atom(_, e, Some(_)) => *e,
             Value::Thunk { effect, .. } => *effect, 
             Value::Union(b) => b.iter().map(|v| v.effect()).max().unwrap_or(EffectTag::Pure), 
             Value::Blur(bd) => bd.effect,
+            Value::Range { start, end, step } => {
+                let mut e = start.effect().max(end.effect());
+                if let Some(s) = step {
+                    e = e.max(s.effect());
+                }
+                e
+            }
             _ => EffectTag::Pure 
         }
     }
@@ -803,6 +828,13 @@ impl Value {
             Value::Combo(c) => { if c.is_pure_wrapper() { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } } "{...}".to_string() }
             Value::Union(_) => "(...|...)".to_string(),
             Value::Blur(bd) => format!("#blur({})", bd.cause.as_str()),
+            Value::Range { start, end, step } => {
+                let mut s = format!("{}..{}", start.to_string_plain(), end.to_string_plain());
+                if let Some(st) = step {
+                    s.push_str(&format!("..{}", st.to_string_plain()));
+                }
+                s
+            }
             _ => format!("{:?}", self),
         }
     }
@@ -856,6 +888,14 @@ impl Value {
             Value::Blur(bd) => {
                 let caid = bd.blur_caid().to_string();
                 format!("#blur {{ %cause: #{}, %caid: \"{}\" }}", bd.cause.as_str(), caid)
+            }
+            // Canonical print: `a..b` / `a..b..s`, no spaces (range_eval probes).
+            Value::Range { start, end, step } => {
+                let mut s = format!("{}..{}", start.to_nlang(0), end.to_nlang(0));
+                if let Some(st) = step {
+                    s.push_str(&format!("..{}", st.to_nlang(0)));
+                }
+                s
             }
             _ => format!("{:?}", self),
         }
@@ -1004,6 +1044,18 @@ impl Value {
                 for seg in &path.segments {
                     hasher.update((seg.len() as u64).to_le_bytes());
                     hasher.update(seg.as_bytes());
+                }
+            }
+            Value::Range { start, end, step } => {
+                hasher.update([0x08]);
+                start.hash_recursive_with_salt(hasher, salt);
+                end.hash_recursive_with_salt(hasher, salt);
+                match step {
+                    None => hasher.update([0x00]),
+                    Some(s) => {
+                        hasher.update([0x01]);
+                        s.hash_recursive_with_salt(hasher, salt);
+                    }
                 }
             }
         }

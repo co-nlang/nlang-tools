@@ -266,9 +266,14 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
                     _ => {}
                 }
             }
-            // Grammar allows open bounds; represent missing sides as Top (`_`).
-            let start = start.unwrap_or_else(|| Expr::new(ExprKind::Atom(AtomKind::Top), span));
-            let end = end.unwrap_or_else(|| Expr::new(ExprKind::Atom(AtomKind::Top), span));
+            // Omitted bounds default to ORDER anchors (SPEC_02 §3): `#_|_`
+            // (TagStart, start) / `#_` (TagEnd, end) — not information Top.
+            let start = start.unwrap_or_else(|| {
+                Expr::new(ExprKind::Atom(AtomKind::TagStart), span)
+            });
+            let end = end.unwrap_or_else(|| {
+                Expr::new(ExprKind::Atom(AtomKind::TagEnd), span)
+            });
             Ok(Expr::new(
                 ExprKind::Range {
                     start: Box::new(start),

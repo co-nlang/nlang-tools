@@ -556,6 +556,35 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
                 Value::Combo(ComboVal::new(rf, false, IndexMap::new(), EffectTag::Pure, rv))
             }
+            // Closed interval set [start, end] (SPEC_02 §3 / SYNTAX_04 §4.5).
+            // Bounds evaluated at observation time (variable bounds free).
+            ExprKind::Range { start, end, step } => {
+                let vs = self.force(self.eval(start, ctx), ctx);
+                if let Value::Bottom(_) = &vs {
+                    return vs;
+                }
+                let ve = self.force(self.eval(end, ctx), ctx);
+                if let Value::Bottom(_) = &ve {
+                    return ve;
+                }
+                let vst = match step {
+                    Some(s) => {
+                        let v = self.force(self.eval(s, ctx), ctx);
+                        if let Value::Bottom(_) = &v {
+                            return v;
+                        }
+                        Some(Box::new(v))
+                    }
+                    None => None,
+                };
+                Value::Range {
+                    start: Box::new(vs),
+                    end: Box::new(ve),
+                    step: vst,
+                }
+            }
+            // `@{ e } ≡ e` (SYNTAX_04 §4.7); empty `@{}` is AnonSet(Bottom) → ⊥.
+            ExprKind::AnonSet(inner) => self.eval(inner, ctx),
             // Lattice-family equality `=`: non-collapsing structural comparison (partial impl; SYNTAX_06/10)
             ExprKind::LatticeEq(a, b) => {
                 // Set family does NOT absorb (SYNTAX_06 §4.1): `_|_` is an

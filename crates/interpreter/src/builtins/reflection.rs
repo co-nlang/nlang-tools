@@ -50,6 +50,7 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             Value::Top => "top",
             Value::Bottom(_) => "bottom",
             Value::Blur(_) => "blur",
+            Value::Range { .. } => "range",
             Value::Atom(kind, _, _) => match kind {
                 AtomKind::Int(_) => "int",
                 AtomKind::Float(_) => "float",

@@ -33,6 +33,9 @@ const TAG_REF:    u8 = 0x16;
 // GUIDE_03 §11.3 memo-key triple. Without context, two thunks with the
 // same expr but different bindings collide (deepen-memo bug).
 const TAG_THUNK:  u8 = 0x17;
+// Range [start, end] (optional step) — new CAID tag (2026-07-10); no prior
+// values existed (all ranges were ⊥ via wildcard), so no CAID invalidation.
+const TAG_RANGE:  u8 = 0x18;
 
 // ── Public API ────────────────────────────────────────────────
 
@@ -106,6 +109,18 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
                 serialize_value(partial, buf);
             } else {
                 buf.push(0x00);
+            }
+        }
+        Value::Range { start, end, step } => {
+            buf.push(TAG_RANGE);
+            serialize_value(start, buf);
+            serialize_value(end, buf);
+            match step {
+                None => buf.push(0x00),
+                Some(s) => {
+                    buf.push(0x01);
+                    serialize_value(s, buf);
+                }
             }
         }
     }

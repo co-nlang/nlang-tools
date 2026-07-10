@@ -93,5 +93,6 @@ fn kind_of(v: &Value) -> &'static str {
         Value::Top => "Top", Value::Atom(..) => "Atom", Value::Combo(_) => "Combo",
         Value::Union(_) => "Union", Value::Code(_) => "Code", Value::Thunk { .. } => "Thunk",
         Value::Bottom(_) => "Bottom", Value::Blur(_) => "Blur", Value::Ref(_) => "Ref",
+        Value::Range { .. } => "Range",
     }
 }

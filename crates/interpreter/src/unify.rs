@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::cmp::Ordering;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext};
 use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail};
@@ -6,6 +7,8 @@ use crate::type_constraint::{TypeConstraint, type_constraint_meet, is_type_const
 use crate::observation::handle_resource_exhausted;
 use crate::lattice_sketch;
 use nlang_parser::ast::AtomKind;
+use num_bigint::BigInt;
+use num_traits::{ToPrimitive, Zero};
 
 const EPSILON_COHERENT: f64 = 0.1;
 
@@ -162,6 +165,13 @@ impl Ouroboros {
             (_, Value::Bottom(c)) => return Value::Bottom(c.clone()),
             _ => {}
         }
+
+        // Range membership / stepless intersection (SPEC_02 §3; range_eval work order).
+        // Placed after Top/Bottom identity so those arms stay automatic.
+        if let Some(r) = range_unify(&a, &b) {
+            return r;
+        }
+
         let nondet = a.effect() >= EffectTag::NonDet || b.effect() >= EffectTag::NonDet;
         let cache_key = if id_a.digest <= id_b.digest { (id_a, id_b) } else { (id_b, id_a) };
         if !nondet {
@@ -372,4 +382,190 @@ impl Ouroboros {
             _ => false,
         }
     }
+}
+
+// ── Range lattice ops (closed-closed; anchors = ±∞) ─────────────────────────
+
+/// Returns Some(result) if either operand is a Range; None if neither is.
+fn range_unify(a: &Value, b: &Value) -> Option<Value> {
+    match (a, b) {
+        (Value::Range { .. }, Value::Range { .. }) => Some(range_intersect(a, b)),
+        (atom @ Value::Atom(_, _, _), Value::Range { start, end, step })
+        | (Value::Range { start, end, step }, atom @ Value::Atom(_, _, _)) => {
+            Some(range_membership(atom, start, end, step.as_deref()))
+        }
+        // Non-numeric / non-range vs Range: honest unsupported
+        (Value::Range { .. }, _) | (_, Value::Range { .. }) => Some(BottomCause::Conflict.into()),
+        _ => None,
+    }
+}
+
+fn range_membership(
+    atom: &Value,
+    start: &Value,
+    end: &Value,
+    step: Option<&Value>,
+) -> Value {
+    // x must be a numeric atom
+    let Some(x) = numeric_f64(atom) else {
+        return BottomCause::Conflict.into();
+    };
+    let Some(lo) = bound_key(start) else {
+        return BottomCause::Conflict.into();
+    };
+    let Some(hi) = bound_key(end) else {
+        return BottomCause::Conflict.into();
+    };
+    // closed-closed: lo ≤ x ≤ hi
+    if bound_cmp(&lo, &bound_key_num(x)).map(|o| o == Ordering::Greater).unwrap_or(true) {
+        return BottomCause::Conflict.into();
+    }
+    if bound_cmp(&bound_key_num(x), &hi).map(|o| o == Ordering::Greater).unwrap_or(true) {
+        return BottomCause::Conflict.into();
+    }
+    // step: (x - start) % step == 0; anchors as start use 0 as offset base for density
+    if let Some(st) = step {
+        if !on_step(atom, start, st) {
+            return BottomCause::Conflict.into();
+        }
+    }
+    atom.clone()
+}
+
+fn range_intersect(a: &Value, b: &Value) -> Value {
+    let (Value::Range { start: s1, end: e1, step: st1 }, Value::Range { start: s2, end: e2, step: st2 }) =
+        (a, b)
+    else {
+        return BottomCause::Conflict.into();
+    };
+    // Explicit step on either side → deferred (CRT); honest Conflict
+    if st1.is_some() || st2.is_some() {
+        return BottomCause::Conflict.into();
+    }
+    let Some(lo1) = bound_key(s1) else {
+        return BottomCause::Conflict.into();
+    };
+    let Some(hi1) = bound_key(e1) else {
+        return BottomCause::Conflict.into();
+    };
+    let Some(lo2) = bound_key(s2) else {
+        return BottomCause::Conflict.into();
+    };
+    let Some(hi2) = bound_key(e2) else {
+        return BottomCause::Conflict.into();
+    };
+    let lo = bound_max(&lo1, &lo2);
+    let hi = bound_min(&hi1, &hi2);
+    match bound_cmp(&lo, &hi) {
+        Some(Ordering::Greater) => BottomCause::Conflict.into(), // empty
+        Some(Ordering::Equal) => {
+            // singleton collapses to the atom (prefer concrete Int if both match)
+            bound_to_value(&lo)
+        }
+        Some(Ordering::Less) => Value::Range {
+            start: Box::new(bound_to_value(&lo)),
+            end: Box::new(bound_to_value(&hi)),
+            step: None,
+        },
+        None => BottomCause::Conflict.into(),
+    }
+}
+
+/// Bound key: (-1, _) = −∞ (TagStart), (1, _) = +∞ (TagEnd), (0, f) = number.
+#[derive(Clone, Copy)]
+struct BoundKey(i8, f64);
+
+fn bound_key(v: &Value) -> Option<BoundKey> {
+    match v {
+        Value::Atom(AtomKind::TagStart, _, _) => Some(BoundKey(-1, 0.0)),
+        Value::Atom(AtomKind::TagEnd, _, _) => Some(BoundKey(1, 0.0)),
+        Value::Atom(AtomKind::Int(i), _, _) => Some(BoundKey(0, i.to_f64()?)),
+        Value::Atom(AtomKind::Float(f), _, _) => Some(BoundKey(0, *f)),
+        _ => None,
+    }
+}
+
+fn bound_key_num(x: f64) -> BoundKey {
+    BoundKey(0, x)
+}
+
+fn bound_cmp(a: &BoundKey, b: &BoundKey) -> Option<Ordering> {
+    match (a.0, b.0) {
+        (-1, -1) | (1, 1) => Some(Ordering::Equal),
+        (-1, _) => Some(Ordering::Less),
+        (_, -1) => Some(Ordering::Greater),
+        (1, _) => Some(Ordering::Greater),
+        (_, 1) => Some(Ordering::Less),
+        (0, 0) => a.1.partial_cmp(&b.1),
+        _ => None,
+    }
+}
+
+fn bound_max(a: &BoundKey, b: &BoundKey) -> BoundKey {
+    match bound_cmp(a, b) {
+        Some(Ordering::Less) => *b,
+        _ => *a,
+    }
+}
+
+fn bound_min(a: &BoundKey, b: &BoundKey) -> BoundKey {
+    match bound_cmp(a, b) {
+        Some(Ordering::Greater) => *b,
+        _ => *a,
+    }
+}
+
+fn bound_to_value(k: &BoundKey) -> Value {
+    match k.0 {
+        -1 => Value::Atom(AtomKind::TagStart, EffectTag::Pure, None),
+        1 => Value::Atom(AtomKind::TagEnd, EffectTag::Pure, None),
+        _ => {
+            // Prefer Int when the float is integral
+            if k.1.fract() == 0.0 && k.1.abs() < (i64::MAX as f64) {
+                Value::Atom(AtomKind::Int(BigInt::from(k.1 as i64)), EffectTag::Pure, None)
+            } else {
+                Value::Atom(AtomKind::Float(k.1), EffectTag::Pure, None)
+            }
+        }
+    }
+}
+
+fn numeric_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Atom(AtomKind::Int(i), _, _) => i.to_f64(),
+        Value::Atom(AtomKind::Float(f), _, _) => Some(*f),
+        _ => None,
+    }
+}
+
+fn on_step(x: &Value, start: &Value, step: &Value) -> bool {
+    // Integer-preferred path for exactness
+    if let (
+        Value::Atom(AtomKind::Int(xv), _, _),
+        Value::Atom(AtomKind::Int(sv), _, _),
+        Value::Atom(AtomKind::Int(st), _, _),
+    ) = (x, start, step)
+    {
+        if st.is_zero() {
+            return false;
+        }
+        let diff = xv - sv;
+        return (&diff % st).is_zero();
+    }
+    // Anchor start: treat as dense base 0 for float step? Prefer numeric start only.
+    let (Some(xf), Some(sf), Some(stf)) = (numeric_f64(x), numeric_f64(start), numeric_f64(step))
+    else {
+        // start is anchor → only accept if step is zero-offset from a numeric reading;
+        // for TagStart/-∞ with step, membership reduces to "any number on the ray"
+        // with no discrete grid — treat as dense (always on-step if in bounds).
+        if matches!(start, Value::Atom(AtomKind::TagStart | AtomKind::TagEnd, _, _)) {
+            return true;
+        }
+        return false;
+    };
+    if stf == 0.0 {
+        return false;
+    }
+    let q = (xf - sf) / stf;
+    (q - q.round()).abs() < 1e-9
 }

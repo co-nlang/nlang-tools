@@ -338,10 +338,10 @@ fn golden_pipe_ternary_context() {
         "1 | 2 |> /f",
         "Pipe(Join(Atom(Int(1)), Atom(Int(2))), Path(Bare:/f))",
     );
-    // open ranges (SYNTAX_04, re-checked here as expression primaries)
-    assert_shape("..", "Range(Atom(Top), Atom(Top))");
-    assert_shape("..10", "Range(Atom(Top), Atom(Int(10)))");
-    assert_shape("1..", "Range(Atom(Int(1)), Atom(Top))");
+    // open ranges: omitted bounds = order anchors (SPEC_02 §3), not Top
+    assert_shape("..", "Range(Atom(TagStart), Atom(TagEnd))");
+    assert_shape("..10", "Range(Atom(TagStart), Atom(Int(10)))");
+    assert_shape("1..", "Range(Atom(Int(1)), Atom(TagEnd))");
     assert_shape(
         "-5..5..1",
         "Range(Atom(Int(-5)), Atom(Int(5)), Atom(Int(1)))",
