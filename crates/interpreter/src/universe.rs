@@ -1,9 +1,54 @@
-use crate::value::{Value, ComboVal, ContentHash, BottomCause, CommitKind, RefineInfo, Commit, default_cache_id, AuthorityInfo};
+use crate::value::{Value, ComboVal, ContentHash, BottomCause, CommitKind, RefineInfo, Commit, default_cache_id, AuthorityInfo, EffectTag};
 use crate::Ouroboros;
 use crate::EvalContext;
-use nlang_parser::ast::{Path, PathAnchor, Field, FieldKey, Prefix};
+use nlang_parser::ast::{Path, PathAnchor, Field, FieldKey, Prefix, Expr, ExprKind, AtomKind};
 use indexmap::IndexMap;
 use anyhow::Result;
+
+/// Coordinate names a field key will occupy in staged (prefixed + bare).
+fn field_coords(key: &FieldKey) -> Vec<String> {
+    match key {
+        FieldKey::Named { name, prefix } => {
+            let is_p = matches!(prefix, Some(Prefix::Private) | Some(Prefix::Local));
+            let trimmed = name.trim().to_string();
+            if is_p {
+                vec![trimmed]
+            } else {
+                let p = match prefix {
+                    Some(Prefix::Logic) => "/",
+                    Some(Prefix::Type) => "@",
+                    Some(Prefix::Meta) => "%",
+                    Some(Prefix::System) => "~%",
+                    _ => "",
+                };
+                let stored = format!("{}{}", p, trimmed);
+                if stored == trimmed {
+                    vec![stored]
+                } else {
+                    vec![stored, trimmed]
+                }
+            }
+        }
+        FieldKey::Quoted(name) => vec![name.trim().to_string()],
+        FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
+            vec![p.segments[0].trim().to_string()]
+        }
+        _ => vec![],
+    }
+}
+
+/// True only for the literal open-world hole `_` (not e.g. `a + 1` → Top).
+fn is_literal_top(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Atom(AtomKind::Top) => true,
+        ExprKind::Path(p) => {
+            p.anchor == PathAnchor::Bare
+                && p.segments.len() == 1
+                && p.segments[0].trim() == "_"
+        }
+        _ => false,
+    }
+}
 
 pub struct Universe { pub head: Option<ContentHash>, pub root: ComboVal, pub staged: ComboVal, pub is_dirty: bool }
 impl Universe {
@@ -16,7 +61,31 @@ impl Universe {
         let mut ctx = EvalContext::new(self.root.clone());
         ctx.staged = Some(self.staged.clone());
         ctx.horizon_salt = engine.store.get_horizon_salt();
-        let val = engine.eval(&field.value, &mut ctx);
+
+        // Coordinate(s) this field will occupy — marked in-flight during eval
+        // so self-ref (`a: a + 1`) is ⊥ #divergent, not open-miss Top (L2-17).
+        let coords = field_coords(&field.key);
+        for c in &coords {
+            ctx.computing.insert(c.clone());
+        }
+        let mut val = engine.eval(&field.value, &mut ctx);
+        for c in &coords {
+            ctx.computing.remove(c);
+        }
+
+        // Forward / mutual refs evaluate to Top (open miss) under sequential
+        // evolve. Reify as a Thunk so later observation can force once both
+        // bindings exist — and so mutual cycles hit force_coord / in_flight.
+        // Literal `_` stays Top (open-world hole). Stage 3 live-Ref results
+        // are concrete (not Top) and pass through unchanged.
+        if matches!(val, Value::Top) && !is_literal_top(&field.value) {
+            val = Value::Thunk {
+                expr: Box::new(field.value.clone()),
+                closure: ctx.scopes.clone(),
+                context: ctx.context_value.clone().map(Box::new),
+                effect: EffectTag::Pure,
+            };
+        }
         let val_effect = val.effect();
 
         let mut rf = IndexMap::new();
@@ -59,6 +128,7 @@ impl Universe {
         let res = engine.unify(Value::Combo(self.staged.clone()), incoming);
         match res {
             Value::Combo(m) => { self.staged = m; self.is_dirty = true; Ok(()) }
+            Value::Bottom(d) => Err(d.cause),
             _ => Err(BottomCause::Conflict)
         }
     }

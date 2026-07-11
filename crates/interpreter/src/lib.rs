@@ -2,7 +2,7 @@ pub mod universe; pub use universe::Universe;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use indexmap::IndexMap;
-use nlang_parser::ast::{Path, PathAnchor, AtomKind, Expr};
+use nlang_parser::ast::{Path, PathAnchor, AtomKind, Expr, ExprKind};
 use nlang_parser::tier::{Tier, classify_tier};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -49,6 +49,10 @@ pub struct EvalContext {
     pub staged: Option<ComboVal>,
     pub computing: HashSet<String>,
     pub call_history: HashMap<String, Vec<ContentHash>>,
+    /// L2-17: thunk content-hashes currently being forced in this observation.
+    /// Re-entering the same thunk → ⊥ #divergent (must fire before stack/fuel).
+    /// Survives `sub_context` clones (unlike the legacy `computing` clear).
+    pub in_flight: HashSet<ContentHash>,
     pub in_math_op: bool,
     pub context_value: Option<Value>,
     pub fuel: u64,
@@ -85,7 +89,7 @@ impl EvalContext {
         let salt = ContentHash::v1(hasher.finalize().to_vec());
         Self { 
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
-            call_history: HashMap::new(), in_math_op: false, context_value: None, 
+            call_history: HashMap::new(), in_flight: HashSet::new(), in_math_op: false, context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, memo_enabled: true, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
@@ -119,6 +123,21 @@ impl EvalContext {
         }
         self.fuel -= cost;
         Ok(())
+    }
+}
+
+
+/// Bare path coordinate for L2-17 path-shaped thunks (`s.v` → `"s.v"`).
+fn path_coord_of(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Path(p) if p.anchor == PathAnchor::Bare && !p.segments.is_empty() => Some(
+            p.segments
+                .iter()
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<_>>()
+                .join("."),
+        ),
+        _ => None,
     }
 }
 
@@ -959,7 +978,7 @@ let mut refl_fields = IndexMap::new();
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
                 // staged, which the key does not include.
-                let effective_context: Option<Value> = context.map(|b| *b).or(ctx.context_value.clone());
+                let effective_context: Option<Value> = context.as_ref().map(|b| (**b).clone()).or(ctx.context_value.clone());
                 let tier: Option<Tier> = classify_tier(&expr).0.into();
                 let should_memo = matches!(tier, Some(Tier::C) | Some(Tier::M));
                 let staged_ok = ctx.staged.is_none() && ctx.memo_enabled;
@@ -1004,6 +1023,28 @@ let mut refl_fields = IndexMap::new();
                     }
                 }
 
+                // L2-17: same-thunk re-entry → ⊥ #divergent (before stack/fuel).
+                // Identity = content_hash of the thunk (expr+frame+context).
+                let thunk_id = Value::Thunk {
+                    expr: expr.clone(),
+                    closure: closure.clone(),
+                    context: context.clone(),
+                    effect,
+                }
+                .content_hash();
+                if ctx.in_flight.contains(&thunk_id) {
+                    return BottomCause::Divergent.into();
+                }
+                // Path-shaped thunks also key on the bare path coordinate
+                // (`s.v`): field re-fetch builds a fresh Thunk instance whose
+                // content-hash may differ, but the path is the same cycle.
+                let path_coord = path_coord_of(&expr);
+                if let Some(ref pc) = path_coord {
+                    if ctx.computing.contains(pc) {
+                        return BottomCause::Divergent.into();
+                    }
+                }
+
                 // Stage 5 (§5a): nested dep_collector propagation.
                 // Install fresh collector in call_ctx; after eval, merge
                 // inner deps into outer collector (inner result embeds
@@ -1017,8 +1058,29 @@ let mut refl_fields = IndexMap::new();
                 call_ctx.scopes = closure;
                 call_ctx.context_value = effective_context;
                 call_ctx.dep_collector = inner_collector;
+                // in_flight / path coord ride sub_context clone for nested
+                // observation so re-entry is visible to inner forces.
+                call_ctx.in_flight.insert(thunk_id.clone());
+                if let Some(ref pc) = path_coord {
+                    call_ctx.computing.insert(pc.clone());
+                }
                 let res = self.eval(&expr, &mut call_ctx);
+                // Path-shaped thunks only: solidify one layer while path_coord
+                // is still held — a cycle returns a fresh Thunk of the same
+                // path; forcing it hits the path_coord guard above. Non-path
+                // thunks must NOT force here (false #divergent on folds / HOFs).
+                let res = if path_coord.is_some() {
+                    self.force(res, &mut call_ctx)
+                } else {
+                    res
+                };
+                if let Some(ref pc) = path_coord {
+                    call_ctx.computing.remove(pc);
+                }
+                call_ctx.in_flight.remove(&thunk_id);
                 ctx.fuel = call_ctx.fuel;
+                ctx.in_flight = call_ctx.in_flight;
+                ctx.computing = call_ctx.computing;
                 let inner_deps = call_ctx.dep_collector.take();
 
                 let res = match res {
@@ -1036,8 +1098,14 @@ let mut refl_fields = IndexMap::new();
                 }
 
                 // Stage 5 (§5b): insert into force_memo with deps + reverse index.
+                // L2-17: #divergent may be memoized (handover); other Bottoms stay out.
                 if let Some(ref k) = memo_key {
-                    if !matches!(res, Value::Bottom(_)) && !res.contains_blur() && res.effect() < EffectTag::NonDet {
+                    let memoizable = match &res {
+                        Value::Bottom(d) if matches!(d.cause, BottomCause::Divergent) => true,
+                        Value::Bottom(_) => false,
+                        _ => !res.contains_blur() && res.effect() < EffectTag::NonDet,
+                    };
+                    if memoizable {
                         if let Ok(mut memo) = self.force_memo.write() {
                             const FORCE_MEMO_CAP: usize = 100_000;
                             if memo.len() >= FORCE_MEMO_CAP { memo.clear(); if let Ok(mut rev) = self.force_memo_rev.write() { rev.clear(); } }
@@ -1143,6 +1211,8 @@ let mut refl_fields = IndexMap::new();
             }
 
             for scope in ctx.scopes.iter().rev() {
+                // Scope frames: plain force (parameter rebinding is not a
+                // coordinate cycle — force_coord here false-triggers HOFs).
                 if let Some(val) = scope.get_field(name) { return self.force(val.clone(), ctx); }
                 if let Some(val) = scope.local_fields().get(name) { return self.force(val.clone(), ctx); }
                 let prefixes = vec!["/", "@", "~", "~%"];
@@ -1152,10 +1222,47 @@ let mut refl_fields = IndexMap::new();
                     if let Some(val) = scope.get_local_field(&alt_name) { return self.force(val.clone(), ctx); }
                 }
             }
-            if let Some(ref s) = ctx.staged { if let Some(val) = s.get_field(name).or_else(|| s.get_local_field(name)) { return self.force(val.clone(), ctx); } let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = s.get_field(&alt_name).or_else(|| s.get_local_field(&alt_name)) { return self.force(val.clone(), ctx); } } }
-            if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { let v = val.clone(); self.record_dep(ctx, name); return self.force(v, ctx); }
+            if let Some(ref s) = ctx.staged {
+                // Public staged fields use force_coord (self/mutual cycles).
+                // Local (~private) fields: plain force — re-entry during HOF
+                // application is not a lattice cycle (list.fold + ~f).
+                if let Some(val) = s.get_field(name) {
+                    return self.force_coord(name, val.clone(), ctx);
+                }
+                if let Some(val) = s.get_local_field(name) {
+                    return self.force(val.clone(), ctx);
+                }
+                let prefixes = vec!["/", "@", "~", "~%"];
+                for p in prefixes {
+                    let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) };
+                    if let Some(val) = s.get_field(&alt_name) {
+                        return self.force_coord(&alt_name, val.clone(), ctx);
+                    }
+                    if let Some(val) = s.get_local_field(&alt_name) {
+                        return self.force(val.clone(), ctx);
+                    }
+                }
+            }
+            if let Some(val) = ctx.root.get_field(name) {
+                let v = val.clone();
+                self.record_dep(ctx, name);
+                return self.force_coord(name, v, ctx);
+            }
+            if let Some(val) = ctx.root.get_local_field(name) {
+                let v = val.clone();
+                self.record_dep(ctx, name);
+                return self.force(v, ctx);
+            }
             let prefixes = vec!["/", "@", "~", "~%"];
-            for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { return self.force(val.clone(), ctx); } }
+            for p in prefixes {
+                let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) };
+                if let Some(val) = ctx.root.get_field(&alt_name) {
+                    return self.force_coord(&alt_name, val.clone(), ctx);
+                }
+                if let Some(val) = ctx.root.get_local_field(&alt_name) {
+                    return self.force(val.clone(), ctx);
+                }
+            }
 
             // Non-builtin @Name not found → Unknown marker (same shape as
             // the old always-marker path; validate = unconditional pass).
@@ -1183,7 +1290,13 @@ let mut refl_fields = IndexMap::new();
                 if found.is_none() { if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { found = Some(val.clone()); self.record_dep(ctx, name); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { found = Some(val.clone()); self.record_dep(ctx, &alt_name); break; } } } }
                 match found { Some(v) => {
                     let is_ref = matches!(&v, Value::Ref(_));
-                    let forced = self.force(v, ctx);
+                    // force_coord only for public root/staged coordinates;
+                    // private/local re-entry during HOF is not a cycle.
+                    let forced = if name.starts_with('~') {
+                        self.force(v, ctx)
+                    } else {
+                        self.force_coord(name, v, ctx)
+                    };
                     if path.segments.len() > 1 {
                         // F1 (§3-fix): when resolving through a Ref, the deref'd
                         // value becomes the $ binding for thunks forced in the
@@ -1196,7 +1309,7 @@ let mut refl_fields = IndexMap::new();
                             ctx.context_value = Some(forced.clone());
                             old
                         } else { None };
-                        let res = self.navigate_segments(forced, &path.segments[1..], ctx);
+                        let res = self.navigate_segments(forced, &path.segments[1..], ctx, name);
                         if is_ref { ctx.context_value = old_ctx_val; }
                         return res;
                     }
@@ -1210,12 +1323,17 @@ let mut refl_fields = IndexMap::new();
             PathAnchor::Parent(count) => { let len = ctx.scopes.len(); if len > count as usize { Value::Combo(ctx.scopes[len - 1 - (count as usize)].clone()) } else { return BottomCause::InvalidPath.into(); } }
             PathAnchor::Current => { if let Some(top) = ctx.scopes.last() { Value::Combo(top.clone()) } else { Value::Combo((*ctx.root).clone()) } }
         };
-        if !path.segments.is_empty() && !matches!(path.anchor, PathAnchor::Bare) { self.navigate_segments(start_val, &path.segments, ctx) } else { start_val }
+        if !path.segments.is_empty() && !matches!(path.anchor, PathAnchor::Bare) {
+            self.navigate_segments(start_val, &path.segments, ctx, "")
+        } else {
+            start_val
+        }
     }
 
-    fn navigate_segments(&self, start: Value, segments: &[String], ctx: &mut EvalContext) -> Value {
+    fn navigate_segments(&self, start: Value, segments: &[String], ctx: &mut EvalContext, path_prefix: &str) -> Value {
         let mut val = start;
         let mut accumulated_effect = val.effect();
+        let mut path_so_far = path_prefix.to_string();
         for seg in segments {
             if let Err(e) = ctx.check_resources(2) { 
                 return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, accumulated_effect);
@@ -1260,7 +1378,15 @@ let mut refl_fields = IndexMap::new();
             match current { 
                 Value::Combo(ref c) => { 
                     let target = c.get_field(seg).or_else(|| c.get_field(&format!("/{}", seg))).or_else(|| c.get_field(&format!("@{}", seg))).cloned().unwrap_or(Value::Top); 
-                    val = target; 
+                    // Leave the field unforced (Stage 2: open terms stay Thunk
+                    // until observation). Cycle detection for the full path is
+                    // handled in `force` when the thunk's expr is that path.
+                    if !path_so_far.is_empty() {
+                        path_so_far = format!("{}.{}", path_so_far, seg);
+                    } else {
+                        path_so_far = seg.to_string();
+                    }
+                    val = target;
                 } 
                 _ => { return BottomCause::InvalidPath.into() } 
             }
@@ -1314,7 +1440,34 @@ let mut refl_fields = IndexMap::new();
         // memory exhaustion outruns the fuel horizon. Fix: share root via
         // Arc<ComboVal> so sub_context clones are cheap; requires making
         // root access patterns Arc-compatible (tests mutate root directly).
-        let mut sub = ctx.clone(); sub.computing.clear(); sub.call_history.clear(); sub
+        // L2-17: do NOT clear `in_flight` or `computing` — nested force/eval
+        // must see the parent observation's cycle set (re-entry → #divergent).
+        // `call_history` remains a per-subsession reset.
+        let mut sub = ctx.clone(); sub.call_history.clear(); sub
+    }
+
+    /// Force a binding under a coordinate key. Re-entering the same coordinate
+    /// in this observation = cycle → ⊥ #divergent (L2-17). Covers path cycles
+    /// (`s.v` → `s.v`) where fresh thunk instances may not share a content-hash.
+    fn force_coord(&self, coord: &str, val: Value, ctx: &mut EvalContext) -> Value {
+        // Private / system locals: not lattice cycle coordinates.
+        if coord.starts_with('~') {
+            return self.force(val, ctx);
+        }
+        // Only gate re-entry for Thunk / Ref bindings — solid values (Combo,
+        // Atom, …) re-force is identity or cheap and HOF-safe.
+        let needs_gate = matches!(val, Value::Thunk { .. } | Value::Ref(_));
+        if needs_gate {
+            if ctx.computing.contains(coord) {
+                return BottomCause::Divergent.into();
+            }
+            ctx.computing.insert(coord.to_string());
+            let res = self.force(val, ctx);
+            ctx.computing.remove(coord);
+            res
+        } else {
+            self.force(val, ctx)
+        }
     }
 
     pub fn remote_fetch(&self, addr: &str, hash: &ContentHash) -> Result<Value, BottomCause> {

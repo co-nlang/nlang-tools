@@ -530,7 +530,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 let ov = self.eval(obj, ctx);
                 let kv = self.eval(key, ctx);
                 let ks = kv.collapse().to_string_plain();
-                self.navigate_segments(ov, &[ks], ctx)
+                self.navigate_segments(ov, &[ks], ctx, "")
             }
             ExprKind::Interpolated(parts) => {
                 let mut res = String::new();

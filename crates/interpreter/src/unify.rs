@@ -347,7 +347,9 @@ impl Ouroboros {
         for key in all_keys {
             let va = a.get_field(&key).cloned().unwrap_or(Value::Top); 
             let vb = b.get_field(&key).cloned().unwrap_or(Value::Top);
-            if a.closed && !a.contains_key(&key) && !vb.is_top() { 
+            let va_is_top = va.is_top();
+            let vb_is_top = vb.is_top();
+            if a.closed && !a.contains_key(&key) && !vb_is_top { 
                 return Value::Bottom(Box::new(BottomDetail { 
                     cause: BottomCause::MissingKey, 
                     path: Some(key.clone()), 
@@ -357,7 +359,7 @@ impl Ouroboros {
                     involved: vec![],
                  ..Default::default() }));
             }
-            if b.closed && !b.contains_key(&key) && !va.is_top() { 
+            if b.closed && !b.contains_key(&key) && !va_is_top { 
                 return Value::Bottom(Box::new(BottomDetail { 
                     cause: BottomCause::MissingKey, 
                     path: Some(key.clone()), 
@@ -368,8 +370,17 @@ impl Ouroboros {
                  ..Default::default() }));
             }
             let merged = self.unify_internal(va, vb, ctx); 
-            if let Value::Bottom(mut detail) = merged { 
-                let cp = detail.path.map(|p| format!("{}.{}", key, p)).unwrap_or(key.clone()); 
+            if let Value::Bottom(mut detail) = merged {
+                // L2-17: Top & ⊥ at a single field stores the Bottom binding
+                // (divergent / no_context coordinates) instead of aborting the
+                // whole combo — so `a: a + 1` can be observed as _|_ #divergent
+                // rather than failing evolve before observe. Real conflicts
+                // (neither side Top) still abort the merge.
+                if va_is_top || vb_is_top {
+                    rf.insert(key.clone(), Value::Bottom(detail));
+                    continue;
+                }
+                let cp = detail.path.as_ref().map(|p| format!("{}.{}", key, p)).unwrap_or_else(|| key.clone()); 
                 detail.path = Some(cp); 
                 return Value::Bottom(detail); 
             }

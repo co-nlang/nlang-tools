@@ -1,18 +1,10 @@
-// L2-17 divergence detection + ⊥ %cause printing probes (2026-07-11,
-// pre-committed by work order — docs/divergence_cause_handover.md;
-// gaps recorded in nlang-spec ENGINE_SYNC「合規矩陣曝光之引擎缺口」,
-// conformance vector L2-17).
+// L2-17 divergence detection + ⊥ %cause printing probes (2026-07-11 —
+// docs/divergence_cause_handover.md; conformance L2-17).
 //
-// Today: self-referential thunks resolve to `_` (self not reachable during
-// own force → open term → Top) — a CLAIMS-EVERYTHING silent wrong.
-// Ruling: resolving a name whose thunk is currently IN-FLIGHT (being forced
-// in this observation) = self-referential cycle = ⊥ #divergent.
-// Undefined names stay `_` (open-world semantics — NOT this order's scope).
-// Productive recursion (morphism with shrinking argument) MUST keep working —
-// that is the load-bearing active pin of this order.
-//
-// ⊥ display: Value::to_nlang Bottom arm gains `(%cause: #<tag>)` (format
-// follows the existing Blur precedent); bn_serial bytes untouched.
+// Ruling: same thunk / public coordinate re-entered during force →
+// ⊥ #divergent (before stack/fuel). Undefined names stay `_` (open world).
+// Productive recursion (shrinking-argument morphism) is the load-bearing pin.
+// ⊥ display: `_|_ (%cause: #<tag>)`; bn_serial untouched.
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_interpreter::value::BottomCause;
@@ -93,32 +85,32 @@ fn assert_obs_int(src: &str, path: &str, expect: i64) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE: conformance L2-17 — `a: a + 1` is a cycle, not ⊤
+// RED LINE: conformance L2-17 — `a: a + 1` is a cycle, not ⊤
 fn l217_self_arith_divergent() {
     assert_divergent("a: a + 1\nout: a", "out");
 }
 
 #[test]
-#[ignore] // RED LINE: pure self-identity is equally informationless
+// RED LINE: pure self-identity is equally informationless
 fn l217_self_identity_divergent() {
     assert_divergent("x: x\nout: x", "out");
 }
 
 #[test]
-#[ignore] // RED LINE: mutual cycle through two coordinates
+// RED LINE: mutual cycle through two coordinates
 fn l217_mutual_cycle_divergent() {
     assert_divergent("a: b + 1\nb: a + 1\nout: a", "out");
 }
 
 #[test]
-#[ignore] // RED LINE: cycle through path navigation (s.v refers to itself)
+// RED LINE: cycle through path navigation (s.v refers to itself)
 fn l217_path_cycle_divergent() {
     assert_divergent("s: { v: s.v }\nout: s.v", "out");
 }
 
 #[test]
-#[ignore] // RED LINE: ⊥ canonical display carries %cause tag (Blur-precedent
-          // format `(%cause: #<tag>)`); bn_serial bytes must NOT change
+// RED LINE: ⊥ canonical display carries %cause tag (Blur-precedent
+// format `(%cause: #<tag>)`); bn_serial bytes must NOT change
 fn bottom_display_carries_cause_tag() {
     let v: Value = BottomCause::Divergent.into();
     let s = v.to_nlang(0);

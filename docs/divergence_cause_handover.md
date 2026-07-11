@@ -60,3 +60,42 @@
 假前提死碼掃描。驗收方將全套重跑(718/0/3)、conformance 45/45 覆核、
 diff-read、對抗加測(環×memo、環×Union、深遞迴 fuel 邊界、
 display 格式×既有 golden)。
+
+---
+
+## 交付記錄(2026-07-11, implementer)
+
+### 根因 / 修復
+
+1. **環偵測**(語義層,先於 stack/fuel):
+   - `EvalContext.in_flight`: thunk content-hash 重入 → `#divergent`
+   - `force_coord` / `computing`: 公開座標 Thunk/Ref 重入 → `#divergent`
+     (private `~` 與固態 Combo/Atom 不設閘,避免 HOF 誤殺)
+   - path 形 thunk(`s.v`): force 期間持有 path 座標並 solidify 一層
+   - evolve: 座標標 in-flight;求值得 Top 且非字面 `_` → 存 Thunk
+     (互指 / 前向引用);`a: a+1` 在 force 時成環
+2. **⊥ 列印**:`Value::to_nlang` / `to_string_plain` →
+   `_|_ (%cause: #<tag>)`(+ optional `  ;; msg`)。bn_serial 未動
+   (Bottom hash 仍用 cause 判別字)。
+3. **Top & ⊥ 欄位**:`unify_combo` 允許單欄 Bottom 寫入(一方為 Top)
+   ——否則 `oo run` 在 observe 前 evolve 失敗,無法印出 `%cause`。
+
+### 紅線對應
+
+| 探針 | 機制 |
+|------|------|
+| `l217_self_arith_divergent` / `_identity` | 座標/thunk 重入 |
+| `l217_mutual_cycle_divergent` | Top→Thunk + 雙座標 force 鏈 |
+| `l217_path_cycle_divergent` | path_coord 於 force 持有 |
+| `bottom_display_carries_cause_tag` | to_nlang `%cause: #…` |
+
+### 活釘 / 鄰域
+
+factorial 120、未定義 `_`、free-`$` `#no_context`、runaway bottom、
+遞迴型、stage2/3、memo 紅線、integration — 綠。
+
+### 終態
+
+- workspace **718 過 0 敗 3 ignored**
+- conformance **45/45**(L2-17 stdout:`_|_ (%cause: #divergent)`;無 %cause note)
+- nlang-spec 帳:驗收方記
