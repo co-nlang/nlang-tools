@@ -895,6 +895,23 @@ let mut refl_fields = IndexMap::new();
                     let dispatch_result = self.dispatch_morphism(rules_source, &arg, ctx);
                     return dispatch_result.to_value(f.effect());
                 }
+
+                // Pattern-key dispatch table (`{ @{ 4.. }: "A", ... }`): non-meta
+                // non-numeric keys + `%morphism`, no `%rules`/`%builtin`.
+                // Numeric keys alone are curry slots (partial apply of builtins) —
+                // must NOT be treated as patterns (would steal math.add partials).
+                if c.get_field("%morphism").is_some()
+                    && c.get_field("%rules").is_none()
+                    && c.get_field("%builtin").is_none()
+                {
+                    let has_pattern_fields = c.all_fields_iter().any(|(k, _)| {
+                        !k.starts_with('%') && k.parse::<usize>().is_err()
+                    });
+                    if has_pattern_fields {
+                        let dispatch_result = self.dispatch_morphism(c, &arg, ctx);
+                        return dispatch_result.to_value(f.effect());
+                    }
+                }
                 
                 if let Some(Value::Atom(AtomKind::Str(builtin_id), _, _)) = c.get_field("%builtin") { 
                     if let Some(func) = self.builtin_registry.get(builtin_id) { 
@@ -913,8 +930,8 @@ let mut refl_fields = IndexMap::new();
                 }
                 
                 let ks = arg.collapse().to_string_plain();
-                if let Some(v) = c.get_field(&ks).or_else(|| c.get_field("it")).or_else(|| c.get_field("_")) { 
-                    return v.clone(); 
+                if let Some(v) = c.get_field(&ks).or_else(|| c.get_field("it")).or_else(|| c.get_field("_")) {
+                    return v.clone();
                 }
                 BottomCause::Conflict.into()
             }
@@ -1113,20 +1130,18 @@ let mut refl_fields = IndexMap::new();
                 return crate::value::BottomCause::Conflict.into();
             }
             
+            // E4: only *builtin* `@name` short-circuits to a type_constraint
+            // marker. User `@Name` falls through the normal lookup chain
+            // (scopes → staged → root; force + record_dep). Not-found keeps
+            // the Unknown marker pass-through (e4_undefined_typeref_passthrough).
+            // Builtins are reserved and not shadowable.
             if TypeConstraint::is_type_constraint_path(name) {
                 let type_name = name.trim_start_matches('@');
-                return Value::Combo(ComboVal::new(
-                    IndexMap::from_iter(vec![
-                        ("%kind".to_string(), Value::Atom(AtomKind::Tag("type_constraint".to_string()), EffectTag::Pure, None)),
-                        ("%type".to_string(), Value::Atom(AtomKind::Str(type_name.to_string()), EffectTag::Pure, None)),
-                    ]),
-                    true,
-                    IndexMap::new(),
-                    EffectTag::Pure,
-                    vec![]
-                ));
+                if TypeConstraint::is_builtin_type_name(type_name) {
+                    return TypeConstraint::marker_value(type_name);
+                }
             }
-            
+
             for scope in ctx.scopes.iter().rev() {
                 if let Some(val) = scope.get_field(name) { return self.force(val.clone(), ctx); }
                 if let Some(val) = scope.local_fields().get(name) { return self.force(val.clone(), ctx); }
@@ -1141,6 +1156,12 @@ let mut refl_fields = IndexMap::new();
             if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { let v = val.clone(); self.record_dep(ctx, name); return self.force(v, ctx); }
             let prefixes = vec!["/", "@", "~", "~%"];
             for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { return self.force(val.clone(), ctx); } }
+
+            // Non-builtin @Name not found → Unknown marker (same shape as
+            // the old always-marker path; validate = unconditional pass).
+            if TypeConstraint::is_type_constraint_path(name) {
+                return TypeConstraint::marker_value(name.trim_start_matches('@'));
+            }
         }
         self.resolve_path_internal(path, ctx)
     }

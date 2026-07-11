@@ -814,7 +814,7 @@ impl Value {
                     if *i >= 0.0 { format!("{}+{}i", r, i) }
                     else { format!("{}-{}i", r, i.abs()) }
                 },
-                AtomKind::Str(s) => s.clone(), 
+                AtomKind::Str(s) => s.clone(),
                 AtomKind::Tag(t) => format!("#{}", t), 
                 AtomKind::TagStart => "#_|_".to_string(),
                 AtomKind::TagEnd => "#_".to_string(),
