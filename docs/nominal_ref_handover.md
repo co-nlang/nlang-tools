@@ -122,3 +122,24 @@ re-eval)。
 
 合併引擎 / Union 通用去重 / bn_serial / fmt / linter 遮蔽 / nlang-spec 回寫
 (驗收方記帳)。
+
+---
+
+## 驗收記錄(2026-07-11,驗收方)
+
+**判定:通過,零代修**——第二次零代修交付(前例 cmp-extremes)。交付 `9db9090`。
+
+- 紅線 8/8 un-ignore 全綠;**斷言逐條比對零變動**(頭註時態壓縮,良性慣habit)。
+- **反事實(worktree dcf6139 + 交付版探針)**:pre-fix 恰 8 紅 7 綠——紅→綠
+  因果閉合。
+- 全套:`nominal_ref` 15/15、`range_gaps` 26、`dispatch` 5、workspace
+  **708/0/3**(108 套)——與工單門檻精確吻合。
+- 對抗加測:內部前向引用 lazy 正常;`@int & @num` marker 子型別路徑原樣;
+  use-before-def 量測覆核與交付表一致;假前提掃描乾淨(註解與 diff 事實一致,
+  無非目標波及——上一案的兩類問題本案皆無)。
+- **README 門面範例端到端首次通過**(valid → 合併值;minor → ⊥)。
+- **附註行為(裁決內,記錄)**:`@Adult` 會經 prefix-alternates 找到**裸名**
+  `Adult: {…}` 定義並執法——「與裸名同路」的既有跨前綴機制,非本案新增。
+- **遺留(不裁,已記 ENGINE_SYNC)**:use-before-def 靜默直通=演化時序語義
+  (該時刻定義不存在)+ Unknown 直通之疊加;「引用永不定義之 @Name」的
+  lint 屬想法 D Tier 1 範疇。
