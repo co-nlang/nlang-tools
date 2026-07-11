@@ -133,7 +133,10 @@ pub fn register_diff_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let entry = oo.force(entry, ctx);
             if let Value::Combo(ref ec) = entry {
                 let path_str = match ec.get_field("path") {
-                    Some(p) => oo.force(p.clone(), ctx).to_string_plain(),
+                    Some(p) => {
+                        let raw = oo.force(p.clone(), ctx).to_string_plain();
+                        crate::value::strip_plain_quotes(&raw).to_string()
+                    }
                     None => continue,
                 };
                 let new_val = match ec.get_field("to") {

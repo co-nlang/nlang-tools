@@ -99,7 +99,10 @@ pub fn register_query_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             None => return BottomCause::Conflict.into(),
         };
         let path_str = match c.get_field("1").or_else(|| c.get_field("path")) {
-            Some(v) => oo.force(v.clone(), ctx).to_string_plain(),
+            Some(v) => {
+                let raw = oo.force(v.clone(), ctx).to_string_plain();
+                crate::value::strip_plain_quotes(&raw).to_string()
+            }
             None => return val,
         };
         let segments = parse_path(&path_str);
@@ -149,7 +152,7 @@ pub fn register_query_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         };
         let keys: Vec<String> = extract_list_items(&key_list_val, oo, ctx)
             .into_iter()
-            .map(|v| v.to_string_plain())
+            .map(|v| crate::value::strip_plain_quotes(&v.to_string_plain()).to_string())
             .collect();
 
         let src = match combo_val { Value::Combo(c) => c, _ => return BottomCause::Conflict.into() };

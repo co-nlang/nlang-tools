@@ -26,7 +26,8 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("refl.has".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg {
             if let (Some(vkey), Some(vobj)) = (c.get_field("0"), c.get_field("1")) {
-                let key = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key_raw = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key = crate::value::strip_plain_quotes(&key_raw).to_string();
                 if let Value::Combo(oc) = oo.force(vobj.clone(), ctx).collapse() {
                     return Value::Atom(AtomKind::Tag(if oc.fields().contains_key(&key) { "true".to_string() } else { "false".to_string() }), EffectTag::Pure, None);
                 }
@@ -144,7 +145,8 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("refl.get".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg {
             if let (Some(vkey), Some(vobj)) = (c.get_field("0"), c.get_field("1")) {
-                let key = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key_raw = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key = crate::value::strip_plain_quotes(&key_raw).to_string();
                 let obj = oo.force(vobj.clone(), ctx);
                 if let Value::Combo(ref oc) = obj.collapse() {
                     return oc.get_field(&key).cloned().unwrap_or(Value::Top);
@@ -157,7 +159,8 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("refl.set".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg {
             if let (Some(vkey), Some(vval), Some(vobj)) = (c.get_field("0"), c.get_field("1"), c.get_field("2")) {
-                let key = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key_raw = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key = crate::value::strip_plain_quotes(&key_raw).to_string();
                 let val = oo.force(vval.clone(), ctx);
                 let obj = oo.force(vobj.clone(), ctx);
                 if let Value::Combo(ref oc) = obj.collapse() {
@@ -173,7 +176,8 @@ pub fn register_reflection_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("refl.delete".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg {
             if let (Some(vkey), Some(vobj)) = (c.get_field("0"), c.get_field("1")) {
-                let key = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key_raw = oo.force(vkey.clone(), ctx).to_string_plain();
+                let key = crate::value::strip_plain_quotes(&key_raw).to_string();
                 let obj = oo.force(vobj.clone(), ctx);
                 if let Value::Combo(ref oc) = obj.collapse() {
                     let mut new_combo = oc.clone();

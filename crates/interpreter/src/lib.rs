@@ -895,6 +895,23 @@ let mut refl_fields = IndexMap::new();
                     let dispatch_result = self.dispatch_morphism(rules_source, &arg, ctx);
                     return dispatch_result.to_value(f.effect());
                 }
+
+                // Pattern-key dispatch table (`{ @{ 4.. }: "A", ... }`): non-meta
+                // non-numeric keys + `%morphism`, no `%rules`/`%builtin`.
+                // Numeric keys alone are curry slots (partial apply of builtins) —
+                // must NOT be treated as patterns (would steal math.add partials).
+                if c.get_field("%morphism").is_some()
+                    && c.get_field("%rules").is_none()
+                    && c.get_field("%builtin").is_none()
+                {
+                    let has_pattern_fields = c.all_fields_iter().any(|(k, _)| {
+                        !k.starts_with('%') && k.parse::<usize>().is_err()
+                    });
+                    if has_pattern_fields {
+                        let dispatch_result = self.dispatch_morphism(c, &arg, ctx);
+                        return dispatch_result.to_value(f.effect());
+                    }
+                }
                 
                 if let Some(Value::Atom(AtomKind::Str(builtin_id), _, _)) = c.get_field("%builtin") { 
                     if let Some(func) = self.builtin_registry.get(builtin_id) { 
@@ -913,8 +930,14 @@ let mut refl_fields = IndexMap::new();
                 }
                 
                 let ks = arg.collapse().to_string_plain();
-                if let Some(v) = c.get_field(&ks).or_else(|| c.get_field("it")).or_else(|| c.get_field("_")) { 
-                    return v.clone(); 
+                let ks_bare = crate::value::strip_plain_quotes(&ks);
+                if let Some(v) = c
+                    .get_field(&ks)
+                    .or_else(|| c.get_field(ks_bare))
+                    .or_else(|| c.get_field("it"))
+                    .or_else(|| c.get_field("_"))
+                {
+                    return v.clone();
                 }
                 BottomCause::Conflict.into()
             }
@@ -1199,7 +1222,8 @@ let mut refl_fields = IndexMap::new();
             if let Err(e) = ctx.check_resources(2) { 
                 return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, accumulated_effect);
             }
-            let seg = seg.trim();
+            // Str to_string_plain is quoted (`"0"`); field keys store bare `0`.
+            let seg = crate::value::strip_plain_quotes(seg.trim());
             let mut current = self.force(val, ctx);
             accumulated_effect = accumulated_effect.max(current.effect());
             while let Value::Combo(ref c) = current {

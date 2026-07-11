@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
-use nlang_parser::ast::{Expr, ExprKind, FieldKey, Prefix, AtomKind};
+use nlang_parser::ast::{Expr, ExprKind, FieldKey, Prefix, AtomKind, UnaryOp};
 use crate::{Ouroboros, EvalContext, CmpOp};
 use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail, ValRelation, RelOp as ValRelOp};
 use crate::type_constraint::{TypeConstraint, is_type_constraint_combo, get_type_constraint_name};
@@ -12,6 +12,63 @@ use num_traits::{ToPrimitive, Zero};
 enum MathOp { Add, Sub, Mul, Div, Rem }
 
 impl Ouroboros {
+    /// E3: if one operand is AST `!(e)` and eval(e) is Range, rewrite meet to
+    /// membership negation: x if x∉range else ⊥. Mirror both orders.
+    /// Does NOT handle standalone `!(range)` (that stays orthocomplement ⊥).
+    fn try_meet_not_range(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext) -> Option<Value> {
+        let not_range = |e: &Expr, ctx: &mut EvalContext| -> Option<Value> {
+            match &e.kind {
+                ExprKind::Unary {
+                    op: UnaryOp::Not,
+                    expr: inner,
+                }
+                | ExprKind::Complement(inner) => {
+                    let rv = self.eval(inner, ctx);
+                    if matches!(rv, Value::Range { .. }) {
+                        Some(rv)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        };
+
+        if let Some(range) = not_range(a, ctx) {
+            let x = self.eval(b, ctx);
+            return Some(self.membership_negation(x, range, ctx));
+        }
+        if let Some(range) = not_range(b, ctx) {
+            let x = self.eval(a, ctx);
+            return Some(self.membership_negation(x, range, ctx));
+        }
+        None
+    }
+
+    /// x ∉ range → x; x ∈ range → ⊥. Distributes over Union.
+    fn membership_negation(&self, x: Value, range: Value, ctx: &mut EvalContext) -> Value {
+        if let Value::Union(branches) = x {
+            let mut out = Vec::new();
+            for b in branches {
+                let r = self.membership_negation(b, range.clone(), ctx);
+                if !matches!(r, Value::Bottom(_)) {
+                    out.push(r);
+                }
+            }
+            return match out.len() {
+                0 => BottomCause::Conflict.into(),
+                1 => out.into_iter().next().unwrap(),
+                _ => Value::Union(out),
+            };
+        }
+        let meet = self.unify_internal(x.clone(), range, ctx);
+        if matches!(meet, Value::Bottom(_)) {
+            x
+        } else {
+            BottomCause::Conflict.into()
+        }
+    }
+
     pub fn predict_effect(&self, expr: &Expr, ctx: &EvalContext) -> EffectTag {
         match &expr.kind {
             ExprKind::Atom(_) => EffectTag::Pure,
@@ -428,6 +485,12 @@ impl Ouroboros {
                 self.unify_internal(vv, tv, ctx)
             }
             ExprKind::Meet(a, b) => {
+                // E3: meet-context membership negation —
+                // `x & !(range)` / `!(range) & x` ⟺ x if x ∉ range else ⊥.
+                // Standalone `!(range)` still goes through Unary → orthocomplement → ⊥.
+                if let Some(v) = self.try_meet_not_range(a, b, ctx) {
+                    return v;
+                }
                 let va = self.eval(a, ctx);
                 let vb = self.eval(b, ctx);
                 self.unify_internal(va, vb, ctx)

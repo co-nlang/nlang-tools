@@ -570,6 +570,9 @@ impl ContentHash {
     }
 
     pub fn parse(s: &str) -> anyhow::Result<Self> {
+        // Tolerate plain-form quoted strings (`"hash:..."`) after Str
+        // to_string_plain gained source-literal quotes (range_gaps E2).
+        let s = s.trim().trim_matches('"');
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() < 4 || parts[0] != "hash" || parts[1] != "sha256" {
             return Err(anyhow::anyhow!("Invalid CAID format"));
@@ -676,6 +679,17 @@ impl Identity {
 }
 
 pub const TROPICAL_INFINITY: u64 = u64::MAX;
+
+/// Strip source-literal quotes from `to_string_plain` of Str atoms when the
+/// result is used as a field key / path segment (`"score"` → `score`).
+pub fn strip_plain_quotes(s: &str) -> &str {
+    let t = s.trim();
+    if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
+        &t[1..t.len() - 1]
+    } else {
+        t
+    }
+}
 
 impl Value {
     pub fn bits(&self) -> u64 {
@@ -814,7 +828,7 @@ impl Value {
                     if *i >= 0.0 { format!("{}+{}i", r, i) }
                     else { format!("{}-{}i", r, i.abs()) }
                 },
-                AtomKind::Str(s) => s.clone(), 
+                AtomKind::Str(s) => s.clone(),
                 AtomKind::Tag(t) => format!("#{}", t), 
                 AtomKind::TagStart => "#_|_".to_string(),
                 AtomKind::TagEnd => "#_".to_string(),

@@ -42,6 +42,12 @@ impl TypeConstraint {
     }
 
     pub fn validate_value(&self, value: &Value) -> ValidationResult {
+        // E1: @T & Range = Range (refinement) iff non-anchor bounds pass @T.
+        // Anchors (TagStart/TagEnd) always pass. Bounds are never rewritten
+        // (PassWithProjection still returns the original Range in meet).
+        if let Value::Range { start, end, step } = value {
+            return self.validate_range_bounds(start, end, step.as_deref());
+        }
         match self {
             TypeConstraint::Any => ValidationResult::Pass,
             TypeConstraint::Num => match value {
@@ -119,6 +125,43 @@ impl TypeConstraint {
             TypeConstraint::Unknown(name) => ValidationResult::Unknown(name.clone()),
         }
     }
+
+    /// Validate Range bounds under this constraint. Order anchors always pass;
+    /// non-anchor bounds must each validate. Result is Pass if all ok (including
+    /// when bounds would project under @float — projection is NOT applied to bounds).
+    fn validate_range_bounds(
+        &self,
+        start: &Value,
+        end: &Value,
+        step: Option<&Value>,
+    ) -> ValidationResult {
+        let is_order_anchor = |v: &Value| {
+            matches!(
+                v,
+                Value::Atom(AtomKind::TagStart, _, _) | Value::Atom(AtomKind::TagEnd, _, _)
+            )
+        };
+        let mut any_projection = false;
+        for bound in [start, end].into_iter().chain(step.into_iter()) {
+            if is_order_anchor(bound) {
+                continue;
+            }
+            match self.validate_value(bound) {
+                // Recursion: bound is atom → hits atom arms (not Range).
+                ValidationResult::Pass => {}
+                ValidationResult::PassWithProjection => {
+                    any_projection = true;
+                }
+                ValidationResult::Fail(m) => return ValidationResult::Fail(m),
+                ValidationResult::Unknown(u) => return ValidationResult::Unknown(u),
+            }
+        }
+        if any_projection {
+            ValidationResult::PassWithProjection
+        } else {
+            ValidationResult::Pass
+        }
+    }
 }
 
 pub enum ValidationResult {
@@ -135,6 +178,10 @@ pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
     match result {
         ValidationResult::Pass => value,
         ValidationResult::PassWithProjection => {
+            // Range bounds must never be rewritten (fmt v2 freeze / E1).
+            if matches!(value, Value::Range { .. }) {
+                return value;
+            }
             match &constraint {
                 TypeConstraint::Float => match value {
                     Value::Atom(AtomKind::Int(i), e, _) => Value::Atom(AtomKind::Float(i.to_f64().unwrap_or(0.0)), e, None),

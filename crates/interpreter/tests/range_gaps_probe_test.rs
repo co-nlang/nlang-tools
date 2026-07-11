@@ -12,7 +12,6 @@
 //    membership negation only: `x & !(a..b)` ⟺ x if x∉[a,b] else ⊥.
 //    Standalone `!(range)` stays ⊥ (honest message; fmt v3 residual 另案).
 //
-// Red lines are #[ignore]; un-ignoring them IS the acceptance gate.
 // Guards are active and pin known-green behavior — MUST stay green.
 
 use nlang_interpreter::{Ouroboros, EvalContext, Value};
@@ -67,12 +66,14 @@ fn assert_range_plain(src: &str, expect: &str) {
     }
 }
 
-/// Union whose branches' plain prints equal `expect` (order-insensitive).
+/// Union whose branches' canonical `to_nlang` equal `expect` (order-insensitive).
+/// Expects source-literal form (e.g. `"A"` with quotes) — same identity axis as
+/// to_nlang, not unquoted to_string_plain.
 fn assert_union_plain(src: &str, expect: &[&str]) {
     let v = eval_one(src);
     match &v {
         Value::Union(branches) => {
-            let mut got: Vec<String> = branches.iter().map(|b| b.to_string_plain()).collect();
+            let mut got: Vec<String> = branches.iter().map(|b| b.to_nlang(0)).collect();
             let mut want: Vec<String> = expect.iter().map(|s| s.to_string()).collect();
             got.sort();
             want.sort();
@@ -87,20 +88,17 @@ fn assert_union_plain(src: &str, expect: &[&str]) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE (E1): @int & Range = the Range itself (refinement)
 fn e1_int_marker_meets_range_is_range() {
     assert_range_plain("a: @int & 6..", "6..#_");
     assert_range_plain("a: @int & 1..9", "1..9");
 }
 
 #[test]
-#[ignore] // RED LINE (E1): mirror side — same arm, not a duplicate (mirror-ban)
 fn e1_range_meets_int_marker_mirror() {
     assert_range_plain("a: 6.. & @int", "6..#_");
 }
 
 #[test]
-#[ignore] // RED LINE (E1): REAL_05 compliance vector L1-05
 fn e1_real05_l1_05_membership_through_marker() {
     assert_int("a: @{ @int & 6.. } & 10", 10);
     assert_int("a: 10 & (@int & 6..)", 10);
@@ -118,9 +116,8 @@ fn e1_marker_kind_mismatch_is_bottom() {
     assert_bottom("a: @int & (1.5..9)");
 }
 
+// (standing adversarial vector — 5b501e5 arm-order bug class)
 #[test]
-#[ignore] // RED LINE (E1): Union distributes over marker-refined range
-          // (standing adversarial vector — 5b501e5 arm-order bug class)
 fn e1_union_distributes_over_marker_range() {
     assert_int("a: (10 | 5) & (@int & 6..)", 10);
 }
@@ -130,7 +127,6 @@ fn e1_union_distributes_over_marker_range() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE (E2): range key matches member; constant rule (%val) applies
 fn e2_range_key_constant_rule() {
     assert_str(r#"r: { @{ 4.. }: "A" } 5"#, "A");
 }
@@ -142,14 +138,12 @@ fn e2_range_key_rejects_nonmember() {
 }
 
 #[test]
-#[ignore] // RED LINE (E2): morphism rule through range key
 fn e2_range_key_morphism_rule() {
     assert_int(r#"r: { @{ 4.. }: (x -> x + 1) } 5"#, 6);
 }
 
+// BOTH-SIDES pin (a): patterns 4.. and ..6 are incomparable → "A"|"B".
 #[test]
-#[ignore] // RED LINE (E2): SPEC_06 範例 B — incomparable overlap keeps Multiple.
-          // BOTH-SIDES pin (a): patterns 4.. and ..6 are incomparable → "A"|"B".
 fn e2_incomparable_patterns_stay_multiple() {
     assert_union_plain(
         r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B" } 5"#,
@@ -158,15 +152,13 @@ fn e2_incomparable_patterns_stay_multiple() {
 }
 
 #[test]
-#[ignore] // RED LINE (E2): SPEC_06 — outside the overlap, single arm wins
 fn e2_overlap_edges_single_arm() {
     assert_str(r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B" } 9"#, "A");
     assert_str(r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B" } 1"#, "B");
 }
 
+// BOTH-SIDES pin (b): 4..6 ⊂ 4.. and 4..6 ⊂ ..6 → "C" alone, not A|B|C.
 #[test]
-#[ignore] // RED LINE (E2): SPEC_07 情境 C — subset pattern is the unique minimal.
-          // BOTH-SIDES pin (b): 4..6 ⊂ 4.. and 4..6 ⊂ ..6 → "C" alone, not A|B|C.
 fn e2_subset_pattern_is_unique_minimal() {
     assert_str(
         r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B", @{ @int & 4..6 }: "C" } 5"#,
@@ -179,7 +171,6 @@ fn e2_subset_pattern_is_unique_minimal() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE (E3): strict positivity — SPEC_07 §5 check_pos spelling
 fn e3_meet_not_range_membership_negation() {
     assert_int("a: 5 & !(..0)", 5);
     assert_bottom("a: -1 & !(..0)");
@@ -191,34 +182,29 @@ fn e3_closed_end_excluded() {
     assert_bottom("a: 0 & !(..0)");
 }
 
+// exists at all; int-materialization `1..` would wrongly kill this)
 #[test]
-#[ignore] // RED LINE (E3): dense domain — 0.5 must pass (the reason !(..0)
-          // exists at all; int-materialization `1..` would wrongly kill this)
 fn e3_dense_member_passes() {
     assert_float("a: 0.5 & !(..0)", 0.5);
 }
 
 #[test]
-#[ignore] // RED LINE (E3): mirror side — same rewrite, not a duplicate arm
 fn e3_mirror_not_range_on_left() {
     assert_int("a: !(..0) & 5", 5);
 }
 
 #[test]
-#[ignore] // RED LINE (E3): bounded range complement, both directions
 fn e3_bounded_range_complement() {
     assert_int("a: 0 & !(1..3)", 0);
     assert_bottom("a: 2 & !(1..3)");
 }
 
 #[test]
-#[ignore] // RED LINE (E3): Union distributes over the negation meet
 fn e3_union_distributes_over_not_range() {
     assert_int("a: (1 | -1) & !(..0)", 1);
 }
 
 #[test]
-#[ignore] // RED LINE (E3): morphism-body usage — the actual check_pos vector
 fn e3_check_pos_morphism() {
     assert_int("r: (x -> @{ $ & !(..0) }) 5", 5);
     assert_bottom("r: (x -> @{ $ & !(..0) }) (-3)");
