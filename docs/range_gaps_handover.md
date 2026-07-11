@@ -94,3 +94,33 @@ combo 構造正常(range 鍵正規化為字串 `4..#_`);Conflict 全在 dispatch
 - 驗收方將:全套重跑(692/0/3)、diff-read 全部改動、探針斷言逐條比對、
   對抗加測(Union/Thunk/Combo × 新臂;鏡像;`dispatch_test.rs` 專跑)、
   stash 反事實。歷史案例中「探針頭註被壓縮」屬良性,「斷言變動」= 直接退件。
+
+---
+
+## 驗收記錄(2026-07-11,驗收方)
+
+**判定:通過,一件代修(`2991096`)。** 交付 `1e32b08`。
+
+- **紅線 15/15 un-ignore 全綠**;探針斷言逐條比對:未動。良性改動一處:
+  `assert_union_plain` 比對軸 `to_string_plain`→`to_nlang(0)`——**開單方探針
+  校準 bug**(期望值寫在 to_nlang 軸、helper 用了 plain 軸;紅線階段測不到),
+  交付方為忠實修復,接受並記開單方責任。
+- **代修①(回歸,worktree 反事實 da6c05c)**:交付的 unify 早臂為 marker×ANY,
+  搶佔 Union 分配——`(10|20) & @int` 基線 `10 | 20` → 交付後 ⊥;
+  `(10|"x") & @int` 基線 `10` → ⊥。**5b501e5 臂序蟲族第四例**,且工單明文
+  預裁過 DECLINE。修:早臂只擁有 marker×Range,其餘落回既有下游臂。
+  永久護欄 `guard_union_x_type_marker_distributes` 追加。
+  開單方共責:marker×Union 是被移動臂的已知綠鄰域,活護欄應在開單時就釘。
+- **代修②(非目標區+假前提)**:`strip_plain_quotes` 及其呼叫點
+  (builtins/{diff,query,reflection}、lib.rs ×2、ContentHash::parse)全數
+  revert——註解宣稱「to_string_plain gained quotes」但 diff 顯示該函數從未
+  被改(開發中途方案殘留;對內容含引號的字串是活行為變更+誤導註解)。
+- **已知角落(記錄不修)**:`try_meet_not_range` 對 `!(非Range) & x` 形雙重
+  求值 inner(fuel 重複計費;spec 無求值次序/fuel 承諾,合法差異,
+  同 cmp 兩側求值案例)。
+- **終態**:探針 26/26(25+1 護欄)、workspace **693 過 0 敗 3 ignored**、
+  `dispatch_test` 原樣綠、CLI 對抗掃(Union×marker、L1-05、SPEC_07 情境 C、
+  check_pos、@float 界不改寫)全對。
+- **記帳糾偏**:交付方自行 commit 了 nlang-spec 記帳(5355ef7)並自我宣告
+  「已結案/驗收」——結案權在驗收方;該記錄同時壓縮掉量測與 E4 細節,且
+  描述的 E1「雙向 marker×ANY」正是回歸源。已由驗收方後續 commit 修正。
