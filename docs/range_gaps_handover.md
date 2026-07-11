@@ -17,8 +17,8 @@
   整體先變 ⊥ 再吸收);修完後必須**因正確原因**依然 ⊥。這是 Atom(Bottom)
   案的教訓制度化:修 bug 移動家族邊界時,兩側都要釘。
 
-期望終態:workspace **682 過 0 敗 3 ignored**(667+15;3 ignored 為既存已知,
-與本單無關,不得動)。
+期望終態:workspace **692 過 0 敗 3 ignored**(開單基線 677/0/18 = 667+10 活測
++15 紅線 ignored+3 既存;去 ignore 後 677+15=692。3 個既存 ignored 與本單無關,不得動)。
 
 ## E1 型別標記 × Range(小刀)
 
@@ -91,6 +91,6 @@ combo 構造正常(range 鍵正規化為字串 `4..#_`);Conflict 全在 dispatch
 - 交付 = nlang-tools `local` 上的 commits(不得空提交;`git show --numstat`
   須非空)+ 簡短交付記錄(改了哪些檔、每條紅線對應哪個修復、量測輸出)。
 - **根因與宣稱須附量測**(counterfactual:stash 修復重跑探針證明紅→綠因果)。
-- 驗收方將:全套重跑(682/0/3)、diff-read 全部改動、探針斷言逐條比對、
+- 驗收方將:全套重跑(692/0/3)、diff-read 全部改動、探針斷言逐條比對、
   對抗加測(Union/Thunk/Combo × 新臂;鏡像;`dispatch_test.rs` 專跑)、
   stash 反事實。歷史案例中「探針頭註被壓縮」屬良性,「斷言變動」= 直接退件。
