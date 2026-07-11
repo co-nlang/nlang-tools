@@ -41,6 +41,43 @@ impl TypeConstraint {
         path_name.trim().starts_with('@')
     }
 
+    /// Builtin reserved set (`from_name` ≠ Unknown). User `@Name` defs must
+    /// not shadow these (E4 / `e4_builtin_reserved_not_shadowable`).
+    pub fn is_builtin_type_name(name: &str) -> bool {
+        !matches!(Self::from_name(name), TypeConstraint::Unknown(_))
+    }
+
+    /// Opaque `{{%kind: #type_constraint, %type: "…"}}` marker used for
+    /// builtins and the Unknown not-found fallback.
+    pub fn marker_value(type_name: &str) -> Value {
+        use crate::value::{ComboVal, EffectTag};
+        use indexmap::IndexMap;
+        Value::Combo(ComboVal::new(
+            IndexMap::from_iter(vec![
+                (
+                    "%kind".to_string(),
+                    Value::Atom(
+                        AtomKind::Tag("type_constraint".to_string()),
+                        EffectTag::Pure,
+                        None,
+                    ),
+                ),
+                (
+                    "%type".to_string(),
+                    Value::Atom(
+                        AtomKind::Str(type_name.to_string()),
+                        EffectTag::Pure,
+                        None,
+                    ),
+                ),
+            ]),
+            true,
+            IndexMap::new(),
+            EffectTag::Pure,
+            vec![],
+        ))
+    }
+
     pub fn validate_value(&self, value: &Value) -> ValidationResult {
         // E1: @T & Range = Range (refinement) iff non-anchor bounds pass @T.
         // Anchors (TagStart/TagEnd) always pass. Bounds are never rewritten

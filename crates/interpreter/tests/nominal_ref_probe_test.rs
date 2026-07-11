@@ -1,23 +1,15 @@
-// E4 nominal `@Name` reference probes (2026-07-11, pre-committed by work
-// order — docs/nominal_ref_handover.md; gap recorded in nlang-spec
-// ENGINE_SYNC「Range 語義補完缺口」E4).
+// E4 nominal `@Name` reference probes (2026-07-11 — docs/nominal_ref_handover.md;
+// gap recorded in nlang-spec ENGINE_SYNC「Range 語義補完缺口」E4).
 //
-// Today: `is_type_constraint_path` = ANY `@`-prefixed name → opaque
-// `{{%kind: #type_constraint}}` marker BEFORE scope/root lookup — user
-// definitions (`@Adult: {…}`) are never consulted; Unknown markers
-// pass values through SILENTLY (violating values survive merges).
-//
-// Ruling: builtin type names stay markers (reserved set, not shadowable);
+// Resolution: builtin type names stay markers (reserved set, not shadowable);
 // every other `@Name` resolves through the normal lookup chain (lazy force,
 // record_dep); not-found keeps the Unknown pass-through fallback.
 // Trinity: a dereferenced type def is just a value — sealed `{{}}` templates
 // keep SPEC_03 exhaustive-schema semantics (extra field → ⊥), open `{}`
 // templates constrain listed fields only.
 //
-// DESIGN NOTE (lesson from range_gaps): the PASSING side of most vectors is
-// green today for the WRONG reason (pass-through) — those are ACTIVE pins
-// from day one. Red lines sit exclusively on discriminating points: violating
-// values that today are silently accepted, and deref-visible shapes.
+// Root cause (fixed): `is_type_constraint_path` used to treat ANY `@`-prefixed
+// name as an opaque marker BEFORE scope/root lookup.
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_parser::parse_program;
@@ -84,8 +76,8 @@ fn assert_obs_bottom(src: &str, path: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE (E4): defined type must ENFORCE on merge — the silent
-          // acceptance is the bug (README front-page example class)
+// RED LINE (E4): defined type must ENFORCE on merge — the silent
+// acceptance is the bug (README front-page example class)
 fn e4_violating_merge_is_bottom() {
     assert_obs_bottom(
         "@Adult: { age: 18.. }\nminor: { name: \"Bob\", age: 15 } & @Adult",
@@ -94,7 +86,7 @@ fn e4_violating_merge_is_bottom() {
 }
 
 #[test]
-#[ignore] // RED LINE (E4): mirror side — same lookup path, not a duplicate
+// RED LINE (E4): mirror side — same lookup path, not a duplicate
 fn e4_violating_merge_mirror() {
     assert_obs_bottom(
         "@Adult: { age: 18.. }\nminor: @Adult & { name: \"Bob\", age: 15 }",
@@ -103,8 +95,8 @@ fn e4_violating_merge_mirror() {
 }
 
 #[test]
-#[ignore] // RED LINE (E4): observing the reference yields the DEFINITION,
-          // not the opaque marker
+// RED LINE (E4): observing the reference yields the DEFINITION,
+// not the opaque marker
 fn e4_deref_shape_is_definition() {
     match run_observe("@Adult: { age: 18.. }\nprobe: @Adult", "probe") {
         Ok(Value::Combo(cv)) => {
@@ -119,8 +111,8 @@ fn e4_deref_shape_is_definition() {
 }
 
 #[test]
-#[ignore] // RED LINE (E4): SPEC_03 exhaustive sealed schema — extra field ⊥
-          // (exact spec example; today the marker silently passes it)
+// RED LINE (E4): SPEC_03 exhaustive sealed schema — extra field ⊥
+// (exact spec example; today the marker silently passes it)
 fn e4_sealed_exhaustive_extra_field_bottom() {
     assert_obs_bottom(
         "@StrictUser: {{ name: @str }}\nr: @StrictUser & { name: \"Alice\", age: 30 }",
@@ -129,8 +121,8 @@ fn e4_sealed_exhaustive_extra_field_bottom() {
 }
 
 #[test]
-#[ignore] // RED LINE (E4): constraints run THROUGH the template fieldwise —
-          // @float projection visible (1 → 1.0), proves real fieldwise unify
+// RED LINE (E4): constraints run THROUGH the template fieldwise —
+// @float projection visible (1 → 1.0), proves real fieldwise unify
 fn e4_projection_through_template() {
     match run_observe("@P: { x: @float }\nr: { x: 1 } & @P", "r.x") {
         Ok(Value::Atom(AtomKind::Float(f), _, _)) => {
@@ -141,8 +133,8 @@ fn e4_projection_through_template() {
 }
 
 #[test]
-#[ignore] // RED LINE (E4): recursive type def — deref must be lazy enough to
-          // terminate AND enforce (v: "s" violates @int)
+// RED LINE (E4): recursive type def — deref must be lazy enough to
+// terminate AND enforce (v: "s" violates @int)
 fn e4_recursive_type_enforces_and_terminates() {
     assert_obs_bottom(
         "@Tree: { v: @int, next: @Tree | () }\nt: { v: \"s\", next: () } & @Tree",
@@ -151,8 +143,8 @@ fn e4_recursive_type_enforces_and_terminates() {
 }
 
 #[test]
-#[ignore] // RED LINE (E4): Union of type refs — distribution must survive the
-          // new resolution path (arm-order class, 5th time's the charm)
+// RED LINE (E4): Union of type refs — distribution must survive the
+// new resolution path (arm-order class, 5th time's the charm)
 fn e4_union_of_typerefs_enforces() {
     assert_obs_bottom(
         "@Neg: ..0\n@Pos: 1..\nx: 0.5 & (@Neg | @Pos)",
@@ -161,11 +153,10 @@ fn e4_union_of_typerefs_enforces() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// ACTIVE both-sides pins — green today (pass-through), must stay green
-// after for the RIGHT reason
+// ACTIVE both-sides pins — must stay green for the RIGHT reason (real deref)
 // ─────────────────────────────────────────────────────────────────────────
 
-#[test] // ACTIVE pin: satisfying merge passes (today: wrong reason)
+#[test] // ACTIVE pin: satisfying merge passes via real template meet
 fn e4_satisfying_merge_passes() {
     assert_obs_int(
         "@Adult: { age: 18.. }\nuser: { name: \"Alice\", age: 25 } & @Adult",
@@ -203,10 +194,9 @@ fn e4_undefined_typeref_passthrough() {
 }
 
 #[test]
-#[ignore] // RED LINE (E4): satisfying side of union-of-typerefs — TODAY this is
-          // `10 | 10` (marker pass-through per branch, no dedupe); after deref
-          // it must distribute (⊥ | 10) and collapse to the single survivor 10
-          // (same law as (1|7) & 1..3 → 1). Calibration itself caught this.
+// RED LINE (E4): satisfying side of union-of-typerefs — must distribute
+// (⊥ | 10) and collapse to the single survivor 10 (same law as
+// (1|7) & 1..3 → 1). Calibration itself caught the prior `10|10` wart.
 fn e4_union_of_typerefs_passing() {
     assert_obs_int("@Neg: ..0\n@Pos: 1..\nx: 10 & (@Neg | @Pos)", "x", 10);
 }
