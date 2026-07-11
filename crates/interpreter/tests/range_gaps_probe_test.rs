@@ -251,3 +251,14 @@ fn guard_dispatch_atom_keys_unchanged() {
     let v = eval_one(r#"r: { 1: "one", 2: "two" } 3"#);
     assert!(matches!(v, Value::Bottom(_)), "no-match must stay ⊥, got {v:?}");
 }
+
+#[test]
+fn guard_union_x_type_marker_distributes() {
+    // Acceptance-added permanent guard (2026-07-11): the delivered E1 arm was
+    // hoisted as marker×ANY and preempted Union distribution — `(10|20) & @int`
+    // regressed to ⊥ (5b501e5 arm-order class, 4th occurrence). The early arm
+    // owns ONLY marker×Range; everything else declines downstream.
+    assert_union_plain("a: (10 | 20) & @int", &["10", "20"]);
+    assert_int("a: (10 | \"x\") & @int", 10);
+    assert_int("a: @int & (10 | \"x\")", 10);
+}

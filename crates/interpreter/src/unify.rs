@@ -143,24 +143,23 @@ impl Ouroboros {
         let id_a = a.content_hash(); let id_b = b.content_hash();
         if id_a == id_b { return a; }
 
-        // Type-marker × anything (incl. Range / E1). Mirror both orders; single path.
+        // Type-marker × Range (E1) — acceptance repair: this early arm owns
+        // ONLY the new value kind (Range). Every other kind DECLINES to the
+        // established downstream arms (Union distribution, Combo×Combo subtype,
+        // Combo×Atom at the atom arm) — hoisting marker×ANY here preempted
+        // Union distribution: `(10|20) & @int` regressed to ⊥ (5b501e5 arm-order
+        // bug class, 4th occurrence).
         if let Value::Combo(ac) = &a {
-            if is_type_constraint_combo(ac) {
+            if is_type_constraint_combo(ac) && matches!(&b, Value::Range { .. }) {
                 if let Some(type_name) = get_type_constraint_name(ac) {
-                    // Decline when other is also a type-constraint combo — fall to
-                    // Combo×Combo path below (subtype between markers).
-                    if !matches!(&b, Value::Combo(bc) if is_type_constraint_combo(bc)) {
-                        return type_constraint_meet(b.clone(), &type_name);
-                    }
+                    return type_constraint_meet(b.clone(), &type_name);
                 }
             }
         }
         if let Value::Combo(bc) = &b {
-            if is_type_constraint_combo(bc) {
+            if is_type_constraint_combo(bc) && matches!(&a, Value::Range { .. }) {
                 if let Some(type_name) = get_type_constraint_name(bc) {
-                    if !matches!(&a, Value::Combo(ac) if is_type_constraint_combo(ac)) {
-                        return type_constraint_meet(a.clone(), &type_name);
-                    }
+                    return type_constraint_meet(a.clone(), &type_name);
                 }
             }
         }

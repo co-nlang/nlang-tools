@@ -930,13 +930,7 @@ let mut refl_fields = IndexMap::new();
                 }
                 
                 let ks = arg.collapse().to_string_plain();
-                let ks_bare = crate::value::strip_plain_quotes(&ks);
-                if let Some(v) = c
-                    .get_field(&ks)
-                    .or_else(|| c.get_field(ks_bare))
-                    .or_else(|| c.get_field("it"))
-                    .or_else(|| c.get_field("_"))
-                {
+                if let Some(v) = c.get_field(&ks).or_else(|| c.get_field("it")).or_else(|| c.get_field("_")) {
                     return v.clone();
                 }
                 BottomCause::Conflict.into()
@@ -1222,8 +1216,7 @@ let mut refl_fields = IndexMap::new();
             if let Err(e) = ctx.check_resources(2) { 
                 return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, accumulated_effect);
             }
-            // Str to_string_plain is quoted (`"0"`); field keys store bare `0`.
-            let seg = crate::value::strip_plain_quotes(seg.trim());
+            let seg = seg.trim();
             let mut current = self.force(val, ctx);
             accumulated_effect = accumulated_effect.max(current.effect());
             while let Value::Combo(ref c) = current {
