@@ -205,7 +205,7 @@ Phase 45：A 組擴充（~%Math +8, ~%List +5, ~%String +5, ~%Time +5）→ ~492
 Phase 46：~%Set（8）+ ~%Stat（6）零 dep 新模組 → ~504 tests  
 Phase 47：~%Csv（手寫）+ ~%Url（url crate）+ ~%Toml（toml crate）→ ~514 tests  
 語義同步波（2026-06/07）：SPEC_14 全同步 → `$` P1–P5 → 惰性 Stage 1–5＋memo＋Route B
-→ fuzz/golden → Top/Bottom 正規化 → cmp 極值 → Range → **667 tests（106 套件）**
+→ fuzz/golden → Top/Bottom 正規化 → cmp 極值 → Range → Range 補完 E1–E3(型別標記×Range/分派鍵/正交補)→ nominal @Name 接線(E4,README 範例端到端)→ **708 tests（108 套件）**
 
 每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
 零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。  

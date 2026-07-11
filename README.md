@@ -72,7 +72,7 @@ echo 'age: 33' > refine.n
 ## 🧪 Testing
 
 ```bash
-# Full Rust suite: 667 passed / 0 failed / 3 ignored (106 suites)
+# Full Rust suite: 708 passed / 0 failed / 3 ignored (108 suites)
 cargo test --workspace
 ```
 
