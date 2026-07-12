@@ -735,6 +735,13 @@ fn collect_defs_expr(expr: &Expr, defined: &mut HashSet<String>) {
 
 fn collect_param_names(expr: &Expr, defined: &mut HashSet<String>) {
     match &expr.kind {
+        // Multi-param juxtaposition (`x y -> …`) parses as Apply in param
+        // position — every bare path inside is a bound name (acceptance
+        // repair: `/assert_eq: x y -> x == y` false-flagged `y`).
+        ExprKind::Apply(a, b) => {
+            collect_param_names(a, defined);
+            collect_param_names(b, defined);
+        }
         ExprKind::Path(p) if p.anchor == PathAnchor::Bare => {
             for seg in &p.segments {
                 let t = seg.trim();

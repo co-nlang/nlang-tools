@@ -125,3 +125,11 @@ fn pin_existing_r3_still_fires() {
         "R3 must still fire, got {ds:?}"
     );
 }
+
+#[test] // ACCEPTANCE GUARD (added at acceptance, 2026-07-12): multi-param
+        // morphism (`x y -> …` = Apply-shaped param) binds ALL names —
+        // the false positive found in tests/lib/test.n must stay dead
+fn pin_r4_multi_param_morphism_not_flagged() {
+    assert!(r4s("f: x y -> x == y\nout: /f 1 1").is_empty());
+    assert!(r4s("g: a b c -> a + b + c\nout: /g 1 2 3").is_empty());
+}
