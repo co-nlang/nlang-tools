@@ -1,6 +1,6 @@
 # nlang 功能路線圖
 
-> 最後更新：2026-07-12（v0.2.0 裸核定版）  
+> 最後更新：2026-07-12（v0.2.1）  
 > 開發模式：由 "project brain" AI 出規劃，執行 AI 實作；Phase 制（1–47）之後轉入
 > **規格同步波**（工單＋預置探針驗收制，記錄見 nlang-spec `meta/ENGINE_SYNC.md`
 > 與 `docs/worknotes/`）
@@ -176,7 +176,7 @@
 | field_key path-vs-named 語意 | fuzz 掃描殘留 | ENGINE_SYNC #19 |
 | `.n` 語料清理 | `tests/unit/` 11 個引擎開發期舊期望值失敗（canonical/entropy/federation/ladd/reflection；非引擎回歸，Rust 套件同域全綠） | tests/README.md 已標注 |
 | cargo-fuzz 外掛 | 可選強化 | 同上 |
-| REAL_05 合規測試矩陣 | ✅ 45/45（2026-07-12，L2-17 補齊）——裸核門檻達成，v0.2.0 即裸核版 | REAL_05 |
+| REAL_05 合規測試矩陣 | ✅ 47/47（v0.2.1；45→47 增前向引用向量）——裸核自 v0.2.0 | REAL_05 |
 
 ### P3：長期目標
 
@@ -205,7 +205,7 @@ Phase 45：A 組擴充（~%Math +8, ~%List +5, ~%String +5, ~%Time +5）→ ~492
 Phase 46：~%Set（8）+ ~%Stat（6）零 dep 新模組 → ~504 tests  
 Phase 47：~%Csv（手寫）+ ~%Url（url crate）+ ~%Toml（toml crate）→ ~514 tests  
 語義同步波（2026-06/07）：SPEC_14 全同步 → `$` P1–P5 → 惰性 Stage 1–5＋memo＋Route B
-→ fuzz/golden → Top/Bottom 正規化 → cmp 極值 → Range → Range 補完 E1–E3(型別標記×Range/分派鍵/正交補)→ nominal @Name 接線(E4,README 範例端到端)→ L2-17 發散偵測 + ⊥ %cause(裸核收官)→ **718 tests（109 套件）**
+→ fuzz/golden → Top/Bottom 正規化 → cmp 極值 → Range → Range 補完 E1–E3(型別標記×Range/分派鍵/正交補)→ nominal @Name 接線(E4,README 範例端到端)→ L2-17 發散偵測 + ⊥ %cause(裸核收官)→ 前向引用/one-shot 同時性 → **736 tests（111 套件）**
 
 每 Phase 平均：3–6 個新 builtin，5–14 個新測試。  
 零依賴原則：優先使用已有 dep（serde_json/sha2/ring/base64/hex/regex），無需新增。  
