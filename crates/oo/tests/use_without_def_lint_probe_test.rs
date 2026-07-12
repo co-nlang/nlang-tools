@@ -48,7 +48,6 @@ fn r4s(src: &str) -> Vec<nlint::Diagnostic> {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE: bare name never defined → R4 (names the symbol)
 fn r4_undefined_bare_name_flagged() {
     let ds = r4s("out: zzz_undef + 1");
     assert!(
@@ -58,7 +57,6 @@ fn r4_undefined_bare_name_flagged() {
 }
 
 #[test]
-#[ignore] // RED LINE: `& @Name` never defined → R4 Warn naming the marker
           // (silent pass-through = enforcement the user believes in)
 fn r4_undefined_type_marker_flagged() {
     let ds = r4s("x: { age: 20 } & @Never\nout: x");
@@ -70,7 +68,6 @@ fn r4_undefined_type_marker_flagged() {
 }
 
 #[test]
-#[ignore] // RED LINE: undefined name inside a container body is also seen
 fn r4_undefined_in_container_flagged() {
     let ds = r4s("s: { v: qqq_undef }\nout: s.v");
     assert!(

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use nlang_parser::ast::{Expr, ExprKind, FieldKey, Prefix, AtomKind, UnaryOp};
 use crate::{Ouroboros, EvalContext, CmpOp};
-use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail, ValRelation, RelOp as ValRelOp};
+use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail, ValRelation, RelOp as ValRelOp, normalize_union};
 use crate::type_constraint::{TypeConstraint, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
 use num_bigint::BigInt;
@@ -55,11 +55,7 @@ impl Ouroboros {
                     out.push(r);
                 }
             }
-            return match out.len() {
-                0 => BottomCause::Conflict.into(),
-                1 => out.into_iter().next().unwrap(),
-                _ => Value::Union(out),
-            };
+            return normalize_union(out);
         }
         let meet = self.unify_internal(x.clone(), range, ctx);
         if matches!(meet, Value::Bottom(_)) {
@@ -425,11 +421,7 @@ impl Ouroboros {
                             out.push(res);
                         }
                     }
-                    return match out.len() {
-                        0 => BottomCause::Conflict.into(),
-                        1 => out.into_iter().next().unwrap(),
-                        _ => Value::Union(out),
-                    };
+                    return normalize_union(out);
                 }
                 self.pipe_apply(lv, r, ctx)
             }
@@ -498,7 +490,7 @@ impl Ouroboros {
             ExprKind::Join(a, b) => {
                 let va = self.eval(a, ctx);
                 let vb = self.eval(b, ctx);
-                Value::Union(vec![va, vb])
+                normalize_union(vec![va, vb])
             }
             ExprKind::Diff(a, b) => {
                 let va = self.eval(a, ctx);

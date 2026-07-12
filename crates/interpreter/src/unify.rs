@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::cmp::Ordering;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext};
-use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail};
+use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail, normalize_union};
 use crate::type_constraint::{TypeConstraint, type_constraint_meet, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
 use crate::lattice_sketch;
@@ -234,6 +234,8 @@ impl Ouroboros {
                 branches.sort_by_key(|b| self.tropical_weight(b));
                 let max_branches = ctx.max_branches;
                 let mut results: Vec<Value> = Vec::new();
+                // Collect without early cap so structural dedupe can free
+                // capacity first (SPEC_01 idempotence before max_branches).
                 for branch in branches.into_iter().take(max_branches * 2) {
                     let r = self.unify_internal(branch, other.clone(), ctx);
                     match &r {
@@ -244,14 +246,16 @@ impl Ouroboros {
                         }
                         _ => {
                             results.push(r);
-                            if results.len() >= max_branches { break; }
                         }
                     }
                 }
-                match results.len() { 
-                    0 => BottomCause::Conflict.into(), 
-                    1 => results.into_iter().next().unwrap(), 
-                    _ => Value::Union(results),
+                let deduped = normalize_union(results);
+                match deduped {
+                    Value::Union(mut bs) if bs.len() > max_branches => {
+                        bs.truncate(max_branches);
+                        Value::Union(bs)
+                    }
+                    other => other,
                 }
             }
             // Blur unification rules

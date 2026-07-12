@@ -263,7 +263,7 @@ impl MorphismDispatchResult {
                 if vs.len() == 1 {
                     vs.into_iter().next().unwrap().with_effect(effect)
                 } else {
-                    Value::Union(vs).with_effect(effect)
+                    crate::value::normalize_union(vs).with_effect(effect)
                 }
             }
             MorphismDispatchResult::NoMatch => Value::Bottom(Box::new(BottomDetail {

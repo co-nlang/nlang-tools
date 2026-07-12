@@ -22,7 +22,7 @@ pub mod genesis;
 pub mod ladd;
 pub mod oml;
 pub mod authority;
-pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy};
+pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, handle_resource_exhausted};
@@ -882,11 +882,7 @@ let mut refl_fields = IndexMap::new();
                     out.push(res);
                 }
             }
-            return match out.len() {
-                0 => BottomCause::Conflict.into(),
-                1 => out.into_iter().next().unwrap(),
-                _ => Value::Union(out),
-            };
+            return normalize_union(out);
         }
         if !f.is_morphism() { if arg.is_morphism() { return self.apply_morphism(arg, f, ctx); } }
         match f {
@@ -1179,7 +1175,10 @@ let mut refl_fields = IndexMap::new();
                 for (k, v) in c.local.iter() { new_c.local.insert(k.clone(), self.force_recursive(v.clone(), ctx)); }
                 Value::Combo(new_c)
             }
-            Value::Union(branches) => Value::Union(branches.into_iter().map(|b| self.force_recursive(b, ctx)).collect()),
+            Value::Union(branches) => {
+                let forced: Vec<Value> = branches.into_iter().map(|b| self.force_recursive(b, ctx)).collect();
+                normalize_union(forced)
+            }
             _ => val
         };
         if is_ref { ctx.context_value = old_ctx_val; }

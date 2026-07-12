@@ -92,18 +92,19 @@ fn test_de_morgan_union() {
 #[test]
 fn test_de_morgan_meet() {
     let (oo, mut ctx) = setup();
-    // !(A & B) = !A | !B for open Combo path (complement.rs)
-    // Test with a Combo value that has two fields
+    // !(A & B) = !A | !B for open Combo path (complement.rs).
+    // Two distinct field complements → Union after SPEC_01 dedupe.
+    // (Single-field open combo collapses to the sole complement — also
+    // correct join idempotence; listed in union_dedupe delivery notes.)
     let a_data = IndexMap::from_iter(vec![
         ("x".to_string(), tag("true")),
+        ("y".to_string(), tag("false")),
     ]);
     let a = Value::Combo(ComboVal::new(a_data, false, IndexMap::new(), EffectTag::Pure, vec![]));
     let not_a = oo.orthocomplement(a.clone(), &mut ctx);
-    // For an open Combo, !A should produce Union of field complements
-    // (!true → false)
     match not_a {
-        Value::Union(_) => {} // De Morgan: !A = Union(complements) ✓
-        _ => panic!("!(open Combo) should produce Union for De Morgan, got: {:?}", not_a),
+        Value::Union(bs) => assert!(bs.len() >= 2, "distinct complements kept: {:?}", bs),
+        other => panic!("!(open Combo) with two distinct field complements should be Union, got: {:?}", other),
     }
 }
 

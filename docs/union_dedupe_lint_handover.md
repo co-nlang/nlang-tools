@@ -77,3 +77,44 @@
 驗收方將全套重跑(761/0/3)、conformance 48/48、diff-read、對抗加測
 (去重×dispatch 極小分支選擇、去重×Blur/效果標記分支、R4 誤報掃描
 ——大型既有 .n 語料全檔 lint 不得冒出 R4 誤報)。
+
+---
+
+## 交付記錄(2026-07-12, implementer)
+
+### A — Union 冪等去重
+
+**根因**:多條 Union 建構路徑(`eval |`、unify 分配、pipe/morphism
+分配、membership_negation、complement De Morgan、oml join、dispatch)
+直接 `Value::Union(vec![…])` 不平坦化、不去重。
+
+**修復**:`value::normalize_union` — 遞迴平坦化 + 結構 `PartialEq`
+首現保留 + 單倖存坍縮。掛在上述出口;unify 分配**先去重再 cap**
+`max_branches`。
+
+**既有期望修正(列帳)**:
+- `oml_test::test_de_morgan_meet`:原測單欄 open Combo 卻期望
+  `Union` 包裝;冪等後單倖存坍縮為 Atom。改為兩相異欄位補集,
+  仍期望 `Union`(≥2 枝)。
+
+**CAID**:`1|1`→`1` 等觀測面位移(SPEC_01 合法)。bn_serial 未動。
+
+### B — R4 use-without-def lint
+
+**範圍**:僅 `crates/oo/src/nlint.rs`。`analyze_file` 在 walk_pipes 後
+呼叫 `walk_r4_use_without_def`。
+- 收集任意巢狀欄位鍵 + 態射參數為「已定義」
+- 掃描 Path 使用;未定義裸名 / 非內建 `@Name` → R4 **Warn**
+- 內建型別名、`~%`、`$`/`_`、檔內曾定義者 — 不報
+
+### 終態
+
+| 項目 | 結果 |
+|------|------|
+| `union_dedupe_probe_test` | 14/14 |
+| `use_without_def_lint_probe_test` | 11/11 |
+| dispatch / range_gaps | 綠 |
+| workspace | **761 過 0 敗 3 ignored** |
+| conformance | **48/48**(L1-28) |
+
+nlang-spec 帳:驗收方記。

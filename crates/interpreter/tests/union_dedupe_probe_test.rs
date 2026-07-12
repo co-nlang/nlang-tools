@@ -2,7 +2,7 @@
 // order — docs/union_dedupe_lint_handover.md).
 //
 // Lattice law: x ∨ x = x (SPEC_01 join idempotence). Today Union
-// construction keeps structural duplicates (`1 | 1`, `(1|2)|(1|2)`,
+// construction previously kept structural duplicates (`1 | 1`, `(1|2)|(1|2)`,
 // Top-branch distribution, same-marker distribution).
 // Ruling: dedupe = STRUCTURAL equality, first occurrence kept, single
 // survivor collapses the Union wrapper. Existing orderings are NOT
@@ -66,43 +66,36 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE: join idempotence, literal (today `1 | 1`)
 fn union_literal_self_dedupes() {
     assert_obs("out: 1 | 1", "1");
 }
 
 #[test]
-#[ignore] // RED LINE: duplicate inside a wider union (today `1 | 2 | 1`)
 fn union_inner_duplicate_dedupes() {
     assert_obs("out: 1 | 2 | 1", "1 | 2");
 }
 
 #[test]
-#[ignore] // RED LINE: union ∨ same union (today `1 | 2 | 1 | 2`)
 fn union_join_same_union_dedupes() {
     assert_obs("out: (1 | 2) | (1 | 2)", "1 | 2");
 }
 
 #[test]
-#[ignore] // RED LINE: Top-branch distribution duplicates (today `1 | 2 | 1`)
 fn union_top_branch_meet_dedupes() {
     assert_obs("out: (1 | _) & (1 | 2)", "1 | 2");
 }
 
 #[test]
-#[ignore] // RED LINE: same-marker distribution (today `10 | 10`)
 fn union_same_marker_meet_dedupes() {
     assert_obs("out: 10 & (@int | @int)", "10");
 }
 
 #[test]
-#[ignore] // RED LINE: string atoms (today `"a" | "a"`)
 fn union_string_self_dedupes() {
     assert_obs("out: \"a\" | \"a\"", "\"a\"");
 }
 
 #[test]
-#[ignore] // RED LINE: identical Ranges dedupe STRUCTURALLY
           // (today `1..5 | 1..5`; NOT range coalescing — see pin below)
 fn union_identical_range_dedupes() {
     assert_obs("out: (1..5) | (1..5)", "1..5");
