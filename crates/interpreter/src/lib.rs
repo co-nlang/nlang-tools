@@ -1371,6 +1371,15 @@ let mut refl_fields = IndexMap::new();
                         current = self.force(inner.clone(), ctx);
                         accumulated_effect = accumulated_effect.max(current.effect());
                     } else { break; }
+                } else if crate::value::is_structural_view(c) {
+                    // G6 acceptance repair: the structural-view mark is a
+                    // display filter, transparent to navigation — <<…>>
+                    // bindings navigate exactly like the underlying node
+                    // (SYNTAX_07 §4 #7: post-`>>` field access collapses).
+                    if let Some(inner) = crate::value::structural_node(c) {
+                        current = self.force(inner.clone(), ctx);
+                        accumulated_effect = accumulated_effect.max(current.effect());
+                    } else { break; }
                 } else { break; }
             }
             if seg == "%id" { return Value::Atom(AtomKind::Str(current.content_hash_with_salt(&ctx.horizon_salt).to_string()), EffectTag::Pure, None).with_effect(accumulated_effect); }

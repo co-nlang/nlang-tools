@@ -172,6 +172,24 @@ fn pin_nav_hybrid_field() {
 }
 
 #[test]
+fn pin_structural_literal_nav_transparent() {
+    // ACCEPTANCE REPAIR pin (2026-07-13): the %structural mark is a
+    // display filter, transparent to navigation. Delivery regression:
+    // `lit: <<1 & {name:"Bob"}>>` then `lit.name` → `_` (marker combo
+    // open-miss) while v0.2.6 gave "Bob". navigate_segments now unwraps
+    // the mark like a pure wrapper (SYNTAX_07 §4 #7).
+    assert_obs(
+        "lit: <<1 & { name: \"Bob\" }>>\nout: lit.name",
+        "\"Bob\"",
+    );
+    // Structural of a PATH navigates too (Ref-mediated).
+    assert_obs(
+        "x: 1 & { name: \"Alice\" }\nst: <<x>>\nout: st.name",
+        "\"Alice\"",
+    );
+}
+
+#[test]
 fn pin_pipe_body_navigation_still_works() {
     // Argument passes WHOLE: body navigation must survive the fix.
     // (Red flag for peel-at-binding overreach.)
