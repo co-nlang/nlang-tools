@@ -102,7 +102,7 @@ impl Ouroboros {
             }
             
             // De Morgan: !(A & B) = !A | !B for open Combos
-            Value::Union(all_complements)
+            crate::value::normalize_union(all_complements)
         }
     }
 }

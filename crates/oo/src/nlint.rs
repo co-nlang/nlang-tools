@@ -16,7 +16,7 @@ use std::fs;
 // nlint Tier 1 and engine force_memo in Stage 4b).
 pub use nlang_parser::tier::{Tier, RhsForm, classify_rhs, classify_tier, has_free_dollar, is_morphism_path};
 
-use nlang_parser::ast::{Expr, ExprKind, Field, FieldKey, Path, PathAnchor, Program, StringPart};
+use nlang_parser::ast::{Expr, ExprKind, Field, FieldKey, PathAnchor, Program, StringPart, Prefix};
 
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
@@ -522,6 +522,7 @@ pub fn analyze_file(path: &FsPath) -> FileReport {
     };
     let mut diags = Vec::new();
     walk_pipes(&program, &file, &mut diags);
+    walk_r4_use_without_def(&program, &file, &mut diags);
     // SPEC_15 checks (existing static_analyzer) — keep, prefix rule names.
     {
         let mut analyzer = crate::static_analyzer::StaticAnalyzer::new();
@@ -567,6 +568,368 @@ fn walk_pipes(program: &Program, file: &str, diags: &mut Vec<Diagnostic>) {
             walk_pipes_expr(e, file, diags);
         }
     }
+}
+
+// =====================================================================
+// § R4 — use-WITHOUT-def (lint, not error; open-world still observes `_`)
+// =====================================================================
+// Target: names never defined anywhere in the file. Forward refs are legal
+// (L1-26/27). Conservative: under-report rather than false-alarm.
+
+/// Builtin type-constraint names (engine TypeConstraint::from_name non-Unknown).
+/// Duplicated here so nlint stays engine-free (handover: nlint.rs only).
+const BUILTIN_TYPE_NAMES: &[&str] = &[
+    "any", "num", "complex", "float", "int", "str", "bool", "list", "combo",
+    "morphism", "option", "result",
+];
+
+fn is_builtin_type_name(name: &str) -> bool {
+    let n = name.trim_start_matches('@').trim_start_matches('#');
+    BUILTIN_TYPE_NAMES.iter().any(|b| *b == n)
+}
+
+fn walk_r4_use_without_def(program: &Program, file: &str, diags: &mut Vec<Diagnostic>) {
+    let mut defined: HashSet<String> = HashSet::new();
+    // Collect definitions at every nesting level + morphism params.
+    for field in &program.fields {
+        collect_defs_field(field, &mut defined);
+        collect_defs_expr(&field.value, &mut defined);
+    }
+    // Collect uses; flag those never defined (and not reserved).
+    let mut flagged: HashSet<String> = HashSet::new();
+    for field in &program.fields {
+        collect_uses_expr(&field.value, file, &defined, &mut flagged, diags);
+        if let FieldKey::Pattern(e) = &field.key {
+            collect_uses_expr(e, file, &defined, &mut flagged, diags);
+        }
+    }
+}
+
+fn collect_defs_field(field: &Field, defined: &mut HashSet<String>) {
+    match &field.key {
+        FieldKey::Named { name, prefix } => {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                defined.insert(trimmed.to_string());
+                // Prefixed forms used as path segments too.
+                if let Some(p) = prefix {
+                    let pref = match p {
+                        Prefix::Logic => "/",
+                        Prefix::Type => "@",
+                        Prefix::Meta => "%",
+                        Prefix::System => "~%",
+                        Prefix::Private => "~",
+                        Prefix::Local => "^",
+                        Prefix::Data => "",
+                    };
+                    if !pref.is_empty() {
+                        defined.insert(format!("{}{}", pref, trimmed));
+                    }
+                }
+            }
+        }
+        FieldKey::Quoted(s) => {
+            let t = s.trim();
+            if !t.is_empty() {
+                defined.insert(t.to_string());
+            }
+        }
+        FieldKey::Path(p) if p.anchor == PathAnchor::Bare && p.segments.len() == 1 => {
+            let t = p.segments[0].trim();
+            if !t.is_empty() && t != "_" {
+                defined.insert(t.to_string());
+                // Strip common prefixes so bare lookup matches.
+                for pref in ["~%", "~", "@", "/", "%", "^"] {
+                    if let Some(rest) = t.strip_prefix(pref) {
+                        if !rest.is_empty() {
+                            defined.insert(rest.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        FieldKey::Path(p) => {
+            for seg in &p.segments {
+                let t = seg.trim();
+                if !t.is_empty() && t != "_" {
+                    defined.insert(t.to_string());
+                }
+            }
+        }
+        FieldKey::Pattern(e) => collect_defs_expr(e, defined),
+    }
+}
+
+fn collect_defs_expr(expr: &Expr, defined: &mut HashSet<String>) {
+    match &expr.kind {
+        ExprKind::Combo { fields, .. } => {
+            for f in fields {
+                collect_defs_field(f, defined);
+                collect_defs_expr(&f.value, defined);
+            }
+        }
+        ExprKind::Morphism { param, body } => {
+            // Param names are bound — never R4.
+            collect_param_names(param, defined);
+            collect_defs_expr(body, defined);
+        }
+        ExprKind::Pipe(a, b)
+        | ExprKind::Apply(a, b)
+        | ExprKind::Meet(a, b)
+        | ExprKind::Join(a, b)
+        | ExprKind::Diff(a, b)
+        | ExprKind::Add(a, b)
+        | ExprKind::Sub(a, b)
+        | ExprKind::Mul(a, b)
+        | ExprKind::Div(a, b)
+        | ExprKind::Rem(a, b)
+        | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
+        | ExprKind::Lt(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Lte(a, b)
+        | ExprKind::Gte(a, b)
+        | ExprKind::LatticeEq(a, b)
+        | ExprKind::Probe(a, b)
+        | ExprKind::TypeAnnotation(a, b)
+        | ExprKind::Lens(a, b) => {
+            collect_defs_expr(a, defined);
+            collect_defs_expr(b, defined);
+        }
+        ExprKind::Ternary {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_defs_expr(cond, defined);
+            collect_defs_expr(then_branch, defined);
+            collect_defs_expr(else_branch, defined);
+        }
+        ExprKind::Unary { expr: e, .. }
+        | ExprKind::AnonSet(e)
+        | ExprKind::Spread(e)
+        | ExprKind::Structural(e)
+        | ExprKind::Complement(e) => collect_defs_expr(e, defined),
+        ExprKind::List(items) | ExprKind::Tuple(items) => {
+            for i in items {
+                collect_defs_expr(i, defined);
+            }
+        }
+        ExprKind::Range { start, end, step } => {
+            collect_defs_expr(start, defined);
+            collect_defs_expr(end, defined);
+            if let Some(s) = step {
+                collect_defs_expr(s, defined);
+            }
+        }
+        ExprKind::Interpolated(parts) => {
+            for p in parts {
+                if let StringPart::Interpolated(e) = p {
+                    collect_defs_expr(e, defined);
+                }
+            }
+        }
+        ExprKind::Path(_) | ExprKind::Atom(_) | ExprKind::Poset(_) | ExprKind::Context => {}
+    }
+}
+
+fn collect_param_names(expr: &Expr, defined: &mut HashSet<String>) {
+    match &expr.kind {
+        // Multi-param juxtaposition (`x y -> …`) parses as Apply in param
+        // position — every bare path inside is a bound name (acceptance
+        // repair: `/assert_eq: x y -> x == y` false-flagged `y`).
+        ExprKind::Apply(a, b) => {
+            collect_param_names(a, defined);
+            collect_param_names(b, defined);
+        }
+        ExprKind::Path(p) if p.anchor == PathAnchor::Bare => {
+            for seg in &p.segments {
+                let t = seg.trim();
+                if !t.is_empty() && t != "_" {
+                    defined.insert(t.to_string());
+                    if let Some(rest) = t.strip_prefix('/') {
+                        defined.insert(rest.to_string());
+                    }
+                }
+            }
+        }
+        ExprKind::Tuple(items) | ExprKind::List(items) => {
+            for i in items {
+                collect_param_names(i, defined);
+            }
+        }
+        ExprKind::Combo { fields, .. } => {
+            for f in fields {
+                collect_defs_field(f, defined);
+                collect_param_names(&f.value, defined);
+            }
+        }
+        _ => collect_defs_expr(expr, defined),
+    }
+}
+
+fn collect_uses_expr(
+    expr: &Expr,
+    file: &str,
+    defined: &HashSet<String>,
+    flagged: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match &expr.kind {
+        ExprKind::Path(p) => {
+            if p.anchor != PathAnchor::Bare || p.segments.is_empty() {
+                return;
+            }
+            let first = p.segments[0].trim();
+            maybe_flag_use(first, expr, file, defined, flagged, diags);
+        }
+        ExprKind::Combo { fields, .. } => {
+            for f in fields {
+                collect_uses_expr(&f.value, file, defined, flagged, diags);
+                if let FieldKey::Pattern(e) = &f.key {
+                    collect_uses_expr(e, file, defined, flagged, diags);
+                }
+            }
+        }
+        ExprKind::Morphism { param, body } => {
+            // Params are defs, not uses for R4.
+            collect_uses_expr(body, file, defined, flagged, diags);
+            // Still walk param body patterns for nested uses (rare).
+            if !matches!(param.kind, ExprKind::Path(_) | ExprKind::Atom(_)) {
+                collect_uses_expr(param, file, defined, flagged, diags);
+            }
+        }
+        ExprKind::Pipe(a, b)
+        | ExprKind::Apply(a, b)
+        | ExprKind::Meet(a, b)
+        | ExprKind::Join(a, b)
+        | ExprKind::Diff(a, b)
+        | ExprKind::Add(a, b)
+        | ExprKind::Sub(a, b)
+        | ExprKind::Mul(a, b)
+        | ExprKind::Div(a, b)
+        | ExprKind::Rem(a, b)
+        | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
+        | ExprKind::Lt(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Lte(a, b)
+        | ExprKind::Gte(a, b)
+        | ExprKind::LatticeEq(a, b)
+        | ExprKind::Probe(a, b)
+        | ExprKind::TypeAnnotation(a, b)
+        | ExprKind::Lens(a, b) => {
+            collect_uses_expr(a, file, defined, flagged, diags);
+            collect_uses_expr(b, file, defined, flagged, diags);
+        }
+        ExprKind::Ternary {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_uses_expr(cond, file, defined, flagged, diags);
+            collect_uses_expr(then_branch, file, defined, flagged, diags);
+            collect_uses_expr(else_branch, file, defined, flagged, diags);
+        }
+        ExprKind::Unary { expr: e, .. }
+        | ExprKind::AnonSet(e)
+        | ExprKind::Spread(e)
+        | ExprKind::Structural(e)
+        | ExprKind::Complement(e) => {
+            collect_uses_expr(e, file, defined, flagged, diags);
+        }
+        ExprKind::List(items) | ExprKind::Tuple(items) => {
+            for i in items {
+                collect_uses_expr(i, file, defined, flagged, diags);
+            }
+        }
+        ExprKind::Range { start, end, step } => {
+            collect_uses_expr(start, file, defined, flagged, diags);
+            collect_uses_expr(end, file, defined, flagged, diags);
+            if let Some(s) = step {
+                collect_uses_expr(s, file, defined, flagged, diags);
+            }
+        }
+        ExprKind::Interpolated(parts) => {
+            for p in parts {
+                if let StringPart::Interpolated(e) = p {
+                    collect_uses_expr(e, file, defined, flagged, diags);
+                }
+            }
+        }
+        ExprKind::Atom(_) | ExprKind::Poset(_) | ExprKind::Context => {}
+    }
+}
+
+fn maybe_flag_use(
+    raw: &str,
+    expr: &Expr,
+    file: &str,
+    defined: &HashSet<String>,
+    flagged: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "_" || raw == "$" {
+        return;
+    }
+    // System modules: ~%Math, ~%List, …
+    if raw.starts_with("~%") {
+        return;
+    }
+    // Bare system / private path segments still start with ~ — skip modules-ish.
+    // (Conservative: any ~% already returned; lone ~foo may be private field.)
+
+    let is_type = raw.starts_with('@');
+    let bare = raw.trim_start_matches('@').trim_start_matches('/').trim_start_matches('~');
+    if bare.is_empty() {
+        return;
+    }
+    if is_type && is_builtin_type_name(bare) {
+        return;
+    }
+    // Defined under any of the common spellings?
+    if defined.contains(raw)
+        || defined.contains(bare)
+        || defined.contains(&format!("@{}", bare))
+        || defined.contains(&format!("/{}", bare))
+        || defined.contains(&format!("~{}", bare))
+    {
+        return;
+    }
+
+    let key = if is_type {
+        format!("@{}", bare)
+    } else {
+        bare.to_string()
+    };
+    if !flagged.insert(key.clone()) {
+        return; // one diagnostic per symbol per file
+    }
+    let msg = if is_type {
+        format!(
+            "use-without-def: type marker `{}` is never defined in this file \
+             (Unknown markers pass values through silently)",
+            key
+        )
+    } else {
+        format!(
+            "use-without-def: `{}` is never defined in this file \
+             (open-world observation yields `_`)",
+            bare
+        )
+    };
+    diags.push(Diagnostic {
+        rule: "R4".to_string(),
+        severity: Severity::Warn,
+        loc: Loc {
+            file: file.to_string(),
+            span: (expr.span.start, expr.span.end),
+        },
+        tier: None,
+        demotion_reason: None,
+        msg,
+    });
 }
 
 fn walk_pipes_expr(expr: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {

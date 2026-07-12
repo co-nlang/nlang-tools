@@ -64,6 +64,48 @@ impl PartialEq for Value {
     }
 }
 
+/// SPEC_01 join idempotence: flatten nested Unions, drop structural
+/// duplicates (PartialEq, first occurrence kept), collapse to a single
+/// value when one survivor remains. Does not re-sort (eval `|` order /
+/// tropical-weight order of callers preserved among first-seen survivors).
+/// Range coalescing is intentionally out of scope.
+pub fn normalize_union(branches: impl IntoIterator<Item = Value>) -> Value {
+    fn push_flat(v: Value, out: &mut Vec<Value>) {
+        match v {
+            Value::Union(inner) => {
+                for b in inner {
+                    push_flat(b, out);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    let mut flat = Vec::new();
+    for b in branches {
+        push_flat(b, &mut flat);
+    }
+    let mut unique: Vec<Value> = Vec::new();
+    for b in flat {
+        if !unique.iter().any(|u| u == &b) {
+            unique.push(b);
+        }
+    }
+    match unique.len() {
+        0 => Value::Bottom(Box::new(BottomDetail {
+            cause: BottomCause::Conflict,
+            path: None,
+            message: Some("empty union after normalize".to_string()),
+            expected: None,
+            found: None,
+            involved: vec![],
+            obstruction_degree: None,
+            holonomy: None,
+        })),
+        1 => unique.into_iter().next().unwrap(),
+        _ => Value::Union(unique),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComboVal {
     pub data: IndexMap<String, Value>,

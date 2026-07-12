@@ -51,6 +51,6 @@ fn join_values(a: Value, b: Value) -> Value {
         (Value::Top, _) | (_, Value::Top) => Value::Top,
         (Value::Bottom(_), _) => b,
         (_, Value::Bottom(_)) => a,
-        _ => Value::Union(vec![a, b]),
+        _ => crate::value::normalize_union(vec![a, b]),
     }
 }
