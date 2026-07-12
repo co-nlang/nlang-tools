@@ -1,7 +1,7 @@
 # nlang 引擎實作狀態
 
-> 最後更新：2026-07-12（v0.2.0 裸核定版；REAL_05 conformance 45/45）  
-> 測試數量：**718 passed / 0 failed / 3 ignored（109 個測試套件）**  
+> 最後更新：2026-07-12（v0.2.1；REAL_05 conformance 47/47）  
+> 測試數量：**736 passed / 0 failed / 3 ignored（111 個測試套件）**  
 > 版號政策：與規格共用 major.minor（nlang-spec `meta/VERSIONING.md`）；裸核版須過 REAL_05 門檻
 
 ---
@@ -288,7 +288,7 @@ pub struct ComboVal {
 
 ---
 
-## 8. 測試套件現況（109 個測試套件）
+## 8. 測試套件現況（111 個測試套件）
 
 ### 核心引擎測試
 
@@ -357,4 +357,4 @@ pub struct ComboVal {
 | `golden_ast`, `fuzz_roundtrip`, `roundtrip`（parser） | SYNTAX_01–12 §4 形狀凍結＋種子 fuzz＋印表機冪等 |
 | `nlint`（oo, 24 項） | Linter Tier 1：R1/R2/R3、ω(G)、K4/K5 candidate sites |
 
-**總計：718 passed / 0 failed / 3 ignored（3 = 既存已知議題：深 thunk 堆疊、sibling 解析、隔離語境絕對路徑）**
+**總計：736 passed / 0 failed / 3 ignored（3 = 既存已知議題：深 thunk 堆疊、sibling 解析、隔離語境絕對路徑）**

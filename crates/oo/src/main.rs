@@ -273,9 +273,16 @@ fn run_repl() -> anyhow::Result<()> {
 
 fn run_one_shot(files: Vec<PathBuf>, observe: Option<String>, format: bool) -> anyhow::Result<()> {
     let engine = Ouroboros::init(&std::env::current_dir()?)?;
-    // 在 One-shot 模式下，強行使用純淨的宇宙，不加載本地 staged 狀態
+    // One-shot: pure universe, no local staged load.
+    // SPEC_03 simultaneity: all files/fields are one snapshot — evolve
+    // everything first; only then store-put (CAID) and --observe.
+    // Observing per-field mid-evolve solidifies reified thunks before later
+    // fields land (false `_` on forward refs).
     let mut universe = Universe::new(None, engine.root_with_system());
-    
+
+    // Collect single-segment bare field paths for post-evolve store-put.
+    let mut store_paths: Vec<nlang_parser::ast::Path> = Vec::new();
+
     for file in files {
         let input = fs::read_to_string(&file)?;
         let program = parse_program(&input).map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
@@ -283,19 +290,28 @@ fn run_one_shot(files: Vec<PathBuf>, observe: Option<String>, format: bool) -> a
             if let Err(e) = universe.evolve(&engine, &f) {
                 anyhow::bail!("Evolution Conflict in {:?}: {:?} at {:?}", file, e, f.key);
             }
-            // 確保演化出的值進入 Store，方便 CAID 引用
-            let path = match &f.key {
+            match &f.key {
                 FieldKey::Named { name, .. } | FieldKey::Quoted(name) => {
-                    nlang_parser::ast::Path { anchor: nlang_parser::ast::PathAnchor::Bare, segments: vec![name.clone()], span: nlang_parser::ast::Span::default() }
+                    store_paths.push(nlang_parser::ast::Path {
+                        anchor: nlang_parser::ast::PathAnchor::Bare,
+                        segments: vec![name.clone()],
+                        span: nlang_parser::ast::Span::default(),
+                    });
                 }
-                FieldKey::Path(p) if p.anchor == nlang_parser::ast::PathAnchor::Bare && p.segments.len() == 1 => {
-                    p.clone()
+                FieldKey::Path(p)
+                    if p.anchor == nlang_parser::ast::PathAnchor::Bare && p.segments.len() == 1 =>
+                {
+                    store_paths.push(p.clone());
                 }
-                _ => continue,
-            };
-            let val = universe.observe(&engine, &path);
-            let _ = engine.store.put_value(&val);
+                _ => {}
+            }
         }
+    }
+
+    // Store-put after full evolve (purpose preserved: values in Store for CAID).
+    for path in &store_paths {
+        let val = universe.observe(&engine, path);
+        let _ = engine.store.put_value(&val);
     }
 
     if let Some(path_str) = observe {

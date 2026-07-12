@@ -1,4 +1,4 @@
-# n/ Tools: The Ouroboros Engine (v0.2.0)
+# n/ Tools: The Ouroboros Engine (v0.2.1)
 
 > **The Ouroboros Engine** — A high-performance Rust implementation of the `n/` language, featuring lattice-based convergence, call-by-observation lazy evaluation, content-addressed evaluation, and federated truth discovery.
 
@@ -7,7 +7,7 @@
 
 `nlang-tools` is the primary implementation of the **n/ (n-slash)** language. It realizes the **Ouroboros** architecture, where computation is defined as the monotonic merging of geometric structures (Combos) within a globally consistent lattice.
 
-Versioning: the engine shares its `major.minor` with the [language spec](https://github.com/co-nlang/nlang-spec) (`meta/VERSIONING.md` there); a bare-core release (no pre-release tag) certifies REAL_05 conformance. **v0.2.0 is the first bare-core release: REAL_05 Level 2 conformance 45/45** (`conformance/` corpus + `scripts/run-conformance.py` in the spec repo).
+Versioning: the engine shares its `major.minor` with the [language spec](https://github.com/co-nlang/nlang-spec) (`meta/VERSIONING.md` there); a bare-core release (no pre-release tag) certifies REAL_05 conformance. **Bare-core since v0.2.0; v0.2.1 passes the extended matrix 47/47** (forward-reference vectors L1-26/27 — one-shot fields are simultaneous, SPEC_03 commutativity) (`conformance/` corpus + `scripts/run-conformance.py` in the spec repo).
 
 ---
 
@@ -72,7 +72,7 @@ echo 'age: 33' > refine.n
 ## 🧪 Testing
 
 ```bash
-# Full Rust suite: 718 passed / 0 failed / 3 ignored (109 suites)
+# Full Rust suite: 736 passed / 0 failed / 3 ignored (111 suites)
 cargo test --workspace
 ```
 

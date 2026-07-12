@@ -1023,8 +1023,17 @@ let mut refl_fields = IndexMap::new();
                     }
                 }
 
-                // L2-17: same-thunk re-entry → ⊥ #divergent (before stack/fuel).
-                // Identity = content_hash of the thunk (expr+frame+context).
+                // L2-17 / forward-ref: same-thunk re-entry → ⊥ #divergent
+                // (before stack/fuel). Identity = content_hash of the thunk
+                // (expr+frame+context).
+                //
+                // Path-shaped thunks (`out: mid`): do NOT mark the *target*
+                // path (`mid`) into `computing` — that collides with
+                // force_coord of the binding that *lives* at mid (false
+                // #divergent on bare reference chains). Cycle detection for
+                // path self-loops keys on the *holder* coordinate already
+                // placed in `computing` by force_coord (see below), or on
+                // in_flight content-hash when solidifying a re-fetched Thunk.
                 let thunk_id = Value::Thunk {
                     expr: expr.clone(),
                     closure: closure.clone(),
@@ -1035,9 +1044,10 @@ let mut refl_fields = IndexMap::new();
                 if ctx.in_flight.contains(&thunk_id) {
                     return BottomCause::Divergent.into();
                 }
-                // Path-shaped thunks also key on the bare path coordinate
-                // (`s.v`): field re-fetch builds a fresh Thunk instance whose
-                // content-hash may differ, but the path is the same cycle.
+                // Holder re-entry: force_coord("s.v") put "s.v" in computing;
+                // a path-shaped thunk whose expr is that same path is the
+                // self-loop case. A *reference* thunk at `out` with expr `mid`
+                // only sees "out" in computing, not "mid" — no false hit.
                 let path_coord = path_coord_of(&expr);
                 if let Some(ref pc) = path_coord {
                     if ctx.computing.contains(pc) {
@@ -1058,25 +1068,18 @@ let mut refl_fields = IndexMap::new();
                 call_ctx.scopes = closure;
                 call_ctx.context_value = effective_context;
                 call_ctx.dep_collector = inner_collector;
-                // in_flight / path coord ride sub_context clone for nested
-                // observation so re-entry is visible to inner forces.
+                // in_flight rides sub_context clone for nested observation.
                 call_ctx.in_flight.insert(thunk_id.clone());
-                if let Some(ref pc) = path_coord {
-                    call_ctx.computing.insert(pc.clone());
-                }
                 let res = self.eval(&expr, &mut call_ctx);
-                // Path-shaped thunks only: solidify one layer while path_coord
-                // is still held — a cycle returns a fresh Thunk of the same
-                // path; forcing it hits the path_coord guard above. Non-path
-                // thunks must NOT force here (false #divergent on folds / HOFs).
+                // Path-shaped: solidify one layer under the same in_flight set
+                // so a re-fetched Thunk of the same expr hits content-hash
+                // re-entry (path self-loop). Do not mark path targets into
+                // computing (forward-ref fix).
                 let res = if path_coord.is_some() {
                     self.force(res, &mut call_ctx)
                 } else {
                     res
                 };
-                if let Some(ref pc) = path_coord {
-                    call_ctx.computing.remove(pc);
-                }
                 call_ctx.in_flight.remove(&thunk_id);
                 ctx.fuel = call_ctx.fuel;
                 ctx.in_flight = call_ctx.in_flight;
