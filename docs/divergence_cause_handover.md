@@ -99,3 +99,30 @@ factorial 120、未定義 `_`、free-`$` `#no_context`、runaway bottom、
 - workspace **718 過 0 敗 3 ignored**
 - conformance **45/45**(L2-17 stdout:`_|_ (%cause: #divergent)`;無 %cause note)
 - nlang-spec 帳:驗收方記
+
+---
+
+## 驗收記錄(2026-07-12,驗收方)
+
+**通過,零代修(第三例)。** 全套重跑:workspace **718/0/3**、探針 **10/10**
+(5 紅線摘 ignore 全綠 + 5 活釘)、conformance **45/45**(re-run by acceptor,
+release oo)——**裸核門檻首次全綠**。
+
+- **diff-read**:探針檔僅摘 `#[ignore]`(=驗收門)+ 標頭註解壓縮(慣性,
+  良性);斷言零觸碰。假前提掃描過:eval.rs 第四參數、`effective_context`
+  改 clone(context 後續用於 thunk_id,前提屬實)。
+- **bn_serial 查證**:`content_hash` 走 `bn_serial::content_digest`,與
+  to_nlang 無交集;bn_serial.rs 不在 diff。顯示軸/身分軸分離屬實。
+- **反事實(worktree @625beff)**:互指環 交付前 `_` → 交付後 `#divergent` ✓;
+  欄內衝突 `a: 1 & ""` 交付前 evolve 報錯(exit 1)→ 交付後演化成功、
+  觀測得 `_|_ (%cause: #conflict)`——**有意行為變更**(unify_combo Top&⊥
+  存單欄綁定;雙邊真衝突仍中止)。已記 ENGINE_SYNC。
+- **宣稱修正(非代修)**:交付訊息「forward refs survive」過度——bare
+  前向引用(`out: a` 先於 `a: 5`)前後皆 `_`,無迴歸;具體化只服務環偵測。
+  前向引用解析另案。
+- **驗收加測(臨時 harness,已刪)**:發散 memo 兩次觀測穩定、發散不污染
+  鄰座標、同 content-hash thunk 順序使用不誤觸、線性鏈、菱形共享依賴——全綠。
+  CLI 掃:環×Union `_ | 1`(Top 分支開放)、`x: _` 字面洞保 `_`。
+
+遺留(不列本單):bare 前向引用之演化序不敏感解析(具體化機制已就位,
+差 bare-path open-miss 的具體化觸發);通用 Union 去重;use-before-def lint。
