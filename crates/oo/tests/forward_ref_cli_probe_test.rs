@@ -1,12 +1,8 @@
-// Forward-reference CLI probes (2026-07-12, pre-committed by work order —
+// Forward-reference CLI probes (2026-07-12 —
 // docs/forward_ref_handover.md).
 //
-// Symptom: `oo run` observes each field RIGHT AFTER its own evolve
-// (run_one_shot store-put loop) — solidifying reified thunks before later
-// fields land. One-shot fields are one simultaneous snapshot (SPEC_03
-// commutativity): forward refs must resolve, across files too.
-// The store-put purpose (values into Store for CAID refs) must be kept —
-// move it after ALL evolves, don't delete it.
+// One-shot = one simultaneous snapshot: `oo run` evolves all fields first,
+// then store-put (CAID), then --observe. Forward refs resolve across files.
 
 use std::fs;
 use std::path::PathBuf;
@@ -52,13 +48,13 @@ fn run_cli(files: &[(&str, &str)], observe: &str) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE: bare forward ref through the CLI (today `_`)
+// RED LINE: bare forward ref through the CLI (today `_`)
 fn cli_fwd_bare_resolves() {
     assert_eq!(run_cli(&[("a.n", "out: a\na: 5")], "out"), "5");
 }
 
 #[test]
-#[ignore] // RED LINE: forward chain through the CLI (today `_`)
+// RED LINE: forward chain through the CLI (today `_`)
 fn cli_fwd_chain_resolves() {
     assert_eq!(
         run_cli(&[("a.n", "out: mid\nmid: base\nbase: 1")], "out"),
@@ -67,7 +63,7 @@ fn cli_fwd_chain_resolves() {
 }
 
 #[test]
-#[ignore] // RED LINE: cross-FILE forward ref — one-shot = one snapshot
+// RED LINE: cross-FILE forward ref — one-shot = one snapshot
 fn cli_multifile_fwd_resolves() {
     assert_eq!(
         run_cli(&[("a.n", "out: x + 1"), ("b.n", "x: 4")], "out"),

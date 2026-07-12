@@ -1,15 +1,10 @@
-// Forward-reference resolution probes (2026-07-12, pre-committed by work
-// order — docs/forward_ref_handover.md).
+// Forward-reference resolution probes (2026-07-12 —
+// docs/forward_ref_handover.md).
 //
 // Ruling: fields of one one-shot program are SIMULTANEOUS (SPEC_03 merge
-// commutativity) — observation results must not depend on evolve order.
-// Engine-level forward refs already work (L2-17 reification); the engine
-// bug left is FALSE #divergent on bare-path reference CHAINS (`x: y` where
-// y is itself a reified thunk): the path-cycle guard marks the path a thunk
-// POINTS TO, which collides with forcing the coordinate it names.
-// A reference (`out: mid`, thunk lives at out) is NOT a self-loop
-// (`s: { v: s.v }`, thunk lives at s.v). True cycles of every shape must
-// stay ⊥ #divergent — pinned actively below (both-sides rule).
+// commutativity). A bare-path reference (`out: mid`, thunk lives at out)
+// is NOT a self-loop (`s: { v: s.v }`, thunk lives at s.v). True cycles
+// stay ⊥ #divergent (both-sides pins below).
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_interpreter::value::BottomCause;
@@ -86,13 +81,13 @@ fn assert_divergent(src: &str, path: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED LINE: 3-hop bare-path chain is a reference, not a cycle
+// RED LINE: 3-hop bare-path chain is a reference, not a cycle
 fn fwd_chain_resolves() {
     assert_int("out: mid\nmid: base\nbase: 1", "out", 1);
 }
 
 #[test]
-#[ignore] // RED LINE: 4-hop bare-path chain — same mechanism, deeper
+// RED LINE: 4-hop bare-path chain — same mechanism, deeper
 fn fwd_chain_deep_resolves() {
     assert_int("o: c1\nc1: c2\nc2: c3\nc3: 9", "o", 9);
 }

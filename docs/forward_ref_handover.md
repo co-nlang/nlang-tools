@@ -70,3 +70,43 @@
 死碼掃描、既有斷言修改逐一列帳。驗收方將全套重跑(736/0/3)、
 conformance 47/47 覆核、diff-read、對抗加測(欄位重排等價性、環×鏈混合、
 多檔次序矩陣、store-put 目的保全)。
+
+---
+
+## 交付記錄(2026-07-12, implementer)
+
+### 根因 / 反事實
+
+**引擎**:L2-17 path 環守衛在 force path-shaped thunk 時把
+`path_coord_of(expr)`(**指向**的路徑,如 `mid`)插入 `computing`,而
+`force_coord` 用**居住座標**查同一集合 → `out: mid` force out 標記 mid,
+隨後 force mid 誤中 `#divergent`。
+
+**CLI**:`run_one_shot` 每欄 evolve 後立刻 observe 固化 Thunk,後續欄位
+尚未落地 → 前向引用觀測成 `_`。
+
+**反事實**:修前 bare 3/4-hop 鏈 `#divergent`、CLI 前向 `_`;修後 `1`/`9`/
+`5`,真環仍 `#divergent`。
+
+### 修復
+
+1. **引用 ≠ 環**:不再把 path **target** 標進 `computing`。path 自環仍靠
+   (a) `force_coord` 已放入的 **holder** 與 path 式 expr 比對、
+   (b) in_flight content-hash + path 形 solidify 一層。
+2. **CLI**:全部檔/欄 evolve 完 → 統一 store-put(observe+put_value)→
+   `--observe`。CAID 入庫目的保留;REPL / `oo evolve` 未動。
+
+### 紅線對應
+
+| 探針 | 結果 |
+|------|------|
+| `fwd_chain_resolves` / `_deep` | 3/4-hop bare 鏈 → 值 |
+| `cli_fwd_bare` / `_chain` / `_multifile` | CLI 前向/跨檔 → 值 |
+| ⊥ 側:`pin_ref_cycle_*`、CLI mutual `#divergent` | 仍 divergent |
+| L2-17 全套 10/10 | 綠 |
+
+### 終態
+
+- workspace **736 過 0 敗 3 ignored**
+- conformance **47/47**(含 L1-26/27)
+- nlang-spec 帳:驗收方記
