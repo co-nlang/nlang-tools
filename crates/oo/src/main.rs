@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{stdin, stdout, Write};
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = env!("OO_VERSION"), about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
