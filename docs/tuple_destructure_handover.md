@@ -52,6 +52,36 @@ eval Morphism 臂:param 為 **Tuple 且所有元素皆裸單段 Path** 時,單�
 
 ---
 
-## 交付記錄(執行者填)
+## 交付記錄(2026-07-12, implementer)
 
-（待交付）
+### 根因
+
+`ExprKind::Morphism` 打包時 Tuple param 落到 `_` 鍵; `apply_single_rule` 只綁
+`it`/`0`/鍵名,從不綁 `x`/`y` → 體內裸名開放世界 → `_`。
+
+### 修復
+
+**R-P** (`eval.rs`): Tuple 且元素全為裸單段 Path → 規則鍵 `"(x, y)"` +
+`%params` 閉繭 `{0: "x", 1: "y", …}`(Str atoms)。其餘 Tuple 形保持 `_` 打包。
+
+**R-B** (`dispatch.rs` `apply_single_rule`): 見 `%params` 時,引數必須是 data
+軸恰有 `"0"…"k-1"` 的 tuple combo(精確 arity);成功則逐名綁定,**保留**
+`it`/`0`/pattern_key 整包與 `$`=整包。失敗 → ⊥ `#conflict`(無 message,
+對齊探針顯示)。
+
+### CAID / bn_serial
+
+`%params` 僅影響新寫法(今日該寫法輸出 Top,無人依賴);bn_serial 佈局未改。
+
+### 未動
+
+巢狀 tuple、tuple 混柯里、resolve_pattern、分派極小元/Multiple。
+
+### 量測
+
+| 項目 | 結果 |
+|------|------|
+| tuple_destructure probes | **15/15** |
+| workspace | **800 過 0 敗 3 ignored** |
+| conformance | **51/51**(L1-31) |
+| unit+integration | **72/0** |

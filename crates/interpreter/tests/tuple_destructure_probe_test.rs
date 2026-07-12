@@ -79,52 +79,44 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_destructure_juxta() {
     // today: "_" (x/y never bound)
     assert_obs("tf: ((x, y) -> x + y)\nout: tf (3, 5)", "8");
 }
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_destructure_inline() {
     assert_obs("out: ((x, y) -> x * 10 + y) (3, 5)", "35");
 }
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_destructure_pipe() {
     assert_obs("tf: ((x, y) -> x + y)\nout: (3, 5) |> tf", "8");
 }
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_destructure_three() {
     assert_obs("tf: ((a, b, c) -> a + b + c)\nout: tf (1, 2, 3)", "6");
 }
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_destructure_slash_def() {
     assert_obs("/tfirst: ((x, y) -> x)\nout: tfirst (1, 2)", "1");
 }
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_body_sees_context_whole() {
     // $ (whole argument) and destructured names coexist
     assert_obs("tf: ((x, y) -> $.0 + y)\nout: tf (3, 5)", "8");
 }
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_arity_mismatch_bottom() {
     // 2-param tuple, 3-tuple argument — exact arity, no partial destructure
     assert_obs("tf: ((x, y) -> x + y)\nout: tf (1, 2, 3)", "_|_ (%cause: #conflict)");
 }
 
 #[test]
-#[ignore = "RED until G5 delivery — acceptance gate"]
 fn red_tuple_nontuple_arg_bottom() {
     // definition side chose tuple → application side must use tuple
     assert_obs("tf: ((x, y) -> x + y)\nout: tf 5", "_|_ (%cause: #conflict)");
