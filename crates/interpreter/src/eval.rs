@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
-use nlang_parser::ast::{Expr, ExprKind, FieldKey, Prefix, AtomKind, UnaryOp};
+use nlang_parser::ast::{Expr, ExprKind, FieldKey, Prefix, AtomKind, UnaryOp, PathAnchor};
 use crate::{Ouroboros, EvalContext, CmpOp};
 use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail, ValRelation, RelOp as ValRelOp, normalize_union};
 use crate::type_constraint::{TypeConstraint, is_type_constraint_combo, get_type_constraint_name};
@@ -426,13 +426,43 @@ impl Ouroboros {
                 self.pipe_apply(lv, r, ctx)
             }
             ExprKind::Morphism { param, body } => {
-                let pk = match &param.kind {
+                // G5: Tuple of bare single-segment paths → one rule + %params
+                // (positional destructure). Nested/non-path tuples keep `_` key.
+                let (pk, tuple_params) = match &param.kind {
                     ExprKind::Path(p) => {
                         let last = p.segments.last().cloned().unwrap_or_else(|| "_".to_string());
-                        last.trim().trim_start_matches(|c| c == '/' || c == '@' || c == '~' || c == '%').to_string()
+                        (
+                            last.trim()
+                                .trim_start_matches(|c| c == '/' || c == '@' || c == '~' || c == '%')
+                                .to_string(),
+                            None,
+                        )
                     }
-                    ExprKind::Atom(AtomKind::Tag(t)) => t.trim().to_string(),
-                    _ => "_".to_string(),
+                    ExprKind::Atom(AtomKind::Tag(t)) => (t.trim().to_string(), None),
+                    ExprKind::Tuple(items) => {
+                        let mut names = Vec::new();
+                        let mut ok = !items.is_empty();
+                        for it in items {
+                            match &it.kind {
+                                ExprKind::Path(p)
+                                    if p.anchor == PathAnchor::Bare && p.segments.len() == 1 =>
+                                {
+                                    names.push(p.segments[0].trim().to_string());
+                                }
+                                _ => {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if ok {
+                            let key = format!("({})", names.join(", "));
+                            (key, Some(names))
+                        } else {
+                            ("_".to_string(), None)
+                        }
+                    }
+                    _ => ("_".to_string(), None),
                 };
                 let te = self.predict_effect(body, ctx);
                 let mut rule_fields = IndexMap::new();
@@ -443,6 +473,26 @@ impl Ouroboros {
                     closure_fields.insert(i.to_string(), Value::Combo(s.clone()));
                 }
                 rule_fields.insert("%closure".to_string(), Value::Combo(ComboVal::new(closure_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+                // G5 R-P: index → param name metadata (dispatch skips % keys).
+                if let Some(names) = tuple_params {
+                    let mut pf = IndexMap::new();
+                    for (i, n) in names.into_iter().enumerate() {
+                        pf.insert(
+                            i.to_string(),
+                            Value::Atom(AtomKind::Str(n), EffectTag::Pure, None),
+                        );
+                    }
+                    rule_fields.insert(
+                        "%params".to_string(),
+                        Value::Combo(ComboVal::new(
+                            pf,
+                            true,
+                            IndexMap::new(),
+                            EffectTag::Pure,
+                            vec![],
+                        )),
+                    );
+                }
                 let mut rules = IndexMap::new();
                 rules.insert(pk, Value::Combo(ComboVal::new(rule_fields, true, IndexMap::new(), te, vec![])));
                 let mut fields = IndexMap::new();

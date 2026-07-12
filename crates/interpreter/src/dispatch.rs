@@ -211,9 +211,47 @@ impl Ouroboros {
 
                 let param_name = pattern_key.trim().to_string();
                 let mut arg_map = IndexMap::new();
+                // Whole-argument bindings (keep even under tuple destructure).
                 arg_map.insert("it".to_string(), arg.clone());
                 arg_map.insert("0".to_string(), arg.clone());
                 arg_map.insert(param_name.clone(), arg.clone());
+
+                // G5 R-B: `%params` → positional destructure of a tuple arg.
+                if let Some(params_v) = rc.get_field("%params") {
+                    let names = match self.force(params_v.clone(), ctx) {
+                        Value::Combo(pc) => {
+                            let mut names = Vec::new();
+                            let mut i = 0usize;
+                            loop {
+                                match pc.get_field(&i.to_string()) {
+                                    Some(Value::Atom(AtomKind::Str(s), _, _)) => {
+                                        names.push(s.clone());
+                                        i += 1;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            names
+                        }
+                        _ => Vec::new(),
+                    };
+                    if names.is_empty() {
+                        return BottomCause::Conflict.into();
+                    }
+                    let k = names.len();
+                    let arg_f = self.force(arg.clone(), ctx);
+                    match extract_tuple_fields(&arg_f, k) {
+                        Some(fields) => {
+                            for (name, val) in names.into_iter().zip(fields.into_iter()) {
+                                arg_map.insert(name, val);
+                            }
+                        }
+                        None => {
+                            // Destructure failure (arity / non-tuple) = ⊥ #conflict
+                            return BottomCause::Conflict.into();
+                        }
+                    }
+                }
 
                 call_ctx
                     .scopes
@@ -247,6 +285,27 @@ impl Ouroboros {
             ..Default::default()
         }))
     }
+}
+
+/// G5: argument is a tuple-shaped combo with exact data keys `"0"…"k-1"`.
+fn extract_tuple_fields(arg: &Value, k: usize) -> Option<Vec<Value>> {
+    let cv = match arg {
+        Value::Combo(c) => c,
+        _ => return None,
+    };
+    // Data axis only — exact arity, no extra fields.
+    if cv.data.len() != k {
+        return None;
+    }
+    let mut out = Vec::with_capacity(k);
+    for i in 0..k {
+        let key = i.to_string();
+        if !cv.data.contains_key(&key) {
+            return None;
+        }
+        out.push(cv.data.get(&key).cloned().unwrap());
+    }
+    Some(out)
 }
 
 pub enum MorphismDispatchResult {
