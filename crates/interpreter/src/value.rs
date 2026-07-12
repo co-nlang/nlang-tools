@@ -824,7 +824,8 @@ impl Value {
                 _ => format!("{:?}", kind),
             },
             Value::Top => "_".to_string(),
-            Value::Bottom(d) => format!("_|_ (%cause: {:?})", d.cause),
+            // Align with to_nlang: `#<tag>` not Debug variant name.
+            Value::Bottom(d) => format!("_|_ (%cause: #{})", d.cause.as_tag()),
             Value::Combo(c) => { if c.is_pure_wrapper() { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } } "{...}".to_string() }
             Value::Union(_) => "(...|...)".to_string(),
             Value::Blur(bd) => format!("#blur({})", bd.cause.as_str()),
@@ -884,7 +885,15 @@ impl Value {
                 s
             }
             Value::Union(branches) => { let parts: Vec<String> = branches.iter().map(|b| b.to_nlang(indent)).collect(); parts.join(" | ") }
-            Value::Bottom(d) => { let mut s = "_|_".to_string(); if let Some(ref m) = d.message { s.push_str(&format!("  ;; {}", m)); } s }
+            // L2-17: Blur-precedent cause tag on the display axis (bn_serial
+            // identity axis untouched — Bottom hashes by cause discriminant).
+            Value::Bottom(d) => {
+                let mut s = format!("_|_ (%cause: #{})", d.cause.as_tag());
+                if let Some(ref m) = d.message {
+                    s.push_str(&format!("  ;; {}", m));
+                }
+                s
+            }
             Value::Blur(bd) => {
                 let caid = bd.blur_caid().to_string();
                 format!("#blur {{ %cause: #{}, %caid: \"{}\" }}", bd.cause.as_str(), caid)
