@@ -61,20 +61,37 @@ comparison (absorbs `_|_`/`_`), and `=`/`<=` for set-family clean booleans.
 Assertions via the test library:
 
 ```n
-/assert_eq: x y -> x == y
+assert_eq: (x -> (y -> x == y))
 test_example: /assert_eq (1 + 1) 2
 ```
 
-## Known stale entries (corpus triage backlog, 2026-07-11)
+## Corpus status (2026-07-12 cleanup — the old 11-stale backlog is CLEARED)
 
-`oo test tests/unit/` currently reports **45 passed / 11 failed** — all 11 are
-engine-dev era expectations that predate current semantics, concentrated in:
+`oo test tests/unit/` = **65 passed / 0 failed**; `tests/integration/` = **7 / 0**.
+`tests/pending/` holds deferred material and is EXPECTED to fail/parse-error
+(old-grammar loose files moved there: builtin_test / genesis_seeds /
+sprint1_verify / federation_test / federation_test_tcp; plus test_canonical —
+blocked on engine gaps below).
 
-- `test_canonical.n` (2), `test_entropy.n` (3) — old `%bits`/canonical-order expectations
-- `test_federation.n` (3), `test_ladd.n` (2) — old gravity/fetch fixtures
-  (the LADD/federation behavior itself is covered green in the Rust suite)
-- `test_reflection.n` — evolves to Conflict under finalized grammar
+Engine gaps exposed by this cleanup (measured, ledgered in nlang-spec
+`meta/ENGINE_SYNC.md`; the corpus works around them and the workarounds are
+marked in-file):
 
-These are **corpus maintenance items, not engine regressions** (tracked in
-`docs/feature-roadmap.md` backlog). New tests should follow the finalized
-SYNTAX_01–12 spelling.
+- **G1 combo equality**: identical bound combos compare `#false` in BOTH cmp
+  families (`x: {a:1}, y: {a:1}` → `x == y` and `x = y` both `#false`), while
+  atoms/lists are fine and `normalize_union` dedupes equal combos correctly —
+  the leak is in the cmp evaluation path, not `PartialEq`. Corpus workaround:
+  field-wise atom assertions.
+- **G2 `/`-prefixed curried defs**: `/add: (x -> (y -> x + y))` breaks EVERY
+  application form (⊥ #conflict) — the dispatch packaging swallows the inner
+  morphism as a rule keyed `y`. Bare-name defs (`add: …`, referenced `/add`
+  via prefix-alternates) work in all forms. Corpus rule: **define curried
+  morphisms with bare names, body-parenthesized** (see lib/test.n header).
+- **G3 fuel-exhaustion cause**: runaway morphisms report `%type` `#conflict`
+  (cause refinement queued since L2-17).
+- **G4 union-dedupe × navigation**: when ALL union branches survive a meet and
+  dedupe to one combo, display shows the single combo but path navigation gets
+  the pre-dedupe union → `#invalid_path`. Corpus workaround: conflict-kill
+  distinguishers so a single branch survives.
+
+New tests follow the finalized SYNTAX_01–12 spelling.

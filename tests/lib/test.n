@@ -1,26 +1,29 @@
 ;; n/ Test Library
+;; 拼法註記(2026-07-12 語料清理):斷言一律以**裸名**定義(引用時寫
+;; /assert_eq——跨前綴查找),柯里層 body 加括號。`/` 前綴定義的多層態射
+;; 現有引擎缺口(打包為分派表時內層被吞;ENGINE_SYNC 缺口 G2),勿用。
 ;; 測試輔助函數和斷言
 
 ;; 基本斷言
-/assert_true: x -> x == #true
-/assert_false: x -> x == #false
-/assert_eq: x y -> x == y
-/assert_ne: x y -> x != y
+assert_true: (x -> x == #true)
+assert_false: (x -> x == #false)
+assert_eq: (x -> (y -> x == y))
+assert_ne: (x -> (y -> x != y))
 
 ;; 型別斷言
-/assert_int: x -> x & @int
-/assert_str: x -> x & @str
-/assert_combo: x -> x & @combo
+assert_int: (x -> x & @int)
+assert_str: (x -> x & @str)
+assert_combo: (x -> x & @combo)
 
 ;; 數值比較
-/assert_gt: x y -> x > y
-/assert_lt: x y -> x < y
-/assert_gte: x y -> x >= y
-/assert_lte: x y -> x <= y
+assert_gt: (x -> (y -> x > y))
+assert_lt: (x -> (y -> x < y))
+assert_gte: (x -> (y -> x >= y))
+assert_lte: (x -> (y -> x <= y))
 
 ;; 集合斷言
 ;; /assert_contains: combo key -> key ∈ combo ;; Not implemented yet
-/assert_empty: x -> x == {}
+assert_empty: (x -> x == {})
 
 ;; 底部斷言（預期失敗）
 /assert_bottom: x -> x == _|_

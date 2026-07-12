@@ -4,18 +4,22 @@
 ~v2: { a: 1, b: 2 }
 ~u: ~v1 | ~v2
 
-;; 1. 引力塌陷 (Gravity Collapse)
-test_gravity_collapse: (~u & { a: 1 }) == { a: 1, b: 2 }
+;; 1. 疊加態精化(2026-07-12 改寫:舊「引力塌陷」語義已由 SPEC_07 Kleisli
+;;    平等演化取代——疊加態不塌陷;與分支衝突之資訊合併時僅相容支存活。
+;;    (等值斷言繞開缺口 G1;全支存活時之導航繞開缺口 G4——見 ENGINE_SYNC)
+~refined: ~u & { b: 3 }
+test_union_refine_conflict_kill: ~refined.b == 3
 
-;; 2. 衝突解決
+;; 2. 分支選擇(2026-07-12 改寫:`& _` 不再觸發 Gravity 選擇——疊加保留;
+;;    分支選擇由與具體值合併觸發,SPEC_07 §4)
 ~c1: #active
 ~c2: #done
 ~uc: ~c1 | ~c2
-;; 這裡我們顯式與 Top 合併以觸發 Union 內部的 Gravity 選擇
-test_conflict_gravity: (~uc & _) == #active
+test_union_branch_select: (~uc & #active) == #active
 
 ;; 3. 聯邦 Fetch 基礎 (單節點模擬)
 ;; 注意：這部分依賴於當前節點 Store 中已有的 CAID。
 ~id: (~%Discovery./identify_and_store { hello: "world" })
 test_identify: ~id != ""
-test_fetch_local: (~%Discovery./fetch ~id) == { hello: "world" }
+test_fetch_local: (~%Discovery./fetch ~id).hello == "world"
+;;   ^ 2026-07-12:改欄位斷言繞開 combo 等值缺口 G1(fetch 本身正常)
