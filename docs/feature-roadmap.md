@@ -174,7 +174,7 @@
 | `=` 真格論相等（互 `<=`） | 現為非塌縮結構等值 | 同上 |
 | `3 <= 5` 數值序 vs 子集語義 | 規格 §4.10 為子集；引擎數值序＝記錄在案的刻意偏離，需獨立裁決＋遷移 | SYNTAX_06 §4.10 |
 | field_key path-vs-named 語意 | fuzz 掃描殘留 | ENGINE_SYNC #19 |
-| `.n` 語料清理 | `tests/unit/` 11 個引擎開發期舊期望值失敗（canonical/entropy/federation/ladd/reflection；非引擎回歸，Rust 套件同域全綠） | tests/README.md 已標注 |
+| ~~`.n` 語料清理~~ ✅ 2026-07-12 | 11 件舊期望歸零（unit 65/0、integration 7/0、R4 掃描歸零）；曝光缺口 G1 combo 等值／G2 `/` 柯里定義／G4 去重×導航（ENGINE_SYNC 量測） | tests/README.md 缺口清單 |
 | cargo-fuzz 外掛 | 可選強化 | 同上 |
 | REAL_05 合規測試矩陣 | ✅ 48/48（v0.2.2；含前向引用與聯集冪等向量）——裸核自 v0.2.0 | REAL_05 |
 

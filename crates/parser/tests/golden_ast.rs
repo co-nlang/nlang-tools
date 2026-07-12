@@ -292,10 +292,11 @@ fn golden_morphism_definition() {
         "data |> (x -> x + 1)",
         "Pipe(Path(Bare:data), Morphism(Path(Bare:x), Add(Path(Bare:x), Atom(Int(1)))))",
     );
-    // curried params = apply on LHS; tuple param is one arg
+    // G2-M: multi-param sugar desugars to nested curry at AST build
+    // (was Morphism(Apply(x,y), body); SYNTAX_11 auto-curry)
     assert_shape(
         "x y -> x",
-        "Morphism(Apply(Path(Bare:x), Path(Bare:y)), Path(Bare:x))",
+        "Morphism(Path(Bare:x), Morphism(Path(Bare:y), Path(Bare:x)))",
     );
     assert_shape(
         "(x, y) -> x",

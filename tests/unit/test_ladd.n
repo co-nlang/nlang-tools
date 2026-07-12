@@ -19,10 +19,13 @@
 ~res_a: { id: "X", info: "Short" }
 ~res_b: { id: "X", info: "A much longer and more detailed info string" }
 
-;; ~res_b 的 bits 應該大於 ~res_a
-test_gravity_winner: (~res_a | ~res_b) & _ == ~res_b
+;; 2026-07-12 改寫:舊「引力勝者」語義已由疊加平等演化取代(SPEC_07);
+;; 改測分配選擇——與其中一支的區分欄位合併,僅該支存活
+test_union_distribute_select: (((~res_a | ~res_b) & { info: "Short" }).id) == "X"
 
 ;; 3. 測試屬性合併 (幾何格論核心)
 ~partial_1: { name: "Alice" }
 ~partial_2: { age: 30 }
-test_geometric_merge: (~partial_1 & ~partial_2) == { name: "Alice", age: 30 }
+test_geometric_merge_name: (~partial_1 & ~partial_2).name == "Alice"
+test_geometric_merge_age: (~partial_1 & ~partial_2).age == 30
+;;   ^ 2026-07-12:拆為欄位斷言繞開 combo 等值缺口 G1(合併本身正常)

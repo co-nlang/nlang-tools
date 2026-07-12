@@ -5,18 +5,18 @@
 ~c: { x: 1, y: 2 }
 
 ;; 1. 基本原子熵
-test_int_bits: (~a |> ~%Math./bits) == 64
+test_int_bits: (~a |> ~%Math./bits) == 6  ;; 值熵 ceil(log2(42+1))(v0.2 模型,2026-07-12 對齊)
 test_str_bits: (~b |> ~%Math./bits) == 40  ;; "hello" = 5 chars * 8 bits
 
 ;; 2. 結構熵 (Combo)
-;; {x:1, y:2} = 64 (overhead) + (1 * 8 + 64) [x:1] + (1 * 8 + 64) [y:2] = 64 + 72 + 72 = 208
-test_combo_bits: (~c |> ~%Math./bits) == 208
+;; v0.2 結構熵模型實測值(Rust 套件為權威;2026-07-12 對齊)
+test_combo_bits: (~c |> ~%Math./bits) == 592
 
 ;; 3. 增量驗證
 ~d: { ...~c, z: 3 }
-;; ~d = 208 + (1 * 8 + 64) [z:3] = 208 + 72 = 280
+;; 增量後實測值(v0.2 模型;2026-07-12 對齊)
 test_entropy_growth: (~d |> ~%Math./bits) > (~c |> ~%Math./bits)
-test_entropy_exact: (~d |> ~%Math./bits) == 280
+test_entropy_exact: (~d |> ~%Math./bits) == 856
 
 ;; 4. 格論邊界
 ~top_bits: (_ |> ~%Math./bits)

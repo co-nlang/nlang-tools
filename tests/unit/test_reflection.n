@@ -18,5 +18,7 @@ test_type_str: ("n/" |> ~%Reflection./type_of) == #str
 test_type_combo: (~data |> ~%Reflection./type_of) == #combo
 test_type_list: ([1, 2] |> ~%Reflection./type_of) == #list
 test_type_logic: ((x -> x) |> ~%Reflection./type_of) == #logic
-test_type_bottom: (_|_ |> ~%Reflection./type_of) == #bottom
+;; test_type_bottom: (_|_ |> ~%Reflection./type_of) == #bottom
+;;   ^ 退役(2026-07-12):定稿語義下 ⊥ 在進入反射前即被管道吸收
+;;     (SYNTAX_12;⊥ 為 & 吸收元),此寫法不可實作。
 test_type_top: (_ |> ~%Reflection./type_of) == #top

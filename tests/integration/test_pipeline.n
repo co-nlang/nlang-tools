@@ -1,4 +1,9 @@
 ;; 集成測試 - 管道和 morphism
+;; (2026-07-12 語料清理:補上 add/set_y 定義——先前未定義,測試靠開放世界
+;; `_` 弱通過。裸名定義,理由見 tests/lib/test.n 拼法註記。)
+
+add: (x -> (y -> x + y))
+set_y: (v -> (obj -> obj & { y: v }))
 
 ;; 基本管道
 test_pipe_basic: 5 |> /add 3
