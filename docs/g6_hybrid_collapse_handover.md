@@ -1,0 +1,71 @@
+# 工單:G6 混血節點值語境塌縮 (2026-07-13)
+
+**執行者**:模型 #3
+**驗收者**:專案腦(探針已預先提交,紅線不可動)
+**探針**:`crates/interpreter/tests/hybrid_collapse_probe_test.rs`(8 紅門 + 10 釘;已校準:紅門今日全紅、釘今日全綠)
+
+**驗收 = 紅門全綠 + 釘全綠 + 全套件無退化(基線 838/0/3,G1 探針檔退臨時釘後為 24 測)+ 語料 72/0 + conformance 全綠(含新增 L1-37~39,交付時應 59/59)。**
+
+---
+
+## 0. 裁定(已批;SYNTAX_06 §4 #6 值語境統一律 + SYNTAX_07 §4 #6 對偶已入法)
+
+病灶單根:值語境塌縮只認**純包裝**(`is_pure_wrapper` = 僅 `%val`+`%`-meta
+欄);混血(帶非-`%` 資料欄)不塌。三症狀面:觀測顯示印全 combo、
+算術 ⊥ #conflict、管道/應用 ⊥ #conflict。
+
+- **值語境讀 `%val`**:坍縮態觀測(顯示樹**遞迴**——巢狀混血子節點、
+  list 元素同律)、math 運算元(左右兩側)、原子比較(G1 已修)。
+- **引數全節點傳遞**:`x |> inc` → `2` 是**體內 math 剝殼的衍生結果**;
+  **不得在綁定點剝殼**——體內導航 `p.name` 必須存活
+  (釘 `pin_pipe_body_navigation_still_works`)。
+- **非值語境不塌**:座標導航、`=` 家族(外延結構)、結構態 `<<x>>`
+  (完整節點含 `%val`——對偶面,三支結構釘)。
+- **剝殼只認 `%val`**:普通 combo 在 math/原子比較照舊 ⊥
+  (釘 `pin_plain_combo_math_stays_conflict`)。
+
+## 1. 地圖
+
+- **math**:`eval.rs:785 eval_math`——:796 `collapse()` 只解純包裝,
+  混血落 :843 `_ => Conflict`。修法:運算元過 G1 的
+  `atomic_family_operand`(eval.rs 頂部,剝 `%val` 遞迴)——但注意其
+  Err 語義:math 的普通 combo 應維持**現行 ⊥ 路徑**,勿改 cause。
+  建議把 helper 一般化(如 `value_context_operand`)並讓 G1 呼叫點
+  同步改名,勿複製貼上兩份。
+- **管道/應用**:預期**零改動**(體內 math 修好即衍生通過)。若
+  `dbl x` juxtaposition 路徑另有塌縮點,以紅門實測為準。
+- **觀測顯示**:塌縮點放在**觀測投影**層(universe.observe 出口或
+  oo 顯示前),**不可**放進 `to_nlang` 本體(結構態同用它,會殺對偶)。
+  結構態的區分訊號有二,皆須用上:
+  1. `<<path>>` 求值為 `Value::Ref`(eval.rs:611)——**Ref 中介的觀測
+     = 結構視角,保全節點**(SYNTAX_07 §2 #4 活引用;別名鏈同律,
+     釘 `pin_structural_alias_stays_full`);
+  2. `<<非路徑>>`(字面量/複合式)無 Ref 標記——以**定義式為
+     Structural** 判(觀測欄位的 thunk expr 是 `ExprKind::Structural`
+     → 跳過塌縮;釘 `pin_structural_literal_stays_full`)。
+- **顯示遞迴**:巢狀混血(`{h: 3 & {…}}` → `{h: 3}`)與 list 元素
+  (`[1 & {…}, 2]` → `[1, 2]`)在坍縮態渲染中同律讀 `%val`。
+
+## 2. 邊界與陷阱
+
+1. **勿動 `collapse()`/`is_pure_wrapper` 本體**(Probe、集合家族、
+   既有顯示共用);值語境剝殼一律走 helper。
+2. **勿在 dispatch 綁定點剝殼**——G5 tuple 解構收 combo 引數
+   (`%params` 路徑)、體內導航都要活;釘已佈。
+3. **效果標籤**:剝殼取 `%val` 時效果照 `collapse_with_effect` 慣例
+   合併(外殼 effect max 進結果),勿丟。
+4. **CAID/fmt 無虞**:bn_serial 不走 to_nlang;但**勿**動 to_nlang
+   列印格式本身(塌縮發生在選值,不在排版)。
+5. **G1 探針檔已退臨時釘**(`pin_hybrid_observe_current_full_print`
+   →註解指向本單;由驗收方預先提交,非你動的)。G1 檔其餘 24 測
+   全數紅線。
+6. 全語料回歸 + conformance L1-37~39(spec 側已入庫,今日三紅)。
+7. 交付紀錄照舊格式(根因、diff、量測、未動聲明)。
+
+## 3. 非目標
+
+- `<<x>>` 補材料化 `%id`/`%kind`(SYNTAX_07 範例所示之元欄注入——
+  現況兩態皆不顯,另案;本單只管「不塌」)。
+- dispatch 模式匹配對混血引數的 unify 語義(原子 pattern × 混血,
+  另議)。
+- `<`/`<=` on combo(§4.10)、cmp×Union、G3、fmt。
