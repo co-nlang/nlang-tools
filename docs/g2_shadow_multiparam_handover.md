@@ -71,6 +71,32 @@
 
 ---
 
-## 驗收紀錄(驗收者填)
+## 交付記錄(2026-07-12, implementer)
 
-（待交付）
+### 根因 / 修復
+
+| 件 | 根因 | 修復 |
+|---|---|---|
+| **G2-M** | `x y -> body` 解析為 `Morphism{param: Apply(x,y)}`，規則鍵退化 | parser `fold_multiparam`：僅摺疊裸單段 Path 的 Apply 鏈 → 巢狀 `x -> (y -> body)`（兩處 Morphism 建構點） |
+| **G2-S** | 使用者 `/add` 與 root 內建靜默 staged，observe 時 `unify(root,staged)` 全宇宙 ⊥ | `universe.evolve`：寫入座標若與 **root** 值 unify=⊥ → 立即 `Err`（loud Evolution Conflict） |
+| **G2-C** | Atom×Combo 無條件 `%val` 吸收含態射繭 | `do_unify` Atom×Combo：`is_morphism()` → ⊥ Conflict；非態射 combo 保留 `%val` 吸收 |
+
+### 既有期望修正
+
+- `parser/tests/golden_ast.rs`：`x y -> x` shape 由 `Morphism(Apply(...))` 改為巢狀 curry（G2-M 去糖）。
+
+### 未動
+
+- G5 tuple 參數解構；探針檔斷言；REPL / `oo evolve` 逐步語義；`%val` 通盤重審。
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| multiparam probes | 20/20 |
+| CLI shadow probes | 3/3 |
+| workspace | **785 過 0 敗 3 ignored** |
+| conformance | **50/50**（L1-29/30） |
+| `oo test tests/unit tests/integration` | **72 過 0 敗** |
+
+nlang-spec 帳：驗收方記。

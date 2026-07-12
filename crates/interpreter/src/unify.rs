@@ -222,6 +222,11 @@ impl Ouroboros {
                         return type_constraint_meet(Value::Atom(ak, ae, ra), &type_name);
                     }
                 }
+                // G2-C: morphisms are not value-carriers — Atom × morphism = ⊥.
+                // Non-morphism combos keep %val absorb (pin_nonmorphism_val_absorb).
+                if Value::Combo(cv.clone()).is_morphism() {
+                    return BottomCause::Conflict.into();
+                }
                 let val_key = "%val".to_string(); 
                 let existing_val = cv.get_field(&val_key).cloned().unwrap_or(Value::Top); 
                 let merged_val = self.unify_internal(Value::Atom(ak, ae, ra), existing_val, ctx); 

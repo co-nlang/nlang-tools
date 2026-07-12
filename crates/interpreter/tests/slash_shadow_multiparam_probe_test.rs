@@ -115,47 +115,40 @@ fn evolve_statuses(src: &str) -> Vec<bool> {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_multiparam_bare_juxta() {
     // today: "_" (dispatch never fires)
     assert_obs("beq: x y -> x == y\nout: beq 5 5", "#true");
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_multiparam_slash_juxta() {
     // today: "_" — identical failure to bare (the `/` was never the variable)
     assert_obs("/aeq: x y -> x == y\nout: aeq 5 5", "#true");
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_multiparam_slash_paren_chain() {
     assert_obs("/aeq: x y -> x == y\nout: (/aeq 5) 5", "#true");
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_multiparam_pipe() {
     // today: pipe silently returns the piped value (5)
     assert_obs("aeq: x y -> x == y\nout: 5 |> aeq 5", "#true");
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_multiparam_three_params() {
     assert_obs("th: x y z -> x + y + z\nout: th 1 2 3", "6");
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_multiparam_neq_arm() {
     // #false side — proves the body actually evaluates, not a vacuous #true
     assert_obs("aeq: x y -> x == y\nout: aeq 5 6", "#false");
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_multiparam_equiv_explicit_curry() {
     // The ruling IS the equivalence: sugar and explicit spelling agree
     assert_obs(
@@ -169,7 +162,6 @@ fn red_multiparam_equiv_explicit_curry() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_shadow_builtin_add_morphism_errs_at_evolve() {
     // today: [true, true] — silent evolve, whole universe ⊥ at observe
     let st = evolve_statuses("/add: (x -> (y -> x + y))\nz: 42");
@@ -178,7 +170,6 @@ fn red_shadow_builtin_add_morphism_errs_at_evolve() {
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_shadow_builtin_add_atom_errs_at_evolve() {
     // G2-C via the same boundary: /add: 7 today silently grows the closed
     // builtin cocoon a %val key
@@ -192,7 +183,6 @@ fn red_shadow_builtin_add_atom_errs_at_evolve() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_atom_meet_morphism_is_bottom() {
     // today: absorbs into the dispatch combo as %val
     assert_obs("m: (x -> x)\nout: m & 7", "_|_ (%cause: #conflict)");

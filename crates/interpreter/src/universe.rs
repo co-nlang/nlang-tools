@@ -93,29 +93,62 @@ impl Universe {
         // Stage 5 (§5b): collect field keys for per-coordinate invalidation.
         let mut evolved_coords: Vec<String> = Vec::new();
 
+        // Resolve write coordinates first (needed for G2-S root check before
+        // val is moved into the incoming combo).
         match &field.key {
             FieldKey::Named { name, prefix } => {
                 let is_p = matches!(prefix, Some(Prefix::Private) | Some(Prefix::Local));
                 let trimmed = name.trim().to_string();
                 if is_p {
-                    rl.insert(trimmed.clone(), val);
                     evolved_coords.push(trimmed);
                 } else {
                     let p = match prefix { Some(Prefix::Logic) => "/", Some(Prefix::Type) => "@", Some(Prefix::Meta) => "%", Some(Prefix::System) => "~%", _ => "" };
                     let stored = format!("{}{}", p, trimmed);
-                    rf.insert(stored.clone(), val);
                     // Stage 5 acceptance fix: dependency recording uses stored
-                    // (prefixed) names, so invalidate by BOTH forms. Measured:
-                    // `/name:` source keys through the Quoted/Path arms (bare
-                    // form already correct there); whichever key form reaches
-                    // this arm, pushing both is sound over-approximation.
+                    // (prefixed) names, so invalidate by BOTH forms.
                     evolved_coords.push(stored);
                     evolved_coords.push(trimmed);
                 }
             }
-            FieldKey::Quoted(name) => { let t = name.trim().to_string(); rf.insert(t.clone(), val); evolved_coords.push(t); }
-            FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => { let t = p.segments[0].trim().to_string(); rf.insert(t.clone(), val); evolved_coords.push(t); }
+            FieldKey::Quoted(name) => { evolved_coords.push(name.trim().to_string()); }
+            FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
+                evolved_coords.push(p.segments[0].trim().to_string());
+            }
             _ => { self.is_dirty = true; return Ok(()); }
+        };
+
+        // G2-S: root coordinates evolve monotonically. If the incoming value
+        // conflicts with an existing ROOT binding at any written coordinate,
+        // fail at the evolve boundary (loud Evolution Conflict) instead of
+        // poisoning the whole universe at observe-entry unify(root, staged).
+        // Staged×staged conflicts stay on the existing unify path below.
+        for c in &evolved_coords {
+            if let Some(root_val) = self.root.get_field(c).cloned()
+                .or_else(|| self.root.get_local_field(c).cloned())
+            {
+                if let Value::Bottom(d) = engine.unify(root_val, val.clone()) {
+                    return Err(d.cause);
+                }
+            }
+        }
+
+        match &field.key {
+            FieldKey::Named { name, prefix } => {
+                let is_p = matches!(prefix, Some(Prefix::Private) | Some(Prefix::Local));
+                let trimmed = name.trim().to_string();
+                if is_p {
+                    rl.insert(trimmed, val);
+                } else {
+                    let p = match prefix { Some(Prefix::Logic) => "/", Some(Prefix::Type) => "@", Some(Prefix::Meta) => "%", Some(Prefix::System) => "~%", _ => "" };
+                    let stored = format!("{}{}", p, trimmed);
+                    rf.insert(stored, val);
+                }
+            }
+            FieldKey::Quoted(name) => { rf.insert(name.trim().to_string(), val); }
+            FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
+                rf.insert(p.segments[0].trim().to_string(), val);
+            }
+            _ => unreachable!("coords already filtered non-writable keys"),
         };
 
         let incoming = Value::Combo(ComboVal::new(rf, false, rl, val_effect, vec![]));

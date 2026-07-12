@@ -44,7 +44,6 @@ fn run_observe(content: &str, observe: &str) -> (i32, String, String) {
 }
 
 #[test]
-#[ignore = "RED until G2 delivery — acceptance gate"]
 fn red_cli_slash_add_shadow_is_loud() {
     // today: exit 0, stdout "_|_ (%cause: #conflict)", stderr silent
     let (code, _stdout, stderr) = run_observe("/add: (x -> (y -> x + y))\nz: 42\n", "z");

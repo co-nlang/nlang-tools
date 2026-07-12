@@ -102,7 +102,8 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
             let mut res = parse_expr(inner[i].clone())?;
             while i > 0 {
                 let left = parse_expr(inner[i-2].clone())?;
-                res = Expr::new(ExprKind::Morphism { param: Box::new(left), body: Box::new(res) }, span);
+                // G2-M: multi-param sugar `x y -> body` ≡ nested curry
+                res = fold_multiparam(left, res, span);
                 i -= 2;
             }
             Ok(res)
@@ -117,8 +118,13 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
             while i < inner.len() {
                 let op_pair = &inner[i];
                 let right = parse_expr(inner[i+1].clone())?;
+                // G2-M: multi-param sugar folds to nested morphisms (outer span).
+                if op_pair.as_rule() == Rule::morphism_op {
+                    left = fold_multiparam(left, right, span);
+                    i += 2;
+                    continue;
+                }
                 let kind = match op_pair.as_rule() {
-                    Rule::morphism_op => ExprKind::Morphism { param: Box::new(left), body: Box::new(right) },
                     Rule::pipe_op => ExprKind::Pipe(Box::new(left), Box::new(right)),
                     Rule::meet_op => ExprKind::Meet(Box::new(left), Box::new(right)),
                     Rule::type_ann_op => ExprKind::TypeAnnotation(Box::new(left), Box::new(right)),
@@ -406,6 +412,52 @@ fn parse_range_bound(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn 
             Ok(Expr::new(ExprKind::Atom(ak), span))
         }
         _ => Err(format!("Unexpected range_bound rule: {:?}", pair.as_rule()).into()),
+    }
+}
+
+/// G2-M (SYNTAX_11 auto-curry): `x y -> body` ≡ `x -> (y -> body)`.
+/// Fold ONLY when `param` is an Apply chain whose every leaf is a bare
+/// single-segment Path; other param shapes (Tuple, pattern, anchored) keep
+/// the un-folded Morphism (tuple params = G5, out of scope).
+fn fold_multiparam(param: Expr, body: Expr, span: Span) -> Expr {
+    match collect_bare_path_apply_chain(&param) {
+        Some(params) if params.len() >= 2 => {
+            let mut res = body;
+            for p in params.into_iter().rev() {
+                res = Expr::new(
+                    ExprKind::Morphism {
+                        param: Box::new(p),
+                        body: Box::new(res),
+                    },
+                    span,
+                );
+            }
+            res
+        }
+        _ => Expr::new(
+            ExprKind::Morphism {
+                param: Box::new(param),
+                body: Box::new(body),
+            },
+            span,
+        ),
+    }
+}
+
+/// Left-to-right leaves of a juxtaposition Apply chain, if every leaf is a
+/// bare single-segment Path. Returns None on any other shape (strict gate).
+fn collect_bare_path_apply_chain(expr: &Expr) -> Option<Vec<Expr>> {
+    match &expr.kind {
+        ExprKind::Path(p) if p.anchor == PathAnchor::Bare && p.segments.len() == 1 => {
+            Some(vec![expr.clone()])
+        }
+        ExprKind::Apply(f, a) => {
+            let mut left = collect_bare_path_apply_chain(f)?;
+            let right = collect_bare_path_apply_chain(a)?;
+            left.extend(right);
+            Some(left)
+        }
+        _ => None,
     }
 }
 
