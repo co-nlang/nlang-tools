@@ -118,3 +118,29 @@
 | conformance | **48/48**(L1-28) |
 
 nlang-spec 帳:驗收方記。
+
+---
+
+## 驗收記錄(2026-07-12,驗收方)
+
+**通過,一件代修。** 全套重跑:workspace **762/0/3**(761 + 驗收護欄 1)、
+探針 14/14 + 12/12(11 + 護欄)、dispatch/nlint_acceptance 原樣綠、
+conformance **48/48**(release oo 親跑)。
+
+- **代修(驗收方)**:R4 誤報——多參數態射 `x y -> x == y`(參數位為
+  Apply 形)之第二參數 `y` 被誤報(tests/lib/test.n 實掃驗出;`x` 未中
+  只因檔內單參態射碰巧把 `x` 收入定義集)。修:`collect_param_names`
+  增 Apply 臂遞迴。護欄探針 `pin_r4_multi_param_morphism_not_flagged`
+  (雙參+三參)。開單方共責:活釘只釘了單參態射。
+- **diff-read**:A 全部掛點為機械替換(ad-hoc match → `normalize_union`);
+  unify 臂改「先去重後 cap」且輸入側 `take(max_branches*2)` 上界仍在;
+  `Value::PartialEq` 含效果標記與 provenance——同值異效果分支不會誤併
+  (查證);oml_test 期望修正合法(單欄 Union 包裝本為人工物)且已列帳。
+  B 零引擎變更屬實(diff 只及 nlint.rs)。bn_serial 不在 diff。
+- **對抗掃**:dispatch 全家綠;**全語料 R4 掃描**——conformance 語料
+  (48 檔)零 R4;examples/tests 語料僅真陽性(test_pipeline.n `/add`
+  `/set_y`、test_infix_logic.n `/add`——舊 fixture 引用外部態射,
+  即語料清理隊列那批;R4 現在能自動點名它們,工具反哺)。
+
+遺留(不變):float 顯示怪癖(`1.0` 印 `1`)、Union 分支全序(fmt v3)、
+Range 合併、.n 語料清理(R4 已可當清單工具)。
