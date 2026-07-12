@@ -110,3 +110,26 @@ conformance 47/47 覆核、diff-read、對抗加測(欄位重排等價性、環�
 - workspace **736 過 0 敗 3 ignored**
 - conformance **47/47**(含 L1-26/27)
 - nlang-spec 帳:驗收方記
+
+---
+
+## 驗收記錄(2026-07-12,驗收方)
+
+**通過,零代修(第四例)。** 全套重跑:workspace **736/0/3**、
+forward_ref 11/11、CLI 7/7、L2-17 全套 10/10、conformance **47/47**
+(release oo,驗收方親跑)。
+
+- **diff-read**:引擎側為**淨刪除**(不再把 path target 標進 `computing`,
+  連同插入/移除對稱碼一併移除);保留的 pc 檢查語義轉為「引用正在 force 中
+  的祖先座標」= 真環(`a: b`/`b: a` 提早一跳收口),自環由 in_flight
+  content-hash + solidify 一層收口——比開單方預想的 holder-key 重構更簡潔。
+  CLI 側純重排,store-put(CAID 目的)保留於全 evolve 之後。假前提掃描過:
+  註解宣稱與 diff 事實一致。探針檔僅摘 `#[ignore]` + 標頭壓縮,斷言零觸碰。
+- **反事實**:開單時之校準即修前量測(3/4-hop 鏈 #divergent、CLI 前向 `_`)
+  ——交付記錄之修前宣稱與其逐項吻合。
+- **對抗加測全綠**:三欄重排矩陣(3 排列同得 6)、三跳引用環 #divergent、
+  鏈入環 #divergent、鏈旁有環不受污染(得 1)、`a: a` 裸自指 #divergent、
+  跨檔次序矩陣(兩序同得 5)。
+
+SPEC_03 交換律自此在 one-shot 通道可機檢(L1-26/27)。
+遺留(不變):Union 去重、use-before-def lint、REPL 逐步語義(合理,非缺陷)。
