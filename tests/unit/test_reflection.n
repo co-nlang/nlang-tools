@@ -4,7 +4,8 @@
 ~closed_data: {{ x: 10 }}
 
 ;; 1. 鍵值探測
-test_keys: (~data |> ~%Reflection./keys) == ["a", "b"]
+;; G1: list structural equality uses `=` (SYNTAX_06 §4 #11/#12)
+test_keys: (~data |> ~%Reflection./keys) = ["a", "b"]
 test_has_a: (~%Reflection./has "a" ~data) == #true
 test_has_z: (~%Reflection./has "z" ~data) == #false
 

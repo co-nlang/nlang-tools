@@ -16,9 +16,10 @@ test_str_contains: ("Distributed Universe" |> ~%String./contains "Uni") == #true
 
 ;; 3. 列表進階操作
 ~list: [3, 1, 4, 2]
-test_list_sort: (~list |> ~%List./sort) == [1, 2, 3, 4]
-test_list_reverse: ([1, 2, 3] |> ~%List./reverse) == [3, 2, 1]
-test_list_slice: ([0, 1, 2, 3, 4, 5] |> ~%List./slice 1 4) == [1, 2, 3]
+;; G1: list structural equality uses `=` (not `==`; lists are non-collapsible combos)
+test_list_sort: (~list |> ~%List./sort) = [1, 2, 3, 4]
+test_list_reverse: ([1, 2, 3] |> ~%List./reverse) = [3, 2, 1]
+test_list_slice: ([0, 1, 2, 3, 4, 5] |> ~%List./slice 1 4) = [1, 2, 3]
 test_list_at: ([10, 20, 30] |> ~%List./at 1) == 20
 
 ;; 4. List Zip

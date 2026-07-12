@@ -80,3 +80,47 @@
   比對,不得動列印本身)。
 - 語料掃描:combo `==` 斷言(清理時已改寫為逐欄,預期零波及;交付時
   驗證並列出掃描結果)。
+
+---
+
+## 交付記錄(2026-07-13, implementer)
+
+### 根因
+
+cmp 比未固化 combo;Thunk/Code `PartialEq` 含 span → 行內字面量也不等。
+`==` 對無 `%val` 的 combo 落結構比 → 默默 `#false`(說謊)。
+
+### 修復
+
+1. **`=` (`LatticeEq`)**:兩側 `force_recursive` 後走 `Value::PartialEq`
+   (六軸+closed+effect+relations;IndexMap 無序)。
+2. **`==`/`!=`**:`force_recursive` + 局部 `atomic_family_operand`——
+   pure wrapper / hybrid 取 `%val` 遞迴;無 `%val` 的 combo → ⊥ `#conflict`
+   (**未**改全域 `collapse()`)。
+3. **唯一等值 / span 盲**:`Value::PartialEq` 的 Code/Thunk 改
+   `without_spans()` 比對 → dedupe 自動同步;拼寫仍敏感
+   (`q`≠`w` 釘仍綠)。
+
+### 既有期望修正(語料)
+
+list 是非塌縮 combo,`==` 變家族誤用。改 `=`(結構等值):
+
+| 檔 | 斷言 |
+|----|------|
+| `tests/unit/test_reflection.n` | `test_keys`: `==` → `=` |
+| `tests/unit/test_stdlib_v2.n` | `test_list_sort/reverse/slice`: `==` → `=` |
+
+其餘 `==` 掃描為原子/標籤/字串比較,零波及。
+
+### 未動
+
+`<=` 於 combo、G6 混血觀測、cmp×Union、`collapse()` 本體、fmt。
+
+### 量測
+
+| 項目 | 結果 |
+|------|------|
+| combo_equality probes | **25/25** |
+| workspace | **838 過 0 敗 3 ignored** |
+| conformance | **56/56**(L1-33~36) |
+| unit+integration | **72/0**(語料修 4 斷言後) |

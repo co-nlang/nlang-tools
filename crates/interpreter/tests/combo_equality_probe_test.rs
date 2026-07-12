@@ -91,35 +91,30 @@ fn assert_bottom_conflict(src: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_lattice_eq_combo_literal() {
     // L1-33. Today: #false (thunk AST+span equality).
     assert_obs("out: { a: 1 } = { a: 1 }", "#true");
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_lattice_eq_combo_bound_span_blind() {
     // L1-34. Bound names, different definition lines — span must not matter.
     assert_obs("x: { a: 1 }\ny: { a: 1 }\nout: x = y", "#true");
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_lattice_eq_combo_nested_same_relation() {
     // Nested fields recurse with the same equality relation.
     assert_obs("x: { a: { b: 1 } }\ny: { a: { b: 1 } }\nout: x = y", "#true");
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_lattice_eq_field_order_blind() {
     // Set view: field spelling order does not participate.
     assert_obs("out: { a: 1, b: 2 } = { b: 2, a: 1 }", "#true");
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_lattice_eq_symbol_spelling_blind() {
     // Fields referencing different symbols with equal values solidify equal.
     assert_obs(
@@ -129,7 +124,6 @@ fn red_lattice_eq_symbol_spelling_blind() {
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_lattice_eq_rules_axis_span_blind() {
     // Same-spelling morphism rule on different lines: span-blind (#13).
     // (Different SPELLINGS stay unequal — pinned below; no alpha-equivalence.)
@@ -144,21 +138,18 @@ fn red_lattice_eq_rules_axis_span_blind() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_eqeq_combo_literal_is_conflict() {
     // L1-35. Today: silent #false — that is a lie ("compared, unequal").
     assert_bottom_conflict("out: { a: 1 } == { a: 1 }");
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_neq_combo_literal_is_conflict() {
     // `!=` mirrors: family misuse is ⊥, NOT #true.
     assert_bottom_conflict("out: { a: 1 } != { a: 1 }");
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_eqeq_same_binding_flips_to_conflict() {
     // BOUNDARY MOVES: today #true (same-span thunks). Ruled ⊥ #conflict —
     // combo operands are family misuse regardless of instance identity.
@@ -166,7 +157,6 @@ fn red_eqeq_same_binding_flips_to_conflict() {
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_eqeq_meet_result_flips_to_conflict() {
     // BOUNDARY MOVES: today #true (meet solidified the fields). Still a
     // non-collapsible combo → ruled ⊥ #conflict.
@@ -174,7 +164,6 @@ fn red_eqeq_meet_result_flips_to_conflict() {
 }
 
 #[test]
-#[ignore = "G1 red gate: awaiting combo-equality fix"]
 fn red_eqeq_hybrid_collapses_to_atom() {
     // L1-36. Hybrid node (%val present) collapses, then atomic family.
     assert_obs("h: 3 & { note: \"n\" }\nout: h == 3", "#true");

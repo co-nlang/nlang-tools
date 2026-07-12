@@ -48,10 +48,16 @@ impl PartialEq for Value {
             (Value::Atom(a1, e1, r1), Value::Atom(a2, e2, r2)) => a1 == a2 && e1 == e2 && r1 == r2,
             (Value::Combo(c1), Value::Combo(c2)) => c1 == c2,
             (Value::Union(u1), Value::Union(u2)) => u1 == u2,
-            (Value::Code(c1), Value::Code(c2)) => c1 == c2,
+            // G1 #13: Code/Thunk equality is span-blind (value property, not
+            // source property). Spelling still differs (`q` vs `w`). Shared
+            // with normalize_union so cmp and dedupe stay one relation.
+            (Value::Code(c1), Value::Code(c2)) => c1.without_spans() == c2.without_spans(),
             (Value::Thunk { expr: ex1, closure: cl1, context: c1, effect: ef1 },
              Value::Thunk { expr: ex2, closure: cl2, context: c2, effect: ef2 }) =>
-                ex1 == ex2 && cl1 == cl2 && c1 == c2 && ef1 == ef2,
+                ex1.without_spans() == ex2.without_spans()
+                    && cl1 == cl2
+                    && c1 == c2
+                    && ef1 == ef2,
             (Value::Bottom(b1), Value::Bottom(b2)) => b1 == b2,
             (Value::Blur(b1), Value::Blur(b2)) => b1 == b2,
             (

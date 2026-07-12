@@ -11,6 +11,24 @@ use num_traits::{ToPrimitive, Zero};
 #[derive(Debug, Clone, Copy)]
 enum MathOp { Add, Sub, Mul, Div, Rem }
 
+/// G1 #12: operand for the atomic `==`/`!=` family.
+/// Pure wrappers collapse; hybrid combos peel `%val` (recursively);
+/// non-collapsible combos (no `%val`) → Err (caller → ⊥ #conflict).
+/// Does not mutate `collapse()` itself (shared with Probe / set family).
+fn atomic_family_operand(v: &Value) -> Result<Value, ()> {
+    let c = v.collapse();
+    match c {
+        Value::Combo(cv) => {
+            if let Some(inner) = cv.get_field("%val") {
+                atomic_family_operand(inner)
+            } else {
+                Err(())
+            }
+        }
+        other => Ok(other.clone()),
+    }
+}
+
 impl Ouroboros {
     /// E3: if one operand is AST `!(e)` and eval(e) is Range, rewrite meet to
     /// membership negation: x if x∉range else ⊥. Mirror both orders.
@@ -690,21 +708,28 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             }
             // `@{ e } ≡ e` (SYNTAX_04 §4.7); empty `@{}` is AnonSet(Bottom) → ⊥.
             ExprKind::AnonSet(inner) => self.eval(inner, ctx),
-            // Lattice-family equality `=`: non-collapsing structural comparison (partial impl; SYNTAX_06/10)
+            // Lattice-family equality `=` (SYNTAX_06 §4 #11/#13): solidify
+            // both sides, then one engine-wide PartialEq (span-blind Code/
+            // Thunk; effect participates; field order free via IndexMap).
+            // Set family does NOT absorb: `_|_` is an operand (empty set).
             ExprKind::LatticeEq(a, b) => {
-                // Set family does NOT absorb (SYNTAX_06 §4.1): `_|_` is an
-                // operand — the empty set — not a black hole. `_|_ = 3` →
-                // #false, `_|_ = _|_` → #true, both clean booleans.
-                let va = self.eval(a, ctx);
-                let vb = self.eval(b, ctx);
+                let va = self.force_recursive(self.eval(a, ctx), ctx);
+                let vb = self.force_recursive(self.eval(b, ctx), ctx);
                 let res_e = va.effect().max(vb.effect());
                 let eq = match (&va, &vb) {
                     (Value::Bottom(_), Value::Bottom(_)) => true,
                     (Value::Bottom(_), _) | (_, Value::Bottom(_)) => false,
-                    (Value::Atom(x, _, _), Value::Atom(y, _, _)) => x == y,
                     _ => va == vb,
                 };
-                Value::Atom(AtomKind::Tag(if eq { "true".to_string() } else { "false".to_string() }), res_e, None)
+                Value::Atom(
+                    AtomKind::Tag(if eq {
+                        "true".to_string()
+                    } else {
+                        "false".to_string()
+                    }),
+                    res_e,
+                    None,
+                )
             }
             // Direction probe `<=>`: returns an order tag, never a boolean (SYNTAX_10 §2.3)
             ExprKind::Probe(a, b) => {
@@ -861,11 +886,11 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
     }
 
     fn eval_binary_cmp(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: CmpOp) -> Value {
-        // Stage 2 (紀律 2): value-judgment point — force thunks before comparison.
+        // Stage 2 (紀律 2) + G1 #13: solidify before any comparison judgment.
         // Always evaluate both sides so set-family effect max is honest and
         // set-family never short-circuits on ⊥ (SYNTAX_06 §4.1/§4.2 two-family split).
-        let va = self.force(self.eval(a, ctx), ctx);
-        let vb = self.force(self.eval(b, ctx), ctx);
+        let va = self.force_recursive(self.eval(a, ctx), ctx);
+        let vb = self.force_recursive(self.eval(b, ctx), ctx);
 
         // ── Atomic family (`==` / `!=`): absorbing ⊥/⊤ (SYNTAX_06 §4.1) ──
         // Policy unchanged from pre-split path: ⊥ before ⊤; return the lattice
@@ -878,15 +903,24 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 return vb;
             }
             let res_e = va.effect().max(vb.effect());
-            let ca = va.collapse();
-            let cb = vb.collapse();
+            // G1 #12: peel hybrid %val into the atomic family; non-collapsible
+            // combo (no %val) → ⊥ #conflict (never silent #false). Local to
+            // this family — does not change collapse() used by Probe / set.
+            let ca = match atomic_family_operand(&va) {
+                Ok(v) => v,
+                Err(()) => return BottomCause::Conflict.into(),
+            };
+            let cb = match atomic_family_operand(&vb) {
+                Ok(v) => v,
+                Err(()) => return BottomCause::Conflict.into(),
+            };
             if ca.is_top() || cb.is_top() {
                 return Value::Top;
             }
-            if let Value::Bottom(d) = ca {
+            if let Value::Bottom(d) = &ca {
                 return Value::Bottom(d.clone());
             }
-            if let Value::Bottom(d) = cb {
+            if let Value::Bottom(d) = &cb {
                 return Value::Bottom(d.clone());
             }
 
@@ -895,7 +929,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 CmpOp::Ne => x != y,
                 _ => unreachable!(),
             };
-            match (ca.clone(), cb.clone()) {
+            match (&ca, &cb) {
                 (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
                     return Value::Atom(
                         AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) {
@@ -909,14 +943,14 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
                 (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
                     return Value::Atom(
-                        AtomKind::Tag(if op_fn(x, y) { "true".into() } else { "false".into() }),
+                        AtomKind::Tag(if op_fn(*x, *y) { "true".into() } else { "false".into() }),
                         res_e,
                         None,
                     );
                 }
                 (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
                     return Value::Atom(
-                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y) {
+                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), *y) {
                             "true".into()
                         } else {
                             "false".into()
@@ -927,7 +961,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
                 (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
                     return Value::Atom(
-                        AtomKind::Tag(if op_fn(x, y.to_f64().unwrap_or(0.0)) {
+                        AtomKind::Tag(if op_fn(*x, y.to_f64().unwrap_or(0.0)) {
                             "true".into()
                         } else {
                             "false".into()
