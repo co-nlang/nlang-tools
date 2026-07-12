@@ -1,6 +1,6 @@
 # nlang 引擎架構概覽
 
-> 最後更新：2026-07-12（v0.2.1；REAL_05 conformance 47/47，one-shot 同時性）  
+> 最後更新：2026-07-12（v0.2.2；REAL_05 conformance 48/48，Union 冪等）  
 > 供新貢獻者快速定位切入點。求值模型的施工圖見 nlang-spec
 > `GUIDE_03 §11`（Call-by-Observation）；逐案決策背景見 `docs/worknotes/`。
 
@@ -427,7 +427,7 @@ EffectTag 在 Value 傳播時取 `max`（最高效果勝出）。
 
 ### 7.1 Rust 整合測試（tests/*.rs）
 
-**736 passed / 0 failed / 3 ignored（111 套件）**。主要覆蓋：
+**762 passed / 0 failed / 3 ignored（113 套件）**。主要覆蓋：
 
 - **格論**：unify, complement, oml, orthomodular；Top/Bottom 正規化格律探針
 - **CAID**：caid, lattice_sketch_v2（17 固定向量）、genesis 種子穩定性
@@ -500,5 +500,5 @@ cargo test --manifest-path crates/interpreter/Cargo.toml seed_caids_are_stable -
 4. 讀 `eval.rs` — 求值流程與比較兩家族分流
 5. 讀 `builtins/json.rs` 或 `builtins/set.rs` — 最清晰的模組實作範本
 6. 看 `genesis.rs` + `lib.rs:root_with_system()` — 理解模組系統結構
-7. 用 `cargo test --workspace` 驗證（736 passed / 3 ignored）
+7. 用 `cargo test --workspace` 驗證（762 passed / 3 ignored）
 8. 參考 `docs/worknotes/` — 各功能的工單、驗收記錄與決策背景
