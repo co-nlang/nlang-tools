@@ -248,18 +248,10 @@ fn pin_tag_vs_unit_eqeq_false() {
     assert_obs("out: #true == ()", "#false");
 }
 
-#[test]
-fn pin_hybrid_observe_current_full_print() {
-    // MEASURED at calibration: observing a hybrid prints the FULL combo
-    // (%val visible) — SYNTAX_06 §4 #6 says observation reads %val → `3`.
-    // That spec-engine discrepancy is ledgered as G6 (separate case; NOT
-    // in the G1 order). This pin freezes today's display so the G1 fix
-    // doesn't drive-by change observation; unpin when G6 is adjudicated.
-    assert_obs(
-        "h: 3 & { note: \"n\" }\nout: h",
-        "{\n  %val: 3\n  note: \"n\"\n}",
-    );
-}
+// (Removed 2026-07-13: the temporary hybrid-observation display pin that
+// froze the full-combo print pending G6. G6 is now adjudicated — the case
+// lives in hybrid_collapse_probe_test.rs as red_observe_hybrid_reads_val,
+// with the structural-state duality pinned there.)
 
 #[test]
 fn pin_union_dedupe_combo_then_navigate() {

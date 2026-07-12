@@ -11,22 +11,51 @@ use num_traits::{ToPrimitive, Zero};
 #[derive(Debug, Clone, Copy)]
 enum MathOp { Add, Sub, Mul, Div, Rem }
 
-/// G1 #12: operand for the atomic `==`/`!=` family.
+/// G1 #12 / G6: value-context operand (math, atomic `==`/`!=`).
 /// Pure wrappers collapse; hybrid combos peel `%val` (recursively);
 /// non-collapsible combos (no `%val`) → Err (caller → ⊥ #conflict).
 /// Does not mutate `collapse()` itself (shared with Probe / set family).
-fn atomic_family_operand(v: &Value) -> Result<Value, ()> {
+fn value_context_operand(v: &Value) -> Result<Value, ()> {
     let c = v.collapse();
     match c {
         Value::Combo(cv) => {
+            // Structural-view mark holds the full node in %node (not %val —
+            // pure-wrapper collapse would erase the mark during lattice
+            // unify). Peel the mark then continue so math still reads the
+            // hybrid's %val.
+            if crate::value::is_structural_view(cv) {
+                if let Some(inner) = crate::value::structural_node(cv) {
+                    return value_context_operand(inner);
+                }
+            }
             if let Some(inner) = cv.get_field("%val") {
-                atomic_family_operand(inner)
+                value_context_operand(inner)
             } else {
                 Err(())
             }
         }
         other => Ok(other.clone()),
     }
+}
+
+/// G6: mark a value as structural-view (`<<non-path>>`) so observation
+/// display preserves the full node. Payload is `%node`, **not** `%val`:
+/// pure wrappers (`%val` + %-meta only) are peeled by `collapse()` during
+/// lattice unify, which would erase the structural signal before observe.
+fn mark_structural_view(inner: Value) -> Value {
+    let mut fields = IndexMap::new();
+    fields.insert(
+        "%structural".to_string(),
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+    );
+    fields.insert("%node".to_string(), inner);
+    Value::Combo(ComboVal::new(
+        fields,
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 impl Ouroboros {
@@ -611,12 +640,13 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             ExprKind::Structural(e) => {
                 // Stage 3 (§3a): structural form <<path>> — symbolic reference.
                 // The structural brackets are "this is a reference, don't evaluate
-                // it yet." Non-path operands keep current geometric semantics
-                // (SYNTAX_07 §2.2).
+                // it yet." Non-path operands keep geometric body but mark
+                // structural-view so G6 observation does not peel %val
+                // (SYNTAX_07 §2.2 / §4 #6 duality).
                 if let ExprKind::Path(p) = &e.kind {
                     Value::Ref(p.clone())
                 } else {
-                    self.eval(e, ctx)
+                    mark_structural_view(self.eval(e, ctx))
                 }
             },
             ExprKind::Unary { op, expr } => {
@@ -792,6 +822,18 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         if let Value::Bottom(_) = va { return va; }
         let vb = self.force(self.eval(b, ctx), ctx);
         if let Value::Bottom(_) = vb { return vb; }
+        // G6: value-context peels hybrid %val (and pure wrappers); plain
+        // combos without %val stay on the Conflict path below.
+        let va = match value_context_operand(&va) {
+            Ok(v) => v,
+            Err(()) => return BottomCause::Conflict.into(),
+        };
+        let vb = match value_context_operand(&vb) {
+            Ok(v) => v,
+            Err(()) => return BottomCause::Conflict.into(),
+        };
+        if let Value::Bottom(_) = va { return va; }
+        if let Value::Bottom(_) = vb { return vb; }
         let res_e = va.effect().max(vb.effect());
         let ca = va.collapse();
         let cb = vb.collapse();
@@ -906,11 +948,11 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             // G1 #12: peel hybrid %val into the atomic family; non-collapsible
             // combo (no %val) → ⊥ #conflict (never silent #false). Local to
             // this family — does not change collapse() used by Probe / set.
-            let ca = match atomic_family_operand(&va) {
+            let ca = match value_context_operand(&va) {
                 Ok(v) => v,
                 Err(()) => return BottomCause::Conflict.into(),
             };
-            let cb = match atomic_family_operand(&vb) {
+            let cb = match value_context_operand(&vb) {
                 Ok(v) => v,
                 Err(()) => return BottomCause::Conflict.into(),
             };
