@@ -77,27 +77,23 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "RED until G4 delivery — acceptance gate"]
 fn red_union_nav_common_field_dedupes() {
     // 9 | 9 → normalize → 9
     assert_obs("out: ({ a: 1, c: 9 } | { a: 1, b: 2, c: 9 }).c", "9");
 }
 
 #[test]
-#[ignore = "RED until G4 delivery — acceptance gate"]
 fn red_union_nav_distinct_values_superpose() {
     assert_obs("out: ({ a: 1 } | { a: 2 }).a", "1 | 2");
 }
 
 #[test]
-#[ignore = "RED until G4 delivery — acceptance gate"]
 fn red_union_nav_partial_field_keeps_top_branch() {
     // branch 1 open-miss → _ (kept: honest superposition), branch 2 → 2
     assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "_ | 2");
 }
 
 #[test]
-#[ignore = "RED until G4 delivery — acceptance gate"]
 fn red_union_nav_bottom_branch_dropped() {
     // atom branch navigates to ⊥ #invalid_path → dropped, survivor collapses
     assert_obs("out: ({ a: 1 } | 7).a", "1");
@@ -111,7 +107,6 @@ fn pin_union_nav_all_bottom_is_invalid_path() {
 }
 
 #[test]
-#[ignore = "RED until G4 delivery — acceptance gate"]
 fn red_union_nav_multi_segment() {
     // 5 | 5 → 5 through two segments
     assert_obs(
@@ -121,7 +116,6 @@ fn red_union_nav_multi_segment() {
 }
 
 #[test]
-#[ignore = "RED until G4 delivery — acceptance gate"]
 fn red_union_nav_evolved_all_survive() {
     // the original federation shape: all-survive meet, then navigate
     assert_obs(

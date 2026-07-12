@@ -1377,9 +1377,9 @@ let mut refl_fields = IndexMap::new();
                 return current;
             }
 
-            match current { 
-                Value::Combo(ref c) => { 
-                    let target = c.get_field(seg).or_else(|| c.get_field(&format!("/{}", seg))).or_else(|| c.get_field(&format!("@{}", seg))).cloned().unwrap_or(Value::Top); 
+            match current {
+                Value::Combo(ref c) => {
+                    let target = c.get_field(seg).or_else(|| c.get_field(&format!("/{}", seg))).or_else(|| c.get_field(&format!("@{}", seg))).cloned().unwrap_or(Value::Top);
                     // Leave the field unforced (Stage 2: open terms stay Thunk
                     // until observation). Cycle detection for the full path is
                     // handled in `force` when the thunk's expr is that path.
@@ -1389,8 +1389,42 @@ let mut refl_fields = IndexMap::new();
                         path_so_far = seg.to_string();
                     }
                     val = target;
-                } 
-                _ => { return BottomCause::InvalidPath.into() } 
+                }
+                // G4: path nav over Union = per-branch projection (SPEC_07
+                // 平等演化). Drop ⊥ survivors; keep Top (open-miss); then
+                // normalize_union. Single-segment recursion — remaining
+                // segments continue on the aggregated result (no double
+                // projection of the full tail).
+                Value::Union(branches) => {
+                    let mut survivors: Vec<Value> = Vec::new();
+                    let mut branch_effect = accumulated_effect;
+                    for b in branches {
+                        let projected =
+                            self.navigate_segments(b, &[seg.to_string()], ctx, "");
+                        match projected {
+                            Value::Bottom(_) => {
+                                // Drop — compatible-survivor rule
+                            }
+                            other => {
+                                branch_effect = branch_effect.max(other.effect());
+                                survivors.push(other);
+                            }
+                        }
+                    }
+                    if survivors.is_empty() {
+                        return BottomCause::InvalidPath.into();
+                    }
+                    if !path_so_far.is_empty() {
+                        path_so_far = format!("{}.{}", path_so_far, seg);
+                    } else {
+                        path_so_far = seg.to_string();
+                    }
+                    val = normalize_union(survivors);
+                    accumulated_effect = branch_effect;
+                }
+                _ => {
+                    return BottomCause::InvalidPath.into();
+                }
             }
         }
         val.with_effect(accumulated_effect)

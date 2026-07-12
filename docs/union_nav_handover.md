@@ -71,6 +71,33 @@ Union 之路徑導航 = **逐支導航**,每支行為與單值導航完全一致
 
 ---
 
-## 交付記錄(執行者填)
+## 交付記錄(2026-07-12, implementer)
 
-（待交付)
+### 根因
+
+`navigate_segments` 的 `match current` 只有 `Value::Combo` 臂;真多支
+`Value::Union` 落 `_ => InvalidPath`。Union 路徑導航從未實作(與去重無關)。
+
+### 修復
+
+`lib.rs` `navigate_segments`:加 `Value::Union(branches)` 臂——
+1. 對當前段逐支 `navigate_segments(branch, &[seg], …)`(單段,其餘段在匯總後外層迴圈繼續);
+2. ⊥ 支剔除;
+3. 全支 ⊥ → ⊥ `#invalid_path`;
+4. 倖存支 `normalize_union`(結構去重 / 單支坍縮);
+5. Top(開放缺欄)支保留。
+
+效果取各支 max;沿用同一 `ctx`(fuel / refine_map)。
+
+### 未動
+
+cmp×Union、去重規則本身、`<<x>>` 結構態、Range/fmt。
+
+### 量測
+
+| 項目 | 結果 |
+|------|------|
+| union_nav probes | **13/13** |
+| workspace | **813 過 0 敗 3 ignored** |
+| conformance | **52/52**(L1-32) |
+| unit+integration | **72/0** |
