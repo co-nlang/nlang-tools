@@ -211,7 +211,28 @@ impl Universe {
             // values, so interactive experience is unchanged; path-directed observe
             // (navigate_segments) forces only the path (§11.4).
             let res = engine.resolve_path(path, &mut ctx);
-            engine.force_recursive(res, &mut ctx)
+            // G6 / SYNTAX_07 §4 #6: Ref-mediated observation = structural view
+            // (full hybrid node). Non-path `<<…>>` carries a `%structural`
+            // mark (payload in `%node`, not `%val`, so lattice collapse does
+            // not erase it). Collapsed observation peels `%val` at the
+            // projection layer — never inside to_nlang.
+            let structural = matches!(&res, Value::Ref(_))
+                || matches!(
+                    &res,
+                    Value::Combo(c) if crate::value::is_structural_view(c)
+                );
+            let forced = engine.force_recursive(res, &mut ctx);
+            if structural {
+                crate::value::unwrap_structural_view(forced)
+            } else {
+                // Mark may only appear after force (Thunk of Structural).
+                match &forced {
+                    Value::Combo(c) if crate::value::is_structural_view(c) => {
+                        crate::value::unwrap_structural_view(forced)
+                    }
+                    _ => crate::value::project_value_context(forced),
+                }
+            }
         } else { BottomCause::Conflict.into() }
     }
 

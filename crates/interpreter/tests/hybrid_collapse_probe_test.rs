@@ -88,7 +88,6 @@ const HYBRID: &str = "x: 1 & { name: \"Alice\" }\n";
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_observe_hybrid_reads_val() {
     // L1-37. Collapsed observation of the hybrid itself → the atom.
     // (Supersedes combo_equality_probe_test's temporary display pin,
@@ -97,26 +96,22 @@ fn red_observe_hybrid_reads_val() {
 }
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_math_hybrid_left_operand() {
     // L1-38.
     assert_obs("x: 1 & { name: \"Alice\" }\nout: x + 1", "2");
 }
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_math_hybrid_right_operand() {
     assert_obs("out: 10 + (2 & { n: \"m\" })", "12");
 }
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_math_hybrid_both_operands() {
     assert_obs("a: 1 & { u: \"p\" }\nb: 2 & { v: \"q\" }\nout: a + b", "3");
 }
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_pipe_hybrid_arg_body_math() {
     // L1-39. Falls out of body math once operands peel; arg passes whole.
     assert_obs(
@@ -126,7 +121,6 @@ fn red_pipe_hybrid_arg_body_math() {
 }
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_apply_hybrid_arg_juxtaposition() {
     assert_obs(
         "dbl: (n -> n * 2)\nx: 3 & { note: \"n\" }\nout: dbl x",
@@ -135,14 +129,12 @@ fn red_apply_hybrid_arg_juxtaposition() {
 }
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_nested_hybrid_renders_collapsed() {
     // Collapse recurses through the rendered tree (unified law).
     assert_obs("out: { h: 3 & { n: \"x\" } }", "{\n  h: 3\n}");
 }
 
 #[test]
-#[ignore = "G6 red gate: awaiting hybrid value-context collapse"]
 fn red_list_element_hybrid_renders_collapsed() {
     assert_obs("out: [1 & { n: \"a\" }, 2]", "[1, 2]");
 }
@@ -168,8 +160,6 @@ fn pin_structural_alias_stays_full() {
 
 #[test]
 fn pin_structural_literal_stays_full() {
-    // Non-path structural operand (SYNTAX_07 §2.2): geometric body of the
-    // value — must NOT collapse when display-level peel lands.
     assert_obs(
         "out: <<1 & { name: \"Bob\" }>>",
         "{\n  %val: 1\n  name: \"Bob\"\n}",

@@ -235,9 +235,15 @@ fn pin_combo_local_slash_add_ok() {
 }
 
 #[test] // ACTIVE pin: %val absorb for NON-morphism combos stays — the
-        // G2-C fix must be scoped to morphisms only
+        // G2-C fix must be scoped to morphisms only.
+        // G6 collapsed observe peels hybrid %val; prove the hybrid shape
+        // via structural dual (SYNTAX_07) + field navigation.
 fn pin_nonmorphism_val_absorb_survives() {
-    assert_obs("out: { note: \"n\" } & 5", "{\n  %val: 5\n  note: \"n\"\n}");
+    assert_obs(
+        "x: { note: \"n\" } & 5\nout: <<x>>",
+        "{\n  %val: 5\n  note: \"n\"\n}",
+    );
+    assert_obs("x: { note: \"n\" } & 5\nout: x.note", "\"n\"");
 }
 
 #[test] // ACTIVE pin: staged-staged data conflict still errs at evolve

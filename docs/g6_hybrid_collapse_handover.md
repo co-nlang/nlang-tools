@@ -69,3 +69,43 @@
 - dispatch 模式匹配對混血引數的 unify 語義(原子 pattern × 混血,
   另議)。
 - `<`/`<=` on combo(§4.10)、cmp×Union、G3、fmt。
+
+---
+
+## 交付記錄(2026-07-13, implementer)
+
+### 根因 / 修復
+
+| 面 | 根因 | 修復 |
+|---|---|---|
+| **math / atomic `==`** | `collapse()` 只認純包裝;混血落 Conflict | 一般化 `value_context_operand`(G1 同 helper 改名):遞迴剝 `%val`;無 `%val` → Err → ⊥ #conflict(cause 不變) |
+| **管道/應用** | 體內 math 同樣不剝混血 | **零改動**——`value_context_operand` 修好後 `x \|> inc` / `dbl x` 衍生通過 |
+| **坍縮態觀測** | 顯示印全 combo | `universe.observe` 出口呼叫 `project_value_context`:遞迴剝 `%val`(巢狀/list 同律);**不**進 `to_nlang` |
+| **結構態 `<<path>>`** | 需保全全節點 | bare 單段 `resolve_path` 對 `Value::Ref` **不 force**(observe 辨識 Ref = 結構視角);`force_recursive` 仍解引用 |
+| **結構態 `<<非路徑>>`** | 初版以純包裝 `{%structural,#true; %val:node}` 標記 → evolve 的 `unify_internal` 走 `collapse()` **剝掉標記** | 標記改為 **非純包裝** shape:`{%structural:#true, %node:inner}`(刻意不用 `%val`,故 `is_pure_wrapper` 為假,格子 merge 保全標記);observe 解包 `%node` 後印全節點 |
+
+### 既有期望修正
+
+| 檔 | 調整 |
+|----|------|
+| `slash_shadow_multiparam_probe_test.rs` `pin_nonmorphism_val_absorb_survives` | 坍縮態觀測現剝 `%val`(G6 合法);改以 `<<x>>` 結構對偶 + `x.note` 導航證明非態射 absorb 仍產混血(G2-C 釘意不變) |
+
+探針檔本身(紅門/釘斷言)由驗收方預先提交,本單只移 `#[ignore]`/清理診斷(已是 clean assert_obs)。
+
+### 未動
+
+- `collapse()` / `is_pure_wrapper` 本體
+- `to_nlang` 排版 / bn_serial
+- dispatch 綁定點(管道引數整節點傳遞;體內 `p.name` 釘綠)
+- 結構態材料化 `%id`/`%kind`、G3、fmt、`<`/`<=` on combo
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| hybrid_collapse probes | **18/18** |
+| workspace | **855 過 0 敗 3 ignored**(838 基線 −1 G1 臨時釘 +18 本探針) |
+| conformance | **59/59**(L1-37~39) |
+| `oo test tests/unit tests/integration` | **72 過 0 敗** |
+
+nlang-spec 帳:驗收方記。

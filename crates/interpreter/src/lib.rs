@@ -1212,16 +1212,38 @@ let mut refl_fields = IndexMap::new();
                 }
             }
 
+            // G6: bare single-segment Ref is returned unforced so observe can
+            // treat Ref-mediated paths as structural view (SYNTAX_07 §4 #6).
+            // Judgment sites (math/cmp/force_recursive) still force Refs.
+            let return_or_force = |oo: &Self, n: &str, val: Value, ctx: &mut EvalContext, use_coord: bool| -> Value {
+                if matches!(&val, Value::Ref(_)) {
+                    return val;
+                }
+                if use_coord {
+                    oo.force_coord(n, val, ctx)
+                } else {
+                    oo.force(val, ctx)
+                }
+            };
+
             for scope in ctx.scopes.iter().rev() {
                 // Scope frames: plain force (parameter rebinding is not a
                 // coordinate cycle — force_coord here false-triggers HOFs).
-                if let Some(val) = scope.get_field(name) { return self.force(val.clone(), ctx); }
-                if let Some(val) = scope.local_fields().get(name) { return self.force(val.clone(), ctx); }
+                if let Some(val) = scope.get_field(name) {
+                    return return_or_force(self, name, val.clone(), ctx, false);
+                }
+                if let Some(val) = scope.local_fields().get(name) {
+                    return return_or_force(self, name, val.clone(), ctx, false);
+                }
                 let prefixes = vec!["/", "@", "~", "~%"];
                 for p in prefixes {
                     let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) };
-                    if let Some(val) = scope.get_field(&alt_name) { return self.force(val.clone(), ctx); }
-                    if let Some(val) = scope.get_local_field(&alt_name) { return self.force(val.clone(), ctx); }
+                    if let Some(val) = scope.get_field(&alt_name) {
+                        return return_or_force(self, &alt_name, val.clone(), ctx, false);
+                    }
+                    if let Some(val) = scope.get_local_field(&alt_name) {
+                        return return_or_force(self, &alt_name, val.clone(), ctx, false);
+                    }
                 }
             }
             if let Some(ref s) = ctx.staged {
@@ -1229,40 +1251,40 @@ let mut refl_fields = IndexMap::new();
                 // Local (~private) fields: plain force — re-entry during HOF
                 // application is not a lattice cycle (list.fold + ~f).
                 if let Some(val) = s.get_field(name) {
-                    return self.force_coord(name, val.clone(), ctx);
+                    return return_or_force(self, name, val.clone(), ctx, true);
                 }
                 if let Some(val) = s.get_local_field(name) {
-                    return self.force(val.clone(), ctx);
+                    return return_or_force(self, name, val.clone(), ctx, false);
                 }
                 let prefixes = vec!["/", "@", "~", "~%"];
                 for p in prefixes {
                     let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) };
                     if let Some(val) = s.get_field(&alt_name) {
-                        return self.force_coord(&alt_name, val.clone(), ctx);
+                        return return_or_force(self, &alt_name, val.clone(), ctx, true);
                     }
                     if let Some(val) = s.get_local_field(&alt_name) {
-                        return self.force(val.clone(), ctx);
+                        return return_or_force(self, &alt_name, val.clone(), ctx, false);
                     }
                 }
             }
             if let Some(val) = ctx.root.get_field(name) {
                 let v = val.clone();
                 self.record_dep(ctx, name);
-                return self.force_coord(name, v, ctx);
+                return return_or_force(self, name, v, ctx, true);
             }
             if let Some(val) = ctx.root.get_local_field(name) {
                 let v = val.clone();
                 self.record_dep(ctx, name);
-                return self.force(v, ctx);
+                return return_or_force(self, name, v, ctx, false);
             }
             let prefixes = vec!["/", "@", "~", "~%"];
             for p in prefixes {
                 let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) };
                 if let Some(val) = ctx.root.get_field(&alt_name) {
-                    return self.force_coord(&alt_name, val.clone(), ctx);
+                    return return_or_force(self, &alt_name, val.clone(), ctx, true);
                 }
                 if let Some(val) = ctx.root.get_local_field(&alt_name) {
-                    return self.force(val.clone(), ctx);
+                    return return_or_force(self, &alt_name, val.clone(), ctx, false);
                 }
             }
 

@@ -70,6 +70,79 @@ impl PartialEq for Value {
     }
 }
 
+/// G6: `%structural: #true` mark on a structural-view wrapper (`<<…>>`
+/// non-path). Payload lives in `%node` (not `%val`) so lattice `collapse()`
+/// does not erase the mark during evolve unify.
+pub fn is_structural_view(cv: &ComboVal) -> bool {
+    match cv.get_field("%structural") {
+        Some(Value::Atom(AtomKind::Tag(t), _, _)) => {
+            t.trim_start_matches('#') == "true"
+        }
+        _ => false,
+    }
+}
+
+/// Payload of a structural-view wrapper (`%node`), if present.
+pub fn structural_node(cv: &ComboVal) -> Option<&Value> {
+    if is_structural_view(cv) {
+        cv.get_field("%node")
+    } else {
+        None
+    }
+}
+
+/// Unwrap structural-view mark to the full node; otherwise return `v` unchanged.
+pub fn unwrap_structural_view(v: Value) -> Value {
+    match v {
+        Value::Combo(c) if is_structural_view(&c) => c
+            .get_field("%node")
+            .cloned()
+            .unwrap_or(Value::Combo(c)),
+        other => other,
+    }
+}
+
+/// G6: collapsed-observation projection (SYNTAX_06 §4 #6 value-context).
+/// Peels hybrid/pure-wrapper `%val` for display; recurses into combo fields
+/// and list elements. Structural-view markers unwrap to the full node without
+/// peeling its hybrid shape. Does **not** alter `to_nlang`.
+pub fn project_value_context(v: Value) -> Value {
+    match v {
+        Value::Combo(c) => {
+            // Structural view: full node, no hybrid peel.
+            if is_structural_view(&c) {
+                return c
+                    .get_field("%node")
+                    .cloned()
+                    .unwrap_or(Value::Combo(c));
+            }
+            // Hybrid or pure wrapper: value context reads %val.
+            if let Some(inner) = c.get_field("%val").cloned() {
+                return project_value_context(inner);
+            }
+            // Plain combo / list: project each field recursively.
+            let mut new_c = ComboVal::default();
+            new_c.closed = c.closed;
+            new_c.effect = c.effect;
+            new_c.relations = c.relations.clone();
+            new_c.masa_ref = c.masa_ref.clone();
+            for (k, fv) in c.all_fields_iter() {
+                new_c.insert_field(&k, project_value_context(fv));
+            }
+            for (k, fv) in c.local.iter() {
+                new_c
+                    .local
+                    .insert(k.clone(), project_value_context(fv.clone()));
+            }
+            Value::Combo(new_c)
+        }
+        Value::Union(branches) => {
+            normalize_union(branches.into_iter().map(project_value_context))
+        }
+        other => other,
+    }
+}
+
 /// SPEC_01 join idempotence: flatten nested Unions, drop structural
 /// duplicates (PartialEq, first occurrence kept), collapse to a single
 /// value when one survivor remains. Does not re-sort (eval `|` order /
