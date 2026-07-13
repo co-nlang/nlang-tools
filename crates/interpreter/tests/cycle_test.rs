@@ -48,16 +48,23 @@ fn test_fuel_exhausted_blur_mode() {
     let program = parse_program(input).unwrap();
 
     let res = oo.eval_observed(&program.fields[0].value, &mut ctx);
-    println!("Blur mode result: {:?}", res);
     match res {
+        // First-class Value::Blur (Phase 9 / G3 horizon value).
+        Value::Blur(bd) => {
+            assert!(
+                matches!(bd.cause, nlang_interpreter::BlurCause::FuelExhausted),
+                "expected fuel_exhausted blur, got {:?}",
+                bd.cause
+            );
+        }
         Value::Combo(cv) => {
+            // Legacy combo-shaped #blur (if any residual path).
             let kind = cv.get_field("%kind");
-            println!("kind: {:?}", kind);
             assert!(kind.map(|k| k.to_string_plain().trim_start_matches('#') == "blur").unwrap_or(false));
         }
         Value::Bottom(_) => {
-            println!("Got Bottom instead of Blur - this is acceptable if computation was very cheap");
+            // Acceptable if computation was very cheap relative to fuel=1.
         }
-        other => panic!("Expected Blur combo or Bottom, got {:?}", other),
+        other => panic!("Expected Blur or Bottom, got {:?}", other),
     }
 }

@@ -113,7 +113,14 @@ impl EvalContext {
     pub fn with_strategy(mut self, strategy: ObservationStrategy) -> Self { self.strategy = strategy; self }
     pub fn check_resources(&mut self, cost: u64) -> Result<(), ResourceExhausted> { 
         if self.fuel < cost { return Err(ResourceExhausted::FuelExhausted); }
-        if self.depth > self.max_unification_depth as u32 { return Err(ResourceExhausted::StackOverflow); }
+        // G3 R3: depth/stack gate is observation-budget exhaustion, not a
+        // detected cycle. Report FuelExhausted so Blur %cause / Strict ⊥
+        // share the #fuel_exhausted tag (L2-21/22; #divergent reserved for
+        // L2-17 in_flight / coordinate self-ref). ResourceExhausted::StackOverflow
+        // remains for explicit callers if ever needed.
+        if self.depth > self.max_unification_depth as u32 {
+            return Err(ResourceExhausted::FuelExhausted);
+        }
         if let Some(deadline) = self.timeout_deadline {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -871,7 +878,11 @@ let mut refl_fields = IndexMap::new();
 
     pub fn apply_morphism(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
         let f = self.force(f, ctx); if let Value::Bottom(_) = f { return f; } if let Value::Top = f { return Value::Top; }
+        // G3 R1: Blur is not a callable / not a dispatchable arg — absorb
+        // (pass through) rather than falling into the non-combo Conflict arm.
+        if let Value::Blur(_) = &f { return f; }
         let arg = self.force(arg, ctx); if let Value::Bottom(_) = arg { return arg; }
+        if let Value::Blur(_) = &arg { return arg; }
         // bind additivity (SPEC_07 §4, ENGINE_SYNC #18): a superposed argument
         // evolves branchwise — f(A|B) = f(A) | f(B); ⊥ branches prune (| identity)
         if let Value::Union(branches) = arg {
@@ -1406,6 +1417,22 @@ let mut refl_fields = IndexMap::new();
                     return Value::Atom(AtomKind::Tag(type_tag.to_string()), EffectTag::Pure, None).with_effect(accumulated_effect);
                 }
                 return current;
+            }
+            // G3 R4: #blur meta reads BlurCause tag (same spelling as Strict
+            // ⊥ #fuel_exhausted). Both %cause and %type return the cause tag.
+            if let Value::Blur(ref bd) = current {
+                if seg == "%cause" || seg == "%type" {
+                    return Value::Atom(
+                        AtomKind::Tag(bd.cause.as_str().to_string()),
+                        EffectTag::Pure,
+                        None,
+                    )
+                    .with_effect(accumulated_effect);
+                }
+                // Non-meta field on a horizon value: open miss / invalid — do
+                // not re-mint as #conflict; return the blur itself for bare
+                // identity segments is not navigable. Fall through to
+                // InvalidPath via the match below for unknown segs.
             }
 
             match current {

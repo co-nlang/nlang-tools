@@ -53,6 +53,22 @@ enum Commands {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Eval recursion (morphism apply / left-deep math) can exceed the default
+    // main-thread stack before the engine depth horizon engages. Interpreter
+    // probes use 64 MiB threads; match that for the CLI entrypoint.
+    const STACK: usize = 64 * 1024 * 1024;
+    let handle = std::thread::Builder::new()
+        .name("oo-main".into())
+        .stack_size(STACK)
+        .spawn(main_on_large_stack)
+        .expect("spawn oo-main thread");
+    match handle.join() {
+        Ok(result) => result,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+fn main_on_large_stack() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Run { files, observe, format } => run_one_shot(files, observe, format),

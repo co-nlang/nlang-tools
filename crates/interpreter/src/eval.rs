@@ -452,11 +452,27 @@ impl Ouroboros {
                 }
                 let fv = self.eval(f, ctx);
                 let av = self.eval(a, ctx);
+                // G3 R1: Apply absorbs #blur before morphism dispatch
+                // (apply_morphism has no Blur arm → would mint ⊥ #conflict).
+                if let Value::Blur(bd) = &fv {
+                    let mut bd = bd.clone();
+                    bd.effect = bd.effect.max(av.effect());
+                    return Value::Blur(bd);
+                }
+                if let Value::Blur(bd) = &av {
+                    let mut bd = bd.clone();
+                    bd.effect = bd.effect.max(fv.effect());
+                    return Value::Blur(bd);
+                }
                 self.apply_morphism(fv.clone(), av.clone(), ctx)
             }
             ExprKind::Pipe(l, r) => {
                 let lv = self.eval(l, ctx);
                 if let Value::Bottom(_) = lv { return lv; }
+                // G3 R2: pipe argument carries #blur into the body; do not
+                // re-mint at the pipe boundary (absorption happens in body
+                // value contexts / apply). Pass Blur through when the RHS
+                // never consumes it — apply_morphism already absorbs.
                 // bind additivity (SPEC_07 §4 疊加態平等演化; ENGINE_SYNC #18):
                 // a superposed input evolves branchwise with its OWN $ binding —
                 // (A|B) |> f ≡ (A|>f) | (B|>f); ⊥ branches prune (| identity)
@@ -651,6 +667,10 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             },
             ExprKind::Unary { op, expr } => {
                 let v = self.eval(expr, ctx).collapse().clone();
+                // G3 R1: unary value context absorbs #blur (do not mint #conflict).
+                if let Value::Blur(_) = &v {
+                    return v;
+                }
                 match op {
                     nlang_parser::ast::UnaryOp::Not => self.orthocomplement(v, ctx),
                     nlang_parser::ast::UnaryOp::Neg => match v {
@@ -767,6 +787,18 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 if let Value::Bottom(_) = va { return va; }
                 let vb = self.eval(b, ctx);
                 if let Value::Bottom(_) = vb { return vb; }
+                // G3 R1: Probe is a value-context consumer — absorb #blur
+                // (measured same disease as math catch-all before this arm).
+                if let Value::Blur(bd) = &va {
+                    let mut bd = bd.clone();
+                    bd.effect = bd.effect.max(vb.effect());
+                    return Value::Blur(bd);
+                }
+                if let Value::Blur(bd) = &vb {
+                    let mut bd = bd.clone();
+                    bd.effect = bd.effect.max(va.effect());
+                    return Value::Blur(bd);
+                }
                 let res_e = va.effect().max(vb.effect());
                 let ca = va.collapse().clone();
                 let cb = vb.collapse().clone();
@@ -819,9 +851,23 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         // `$.a + 1` inside a pipe transformer evals `$.a` to a Thunk (the field
         // is lazily stored); arithmetic needs the actual value.
         let va = self.force(self.eval(a, ctx), ctx);
+        // ⊥ short-circuit first (G3 trap 2: order preserved vs Blur).
         if let Value::Bottom(_) = va { return va; }
         let vb = self.force(self.eval(b, ctx), ctx);
         if let Value::Bottom(_) = vb { return vb; }
+        // G3 R1: Blur short-circuit BEFORE value_context_operand — helper
+        // stays peel-only; horizon identity must not reach the atom match
+        // catch-all (which previously minted ⊥ #conflict).
+        if let Value::Blur(bd) = &va {
+            let mut bd = bd.clone();
+            bd.effect = bd.effect.max(vb.effect());
+            return Value::Blur(bd);
+        }
+        if let Value::Blur(bd) = &vb {
+            let mut bd = bd.clone();
+            bd.effect = bd.effect.max(va.effect());
+            return Value::Blur(bd);
+        }
         // G6: value-context peels hybrid %val (and pure wrappers); plain
         // combos without %val stay on the Conflict path below.
         let va = match value_context_operand(&va) {
@@ -938,11 +984,24 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         // Policy unchanged from pre-split path: ⊥ before ⊤; return the lattice
         // extreme, never a clean boolean when either side is extreme.
         if matches!(op, CmpOp::Eq | CmpOp::Ne) {
+            // ⊥ short-circuit first (order vs Blur preserved).
             if let Value::Bottom(_) = &va {
                 return va;
             }
             if let Value::Bottom(_) = &vb {
                 return vb;
+            }
+            // G3 R1: atomic family absorbs #blur — never silent #false via
+            // structural PartialEq fallthrough (same lie class as G1 combo==).
+            if let Value::Blur(bd) = &va {
+                let mut bd = bd.clone();
+                bd.effect = bd.effect.max(vb.effect());
+                return Value::Blur(bd);
+            }
+            if let Value::Blur(bd) = &vb {
+                let mut bd = bd.clone();
+                bd.effect = bd.effect.max(va.effect());
+                return Value::Blur(bd);
             }
             let res_e = va.effect().max(vb.effect());
             // G1 #12: peel hybrid %val into the atomic family; non-collapsible
