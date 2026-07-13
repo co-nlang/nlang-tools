@@ -805,7 +805,9 @@ let mut refl_fields = IndexMap::new();
         engine_fields.insert("/resolve".to_string(),         engine_morph("/resolve",         "engine.resolve",         EffectTag::State));
         let mut state_inner = IndexMap::new();
         state_inner.insert("differential".to_string(), Value::Atom(AtomKind::Tag("d1_converging".to_string()), EffectTag::Pure, None));
-        state_inner.insert("strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));
+        // G-config: ~%Engine.state.strategy was a dead display (always #blur,
+        // never tracked ctx overrides). Normative strategy home = ~%Config;
+        // runtime override = /set_strategy. Removed the lying field.
         engine_fields.insert("state".to_string(), Value::Combo(ComboVal::new(state_inner, false, IndexMap::new(), EffectTag::Pure, vec![])));
         fields.insert("~%Engine".to_string(), Value::Combo(ComboVal::new(engine_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
@@ -823,14 +825,17 @@ let mut refl_fields = IndexMap::new();
         official_fields.insert("/add_architect".to_string(), official_morph("engine.add_architect", EffectTag::IO));
         fields.insert("~%Official".to_string(), Value::Combo(ComboVal::new(official_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
-        // ~%Config: genesis defaults (SPEC_09 §6)
+        // ~%Config: genesis defaults (SPEC_08 §3.1 / SPEC_09 §6).
+        // Bare field names on the data axis — path-observable as ~%Config.fuel.
+        // No %-meta fallback (category error: % is node metadata, not config).
         let mut config_fields = IndexMap::new();
-        config_fields.insert("%fuel".to_string(), Value::Atom(AtomKind::Int(10000i64.into()), EffectTag::Pure, None));
-        config_fields.insert("%max_branches".to_string(), Value::Atom(AtomKind::Int(64i64.into()), EffectTag::Pure, None));
-        config_fields.insert("%max_depth".to_string(), Value::Atom(AtomKind::Int(256i64.into()), EffectTag::Pure, None));
-        config_fields.insert("%max_pattern_nodes".to_string(), Value::Atom(AtomKind::Int(1024i64.into()), EffectTag::Pure, None));
-        config_fields.insert("%timeout".to_string(), Value::Atom(AtomKind::Int(1000i64.into()), EffectTag::Pure, None));
-        config_fields.insert("%strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));
+        config_fields.insert("fuel".to_string(), Value::Atom(AtomKind::Int(10000i64.into()), EffectTag::Pure, None));
+        config_fields.insert("max_branches".to_string(), Value::Atom(AtomKind::Int(64i64.into()), EffectTag::Pure, None));
+        config_fields.insert("max_unification_depth".to_string(), Value::Atom(AtomKind::Int(256i64.into()), EffectTag::Pure, None));
+        config_fields.insert("max_lifting_depth".to_string(), Value::Atom(AtomKind::Int(32i64.into()), EffectTag::Pure, None));
+        config_fields.insert("max_pattern_nodes".to_string(), Value::Atom(AtomKind::Int(1024i64.into()), EffectTag::Pure, None));
+        config_fields.insert("timeout".to_string(), Value::Atom(AtomKind::Int(1000i64.into()), EffectTag::Pure, None));
+        config_fields.insert("strategy".to_string(), Value::Atom(AtomKind::Tag("blur".to_string()), EffectTag::Pure, None));
         fields.insert(
             "~%Config".to_string(),
             Value::Combo(ComboVal::new(config_fields, true, IndexMap::new(), EffectTag::Pure, vec![])),
@@ -843,35 +848,40 @@ let mut refl_fields = IndexMap::new();
         let sys_root = self.root_with_system();
         let mut ctx = EvalContext::new(sys_root.clone());
         ctx.memo_enabled = false; // engine-internal: wrong root for memo (see field doc)
+        // Initial horizon from ~%Config (bare names). Runtime override of
+        // strategy is /set_strategy (mutates live ctx, not the genesis node).
         if let Some(Value::Combo(ref cfg)) = sys_root.get_field("~%Config").cloned() {
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%fuel").cloned() {
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("fuel").cloned() {
                 if let Some(f) = n.to_u64() { ctx.fuel = f; }
             }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%max_branches").cloned() {
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_branches").cloned() {
                 if let Some(v) = n.to_u64() { ctx.max_branches = v as usize; }
             }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%max_depth").cloned() {
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_unification_depth").cloned() {
                 if let Some(v) = n.to_u64() { ctx.max_unification_depth = v as usize; }
             }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%max_pattern_nodes").cloned() {
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_lifting_depth").cloned() {
+                if let Some(v) = n.to_u64() { ctx.max_lifting_depth = v as usize; }
+            }
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_pattern_nodes").cloned() {
                 if let Some(v) = n.to_u64() { ctx.max_pattern_nodes = v as usize; }
             }
-            if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("%strategy").cloned() {
+            if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("strategy").cloned() {
                 ctx.strategy = match s.trim_start_matches('#') {
                     "strict" => ObservationStrategy::Strict,
                     "approximate" => ObservationStrategy::Approximate,
                     _ => ObservationStrategy::Blur,
                 };
             }
-        if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("%timeout").cloned() {
-            if let Some(timeout_ms) = n.to_u64() {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                ctx.timeout_deadline = Some(now_ms + timeout_ms);
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("timeout").cloned() {
+                if let Some(timeout_ms) = n.to_u64() {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    ctx.timeout_deadline = Some(now_ms + timeout_ms);
+                }
             }
-        }
         }
         ctx
     }

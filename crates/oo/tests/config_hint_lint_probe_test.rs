@@ -49,7 +49,6 @@ fn r5(diags: &[nlint::Diagnostic]) -> Vec<&nlint::Diagnostic> {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "config red gate: awaiting R5 horizon-hint lint"]
 fn red_r5_node_fuel_hint_warns() {
     let diags = lint_src("x: {\n    %fuel: 5000\n    val: 42\n}\n");
     let hits = r5(&diags);
@@ -69,7 +68,6 @@ fn red_r5_node_fuel_hint_warns() {
 }
 
 #[test]
-#[ignore = "config red gate: awaiting R5 horizon-hint lint"]
 fn red_r5_node_strategy_hint_warns() {
     let diags = lint_src("y: {\n    %strategy: #strict\n    v: 1\n}\n");
     assert!(
@@ -79,7 +77,6 @@ fn red_r5_node_strategy_hint_warns() {
 }
 
 #[test]
-#[ignore = "config red gate: awaiting R5 horizon-hint lint"]
 fn red_r5_nested_hint_warns() {
     // Hints at any nesting depth are still hints.
     let diags = lint_src("outer: {\n    inner: {\n        %timeout: 50\n    }\n}\n");

@@ -29,7 +29,7 @@ pub const SEED_TOML:      &str = "hash:sha256:v1:4594a34f5da20ab41957665d774f485
 pub const SEED_OPTION:    &str = "hash:sha256:v1:882e630c8f1cf5cd644ae7cfe6561e8738911c0b5105dcd0680266433400a89d";
 pub const SEED_RESULT:    &str = "hash:sha256:v1:bf98c6ee2b26ba36628f5b14050cd48b090e6e4e8248bb8e6e98a9d26fb66c46";
 pub const SEED_REGEX:     &str = "hash:sha256:v1:80d321e07858a76dedca5edf51b0b93913e95c93da5a6e135070c1b6647e05a3";
-pub const SEED_CONFIG:    &str = "hash:sha256:v1:87afeec4f3c5a2f384733301885ea6497eef5b352f6961576f5c538a05550f73";
+pub const SEED_CONFIG:    &str = "hash:sha256:v1:1259d1c2f08687029e27377181ddfb126544ff61c4b4ba976a335bb3d56e9e2a";
 
 pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
     vec![

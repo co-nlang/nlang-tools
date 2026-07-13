@@ -71,45 +71,38 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "config red gate: awaiting ~%Config bare-name convergence"]
 fn red_config_fuel_bare() {
     // L2-23.
     assert_obs("out: ~%Config.fuel", "10000");
 }
 
 #[test]
-#[ignore = "config red gate: awaiting ~%Config bare-name convergence"]
 fn red_config_strategy_bare() {
     assert_obs("out: ~%Config.strategy", "#blur");
 }
 
 #[test]
-#[ignore = "config red gate: awaiting ~%Config bare-name convergence"]
 fn red_config_timeout_bare() {
     assert_obs("out: ~%Config.timeout", "1000");
 }
 
 #[test]
-#[ignore = "config red gate: awaiting ~%Config bare-name convergence"]
 fn red_config_max_branches_bare() {
     assert_obs("out: ~%Config.max_branches", "64");
 }
 
 #[test]
-#[ignore = "config red gate: awaiting ~%Config bare-name convergence"]
 fn red_config_max_unification_depth_bare() {
     // Renames the engine's `%max_depth` to the SPEC_09 §6 dictionary name.
     assert_obs("out: ~%Config.max_unification_depth", "256");
 }
 
 #[test]
-#[ignore = "config red gate: awaiting ~%Config bare-name convergence"]
 fn red_config_max_pattern_nodes_bare() {
     assert_obs("out: ~%Config.max_pattern_nodes", "1024");
 }
 
 #[test]
-#[ignore = "config red gate: awaiting ~%Config bare-name convergence"]
 fn red_config_max_lifting_depth_bare() {
     // New field: EvalContext.max_lifting_depth (32) was never configurable.
     assert_obs("out: ~%Config.max_lifting_depth", "32");

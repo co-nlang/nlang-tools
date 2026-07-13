@@ -70,3 +70,45 @@
 - 節點提示的實際採納(子樹沙箱燃料帽,RFC 地盤)。
 - `~%` 系統軸影蓋靜默(另案,勿順手修)。
 - oo CLI `--fuel` 旗標之類的介面糖(另議)。
+
+---
+
+## 交付記錄(2026-07-13, implementer)
+
+### 根因 / 修復
+
+| 面 | 根因 | 修復 |
+|---|---|---|
+| **~%Config 欄名** | `%fuel` 等入 meta 軸 → `~%Config.fuel` 導航 `_` | genesis + `eval_context` 改裸名 data 軸;乾淨斷開無 `%` fallback |
+| **字典名** | `%max_depth` ≠ SPEC_09 | → `max_unification_depth` |
+| **max_lifting_depth** | EvalContext 有欄位未可配置 | genesis 32 + 讀線 |
+| **策略三家** | `~%Engine.state.strategy` 死展示 | 移除該欄(僅留 `differential`);`/set_strategy` 保留並註「活 ctx 覆蓋」 |
+| **R5** | 節點 `%fuel` 等靜默忽略 | nlint Warn(七名);combo 內鍵常為 `Path(["%fuel"])` 非 Named+Meta——兩形皆掃 |
+
+### `~%Engine.state.strategy` 引用掃描
+
+語料/測試 **零引用**(僅本 handover/探針註解)。無需改寫。
+
+### 既有期望修正
+
+| 檔 | 調整 |
+|----|------|
+| `genesis.rs` SEED_CONFIG | 欄名變更 → 新 CAID |
+| `genesis_test.rs` | `get_field("fuel")` 等裸名 |
+
+### 未動
+
+- `%config` 使用者覆蓋/`~%` 影蓋、fuel 量級、fmt/CAID、`/set_strategy` 覆蓋行為
+- R1–R4 診斷輸出形
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| config_home probes | **10/10** |
+| R5 lint probes | **6/6** |
+| workspace | **887 過 0 敗 3 ignored**(871 + 16 本探針) |
+| conformance | **62/62**(L2-23) |
+| 語料 | **74/0** |
+
+nlang-spec 帳:驗收方記。

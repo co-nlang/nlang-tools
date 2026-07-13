@@ -159,6 +159,9 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         result
     }) as Arc<BuiltinFn>);
 
+    // Runtime override of the live observation strategy (State effect).
+    // Initial value lives at ~%Config.strategy (SPEC_08 §3.1); this morphism
+    // only mutates the current EvalContext for the rest of this observation.
     m.insert("engine.set_strategy".to_string(), Arc::new(|arg: Value, _oo: &Ouroboros, ctx: &mut EvalContext| {
         let tag = match &arg {
             Value::Atom(AtomKind::Tag(t), _, _) => t.trim_start_matches('#').to_string(),
