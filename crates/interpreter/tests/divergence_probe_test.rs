@@ -163,11 +163,13 @@ fn pin_free_context_no_context() {
     }
 }
 
-#[test] // ACTIVE pin: runaway morphism recursion already bottoms (fuel) —
-        // must keep bottoming, not hang, whatever the cause tag
+#[test] // ACTIVE pin: runaway morphism recursion must TERMINATE (not hang).
+        // G3: default Blur strategy yields first-class #blur #fuel_exhausted
+        // (not ⊥ #conflict); Strict would be ⊥ #fuel_exhausted. Intent of the
+        // pin is non-hanging terminal, not a specific lattice bottom.
 fn pin_runaway_morphism_bottoms() {
     match run_observe("g: (n -> /g n)\nout: /g 1", "out") {
-        Ok(Value::Bottom(_)) | Err(_) => {}
-        other => panic!("runaway recursion must bottom, got {other:?}"),
+        Ok(Value::Bottom(_)) | Ok(Value::Blur(_)) | Err(_) => {}
+        other => panic!("runaway recursion must terminate (⊥ or #blur), got {other:?}"),
     }
 }

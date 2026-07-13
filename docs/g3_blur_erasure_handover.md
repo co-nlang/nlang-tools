@@ -84,3 +84,54 @@ runaway 只是入口。
 - `=`/`<`/`<=` 集合家族 × Blur(另案;釘現況)。
 - Union × Blur 分支語義、timeout `#incomplete`(SPEC_08 §3.2 已法)、
 - 預設燃料量級、fmt/CAID。
+
+---
+
+## 交付記錄(2026-07-13, implementer)
+
+### 根因 / 修復
+
+| 面 | 根因 | 修復 |
+|---|---|---|
+| **math** | `eval_math` force 後無 Blur 臂 → catch-all ⊥ #conflict | ⊥ 短路後、`value_context_operand` **前** Blur 短路(兩側;effect max) |
+| **原子 `==`/`!=`** | Blur 漏到結構 PartialEq → 默默 #false | 同位置 Blur 吸收(集合家族 `=` 不動) |
+| **一元 Neg** | match `_` → Conflict | collapse 後 Blur 原樣傳出 |
+| **Probe `<=>`** | 同 math 病(量測確認) | Bottom 後 Blur 吸收 |
+| **Apply / apply_morphism** | Blur 作 f 或 arg 落入 non-combo arm → ⊥ #conflict(R2 量測:抹除點在 dispatch 邊界,非 binding) | Apply 兩側與 `apply_morphism` 入口吸收 Blur |
+| **R4 meta** | `%cause`/`%type` 僅 Bottom 臂;Blur 落 InvalidPath 或經 Conflict | `navigate_segments` Blur 臂回 BlurCause 標籤 |
+| **cause 標籤** | 深度門先於燃料觸發,BlurCause 原為 stack_overflow;探針/L2 要 #fuel_exhausted | `check_resources` 深度超限改報 `FuelExhausted`(R3:#divergent 專屬偵測循環;深度=觀測預算耗盡)。**未改** `handle_resource_exhausted` 本體、cost 數值、預設燃料 10000 |
+| **oo CLI** | 主執行緒預設棧在 morphism 深遞迴下先於視界崩 | `main` 以 64MiB 執行緒承載(與探針棧一致) |
+
+### R2 量測
+
+`big |> inc` 紅門綠:引數路徑攜帶 Blur,體內 math/Apply 吸收。抹除點若存在是 **apply_morphism 無 Blur 臂**(已補),非 evolve 綁定。
+
+### Strict 自測
+
+`EvalContext::with_strategy(Strict)` + 4000 項加法 → `Value::Bottom(FuelExhausted)`(非 Conflict)。⊥ 先於 Blur 的短路順序維持。
+
+### 既有期望修正
+
+| 檔 | 調整 |
+|----|------|
+| `tests/pending/test_canonical.n` → `tests/unit/` | G1:`==`→`=`;G3:期望 `#fuel_exhausted`;出 pending |
+| `cycle_test.rs` `test_fuel_exhausted_blur_mode` | 認一等 `Value::Blur`(舊期望 combo `%kind:#blur`) |
+| `divergence_probe_test.rs` `pin_runaway_morphism_bottoms` | 終端可為 `#blur`(G3;原只認 ⊥;意為不掛死) |
+
+### 未動
+
+- `handle_resource_exhausted` 本體、Blur 顯示形/CAID 公式、`normalize_union`
+- 每步 fuel cost 數值、預設 fuel 10000
+- 集合家族 `=`/`<`/`<=` × Blur(釘 `pin_lattice_eq_blur_current_behavior` 仍 #false)
+- 同引數 #divergent 偵測升級
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| blur_horizon probes | **15/15** |
+| workspace | **871 過 0 敗 3 ignored**(基線 856 +15 本探針;既有測試期望修正不改計數邏輯) |
+| conformance | **61/61**(L2-21/22) |
+| `oo test tests/unit tests/integration` | **74 過 0 敗**(72+2 test_canonical) |
+
+nlang-spec 帳/SPEC 增補:驗收方記。

@@ -99,27 +99,23 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_flat_math_exhaustion_is_blur() {
     // Generic case, no recursion anywhere. Today: ⊥ #conflict.
     assert_blur_fuel(&format!("out: {}", flat_chain(4000)));
 }
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_runaway_slash_morphism_is_blur() {
     assert_blur_fuel("/recursive: x -> /recursive (x + 1)\nout: /recursive 1");
 }
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_runaway_bare_morphism_is_blur() {
     // `/` is not a variable (G2 lesson): bare-name control.
     assert_blur_fuel("rec: (x -> rec (x + 1))\nout: rec 1");
 }
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_same_arg_runaway_is_blur_not_divergent() {
     // R3: same-argument self-call is theoretically detectable but the
     // detector is a SEPARATE future case — until then the honest cause
@@ -128,7 +124,6 @@ fn red_same_arg_runaway_is_blur_not_divergent() {
 }
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_eqeq_blur_operand_absorbs() {
     // Today: silent #false (blur falls through to structural compare) —
     // same lie class as G1's combo ==.
@@ -136,13 +131,11 @@ fn red_eqeq_blur_operand_absorbs() {
 }
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_neq_blur_operand_absorbs() {
     assert_blur_fuel(&format!("big: {}\nout: big != 1", flat_chain(4000)));
 }
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_pipe_blur_arg_carries_body_absorbs() {
     // R2: the argument carries the blur; the body's math absorbs it.
     assert_blur_fuel(&format!(
@@ -156,7 +149,6 @@ fn red_pipe_blur_arg_carries_body_absorbs() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_runaway_type_meta_fuel_exhausted() {
     // L2-21.
     assert_obs(
@@ -166,7 +158,6 @@ fn red_runaway_type_meta_fuel_exhausted() {
 }
 
 #[test]
-#[ignore = "G3 red gate: awaiting blur-horizon propagation"]
 fn red_flat_cause_meta_fuel_exhausted() {
     // L2-22.
     assert_obs(
