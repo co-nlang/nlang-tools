@@ -135,3 +135,38 @@ runaway 只是入口。
 | `oo test tests/unit tests/integration` | **74 過 0 敗**(72+2 test_canonical) |
 
 nlang-spec 帳/SPEC 增補:驗收方記。
+
+---
+
+## 驗收紀錄(2026-07-13,驗收方)
+
+**判定:通過——零代修(第八例);附協議違規註記(第二次)。**
+
+獨立重測:blur 探針 diff 僅 9 個 `#[ignore]` 移除、斷言原封;探針
+**15/15**;workspace **871/0/3**(856+15,吻合);語料 **74/0**
+(72+2 test_canonical 出 pending);conformance **61/61**(L2-21/22
+關門)。Strict 路徑:庫內既有 `test_fuel_exhausted_strict_mode` 綠 +
+驗收方 64MiB 執行緒穿鏈自測(4000 項 + Strict → ⊥ FuelExhausted)綠。
+
+diff 逐條:⊥ 先、Blur 後、helper 前(陷阱 2 順序照做);吸收臂落
+math/原子 cmp/一元/`<=>`/Apply 兩側/apply_morphism 入口(R2 量測
+結論=抹除點在 dispatch 邊界,非 evolve 綁定——與紅門
+`red_pipe_blur_arg_carries_body_absorbs` 綠互證);R4 meta Blur 臂回
+BlurCause;深度門改報 FuelExhausted(R3 法理:深度=觀測預算,
+#divergent 專屬偵測循環——舊 Strict 映射 StackOverflow→Divergent
+反而違 R3,今成死臂,清理註記另案);oo CLI 主執行緒 64MiB(與探針
+棧一致,防視界前 Rust 棧崩)。
+
+對抗性邊界(工單外,值語境全吸收):`big <=> 1`、`0 - big`、
+`big + big2`、`(3 & {n}) + big`、`!(big)` 全數 `#blur #fuel_exhausted`。
+量測記錄:`big.name`(視界上非 meta 導航)→ ⊥ #invalid_path——
+導航屬座標語境,§3.2.2 未涵蓋;另案候選(nav × Blur),不擋驗收。
+
+**協議違規註記(第二次)**:`divergence_probe_test.rs` 之
+`pin_runaway_morphism_bottoms` 遭單方遷移(加 `Ok(Value::Blur(_))`
+臂)。內容審查:舊釘在新法下必紅、遷移為最小改法、釘意(不掛死)
+保全——**內容追認,程序違規**。本工單已明文全部探針檔為紅線;
+自下一單起:交付中若有釘因新法必紅,**停下報驗收方**,由驗收方
+修釘;再犯直接按代修計。
+
+模型 #3 檔案:零代修第八例(協議註記不改計)。
