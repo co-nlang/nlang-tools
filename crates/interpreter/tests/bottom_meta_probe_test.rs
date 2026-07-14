@@ -88,21 +88,18 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_bottom_nav_compositional_type() {
     // L2-28. Today: whole ⊥ display (bail-out discards `%type`).
     assert_obs("bad: 1 & 2\nout: bad.name.%type", "#conflict");
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_bottom_nav_compositional_cause() {
     // F1 + F2 combined: passthrough, then cocoon collapse.
     assert_obs("bad: 1 & 2\nout: bad.name.%cause", "#conflict");
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_divergent_nav_compositional() {
     assert_obs("a: a + 1\nout: a.name.%type", "#divergent");
 }
@@ -112,14 +109,12 @@ fn red_divergent_nav_compositional() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_cause_collapses_to_tag() {
     // L2-29. Today: raw diagnostic combo.
     assert_obs("bad: 1 & 2\nout: bad.%cause", "#conflict");
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_cause_structural_keeps_cocoon() {
     // Duality face: <<path>> keeps the chain — and the cocoon now carries
     // its %val duality core.
@@ -131,7 +126,6 @@ fn red_cause_structural_keeps_cocoon() {
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_cause_val_navigable() {
     // Today: `_` (no %val field on the diagnostic combo).
     assert_obs("bad: 1 & 2\nm: bad.%cause\nout: m.%val", "#conflict");
@@ -142,7 +136,6 @@ fn red_cause_val_navigable() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_no_cause_open_atom() {
     // L2-30. Today: ⊥ #invalid_path — the query minting a fresh conflict,
     // exactly what SYNTAX_08 §4 #2 forbids.
@@ -154,27 +147,23 @@ fn red_no_cause_open_atom() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_atom_nav_open() {
     // L2-31.
     assert_obs("out: (7).a", "_");
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_atom_nav_deep_open() {
     // Compositional openness: Top stays Top through further segments.
     assert_obs("out: (7).a.b", "_");
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_top_nav_open() {
     assert_obs("c: { a: 1 }\nout: c.nope.deeper", "_");
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_union_atoms_nav_open() {
     // Successor of G4's pin_union_nav_all_bottom_is_invalid_path
     // (migrated by the ACCEPTOR): atom branches open-miss, kept →
@@ -183,7 +172,6 @@ fn red_union_atoms_nav_open() {
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_union_atom_branch_open_miss() {
     // Successor of G4's red_union_nav_bottom_branch_dropped (`1`): the
     // atom branch is an open miss now, kept like any Top-miss branch.
@@ -191,7 +179,6 @@ fn red_union_atom_branch_open_miss() {
 }
 
 #[test]
-#[ignore = "bottom-meta red gate: awaiting F1-F4 rectification"]
 fn red_parent_overflow_out_of_horizon() {
     // Canonical tag on ^ depth overflow (ERROR_CODES §1). Note: valid
     // parent shapes currently also land here (scopes unwired in

@@ -466,8 +466,24 @@ impl BottomDetail {
             BottomCause::H2Split => "#h2_split",
             BottomCause::SemanticEclipse => "#semantic_eclipse",
             BottomCause::NoContext => "#no_context",
+            BottomCause::OutOfHorizon => "#out_of_horizon",
         };
         fields.insert("%type".to_string(), Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None));
+        // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
+        // core is %val = the cause tag. Direct observation collapses via G6
+        // value-context projection; <<path>> keeps the full chain.
+        fields.insert(
+            "%val".to_string(),
+            Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None),
+        );
+        // Non-empty data axis so lattice unify does not treat this as a pure
+        // wrapper and peel to the bare tag during evolve field-merge (which
+        // would erase the cocoon before `m.%val` can navigate). Collapsed
+        // observation still peels %val (project_value_context).
+        fields.insert(
+            "_".to_string(),
+            Value::Top,
+        );
         if let Some(ref p) = self.path {
             fields.insert("%path".to_string(), Value::Atom(AtomKind::Str(p.clone()), EffectTag::Pure, None));
         }
@@ -530,7 +546,27 @@ impl BottomDetail {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub enum BottomCause { #[default] Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split, SemanticEclipse, NoContext }
+/// Append-only (fmt v2 freeze). New causes go at the tail only.
+/// `InvalidPath` is retained for stored-universe decode; minting has stopped
+/// (F4 abolition, 2026-07-14).
+pub enum BottomCause {
+    #[default]
+    Conflict,
+    MissingKey,
+    FuelExhausted,
+    Timeout,
+    Divergent,
+    InvalidPath,
+    PrivateAccessViolation,
+    NumericalError,
+    ArithmeticOnAnchor,
+    H1Split,
+    H2Split,
+    SemanticEclipse,
+    NoContext,
+    /// `^` parent-anchor overflow (ERROR_CODES §1 #out_of_horizon).
+    OutOfHorizon,
+}
 
 impl BottomCause {
     pub fn as_tag(&self) -> &str {
@@ -548,6 +584,28 @@ impl BottomCause {
             BottomCause::H2Split => "h2_split",
             BottomCause::SemanticEclipse => "semantic_eclipse",
             BottomCause::NoContext => "no_context",
+            BottomCause::OutOfHorizon => "out_of_horizon",
+        }
+    }
+
+    /// REAL_04 §4 primary-cause priority for multi-branch collapse
+    /// (lower rank = more primary). Used when union navigation culls all
+    /// branches to ⊥.
+    pub fn primary_rank(self) -> u8 {
+        match self {
+            BottomCause::Divergent => 0,
+            BottomCause::PrivateAccessViolation => 1,
+            BottomCause::Conflict
+            | BottomCause::H1Split
+            | BottomCause::H2Split
+            | BottomCause::SemanticEclipse
+            | BottomCause::NumericalError
+            | BottomCause::ArithmeticOnAnchor
+            | BottomCause::NoContext => 2,
+            BottomCause::FuelExhausted
+            | BottomCause::Timeout
+            | BottomCause::OutOfHorizon => 3,
+            BottomCause::MissingKey | BottomCause::InvalidPath => 4,
         }
     }
 }

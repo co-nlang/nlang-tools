@@ -1365,7 +1365,17 @@ let mut refl_fields = IndexMap::new();
                     forced
                 } None => Value::Top }
             }
-            PathAnchor::Parent(count) => { let len = ctx.scopes.len(); if len > count as usize { Value::Combo(ctx.scopes[len - 1 - (count as usize)].clone()) } else { return BottomCause::InvalidPath.into(); } }
+            // F4b: ^ overflow = #out_of_horizon (ERROR_CODES §1), not the
+            // abolished #invalid_path. Valid ^ shapes still land here while
+            // observation-context scopes remain unwired (separate case).
+            PathAnchor::Parent(count) => {
+                let len = ctx.scopes.len();
+                if len > count as usize {
+                    Value::Combo(ctx.scopes[len - 1 - (count as usize)].clone())
+                } else {
+                    return BottomCause::OutOfHorizon.into();
+                }
+            }
             PathAnchor::Current => { if let Some(top) = ctx.scopes.last() { Value::Combo(top.clone()) } else { Value::Combo((*ctx.root).clone()) } }
         };
         if !path.segments.is_empty() && !matches!(path.anchor, PathAnchor::Bare) {
@@ -1407,26 +1417,22 @@ let mut refl_fields = IndexMap::new();
             if seg == "%rank" { if let Value::Atom(_, _, Some(r)) = current { return Value::Atom(AtomKind::Int(BigInt::from(r)), EffectTag::Pure, None).with_effect(accumulated_effect); } }
             
             if let Value::Bottom(ref d) = current {
-                if seg == "%cause" { return d.as_cause_combo().with_effect(accumulated_effect); }
-                if seg == "%type" {
-                    let type_tag = match d.cause {
-                        BottomCause::Conflict => "conflict",
-                        BottomCause::MissingKey => "missing_key",
-                        BottomCause::FuelExhausted => "fuel_exhausted",
-                        BottomCause::Timeout => "timeout",
-                        BottomCause::Divergent => "divergent",
-                        BottomCause::InvalidPath => "invalid_path",
-                        BottomCause::PrivateAccessViolation => "private_access_violation",
-                        BottomCause::NumericalError => "numerical_error",
-                        BottomCause::ArithmeticOnAnchor => "arithmetic_on_anchor",
-                        BottomCause::H1Split => "h1_split",
-                        BottomCause::H2Split => "h2_split",
-                        BottomCause::SemanticEclipse => "semantic_eclipse",
-                        BottomCause::NoContext => "no_context",
-                    };
-                    return Value::Atom(AtomKind::Tag(type_tag.to_string()), EffectTag::Pure, None).with_effect(accumulated_effect);
+                if seg == "%cause" {
+                    return d.as_cause_combo().with_effect(accumulated_effect);
                 }
-                return current;
+                if seg == "%type" {
+                    return Value::Atom(
+                        AtomKind::Tag(d.cause.as_tag().to_string()),
+                        EffectTag::Pure,
+                        None,
+                    )
+                    .with_effect(accumulated_effect);
+                }
+                // F1: ⊥ navigation is compositional (x.a.b ≡ (x.a).b) — same
+                // shape as the Blur continue repair. Non-meta segments pass
+                // the bottom through so a later meta segment still answers.
+                val = current;
+                continue;
             }
             // G3 R4 + Blur boundary #4/#5: #blur meta whitelist and
             // coordinate-context absorption (SPEC_08 §3.2.2).
@@ -1450,10 +1456,13 @@ let mut refl_fields = IndexMap::new();
                 }
                 // #5 non-meta nav on #blur: pass the horizon out unchanged
                 // (never mint #invalid_path — nothing is known behind a
-                // horizon). Remaining path segments are not pursued.
+                // horizon). Navigation stays compositional (x.a.b ≡ (x.a).b):
+                // remaining segments continue on the blur so a later meta
+                // segment (%cause/%type/%caid) still answers honestly.
                 let mut bd = bd;
                 bd.effect = bd.effect.max(accumulated_effect);
-                return Value::Blur(bd);
+                val = Value::Blur(bd);
+                continue;
             }
 
             match current {
@@ -1476,13 +1485,16 @@ let mut refl_fields = IndexMap::new();
                 // projection of the full tail).
                 Value::Union(branches) => {
                     let mut survivors: Vec<Value> = Vec::new();
+                    let mut culled_causes: Vec<BottomCause> = Vec::new();
                     let mut branch_effect = accumulated_effect;
                     for b in branches {
                         let projected =
                             self.navigate_segments(b, &[seg.to_string()], ctx, "");
                         match projected {
-                            Value::Bottom(_) => {
-                                // Drop — compatible-survivor rule
+                            Value::Bottom(d) => {
+                                // Drop — compatible-survivor rule; remember
+                                // cause for F4c empty-survivor primary pick.
+                                culled_causes.push(d.cause);
                             }
                             other => {
                                 branch_effect = branch_effect.max(other.effect());
@@ -1491,7 +1503,14 @@ let mut refl_fields = IndexMap::new();
                         }
                     }
                     if survivors.is_empty() {
-                        return BottomCause::InvalidPath.into();
+                        // F4c: primary cause per REAL_04 §4 (not #invalid_path).
+                        // May be rare after F4a (atoms open-miss as Top); kept
+                        // as a defensive arm.
+                        let primary = culled_causes
+                            .into_iter()
+                            .min_by_key(|c| c.primary_rank())
+                            .unwrap_or(BottomCause::Conflict);
+                        return primary.into();
                     }
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);
@@ -1501,8 +1520,16 @@ let mut refl_fields = IndexMap::new();
                     val = normalize_union(survivors);
                     accumulated_effect = branch_effect;
                 }
+                // F3+F4a: atom/Top/other non-navigable → open miss `_`
+                // (never mint abolished #invalid_path). Compositional:
+                // further segments keep open-world Top.
                 _ => {
-                    return BottomCause::InvalidPath.into();
+                    if !path_so_far.is_empty() {
+                        path_so_far = format!("{}.{}", path_so_far, seg);
+                    } else {
+                        path_so_far = seg.to_string();
+                    }
+                    val = Value::Top;
                 }
             }
         }

@@ -80,3 +80,41 @@
 - G4 惰性 ⊥ 支剔除(thunk 漏,另案)。
 - cause 正典審計(BottomCause 全表 vs REAL_04,另案)。
 - REAL_04 完整 Cocoon 欄位集(message/path/line/trace…調和,另案)。
+
+---
+
+## 交付記錄(2026-07-14, implementer)
+
+### 根因 / 修復
+
+| 面 | 根因 | 修復 |
+|---|---|---|
+| **F1** | Bottom 臂 `return current` 跳出段迴圈 | 非 meta 段 `val = current; continue`（與 Blur 同形） |
+| **F2** | `as_cause_combo` 缺 `%val` | 補 `%val: Tag(cause)`；加 data 軸 `_`→Top 使非 pure-wrapper（否則 evolve unify 剝成裸標籤，`m.%val` 失 cocoon） |
+| **F3+F4a** | catch-all 鑄 InvalidPath | `_ => val = Top` 續迴圈（合成開放） |
+| **F4b** | Parent 溢出 InvalidPath | → `OutOfHorizon`（enum **附尾**新增） |
+| **F4c** | 聯集空存活 InvalidPath | 蒐集被剔 cause，`primary_rank` 選主因果；防禦臂保留 |
+| **顯示序** | Union tropical 排序使 Top 先於具體支 | unify Union 排序鍵改 `(is_top, weight)`，open-miss `_` 殿後 |
+
+### F4c 可達性
+
+F4a 後原子支→Top，`(1\|2).a` 不再觸空存活臂。防禦臂保留（真全 ⊥ 投影時仍走主因果）。
+
+### fmt 附尾查核
+
+`BottomCause` 新變體 `OutOfHorizon` 置 enum **末尾**；`InvalidPath` 保留不刪（存量讀取）。Serialize 判別值只增不改序。
+
+### 未動
+
+Blur 臂、私有軸、建構期 normalize、1543 CAID parse、`^` scopes 接線。
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| bottom_meta probes | **23/23** |
+| workspace | **927 過 0 敗 3 ignored**(基線 907 + 23 本探針 − 遷移/計數調整) |
+| conformance | **70/70**(L2-28~31) |
+| 語料 | **74/0** |
+
+nlang-spec 帳:驗收方記。
