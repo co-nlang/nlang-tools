@@ -273,6 +273,19 @@ fn pin_nav_bottom_passthrough() {
 }
 
 #[test]
+fn pin_nav_blur_compositional() {
+    // ACCEPTANCE REPAIR PIN (2026-07-14): the delivery's absorb arm bailed
+    // out of the segment loop, so inline `big.name.%cause` returned the
+    // whole #blur while the binding-split spelling returned the cause tag
+    // — navigation compositionality (x.a.b ≡ (x.a).b) broken. Repair:
+    // absorption continues the loop; later meta segments still answer.
+    assert_obs(
+        &format!("big: {}\nout: big.name.%cause", flat_chain(4000)),
+        "#fuel_exhausted",
+    );
+}
+
+#[test]
 fn pin_small_nav_unaffected() {
     assert_obs("c: { name: \"Bob\" }\nout: c.name", "\"Bob\"");
 }

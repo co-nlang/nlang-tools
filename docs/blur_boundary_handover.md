@@ -103,3 +103,38 @@ LatticeEq / 各吸收點:**⊥ 先、Blur 次**(與 G3 同序)。
 | 語料 | **74/0** |
 
 nlang-spec 帳:驗收方記。
+
+---
+
+## 驗收紀錄(2026-07-14,驗收方)
+
+**判定:通過——一件代修;無協議違規。**
+
+獨立重測:探針純度乾淨(diff 僅 9 個 `#[ignore]` 移除);交付時
+探針 20/20、workspace 906/0/3、語料 74/0、conformance 66/66
+(L2-24~27 關門)全數吻合。
+
+diff 逐條:LatticeEq 二段律照序(⊥ 段先且語義原封、雙 blur 同
+CAID → #true、其餘左優先吸收 effect max);navigate_segments
+%caid 臂回快照字串、非 meta 段吸收;聯集導航零改 normalize_union
+(#5 落地後 blur 支投影自然存活——與工單「量測先行」指示相符)。
+
+**驗收代修**:交付的吸收臂 `return` 跳出段迴圈,丟棄剩餘路徑段——
+內聯 `big.name.%cause` 回整個 #blur,而綁定拆兩步回 #fuel_exhausted:
+**導航合成性(x.a.b ≡ (x.a).b)被破壞**(紅門只測了綁定形,設計
+盲點在驗收方)。代修:吸收改 `val = blur; continue`,後續 meta 段
+照答;代修釘 `pin_nav_blur_compositional`(內聯 `big.name.%cause` →
+#fuel_exhausted)。修後全套件 **907/0/3**、語料 74/0、66/66。
+
+對抗性邊界(工單外):`⊥ = blur` 兩向皆 #false(照工單預裁 ⊥ 先序,
+與 G3 同;註:blur 加燃料後可能收斂為 ⊥,此 #false 屬「⊥ 為空集
+運算元」讀法,重開候選記帳)、`(1).%caid` → ⊥ #invalid_path(白名單
+無過度擴權)、雙 blur 聯集兩支皆存活不誤去重、`bigA.%caid == bigB.%caid`
+→ #false(異快照全可判)、`= @IO` 混效果吸收帶效果。
+
+**既有債曝光**(非本交付引入,不擋驗收):⊥ 之非 meta 導航同樣
+跳出段迴圈——內聯 `bad.name.%cause` 回 ⊥ 原樣、綁定拆步回 cause
+combo,同一合成性歧異(另案候選:nav×⊥ 合成性;且 ⊥.%cause 兩形
+回覆形制不一)。
+
+模型 #3 檔案:一件代修(合成性;吸收語義本體正確)。

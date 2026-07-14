@@ -47,7 +47,25 @@ impl PartialEq for Value {
             (Value::Top, Value::Top) => true,
             (Value::Atom(a1, e1, r1), Value::Atom(a2, e2, r2)) => a1 == a2 && e1 == e2 && r1 == r2,
             (Value::Combo(c1), Value::Combo(c2)) => c1 == c2,
-            (Value::Union(u1), Value::Union(u2)) => u1 == u2,
+            // Union branches are a SET (SPEC_01: `|` commutative + idempotent;
+            // G1 #11 集合觀). Branch order is display/encounter order only —
+            // equality is multiset comparison, so `(1|2) = (2|1)` holds
+            // without a build-time sort.
+            (Value::Union(u1), Value::Union(u2)) => {
+                u1.len() == u2.len() && {
+                    let mut used = vec![false; u2.len()];
+                    u1.iter().all(|a| {
+                        u2.iter().enumerate().any(|(i, b)| {
+                            if !used[i] && a == b {
+                                used[i] = true;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                }
+            }
             // G1 #13: Code/Thunk equality is span-blind (value property, not
             // source property). Spelling still differs (`q` vs `w`). Shared
             // with normalize_union so cmp and dedupe stay one relation.

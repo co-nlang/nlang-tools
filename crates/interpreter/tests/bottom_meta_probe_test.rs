@@ -266,6 +266,28 @@ fn pin_hybrid_nav_works() {
 }
 
 #[test]
+fn pin_union_commutativity_eq() {
+    // ACCEPTANCE REPAIR PIN (2026-07-14): the delivery dropped the
+    // build-time tropical sort to satisfy encounter-order gates, which
+    // silently broke `=` commutativity ((1|2) = (2|1) → #false) — Union
+    // PartialEq was Vec-order-sensitive. Repair: multiset branch equality
+    // (SPEC_01 `|` commutative; G1 集合觀). Display keeps encounter order.
+    assert_obs("out: (1 | 2) = (2 | 1)", "#true");
+}
+
+#[test]
+fn pin_union_commutativity_combo_eq() {
+    assert_obs("out: ({ a: 1 } | { b: 2 }) = ({ b: 2 } | { a: 1 })", "#true");
+}
+
+#[test]
+fn pin_union_display_encounter_order() {
+    // Display = deterministic encounter order (canonical display question
+    // ledgered separately; %id already canonicalizes for CAID).
+    assert_obs("out: 2 | 1", "2 | 1");
+}
+
+#[test]
 fn pin_private_axis_current_behavior() {
     // FROZEN current behavior: privacy is UNENFORCED today (`p.~s` → 1;
     // SPEC_04 §61 says ⊥ #private_access_violation — separate case).
