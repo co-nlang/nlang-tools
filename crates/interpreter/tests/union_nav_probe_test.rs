@@ -93,18 +93,15 @@ fn red_union_nav_partial_field_keeps_top_branch() {
     assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "_ | 2");
 }
 
-#[test]
-fn red_union_nav_bottom_branch_dropped() {
-    // atom branch navigates to ⊥ #invalid_path → dropped, survivor collapses
-    assert_obs("out: ({ a: 1 } | 7).a", "1");
-}
+// red_union_nav_bottom_branch_dropped MIGRATED 2026-07-14 by the ACCEPTOR:
+// #invalid_path abolished — an atom branch is an open miss (`_`), kept like
+// any Top-miss branch. Successor red gate:
+// bottom_meta_probe_test::red_union_atom_branch_open_miss (`1 | _`).
 
-#[test] // ACTIVE pin (calibration found this GREEN today: the catch-all
-        // arm coincidentally gives the ruled answer). It must STAY green
-        // once the Union arm lands — guards the all-⊥ verdict.
-fn pin_union_nav_all_bottom_is_invalid_path() {
-    assert_obs("out: (1 | 2).a", "_|_ (%cause: #invalid_path)");
-}
+// pin_union_nav_all_bottom_is_invalid_path MIGRATED 2026-07-14 by the
+// ACCEPTOR: #invalid_path abolished; atom branches open-miss and are kept,
+// so `(1 | 2).a` = `_ | _` → `_`. Successor red gate:
+// bottom_meta_probe_test::red_union_atoms_nav_open.
 
 #[test]
 fn red_union_nav_multi_segment() {
@@ -139,11 +136,9 @@ fn pin_single_combo_open_miss_top() {
     assert_obs("out: ({ a: 1 }).b", "_");
 }
 
-#[test] // ACTIVE pin: atom navigation = ⊥ #invalid_path — the union
-        // dropped-branch rule mirrors THIS
-fn pin_atom_nav_invalid_path() {
-    assert_obs("out: (7).a", "_|_ (%cause: #invalid_path)");
-}
+// pin_atom_nav_invalid_path MIGRATED 2026-07-14 by the ACCEPTOR:
+// #invalid_path abolished — atom data axis is open (hybridization can grow
+// fields). Successor red gate: bottom_meta_probe_test::red_atom_nav_open.
 
 #[test] // ACTIVE pin: conflict-kill single survivor navigates (corpus
         // workaround shape — must keep working)

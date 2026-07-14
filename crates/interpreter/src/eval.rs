@@ -761,16 +761,58 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             // Lattice-family equality `=` (SYNTAX_06 §4 #11/#13): solidify
             // both sides, then one engine-wide PartialEq (span-blind Code/
             // Thunk; effect participates; field order free via IndexMap).
-            // Set family does NOT absorb: `_|_` is an operand (empty set).
+            // Set family does NOT absorb ⊥ as a return value: `_|_` is an
+            // operand (empty set) → boolean verdict.
+            // Blur boundary #6 (SPEC_08 §3.2.2): two-stage after solidify —
+            // ⊥ first (unchanged), then Blur (same-CAID → #true; else absorb
+            // left-priority — never silent #false).
             ExprKind::LatticeEq(a, b) => {
                 let va = self.force_recursive(self.eval(a, ctx), ctx);
                 let vb = self.force_recursive(self.eval(b, ctx), ctx);
-                let res_e = va.effect().max(vb.effect());
-                let eq = match (&va, &vb) {
-                    (Value::Bottom(_), Value::Bottom(_)) => true,
-                    (Value::Bottom(_), _) | (_, Value::Bottom(_)) => false,
-                    _ => va == vb,
+                // Stage ⊥ (set-family operand semantics — not G3 value absorb).
+                let eq_bottom = match (&va, &vb) {
+                    (Value::Bottom(_), Value::Bottom(_)) => Some(true),
+                    (Value::Bottom(_), _) | (_, Value::Bottom(_)) => Some(false),
+                    _ => None,
                 };
+                if let Some(eq) = eq_bottom {
+                    let res_e = va.effect().max(vb.effect());
+                    return Value::Atom(
+                        AtomKind::Tag(if eq {
+                            "true".to_string()
+                        } else {
+                            "false".to_string()
+                        }),
+                        res_e,
+                        None,
+                    );
+                }
+                // Stage Blur (#6).
+                match (&va, &vb) {
+                    (Value::Blur(ba), Value::Blur(bb))
+                        if ba.blur_caid() == bb.blur_caid() =>
+                    {
+                        let res_e = va.effect().max(vb.effect());
+                        return Value::Atom(
+                            AtomKind::Tag("true".to_string()),
+                            res_e,
+                            None,
+                        );
+                    }
+                    (Value::Blur(bd), _) => {
+                        let mut bd = bd.clone();
+                        bd.effect = bd.effect.max(vb.effect());
+                        return Value::Blur(bd);
+                    }
+                    (_, Value::Blur(bd)) => {
+                        let mut bd = bd.clone();
+                        bd.effect = bd.effect.max(va.effect());
+                        return Value::Blur(bd);
+                    }
+                    _ => {}
+                }
+                let res_e = va.effect().max(vb.effect());
+                let eq = va == vb;
                 Value::Atom(
                     AtomKind::Tag(if eq {
                         "true".to_string()

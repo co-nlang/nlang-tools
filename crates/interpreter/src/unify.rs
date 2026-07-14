@@ -236,8 +236,14 @@ impl Ouroboros {
             }
             (Value::Combo(ac), Value::Combo(bc)) => self.unify_combo(ac, bc, ctx),
             (Value::Union(mut branches), other) | (other, Value::Union(mut branches)) => { 
-                branches.sort_by_key(|b| self.tropical_weight(b));
                 let max_branches = ctx.max_branches;
+                // Preserve source / navigate encounter order among survivors
+                // (F4: `({a:1}|7).a` → `1 | _`, partial-field → `_ | 2`).
+                // Tropical sort only when over the collection budget so
+                // max_branches truncation still prefers light branches.
+                if branches.len() > max_branches * 2 {
+                    branches.sort_by_key(|b| self.tropical_weight(b));
+                }
                 let mut results: Vec<Value> = Vec::new();
                 // Collect without early cap so structural dedupe can free
                 // capacity first (SPEC_01 idempotence before max_branches).

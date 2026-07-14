@@ -47,7 +47,25 @@ impl PartialEq for Value {
             (Value::Top, Value::Top) => true,
             (Value::Atom(a1, e1, r1), Value::Atom(a2, e2, r2)) => a1 == a2 && e1 == e2 && r1 == r2,
             (Value::Combo(c1), Value::Combo(c2)) => c1 == c2,
-            (Value::Union(u1), Value::Union(u2)) => u1 == u2,
+            // Union branches are a SET (SPEC_01: `|` commutative + idempotent;
+            // G1 #11 集合觀). Branch order is display/encounter order only —
+            // equality is multiset comparison, so `(1|2) = (2|1)` holds
+            // without a build-time sort.
+            (Value::Union(u1), Value::Union(u2)) => {
+                u1.len() == u2.len() && {
+                    let mut used = vec![false; u2.len()];
+                    u1.iter().all(|a| {
+                        u2.iter().enumerate().any(|(i, b)| {
+                            if !used[i] && a == b {
+                                used[i] = true;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                }
+            }
             // G1 #13: Code/Thunk equality is span-blind (value property, not
             // source property). Spelling still differs (`q` vs `w`). Shared
             // with normalize_union so cmp and dedupe stay one relation.
@@ -466,8 +484,24 @@ impl BottomDetail {
             BottomCause::H2Split => "#h2_split",
             BottomCause::SemanticEclipse => "#semantic_eclipse",
             BottomCause::NoContext => "#no_context",
+            BottomCause::OutOfHorizon => "#out_of_horizon",
         };
         fields.insert("%type".to_string(), Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None));
+        // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
+        // core is %val = the cause tag. Direct observation collapses via G6
+        // value-context projection; <<path>> keeps the full chain.
+        fields.insert(
+            "%val".to_string(),
+            Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None),
+        );
+        // Non-empty data axis so lattice unify does not treat this as a pure
+        // wrapper and peel to the bare tag during evolve field-merge (which
+        // would erase the cocoon before `m.%val` can navigate). Collapsed
+        // observation still peels %val (project_value_context).
+        fields.insert(
+            "_".to_string(),
+            Value::Top,
+        );
         if let Some(ref p) = self.path {
             fields.insert("%path".to_string(), Value::Atom(AtomKind::Str(p.clone()), EffectTag::Pure, None));
         }
@@ -530,7 +564,27 @@ impl BottomDetail {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub enum BottomCause { #[default] Conflict, MissingKey, FuelExhausted, Timeout, Divergent, InvalidPath, PrivateAccessViolation, NumericalError, ArithmeticOnAnchor, H1Split, H2Split, SemanticEclipse, NoContext }
+/// Append-only (fmt v2 freeze). New causes go at the tail only.
+/// `InvalidPath` is retained for stored-universe decode; minting has stopped
+/// (F4 abolition, 2026-07-14).
+pub enum BottomCause {
+    #[default]
+    Conflict,
+    MissingKey,
+    FuelExhausted,
+    Timeout,
+    Divergent,
+    InvalidPath,
+    PrivateAccessViolation,
+    NumericalError,
+    ArithmeticOnAnchor,
+    H1Split,
+    H2Split,
+    SemanticEclipse,
+    NoContext,
+    /// `^` parent-anchor overflow (ERROR_CODES §1 #out_of_horizon).
+    OutOfHorizon,
+}
 
 impl BottomCause {
     pub fn as_tag(&self) -> &str {
@@ -548,6 +602,28 @@ impl BottomCause {
             BottomCause::H2Split => "h2_split",
             BottomCause::SemanticEclipse => "semantic_eclipse",
             BottomCause::NoContext => "no_context",
+            BottomCause::OutOfHorizon => "out_of_horizon",
+        }
+    }
+
+    /// REAL_04 §4 primary-cause priority for multi-branch collapse
+    /// (lower rank = more primary). Used when union navigation culls all
+    /// branches to ⊥.
+    pub fn primary_rank(self) -> u8 {
+        match self {
+            BottomCause::Divergent => 0,
+            BottomCause::PrivateAccessViolation => 1,
+            BottomCause::Conflict
+            | BottomCause::H1Split
+            | BottomCause::H2Split
+            | BottomCause::SemanticEclipse
+            | BottomCause::NumericalError
+            | BottomCause::ArithmeticOnAnchor
+            | BottomCause::NoContext => 2,
+            BottomCause::FuelExhausted
+            | BottomCause::Timeout
+            | BottomCause::OutOfHorizon => 3,
+            BottomCause::MissingKey | BottomCause::InvalidPath => 4,
         }
     }
 }
