@@ -523,6 +523,7 @@ pub fn analyze_file(path: &FsPath) -> FileReport {
     let mut diags = Vec::new();
     walk_pipes(&program, &file, &mut diags);
     walk_r4_use_without_def(&program, &file, &mut diags);
+    walk_r5_horizon_hints(&program, &file, &mut diags);
     // SPEC_15 checks (existing static_analyzer) — keep, prefix rule names.
     {
         let mut analyzer = crate::static_analyzer::StaticAnalyzer::new();
@@ -567,6 +568,124 @@ fn walk_pipes(program: &Program, file: &str, diags: &mut Vec<Diagnostic>) {
         if let FieldKey::Pattern(e) = &field.key {
             walk_pipes_expr(e, file, diags);
         }
+    }
+}
+
+// =====================================================================
+// § R5 — node-level horizon-param hints (SPEC_08 §3.1)
+// =====================================================================
+// Node fields named %fuel / %timeout / %strategy / %max_* are ADVISORY in
+// this engine (normative home = ~%Config bare fields). Silently ignored
+// config is a trap → Warn, pointing at ~%Config. Conservative (寧漏勿誤):
+// only the seven horizon names; %kind/%fmap/%bind/%termination_proof never.
+
+const R5_HORIZON_HINT_NAMES: &[&str] = &[
+    "fuel",
+    "timeout",
+    "strategy",
+    "max_branches",
+    "max_unification_depth",
+    "max_lifting_depth",
+    "max_pattern_nodes",
+];
+
+fn walk_r5_horizon_hints(program: &Program, file: &str, diags: &mut Vec<Diagnostic>) {
+    for field in &program.fields {
+        walk_r5_field(field, file, diags);
+        walk_r5_expr(&field.value, file, diags);
+    }
+}
+
+fn walk_r5_field(field: &Field, file: &str, diags: &mut Vec<Diagnostic>) {
+    // Combo interior keys parse as Path(["%fuel"]) more often than Named+Meta
+    // (parser path-key arm). Accept both spellings of the same surface form.
+    let bare: Option<String> = match &field.key {
+        FieldKey::Named {
+            name,
+            prefix: Some(Prefix::Meta),
+        } => Some(name.trim().to_string()),
+        FieldKey::Path(p)
+            if p.anchor == PathAnchor::Bare
+                && p.segments.len() == 1
+                && p.segments[0].trim().starts_with('%') =>
+        {
+            Some(p.segments[0].trim().trim_start_matches('%').to_string())
+        }
+        FieldKey::Quoted(s) if s.trim().starts_with('%') => {
+            Some(s.trim().trim_start_matches('%').to_string())
+        }
+        _ => None,
+    };
+    if let Some(bare) = bare {
+        if R5_HORIZON_HINT_NAMES.iter().any(|h| *h == bare.as_str()) {
+            diags.push(Diagnostic {
+                rule: "R5".to_string(),
+                severity: Severity::Warn,
+                loc: Loc {
+                    file: file.to_string(),
+                    span: (field.value.span.start, field.value.span.end),
+                },
+                tier: None,
+                demotion_reason: None,
+                msg: format!(
+                    "horizon hint `%{}` is advisory — this engine does not adopt \
+                     node-level budgets; observation parameters live at ~%Config",
+                    bare
+                ),
+            });
+        }
+    }
+}
+
+fn walk_r5_expr(expr: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::Combo { fields, .. } => {
+            for f in fields {
+                walk_r5_field(f, file, diags);
+                walk_r5_expr(&f.value, file, diags);
+            }
+        }
+        ExprKind::Morphism { param, body } => {
+            walk_r5_expr(param, file, diags);
+            walk_r5_expr(body, file, diags);
+        }
+        ExprKind::Pipe(a, b)
+        | ExprKind::Apply(a, b)
+        | ExprKind::Meet(a, b)
+        | ExprKind::Join(a, b)
+        | ExprKind::Add(a, b)
+        | ExprKind::Sub(a, b)
+        | ExprKind::Mul(a, b)
+        | ExprKind::Div(a, b)
+        | ExprKind::Rem(a, b)
+        | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
+        | ExprKind::Lt(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Lte(a, b)
+        | ExprKind::Gte(a, b)
+        | ExprKind::Probe(a, b) => {
+            walk_r5_expr(a, file, diags);
+            walk_r5_expr(b, file, diags);
+        }
+        ExprKind::List(items) | ExprKind::Tuple(items) => {
+            for e in items {
+                walk_r5_expr(e, file, diags);
+            }
+        }
+        ExprKind::Unary { expr: e, .. }
+        | ExprKind::Complement(e)
+        | ExprKind::Spread(e)
+        | ExprKind::Structural(e)
+        | ExprKind::Lens(e, _) => walk_r5_expr(e, file, diags),
+        ExprKind::Interpolated(parts) => {
+            for p in parts {
+                if let StringPart::Interpolated(e) = p {
+                    walk_r5_expr(e, file, diags);
+                }
+            }
+        }
+        _ => {}
     }
 }
 

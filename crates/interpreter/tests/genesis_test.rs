@@ -94,11 +94,11 @@ fn config_in_root_with_system() {
     let root = oo.root_with_system();
     let config = root.get_field("~%Config").expect("~%Config should exist");
     if let Value::Combo(cv) = config {
-        let fuel = cv.get_field("%fuel").expect("%fuel should exist");
+        let fuel = cv.get_field("fuel").expect("fuel should exist");
         if let Value::Atom(AtomKind::Int(n), _, _) = fuel {
-            assert_eq!(n.to_u64().unwrap_or(0), 10000, "%fuel default should be 10000");
+            assert_eq!(n.to_u64().unwrap_or(0), 10000, "fuel default should be 10000");
         } else {
-            panic!("%fuel should be an Int");
+            panic!("fuel should be an Int");
         }
     } else {
         panic!("~%Config should be a Combo");
@@ -138,17 +138,17 @@ fn eval_context_reads_config_strategy() {
     let oo = Ouroboros::new_in_memory();
     let ctx = oo.eval_context();
     assert!(matches!(ctx.strategy, ObservationStrategy::Blur),
-        "~%Config %strategy: #blur should map to ObservationStrategy::Blur");
+        "~%Config strategy: #blur should map to ObservationStrategy::Blur");
 }
 
-// ── Phase 15: %timeout → timeout_deadline tests ──
+// ── Phase 15: timeout → timeout_deadline tests ──
 
 #[test]
 fn eval_context_sets_timeout_deadline() {
     let oo = Ouroboros::new_in_memory();
     let ctx = oo.eval_context();
     assert!(ctx.timeout_deadline.is_some(),
-        "eval_context() should set timeout_deadline from ~%Config %timeout");
+        "eval_context() should set timeout_deadline from ~%Config timeout");
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
