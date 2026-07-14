@@ -112,3 +112,32 @@
 | 語料 | **74/0** |
 
 nlang-spec 帳:驗收方記。
+
+---
+
+## 驗收紀錄(2026-07-14,驗收方)
+
+**判定:通過——零代修(第九例);無協議違規。**
+
+獨立重測:兩探針檔 diff 僅 10 個 `#[ignore]` 移除、斷言原封;
+config_home **10/10**、R5 lint **6/6**;workspace **887/0/3**
+(基線 871 + 16 本探針,吻合);語料 **74/0**;conformance
+**62/62**(L2-23 關門)。
+
+diff 逐條:genesis 七欄裸名(含 `max_unification_depth` 改名 +
+`max_lifting_depth` 新欄 32)、eval_context 讀線同步(timeout 塊
+縮排一併歸位,行為不變)、SEED_CONFIG CAID 隨欄名更新(系統軸
+運行時注入,無存檔宇宙依賴——工單預裁);`~%Engine.state` 僅留
+`differential`,死展示欄移除;`/set_strategy` 僅補註解(bohr_test
+既有覆蓋綠);R5 掃描器三鍵形皆接(Named+Meta / Path / Quoted,
+交付紀錄之 `Path(["%fuel"])` 發現與紅門綠互證)、遞迴走全表達式形。
+
+對抗性邊界(工單外):`~%Config.%fuel` → `_`(乾淨斷開確認)、
+`~%Engine.state.strategy` → `_`、`~%Config` 全形 = 七裸欄 closed;
+R5:`%max_branches`(非紅門名)報、態射體內 combo `%fuel` 報、
+`%kind`/`%fmap` 靜默。src 無殘留 `%` 配置拼法。
+
+期望遷移審查:`genesis_test.rs` 為一般測試非探針檔,遷移已於交付
+紀錄申報——合規(停下報驗收方規則管的是探針檔;本單探針零觸碰)。
+
+模型 #3 檔案:零代修第九例。
