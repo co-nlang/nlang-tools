@@ -210,10 +210,7 @@ fn pin_moderate_chain_converges() {
     assert_obs(&format!("out: {}", flat_chain(100)), "100");
 }
 
-#[test]
-fn pin_lattice_eq_blur_current_behavior() {
-    // `=` family × Blur is EXCLUDED from this ruling (set family has its
-    // own non-absorbing laws; separate case). Frozen at today's measured
-    // verdict so the G3 fix doesn't drive-by change it.
-    assert_obs(&format!("big: {}\nout: big = 1", flat_chain(4000)), "#false");
-}
+// pin_lattice_eq_blur_current_behavior REMOVED 2026-07-14 by the ACCEPTOR:
+// its freeze clause read "until the separate case" — that case is the Blur
+// boundary ruling (SPEC_08 §3.2.2 #6). Superseded by the red gate
+// blur_boundary_probe_test::red_eq_blur_vs_value_absorbs.

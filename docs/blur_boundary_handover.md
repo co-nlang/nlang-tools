@@ -1,0 +1,74 @@
+# 工單:Blur 邊界律(座標語境吸收 + `=` 二段律 + `%caid` meta)(2026-07-14)
+
+**執行者**:模型 #3
+**驗收者**:專案腦(探針已預先提交,紅線不可動——**全部**探針檔皆紅線。
+若交付中發現任何既有釘因新法必紅:**停下報驗收方**,由驗收方修釘;
+單方遷移直接計代修。)
+**探針**:`crates/interpreter/tests/blur_boundary_probe_test.rs`
+(9 紅門 + 11 釘;已校準:紅門今日全紅、釘今日全綠)
+
+**驗收 = 紅門全綠 + 釘全綠 + 全套件無退化(基線 887/0/3 + 本探針 20 測)
++ 語料 74/0 + conformance 全綠(含新增 L2-24~27,交付時應 66/66)。**
+
+註:G3 釘 `pin_lattice_eq_blur_current_behavior`(凍結 `big = 1` → #false)
+已由**驗收方**於本開單 commit 遷移(其凍結條款明文「另案解凍」,本案
+即該案);後繼紅門 = `red_eq_blur_vs_value_absorbs`。
+
+---
+
+## 0. 裁定(已批;SPEC_08 §3.2.2 #5/#6 + #4 擴充已入法)
+
+G3 只立值語境。量測收口三謊:導航 `big.name` → ⊥ #invalid_path
+(僭稱知道路徑無效)、`bigA = bigB` 同文異綁定 → #false(真值皆
+4000,可證同值)、聯集導航靜默剔 blur 支(視界痕跡消失)。
+
+- **#5 座標語境吸收**:非 meta 段導航遇 `#blur` → 原樣傳出
+  (cause/CAID 保全,效果 max)。聯集逐支導航下 blur 支投影仍為
+  blur 支**存活**;僅 ⊥ 支剔除(SPEC_07/G4 投影律不變)。
+- **#6 `=` 二段律**:固化後任一側 `#blur`:(a) 雙 blur 且 **CAID
+  相同** → `#true`(觀測決定論;與聯集去重同一關係——G1 唯一等值
+  之延伸);(b) 其餘 → 左優先吸收(**不得** `#false`)。
+- **#4 擴 `%caid`**:`#blur` 之 `%caid` meta 觀測回快照 CAID 字串
+  (與 `%cause`/`%type` 同白名單;快照身分全可判比較
+  `x.%caid == y.%caid` 由此免費獲得,無新語法)。
+
+## 1. 地圖與實作建議
+
+1. **navigate_segments**(lib.rs):meta 特殊段(`%cause`/`%type`)的
+   Blur 臂**旁**補 `%caid` 臂(回 `Value::Atom(Str(caid))`);非 meta
+   段遇 `Value::Blur` → 原樣回(在鑄 InvalidPath 之前短路)。既有
+   結構標記/純包裝解殼迴圈不動。
+2. **聯集導航**:G4 逐支投影臂——量測先行:#5 落地後 blur 支投影
+   應自然回 blur;確認剔除邏輯**只**剔 Bottom(若 blur 支被剔,最小
+   修該臂,勿改 normalize_union)。紅門
+   `red_union_nav_blur_branch_survives` 斷言 `1 | #blur` 形。
+3. **LatticeEq**(eval.rs ≈694,G1 固化比對處):force_recursive 之後
+   加二段律臂——雙 Blur 且 `detail.caid` 相等 → #true;任一側 Blur
+   (含異 CAID 雙 Blur)→ 左優先原樣傳出。**⊥ 短路順序不動**(⊥ 先、
+   Blur 次,與 G3 各吸收點同序;交付紀錄註明)。
+4. **效果標籤**:吸收傳出照 max 合併(BlurDetail.effect 既有)。
+
+## 2. 邊界與陷阱
+
+1. **本體不可互鑄**:Blur ≠ ⊥;吸收=原樣傳出,不得改 cause、不得
+   升級成 ⊥。
+2. **`==`/math 勿動**:G3 法已覆蓋(釘 `pin_eqeq_blur_absorbs_g3_law`
+   守住)。雙 blur `==` 只傳左側 cause = 既有法,不在本單擴充。
+3. **`<`/`<=` 勿動**:序判定於 combo/union 全域未實作(§4.10 另案,
+   blur 非變因);釘 `pin_lt/lte_blur_frozen_conflict` 凍結 #conflict。
+4. **%caid 是字串**:顯示含引號(`"hash:sha256:v1:…"`);紅門只斷言
+   含 `hash:sha256:` 前綴(CAID 逐引擎鹽化,不可釘全值)。
+5. **`big = big` 同快照 #true 依賴 force memo**:交付若動到 memo
+   路徑,釘 `pin_eq_self_same_snapshot_true` 會抓;勿為湊 #true 而
+   特判綁定名。
+6. **勿動**:blur 顯示形/CAID 公式、`normalize_union` 去重判準、
+   Union×`=` 分配語義(cmp×Union 另案)、fuel 量級。
+7. 全語料回歸 + conformance L2-24~27(24/26/27 今日紅;25 今日綠=
+   法釘)。
+8. 交付紀錄照舊格式(根因、diff、量測、未動聲明)。
+
+## 3. 非目標
+
+- `<`/`<=` 序判定實作(§4.10 弧)。
+- cmp×Union 分配、`%kind`/`%id` meta 實體化(G6 鄰接另案)。
+- 同引數 #divergent 偵測升級、`~%` 影蓋靜默(各另案)。
