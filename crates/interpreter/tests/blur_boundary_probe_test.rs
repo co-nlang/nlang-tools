@@ -100,14 +100,12 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_nav_blur_absorbs() {
     // Today: ⊥ #invalid_path — the "path is invalid" lie.
     assert_blur_fuel(&format!("big: {}\nout: big.name", flat_chain(4000)));
 }
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_nav_through_combo_absorbs() {
     assert_blur_fuel(&format!(
         "big: {}\nc: {{ x: big }}\nout: c.x.name",
@@ -116,7 +114,6 @@ fn red_nav_through_combo_absorbs() {
 }
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_nav_blur_cause_after_absorb() {
     // L2-24: absorbed blur still answers meta honestly.
     assert_obs(
@@ -126,7 +123,6 @@ fn red_nav_blur_cause_after_absorb() {
 }
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_union_nav_blur_branch_survives() {
     // Today: `1` — blur branch silently culled. Law: only ⊥ branches
     // are culled; the horizon must remain visible in the result.
@@ -145,7 +141,6 @@ fn red_union_nav_blur_branch_survives() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_caid_meta_navigable() {
     // Today: ⊥ #invalid_path. Expect the snapshot CAID string.
     let got = observe_nlang(&format!("big: {}\nout: big.%caid", flat_chain(4000)), "out");
@@ -156,7 +151,6 @@ fn red_caid_meta_navigable() {
 }
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_caid_self_compare_true() {
     // L2-27: snapshot identity is totally decidable — no blur produced.
     assert_obs(
@@ -170,7 +164,6 @@ fn red_caid_self_compare_true() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_eq_blur_vs_value_absorbs() {
     // Migrated from blur_horizon_probe_test::pin_lattice_eq_blur_current_behavior
     // (frozen #false "until the separate case" — this is that case;
@@ -179,7 +172,6 @@ fn red_eq_blur_vs_value_absorbs() {
 }
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_eq_twin_blurs_absorb() {
     // Two bindings, same text: snapshots differ (CAIDs differ) but both
     // denote 4000 — today's #false claims certain inequality, a lie.
@@ -190,7 +182,6 @@ fn red_eq_twin_blurs_absorb() {
 }
 
 #[test]
-#[ignore = "blur boundary red gate: awaiting SPEC_08 3.2.2 #5/#6 + %caid"]
 fn red_eq_twin_cause_meta() {
     // L2-26 mirror.
     assert_obs(

@@ -1428,9 +1428,9 @@ let mut refl_fields = IndexMap::new();
                 }
                 return current;
             }
-            // G3 R4: #blur meta reads BlurCause tag (same spelling as Strict
-            // ⊥ #fuel_exhausted). Both %cause and %type return the cause tag.
-            if let Value::Blur(ref bd) = current {
+            // G3 R4 + Blur boundary #4/#5: #blur meta whitelist and
+            // coordinate-context absorption (SPEC_08 §3.2.2).
+            if let Value::Blur(bd) = current {
                 if seg == "%cause" || seg == "%type" {
                     return Value::Atom(
                         AtomKind::Tag(bd.cause.as_str().to_string()),
@@ -1439,10 +1439,21 @@ let mut refl_fields = IndexMap::new();
                     )
                     .with_effect(accumulated_effect);
                 }
-                // Non-meta field on a horizon value: open miss / invalid — do
-                // not re-mint as #conflict; return the blur itself for bare
-                // identity segments is not navigable. Fall through to
-                // InvalidPath via the match below for unknown segs.
+                if seg == "%caid" {
+                    // Snapshot identity string (totally decidable via ==).
+                    return Value::Atom(
+                        AtomKind::Str(bd.blur_caid().to_string()),
+                        EffectTag::Pure,
+                        None,
+                    )
+                    .with_effect(accumulated_effect);
+                }
+                // #5 non-meta nav on #blur: pass the horizon out unchanged
+                // (never mint #invalid_path — nothing is known behind a
+                // horizon). Remaining path segments are not pursued.
+                let mut bd = bd;
+                bd.effect = bd.effect.max(accumulated_effect);
+                return Value::Blur(bd);
             }
 
             match current {

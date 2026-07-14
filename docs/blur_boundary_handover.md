@@ -72,3 +72,34 @@ G3 只立值語境。量測收口三謊:導航 `big.name` → ⊥ #invalid_path
 - `<`/`<=` 序判定實作(§4.10 弧)。
 - cmp×Union 分配、`%kind`/`%id` meta 實體化(G6 鄰接另案)。
 - 同引數 #divergent 偵測升級、`~%` 影蓋靜默(各另案)。
+
+---
+
+## 交付記錄(2026-07-14, implementer)
+
+### 根因 / 修復
+
+| 面 | 根因 | 修復 |
+|---|---|---|
+| **#5 座標導航** | 非 meta 段遇 Blur 落 `_ => InvalidPath` | `navigate_segments` Blur 臂:非 meta 原樣傳出(effect max);meta 旁補 `%caid` → 快照 CAID 字串 |
+| **聯集導航** | blur 支投影曾鑄 InvalidPath(=⊥)→被剔 | #5 落地後投影回 blur,G4 剔除邏輯仍只剔 Bottom——零改 normalize_union |
+| **#6 `=`** | 異 CAID 雙 blur / blur×值 走 PartialEq → #false | LatticeEq:⊥ 臂先(set 家族布林);雙 blur 同 CAID → #true;其餘含 blur → 左優先吸收 |
+
+### 順序
+
+LatticeEq / 各吸收點:**⊥ 先、Blur 次**(與 G3 同序)。
+
+### 未動
+
+- `==`/math(G3 釘綠)、`<`/`<=` 凍結 #conflict、blur 顯示/CAID 公式、normalize_union 去重、fuel 量級、memo 路徑(無特判綁定名)
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| blur_boundary probes | **20/20** |
+| workspace | **906 過 0 敗 3 ignored**(887 基線 −1 G3 已遷釘 +20 本探針) |
+| conformance | **66/66**(L2-24~27) |
+| 語料 | **74/0** |
+
+nlang-spec 帳:驗收方記。
