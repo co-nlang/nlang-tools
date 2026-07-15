@@ -113,3 +113,34 @@ CAID/`=`/bn_serial、⊥/Blur 導航臂、`~.` 文法、私有 lint。
 - `strip_local_axis` 改 move/就地清空(深 Ref 鏈勿 `all_fields_iter` 克隆 OOM)
 
 nlang-spec 帳:驗收方記。
+
+---
+
+## 驗收紀錄(2026-07-15,驗收方)
+
+**判定:通過——零代修(第十例);無協議違規。**
+
+獨立重測:探針純度乾淨(僅 11 個 `#[ignore]` 移除);探針 **19/19**、
+workspace **948/0/3**(937 基線 +11 紅門轉綠)、語料 **74/0**、
+conformance **74/74**(L2-32~35 關門)。
+
+diff 逐條:外阻=Combo 臂取欄前攔 `~` 段(`~%` 豁免,位置正確);
+內通=`seal_defining_scope`(local 空則跳過——防公有 combo 的 Thunk
+等值/unify 被 frame 污染,設計周到);捕獲=frame 注入 Thunk 閉包
++pipe RHS Thunk 固化(GUIDE_03 §11.4 註解合理,Ref 不強迫=Stage 3
+晚綁定保全);剝除=strip_local_axis 移動式遞迴(防 OOM)+
+project_value_context/結構態雙路接入。
+
+對抗性邊界(工單外):遮蔽(內 `~s` 蓋外 `~s`)→ 11 ✓;雙 frame
+捕獲(`~s`+`~t` 跨兩層)→ 13 ✓;`~%Config` 顯示/導航完好 ✓;
+態射顯示之閉包 frame local 軸已剝、私值 5 全程不現身 ✓(`~s` 僅
+以識別字形式出現於 `%code` 的 AST debug 顯示——原始碼非 local 軸,
+可接受;`%code` 裸印 Rust Debug AST 為既有顯示疣,記帳另案)。
+
+**既有債曝光**(非本交付引入,記帳不擋):(1) **spread 滲出**:
+外部 `q: { ...p, peek: ~s }` → `1`——spread 複製 local 軸使外部
+combo 取得秘密副本(SPEC_04 未立 spread×私有互動;外洩原語,
+另案候選);(2) `--observe ~x` 直讀根層私有 → `7`(工單預裁記錄
+現況:根 combo 即觀測語境=內部人讀法)。
+
+模型 #3 檔案:零代修第十例。
