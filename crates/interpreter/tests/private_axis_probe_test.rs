@@ -90,27 +90,23 @@ fn assert_private_violation(src: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_outward_dotted_blocked() {
     // Today: 1 (leak).
     assert_private_violation("p: { ~s: 1 }\nout: p.~s");
 }
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_sibling_steal_blocked() {
     assert_private_violation("a: { ~s: 1 }\nb: { steal: a.~s }\nout: b.steal");
 }
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_root_anchor_dotted_blocked() {
     // `_.` jumps to root as an external coordinate — descent is external.
     assert_private_violation("~x: 7\nout: _.~x");
 }
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_violation_type_meta() {
     // L2-32 mirror.
     assert_obs("p: { ~s: 1 }\nout: (p.~s).%type", "#private_access_violation");
@@ -121,7 +117,6 @@ fn red_violation_type_meta() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_spec_factory_example() {
     // L2-33: the spec's own §3.2 example. Today: `_`.
     assert_obs(
@@ -131,13 +126,11 @@ fn red_spec_factory_example() {
 }
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_inward_same_combo() {
     assert_obs("p: { ~s: 1, get: ~s + 1 }\nout: p.get", "2");
 }
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_inward_grandchild_lifting() {
     // Shared privacy reaches all descendants.
     assert_obs(
@@ -151,7 +144,6 @@ fn red_inward_grandchild_lifting() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_morphism_capture() {
     // L2-34. Today: ⊥ #conflict (`_` + 3).
     assert_obs("p: { ~s: 5, add: (x -> x + ~s) }\nout: 3 |> p.add", "8");
@@ -162,7 +154,6 @@ fn red_morphism_capture() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_display_strips_local() {
     // L2-35.
     let got = observe_nlang("p: { ~s: 1, pub: 2 }\nout: p", "out");
@@ -173,7 +164,6 @@ fn red_display_strips_local() {
 }
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_structural_strips_local() {
     let got = observe_nlang("p: { ~s: 1, pub: 2 }\nout: <<p>>", "out");
     assert!(
@@ -183,7 +173,6 @@ fn red_structural_strips_local() {
 }
 
 #[test]
-#[ignore = "private-axis red gate: awaiting SPEC_04 3.1 enforcement"]
 fn red_nested_display_strips_local() {
     let got = observe_nlang("w: { inner: { ~k: 9, v: 1 } }\nout: w", "out");
     assert!(

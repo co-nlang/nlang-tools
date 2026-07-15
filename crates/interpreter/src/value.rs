@@ -120,25 +120,72 @@ pub fn unwrap_structural_view(v: Value) -> Value {
     }
 }
 
-/// G6: collapsed-observation projection (SYNTAX_06 §4 #6 value-context).
-/// Peels hybrid/pure-wrapper `%val` for display; recurses into combo fields
-/// and list elements. Structural-view markers unwrap to the full node without
-/// peeling its hybrid shape. Does **not** alter `to_nlang`.
-pub fn project_value_context(v: Value) -> Value {
+/// SPEC_04 §3.1 #4: display projection strips the local (`~`) axis at every
+/// depth. System axis (`~%…`) lives on `system`, not `local`, and is kept.
+/// Does **not** alter CAID / `=` / content identity (those use the raw value).
+///
+/// Move-based (not `all_fields_iter` owned clones): a horizon-deep Ref chain
+/// would OOM if each layer re-cloned the whole tree (stage3 stdlib probe).
+pub fn strip_local_axis(v: Value) -> Value {
     match v {
-        Value::Combo(c) => {
-            // Structural view: full node, no hybrid peel.
+        Value::Combo(mut c) => {
             if is_structural_view(&c) {
-                return c
+                let inner = c
                     .get_field("%node")
                     .cloned()
                     .unwrap_or(Value::Combo(c));
+                return strip_local_axis(inner);
+            }
+            c.local.clear();
+            for (_, fv) in c.data.iter_mut() {
+                let taken = std::mem::replace(fv, Value::Top);
+                *fv = strip_local_axis(taken);
+            }
+            for (_, fv) in c.rules.iter_mut() {
+                let taken = std::mem::replace(fv, Value::Top);
+                *fv = strip_local_axis(taken);
+            }
+            for (_, fv) in c.types.iter_mut() {
+                let taken = std::mem::replace(fv, Value::Top);
+                *fv = strip_local_axis(taken);
+            }
+            for (_, fv) in c.meta.iter_mut() {
+                let taken = std::mem::replace(fv, Value::Top);
+                *fv = strip_local_axis(taken);
+            }
+            for (_, fv) in c.system.iter_mut() {
+                let taken = std::mem::replace(fv, Value::Top);
+                *fv = strip_local_axis(taken);
+            }
+            Value::Combo(c)
+        }
+        Value::Union(branches) => {
+            normalize_union(branches.into_iter().map(strip_local_axis))
+        }
+        other => other,
+    }
+}
+
+/// G6: collapsed-observation projection (SYNTAX_06 §4 #6 value-context).
+/// Peels hybrid/pure-wrapper `%val` for display; recurses into combo fields
+/// and list elements. Structural-view markers unwrap to the full node without
+/// peeling its hybrid shape. Strips local axis (#4). Does **not** alter `to_nlang`.
+pub fn project_value_context(v: Value) -> Value {
+    match v {
+        Value::Combo(c) => {
+            // Structural view: full node, no hybrid peel (still strip local).
+            if is_structural_view(&c) {
+                let inner = c
+                    .get_field("%node")
+                    .cloned()
+                    .unwrap_or(Value::Combo(c));
+                return strip_local_axis(inner);
             }
             // Hybrid or pure wrapper: value context reads %val.
             if let Some(inner) = c.get_field("%val").cloned() {
                 return project_value_context(inner);
             }
-            // Plain combo / list: project each field recursively.
+            // Plain combo / list: project each public field; drop local axis.
             let mut new_c = ComboVal::default();
             new_c.closed = c.closed;
             new_c.effect = c.effect;
@@ -147,17 +194,78 @@ pub fn project_value_context(v: Value) -> Value {
             for (k, fv) in c.all_fields_iter() {
                 new_c.insert_field(&k, project_value_context(fv));
             }
-            for (k, fv) in c.local.iter() {
-                new_c
-                    .local
-                    .insert(k.clone(), project_value_context(fv.clone()));
-            }
             Value::Combo(new_c)
         }
         Value::Union(branches) => {
             normalize_union(branches.into_iter().map(project_value_context))
         }
         other => other,
+    }
+}
+
+/// SPEC_04 §3.1 #1/#2/#3.3: inject this combo as a defining scope frame into
+/// every field thunk (and nested values) so bare `~key` resolves via the
+/// scope chain (sibling + ancestor lifting + morphism capture when the
+/// morphism thunk is forced under this frame).
+///
+/// Skipped when the combo has no local axis — injecting frames into pure
+/// public combos would poison Thunk PartialEq / unify (identical public
+/// field thunks from different parents would disagree on closure).
+pub fn seal_defining_scope(c: &mut ComboVal) {
+    if c.local.is_empty() {
+        return;
+    }
+    let frame = c.clone();
+    fn inject(v: &mut Value, frame: &ComboVal) {
+        match v {
+            Value::Thunk { closure, .. } => {
+                closure.push(frame.clone());
+            }
+            Value::Combo(inner) => {
+                for (_, fv) in inner.data.iter_mut() {
+                    inject(fv, frame);
+                }
+                for (_, fv) in inner.local.iter_mut() {
+                    inject(fv, frame);
+                }
+                for (_, fv) in inner.rules.iter_mut() {
+                    inject(fv, frame);
+                }
+                for (_, fv) in inner.types.iter_mut() {
+                    inject(fv, frame);
+                }
+                for (_, fv) in inner.meta.iter_mut() {
+                    inject(fv, frame);
+                }
+                for (_, fv) in inner.system.iter_mut() {
+                    inject(fv, frame);
+                }
+            }
+            Value::Union(branches) => {
+                for b in branches.iter_mut() {
+                    inject(b, frame);
+                }
+            }
+            _ => {}
+        }
+    }
+    for (_, fv) in c.data.iter_mut() {
+        inject(fv, &frame);
+    }
+    for (_, fv) in c.local.iter_mut() {
+        inject(fv, &frame);
+    }
+    for (_, fv) in c.rules.iter_mut() {
+        inject(fv, &frame);
+    }
+    for (_, fv) in c.types.iter_mut() {
+        inject(fv, &frame);
+    }
+    for (_, fv) in c.meta.iter_mut() {
+        inject(fv, &frame);
+    }
+    for (_, fv) in c.system.iter_mut() {
+        inject(fv, &frame);
     }
 }
 

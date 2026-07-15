@@ -75,3 +75,41 @@ L2-32~35,交付時應 74/74)。**
 - `~%` 影蓋靜默(另案)。
 - 跨宇宙觀測之私有語義(REAL 層,另案)。
 - lint 層「疑似外部私有存取」提示(想法 D 儀器候選,另議)。
+
+---
+
+## 交付記錄(2026-07-15, implementer)
+
+### 根因 / 修復
+
+| 面 | 根因 | 修復 |
+|---|---|---|
+| **外阻** | 點段 `.~key` 走 get_field 直取 local | `navigate_segments` Combo 臂:seg 以 `~` 起且非 `~%` → ⊥ PrivateAccessViolation |
+| **內通/提升** | combo 字面量求值未把自身推入 scope;欄 thunk 閉包空 | `seal_defining_scope`:建完 combo 後把自身 frame 注入各欄 thunk 閉包(子孫 force 時沿鏈見祖先 local) |
+| **捕獲** | 同上 + pipe RHS 多段路徑留 Thunk | seal 使態射定義時 scopes 含定義 combo → `%closure`;`pipe_apply` **force** RHS 再判 morphism |
+| **顯示剝除** | to_nlang 印 local | 觀測出口 `strip_local_axis` / `project_value_context` 不複製 local(遞迴;結構態同) |
+
+### 量測附註
+
+- `--observe` 根層裸 `~x`:仍走 insider 裸名路線(根語境=內部),未另封鎖。
+- `~%Config.fuel` 釘綠(系統軸豁免)。
+
+### 未動
+
+CAID/`=`/bn_serial、⊥/Blur 導航臂、`~.` 文法、私有 lint。
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| private_axis probes | **19/19** |
+| workspace | **948 過 0 敗 3 ignored**(930 −1 遷移 +19) |
+| conformance | **74/74**(L2-32~35) |
+| 語料 | **74/0** |
+
+對抗修復:
+- seal 僅在 `local` 非空時注入(避免公共 combo thunk 閉包毒化 `=`/unify)
+- pipe RHS 只 force Thunk 不 force Ref(保住 Stage 3 活引用)
+- `strip_local_axis` 改 move/就地清空(深 Ref 鏈勿 `all_fields_iter` 克隆 OOM)
+
+nlang-spec 帳:驗收方記。

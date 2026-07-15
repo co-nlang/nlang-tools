@@ -222,13 +222,16 @@ impl Universe {
                     Value::Combo(c) if crate::value::is_structural_view(c)
                 );
             let forced = engine.force_recursive(res, &mut ctx);
+            // Display projection: G6 value-context peel + SPEC_04 §3.1 #4
+            // private-axis strip (collapsed and structural).
             if structural {
-                crate::value::unwrap_structural_view(forced)
+                crate::value::strip_local_axis(crate::value::unwrap_structural_view(forced))
             } else {
-                // Mark may only appear after force (Thunk of Structural).
                 match &forced {
                     Value::Combo(c) if crate::value::is_structural_view(c) => {
-                        crate::value::unwrap_structural_view(forced)
+                        crate::value::strip_local_axis(crate::value::unwrap_structural_view(
+                            forced,
+                        ))
                     }
                     _ => crate::value::project_value_context(forced),
                 }
