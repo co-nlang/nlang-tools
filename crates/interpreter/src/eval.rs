@@ -38,6 +38,26 @@ fn value_context_operand(v: &Value) -> Result<Value, ()> {
     }
 }
 
+/// SPEC_03 §3.1 / SPEC_04 §3.1 #5: spread target is an *insider* when it
+/// appears in the current evaluation scope chain (defining-combo frames
+/// from `seal_defining_scope`). Full `PartialEq` first; if seal left a
+/// pre-inject clone in the thunk closure while the live target has sealed
+/// field thunks, fall back to same-axes-keys + equal `local` (privacy surface).
+fn spread_target_is_insider(target: &ComboVal, ctx: &EvalContext) -> bool {
+    ctx.scopes.iter().any(|frame| {
+        if frame == target {
+            return true;
+        }
+        frame.local == target.local
+            && frame.closed == target.closed
+            && frame.data.keys().eq(target.data.keys())
+            && frame.types.keys().eq(target.types.keys())
+            && frame.rules.keys().eq(target.rules.keys())
+            && frame.meta.keys().eq(target.meta.keys())
+            && frame.system.keys().eq(target.system.keys())
+    })
+}
+
 /// G6: mark a value as structural-view (`<<non-path>>`) so observation
 /// display preserves the full node. Payload is `%node`, **not** `%val`:
 /// pure wrappers (`%val` + %-meta only) are peeled by `collapse()` during
@@ -359,10 +379,17 @@ impl Ouroboros {
                 for f in fields {
                     match &f.key {
                         FieldKey::Quoted(name) if name == "..." => {
+                            // SPEC_03 §3.1 private preservation: external
+                            // spread excludes the local axis; insider spread
+                            // (target appears in the current scope chain)
+                            // keeps local. Geometric test = combo PartialEq
+                            // against ctx.scopes frames (seal frames).
                             let val = self.eval(&f.value, ctx);
                             if let Value::Combo(ref cv) = val {
                                 rf.extend(cv.fields().clone());
-                                rl.extend(cv.local_fields().clone());
+                                if spread_target_is_insider(cv, ctx) {
+                                    rl.extend(cv.local_fields().clone());
+                                }
                                 if !*closed { me = me.max(cv.effect); }
                             }
                         }

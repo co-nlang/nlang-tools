@@ -72,21 +72,18 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "spread-privacy red gate: awaiting SPEC_03 3.1 private preservation"]
 fn red_external_spread_excludes_local() {
     // L2-36. Today: 1 — the exfiltration primitive.
     assert_obs("p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek", "_");
 }
 
 #[test]
-#[ignore = "spread-privacy red gate: awaiting SPEC_03 3.1 private preservation"]
 fn red_external_spread_eq_public_only() {
     // L2-37: the spread result carries ONLY the public axes.
     assert_obs("p: { ~s: 1, a: 2 }\nq: { ...p }\nout: q = { a: 2 }", "#true");
 }
 
 #[test]
-#[ignore = "spread-privacy red gate: awaiting SPEC_03 3.1 private preservation"]
 fn red_nested_external_spread_excludes() {
     // External at any depth: w's subtree never contains p in its chain.
     assert_obs(

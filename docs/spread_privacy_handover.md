@@ -62,3 +62,29 @@ SPEC_03 §3.1 私有保全條款:「若展開操作位於目標 Combo **外部**
 - 態射體內根名解析(`(x -> {...p})` 外呼 → `_`;另案)。
 - `&`×local 軸合併語義(值層法,如需變更須另案裁定)。
 - `~%` 影蓋靜默(另案)。
+
+---
+
+## 交付記錄(2026-07-15, implementer)
+
+### 根因 / 修復
+
+| 面 | 根因 | 修復 |
+|---|---|---|
+| **外部 spread 外洩** | `...` 臂無條件 `rl.extend(local)` | 先 `spread_target_is_insider`;外部跳過 local 軸 |
+| **內外判定** | 無幾何判準 | 目標 combo 與 `ctx.scopes` frame:先 `PartialEq`,再 axes-keys + `local` 等值(相容 seal 前後 frame) |
+
+### 未動
+
+`&` 六軸合併、展開碰撞覆寫、List/Range 展開、效果釋放、私有軸外阻/顯示剝除。
+
+### 量測終態
+
+| 項目 | 結果 |
+|------|------|
+| spread_privacy probes | **11/11** |
+| workspace | **959 過 0 敗 3 ignored**(948+11) |
+| conformance | **77/77**(L2-36~38) |
+| 語料 | **74/0** |
+
+nlang-spec 帳:驗收方記。
