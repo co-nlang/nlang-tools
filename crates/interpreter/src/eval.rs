@@ -262,7 +262,14 @@ impl Ouroboros {
     fn pipe_apply(&self, lv: Value, r: &Expr, ctx: &mut EvalContext) -> Value {
         let mut call_ctx = self.sub_context(ctx);
         call_ctx.context_value = Some(lv.clone());
-        let rv = self.eval(r, &mut call_ctx);
+        // Solidify field *thunks* on multi-segment paths like `p.add`
+        // (GUIDE_03 §11.4 leaves them unforced) so morphism judgment sees
+        // the sealed combo. Do **not** force Refs — Stage 3 live-Ref late
+        // binding requires the pipe RHS to stay symbolic until apply.
+        let mut rv = self.eval(r, &mut call_ctx);
+        while matches!(&rv, Value::Thunk { .. }) {
+            rv = self.force(rv, &mut call_ctx);
+        }
         ctx.fuel = call_ctx.fuel;
         if rv.is_morphism() {
             let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
@@ -434,7 +441,11 @@ impl Ouroboros {
                         }
                     }
                 }
-                let mut res = Value::Combo(ComboVal::new(rf, *closed, rl, me, rv));
+                let mut combo = ComboVal::new(rf, *closed, rl, me, rv);
+                // SPEC_04 §3.1: bare `~key` (and morphism bodies that capture
+                // it) resolve through the defining combo as a scope frame.
+                crate::value::seal_defining_scope(&mut combo);
+                let mut res = Value::Combo(combo);
                 if let Value::Combo(ref cv) = res {
                     if let Some(mode_v) = cv.fields().get("%eval_mode") {
                         let m = self.force(mode_v.clone(), ctx);

@@ -1467,6 +1467,12 @@ let mut refl_fields = IndexMap::new();
 
             match current {
                 Value::Combo(ref c) => {
+                    // SPEC_04 §3.1 #3/#5: dotted descent into a private (`~`)
+                    // segment is external locating → ⊥ #private_access_violation.
+                    // System axis `~%…` is exempt (not the local axis).
+                    if seg.starts_with('~') && !seg.starts_with("~%") {
+                        return BottomCause::PrivateAccessViolation.into();
+                    }
                     let target = c.get_field(seg).or_else(|| c.get_field(&format!("/{}", seg))).or_else(|| c.get_field(&format!("@{}", seg))).cloned().unwrap_or(Value::Top);
                     // Leave the field unforced (Stage 2: open terms stay Thunk
                     // until observation). Cycle detection for the full path is
