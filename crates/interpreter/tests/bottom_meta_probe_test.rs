@@ -287,10 +287,7 @@ fn pin_union_display_encounter_order() {
     assert_obs("out: 2 | 1", "2 | 1");
 }
 
-#[test]
-fn pin_private_axis_current_behavior() {
-    // FROZEN current behavior: privacy is UNENFORCED today (`p.~s` → 1;
-    // SPEC_04 §61 says ⊥ #private_access_violation — separate case).
-    // Pinned so this arc doesn't drive-by it in the catch-all rework.
-    assert_obs("p: { ~s: 1 }\nout: p.~s", "1");
-}
+// pin_private_axis_current_behavior MIGRATED 2026-07-15 by the ACCEPTOR:
+// its freeze clause read "separate case" — that case is the private-axis
+// enforcement arc (SPEC_04 §3.1). Successor red gate:
+// private_axis_probe_test::red_outward_dotted_blocked.
