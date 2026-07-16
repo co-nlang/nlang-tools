@@ -199,6 +199,24 @@ fn pin_data_axis_name_free() {
 }
 
 #[test]
+fn pin_combo_path_key_whole_field_bottom() {
+    // ACCEPTANCE REPAIR PIN (2026-07-16): the SECOND spelling. A
+    // forbidden path key ({~%Math.add: 7}) minted ⊥ only at the LEAF and
+    // materialized `~%Math: {add: ⊥}` as a user coordinate — the silent
+    // shadow lie resurrected via path-key spelling (dual-spelling lesson
+    // #3). The whole field collapses at the FIRST segment.
+    assert_obs(
+        "c: { ~%Math.add: 7 }\nout: (c.~%Math).%cause",
+        "#system_reserved",
+    );
+    // Poison scenario through the second spelling stays diagnosable.
+    assert_obs(
+        "c: { ~%Math.add: 7, v: ~%Math.abs (0 - 3) }\nout: (c.v).%cause",
+        "#system_reserved",
+    );
+}
+
+#[test]
 fn pin_private_axis_untouched() {
     // Longest-match boundary: `~` (private/local) is a different axis;
     // insider lexical read through it stays intact.

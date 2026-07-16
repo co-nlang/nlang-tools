@@ -619,7 +619,17 @@ impl Ouroboros {
                                 me = me.max(val.effect());
                             }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
-                            let _ = self.inject_path(&mut tmp, &p.segments, val);
+                            // SPEC_09 ownership (acceptance repair): a forbidden
+                            // path key must NOT materialize its intermediate
+                            // nodes ({~%Math.add: 7} minting ~%Math: {add: ⊥}
+                            // resurrects the silent shadow via the second
+                            // spelling) — the WHOLE field collapses at the
+                            // first segment.
+                            if sys_reserved {
+                                let _ = self.inject_path(&mut tmp, &p.segments[..1], val);
+                            } else {
+                                let _ = self.inject_path(&mut tmp, &p.segments, val);
+                            }
                             // Path-key sibling merge: {a:{x:1}, a.y:2} → a merges.
                             for (k, v) in tmp.fields() {
                                 self.merge_field_into(&mut rf, k, v, ctx);

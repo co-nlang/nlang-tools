@@ -108,3 +108,30 @@ combo 內寫 `~%Config` **不豁免**(同 Q2 ⊥)。
     不再見 `9 ;; %effect: #io`(隨 ⊥ 鑄造消失)。
   - 未動 parser 拼法、`~%Config` 未知欄名驗證、`~%` 模組內容表。
   - Config 整組替換形未立法,未實作。
+
+## 6. 驗收紀錄(2026-07-16,驗收方)
+
+**PASS——一件代修**。交付 commit `60d98d9`;代修+釘由驗收方入本 commit。
+
+- **Diff 純度** ✓:root 攔截(`is_system_axis_lhs_forbidden` + Config 豁免
+  =整段名精確匹配、恰一裸名欄、`%`/`~` 開頭不豁免)、combo 雙形鑄 ⊥、
+  `SystemReserved` 枚舉尾端追加(fmt 合規)、force 終端值不包 pure-wrapper;
+  探針檔僅 6 個 `#[ignore]` 移除。Config 寫入改走 staged 開放部分覆寫+
+  observe overlay(合法:視界參數非格律約束,10000&50 不應是 ⊥)。
+- **獨立重跑** ✓:探針 13/13、workspace 1077/0/3、conformance 101/101、
+  語料 78/0(交付態);修後 14/14、**1078/0/3**、101/101、78/0。
+- **對抗**:`~%ConfigX.fuel`/`~%Config.fuel.deep`/`~%Config.%fuel`/
+  `~%Config: {...}` 全部大聲拒(exit 1 實測;豁免判準嚴格);巢內
+  `w.inner.~%Math`、cocoon `{{~%Mine}}` 皆 ⊥ 帶因;RHS 值面正確。
+- **代修=路徑鍵拼法穿透**:`c: { ~%Math.add: 7 }` 把 ⊥ 鑄在葉端、
+  `inject_path` 照樣物化中間節點 `~%Math: {add: ⊥}` 為用戶座標——
+  `v: ~%Math.abs(-3)` 借第二拼法無聲毒死回 `_`(本弧要殺的謊還魂)。
+  修=違法路徑鍵整欄塌在**首段**(`inject_path(&p.segments[..1])`);
+  代修釘 `pin_combo_path_key_whole_field_bottom`(兩面:節點 %cause+
+  毒場景可診斷)。**共責**:紅門只釘 Named 鍵形,漏路徑鍵形——
+  雙拼法語境教訓**第三例**(blur 邊界弧 inline/binding、G6 之後);
+  交付方 sys_reserved 檢查有做但塌錯深度。
+- **既有債歸因(反事實 @175912a)**:幻影 `%effect: #io` 於**非影蓋
+  RHS 面**倖存(`c: { v: ~%Math.abs (0-3) }` → `3 ;; %effect: #io`,
+  root 級同式無標籤)——交付前同形,非本交付引入;記帳另案
+  (系統態射應用於 combo 內效果升格)。
