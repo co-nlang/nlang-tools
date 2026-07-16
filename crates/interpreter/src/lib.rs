@@ -169,12 +169,19 @@ fn expr_is_pure_ref(expr: &Expr) -> bool {
 }
 
 /// Re-entry on a force chain: pure static cycle → caused Top; any transform
-/// hop → ⊥ #divergent.
-fn cycle_reentry(ctx: &EvalContext) -> Value {
+/// hop → ⊥ #divergent. `reentered` is the coordinate whose re-entry fired —
+/// it belongs to the loop even when the chain missed it (acceptance repair:
+/// mutual cycle minted members ["a"] only, misreading 互指 as 自指 — the
+/// ruling makes loop SHAPE readable from the member list).
+fn cycle_reentry(ctx: &EvalContext, reentered: Option<&str>) -> Value {
     if ctx.chain_transform_taint {
         BottomCause::Divergent.into()
     } else {
-        crate::value::static_cycle_top(ctx.cycle_chain.clone())
+        let mut members = ctx.cycle_chain.clone();
+        if let Some(name) = reentered {
+            members.push(name.to_string());
+        }
+        crate::value::static_cycle_top(members)
     }
 }
 
@@ -1090,7 +1097,10 @@ let mut refl_fields = IndexMap::new();
                 .content_hash();
                 if ctx.in_flight.contains(&thunk_id) {
                     // SPEC_12 §1.1: pure-ref cycle → caused Top; transform → ⊥.
-                    return cycle_reentry(ctx);
+                    // The re-entered thunk's own expr coordinate is a loop
+                    // member (repair: chain alone missed the mutual partner).
+                    let rc = path_coord_of(&expr);
+                    return cycle_reentry(ctx, rc.as_deref());
                 }
                 // Holder re-entry: force_coord("s.v") put "s.v" in computing;
                 // a path-shaped thunk whose expr is that same path is the
@@ -1099,7 +1109,7 @@ let mut refl_fields = IndexMap::new();
                 let path_coord = path_coord_of(&expr);
                 if let Some(ref pc) = path_coord {
                     if ctx.computing.contains(pc) {
-                        return cycle_reentry(ctx);
+                        return cycle_reentry(ctx, Some(pc));
                     }
                 }
 
@@ -1738,7 +1748,7 @@ let mut refl_fields = IndexMap::new();
         let needs_gate = matches!(val, Value::Thunk { .. } | Value::Ref(_));
         if needs_gate {
             if ctx.computing.contains(coord) {
-                return cycle_reentry(ctx);
+                return cycle_reentry(ctx, Some(coord));
             }
             ctx.computing.insert(coord.to_string());
             ctx.cycle_chain.push(coord.to_string());
@@ -1762,7 +1772,7 @@ let mut refl_fields = IndexMap::new();
             return val;
         }
         if ctx.lexical_forcing.contains(name) {
-            return cycle_reentry(ctx);
+            return cycle_reentry(ctx, Some(name));
         }
         let track = matches!(&val, Value::Thunk { .. });
         if track {

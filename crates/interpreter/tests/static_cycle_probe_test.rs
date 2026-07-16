@@ -197,3 +197,30 @@ fn pin_forward_ref_still_lives() {
     // is exactly the forward-ref arc's; its living face must not regress.
     assert_obs("out: a\na: 5", "5");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// ACCEPTANCE-REPAIR PIN (2026-07-16): loop members must span the WHOLE
+// loop. Delivery minted members from the chain alone — a mutual cycle
+// showed ["a"], misreading 互指 as 自指; the ruling makes loop shape
+// readable from the member list. Repair: cycle_reentry unions the
+// re-entered coordinate into the members at all four mint sites.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn pin_cycle_members_span_loop() {
+    let got = observe_nlang("a: b\nb: a\nout: <<a.%cause>>", "out");
+    assert!(
+        got.contains("\"a\"") && got.contains("\"b\""),
+        "mutual cycle must list both members: {got:?}"
+    );
+    let got3 = observe_nlang("a: b\nb: c2\nc2: a\nout: <<a.%cause>>", "out");
+    assert!(
+        got3.contains("\"a\"") && got3.contains("\"b\"") && got3.contains("\"c2\""),
+        "3-cycle must list all members: {got3:?}"
+    );
+    let gots = observe_nlang("x: x\nout: <<x.%cause>>", "out");
+    assert!(
+        gots.contains("\"x\"") && !gots.contains("\"a\""),
+        "self cycle lists exactly itself: {gots:?}"
+    );
+}

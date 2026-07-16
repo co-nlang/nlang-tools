@@ -150,3 +150,37 @@ root 之 `computing`/`in_flight` 再入一律 `#divergent`、combo 之
 - refine_map 循環、態射遞迴/燃料視界、Blur 展開、~% 影蓋。
 - BottomCause 枚舉未加 static_cycle(因在 Top 側)。
 - L2-17 變換正典 `a: a+1` 仍 `#divergent`。
+
+---
+
+## 6. 驗收紀錄(2026-07-16,驗收方)
+
+**判定:通過——一件代修(環成員名單未含全環);釘衝突停報第二例
+處理正確(補遷共責已另記);基線算式糾正(1050)採納=交付方對、
+驗收方 +17 誤計記帳實不符一筆(我方)。**
+
+獨立重測:純度乾淨(僅 9 個 `#[ignore]` 移除;memo_soundness
+變更如申報=exhaustive 補臂非語義);探針 16/16、workspace
+1050/0/3、語料零敗、conformance **95/95**(L2-53~55 關門、56 法釘)。
+
+diff 審查:`Value::TopCaused` 全 match 位點補臂(eval math/
+complement/lattice_sketch/bn_serial/unify Thunk·Ref 臂/tropical);
+bn_serial 序列化=裸 Top 同位元組(零新 tag,fmt 淨);
+`prefer_caused_top` CAID 早退保因(否則 evolve 合併丟欄);消費
+走 force 路自然蒸發。
+
+對抗性(裸 Top vs 帶因 Top 成對一致):顯式 `x: _` 不長因 ✓;
+`a|5` 與 `_|5` 同形 ✓;`!a` 與 `!_` 同形 ✓;跨界純環
+`a: c2.w / c2:{w:a}` → #static_cycle ✓;管道變換環 → #divergent ✓;
+cause cocoon 未定義鍵 → ⊥ #missing_key(與 cocoon 本徵態弧正確
+合成)✓;combo 顯示 `_` ✓。
+
+**驗收代修**:互指環 `%members` 只錄 `["a"]`——環形狀被誤讀為
+自指,違裁定「環形狀從成員名單直讀」。修=`cycle_reentry` 四鑄造
+點聯集再入座標入成員;修後互指 ["a","b"]、環長 3 全列、combo 同、
+自指恰一。代修釘 `pin_cycle_members_span_loop`(三形)。修後全
+套件 **1051/0/3**、95/95。共責:紅門只釘了 %cause 標籤未釘成員
+形——教訓:**裁定文說「從 X 直讀 Y」時,X 的形要釘,不只標籤**。
+
+模型 #3 檔案:一件代修(成員名單,共責);兩次停報全對;基線
+糾錯記功。
