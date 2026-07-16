@@ -1727,11 +1727,21 @@ let mut refl_fields = IndexMap::new();
                 Some(targets) => { current = targets[0].clone(); }
             }
         }
-        ContentHash::parse(&current).map_err(|_| BottomCause::InvalidPath)
+        // F4 abolition: InvalidPath minting stopped. Malformed refine-map
+        // targets are a store integrity conflict, not a path-syntax error.
+        ContentHash::parse(&current).map_err(|_| BottomCause::Conflict)
     }
 
     pub fn get_live_value(&self, caid: &ContentHash) -> Result<Value> {
-        let resolved = self.follow_refine(caid).map_err(|_| anyhow::anyhow!("Refinement cycle detected"))?;
+        // Split honest messages: Divergent = cycle; Conflict = parse/store
+        // integrity; other causes pass their tag through.
+        let resolved = self.follow_refine(caid).map_err(|cause| match cause {
+            BottomCause::Divergent => anyhow::anyhow!("Refinement cycle detected"),
+            BottomCause::Conflict => {
+                anyhow::anyhow!("Invalid refinement target (store integrity conflict)")
+            }
+            other => anyhow::anyhow!("Refinement follow failed: {}", other.as_tag()),
+        })?;
         self.store.get_value(&resolved)
     }
 

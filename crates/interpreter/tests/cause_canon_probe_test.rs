@@ -89,7 +89,6 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED at order time: #fuel_exhausted (blur early-return skips bot)
 fn red_two_source_bottom_after_blur() {
     // L2-63. Derivation: state after ...big = blur; blur & unbox(bot)
     // = ⊥ (unify Blur×Bottom, both orders) carrying bot's cause.
@@ -103,7 +102,6 @@ fn red_two_source_bottom_after_blur() {
 }
 
 #[test]
-#[ignore] // RED at order time: #fuel_exhausted (plain field after blur also skipped)
 fn red_blur_fold_continues_through_fields() {
     // The fold continues through interleaved plain fields too.
     assert_obs(
@@ -120,14 +118,12 @@ fn red_blur_fold_continues_through_fields() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED at order time: `3  ;; %effect: #io` (blanket ~% → IO lie)
 fn red_combo_system_apply_effect_clean() {
     // L2-64. ~%Math is PURE (SPEC_09 §4) — no phantom io tag.
     assert_obs("c: { v: ~%Math.abs (0 - 3) }\nout: c.v", "3");
 }
 
 #[test]
-#[ignore] // RED at order time: pipe spelling carries the same phantom tag
 fn red_combo_system_pipe_effect_clean() {
     // Dual-spelling rule: apply AND pipe forms both pinned.
     assert_obs("c: { v: 2 |> ~%Math.abs }\nout: c.v", "2");

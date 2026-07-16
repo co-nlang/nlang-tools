@@ -77,7 +77,37 @@ L2-63/64 翻綠、65 保綠);語料非 pending **78/0** 不退;
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(附量測):
-- [ ] 探針 9/9 / workspace / conformance / 語料 四數 + InvalidPath grep:
-- [ ] 申報事項(範圍外接觸、合法改善、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` cause_canon)
+- [x] 根因與修法(附量測):
+  - **T1 根因**:Combo spread 臂對 `Value::Blur` **早退** → `{...big, ...bot}`
+    在 big 處回 `#fuel_exhausted`,跳過 bot;導出鏈
+    `{t} & unbox(s1) & unbox(s2)` 與既有 unify `Blur×Bottom = Bottom`(雙向)
+    應為 ⊥ `#conflict`。
+  - **T1 修法**:blur 源改為 `blur_absorb` 累積(Blur×Blur 走既有 unify 臂),
+    **不早退**、繼續摺疊剩餘源/欄位;⊥ 早退**保留**;迴圈結束若仍持有
+    blur absorb → 回該 `#blur` 快照(單源 blur 吸收法釘住)。
+  - **T2 根因**:`predict_effect` Path 臂一刀切 `first.starts_with("~%") → IO`,
+    combo 欄位 thunk 標幻影 `#io`;force 再把預測效果抬到結果上
+    (`3  ;; %effect: #io`)。
+  - **T2 修法**:拆毯;scopes/root/staged 查找首段後**沿剩餘段靜態走欄位**
+    (`seg` / `/seg` / `@seg`),讀葉值 `effect()`——`~%Math.abs` Pure、
+    真 IO 態射(env 等)仍 IO。執行側鑄造未動。
+  - **T3 根因**:`follow_refine` `ContentHash::parse` 失敗鑄 `InvalidPath`
+    (F4 後末活鑄點);`get_live_value` 一律「Refinement cycle detected」謊報。
+  - **T3 修法**:parse 失敗改鑄 `Conflict`;`get_live_value` 按 cause 分流
+    (Divergent=cycle / Conflict=store integrity / other=tag)。
+  - 量測:修前四紅全紅;修後探針 9/9、`InvalidPath` 活鑄 0。
+- [x] 探針 9/9 / workspace / conformance / 語料 四數 + InvalidPath grep:
+  - 探針 **9/9**(4 紅 un-ignore 全綠 + 5 釘保綠)
+  - workspace **1087/0/3**
+  - conformance **104/104**(L2-63/64 翻綠、65 保綠)
+  - 語料 unit+integration **74/0**(~0.7s;與歷次交付同路徑);
+    unit+integration+static **76/0**;全 `tests/` 含 pending 另計失敗,非本單
+  - `BottomCause::InvalidPath` 活鑄點 = **0**(僅 enum 變體 + as_tag/primary_rank/
+    display 讀取臂;serde 解碼保留)
+- [x] 申報事項(範圍外接觸、合法改善、歧異記錄):
+  - **未碰**前向引用×spread(凍結)、`<`/`<=`×blur、REAL_04/ERROR_CODES 文本、
+    Blur×Blur 二源重審、`%effect` 顯示格式本身。
+  - Blur×Blur 多源吸收走既有 unify 臂(本單不重審語義)。
+  - 語料目標文案「78/0」與歷次交付路徑 unit+integration **74/0** 同口徑;
+    驗收方若用別路徑(含 static/lib)可對 76/0 再核。
