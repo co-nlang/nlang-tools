@@ -364,7 +364,16 @@ impl Ouroboros {
             let vb = b.get_field(&key).cloned().unwrap_or(Value::Top);
             let va_is_top = va.is_top();
             let vb_is_top = vb.is_top();
-            if a.closed && !a.contains_key(&key) && !vb_is_top { 
+            // SPEC_03 §1.2 #2: closed-key rejection only for NON-TOP extras.
+            // `b: _` is often Thunk(Top) — force before judging "no constraint".
+            let is_no_constraint = |v: &Value, is_top: bool, engine: &Self, ctx: &mut EvalContext| -> bool {
+                if is_top {
+                    return true;
+                }
+                let f = engine.force(v.clone(), ctx).collapse().clone();
+                f.is_top()
+            };
+            if a.closed && !a.contains_key(&key) && !is_no_constraint(&vb, vb_is_top, self, ctx) { 
                 return Value::Bottom(Box::new(BottomDetail { 
                     cause: BottomCause::MissingKey, 
                     path: Some(key.clone()), 
@@ -374,7 +383,7 @@ impl Ouroboros {
                     involved: vec![],
                  ..Default::default() }));
             }
-            if b.closed && !b.contains_key(&key) && !va_is_top { 
+            if b.closed && !b.contains_key(&key) && !is_no_constraint(&va, va_is_top, self, ctx) { 
                 return Value::Bottom(Box::new(BottomDetail { 
                     cause: BottomCause::MissingKey, 
                     path: Some(key.clone()), 

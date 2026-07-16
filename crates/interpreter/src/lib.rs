@@ -1534,15 +1534,41 @@ let mut refl_fields = IndexMap::new();
                     if seg.starts_with('~') && !seg.starts_with("~%") {
                         return BottomCause::PrivateAccessViolation.into();
                     }
-                    let target = c.get_field(seg).or_else(|| c.get_field(&format!("/{}", seg))).or_else(|| c.get_field(&format!("@{}", seg))).cloned().unwrap_or(Value::Top);
-                    // Leave the field unforced (Stage 2: open terms stay Thunk
-                    // until observation). Cycle detection for the full path is
-                    // handled in `force` when the thunk's expr is that path.
+                    let found = c
+                        .get_field(seg)
+                        .or_else(|| c.get_field(&format!("/{}", seg)))
+                        .or_else(|| c.get_field(&format!("@{}", seg)))
+                        .cloned();
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);
                     } else {
                         path_so_far = seg.to_string();
                     }
+                    let target = match found {
+                        Some(v) => v,
+                        None if c.closed && !seg.starts_with('%') => {
+                            // SPEC_03 §1.2 #1 / §1.3: Cocoon eigenstate —
+                            // undefined coordinate → ⊥ #missing_key.
+                            // %-meta is another axis (F-series open; pins).
+                            return Value::Bottom(Box::new(crate::value::BottomDetail {
+                                cause: BottomCause::MissingKey,
+                                path: Some(path_so_far.clone()),
+                                message: Some(format!(
+                                    "Key '{}' missing in closed Cocoon",
+                                    seg
+                                )),
+                                expected: None,
+                                found: None,
+                                involved: vec![],
+                                ..Default::default()
+                            }))
+                            .with_effect(accumulated_effect);
+                        }
+                        None => Value::Top,
+                    };
+                    // Leave the field unforced (Stage 2: open terms stay Thunk
+                    // until observation). Cycle detection for the full path is
+                    // handled in `force` when the thunk's expr is that path.
                     val = target;
                 }
                 // G4: path nav over Union = per-branch projection (SPEC_07
