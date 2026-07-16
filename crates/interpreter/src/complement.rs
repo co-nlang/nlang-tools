@@ -8,7 +8,7 @@ impl Ouroboros {
         let effect = forced.effect();
         
         match forced {
-            Value::Top => Value::Atom(AtomKind::Bottom, effect, None),
+            Value::Top | Value::TopCaused { .. } => Value::Atom(AtomKind::Bottom, effect, None),
             
             Value::Bottom(_) => Value::Atom(AtomKind::Top, effect, None),
             

@@ -195,11 +195,13 @@ fn pin_mutual_sibling_frozen() {
     assert_obs("c: { a2: b2, b2: a2 }\nout: c.a2", "_");
 }
 
-#[test]
-fn pin_self_ref_sibling_frozen() {
-    // FROZEN — same separate case.
-    assert_obs("c: { d: d + 1 }\nout: c.d", "_");
-}
+// MIGRATED (2026-07-16, by the acceptor): `pin_self_ref_sibling_frozen`
+// froze `c: {d: d+1}` → `_` pending the mutual/self adjudication. That
+// ruling (SPEC_12 §1.1 as amended) classifies it a TRANSFORM cycle
+// (arithmetic hop) → ⊥ #divergent — the L2-17 canon family. Successor
+// gate: red_combo_transform_self_divergent in static_cycle_probe_test.rs.
+// Second same-type acceptor oversight (three sibling pins migrated at
+// order time, this one missed); implementer halted correctly again.
 
 // MIGRATED (2026-07-16, by the acceptor): `pin_cocoon_closed_miss_frozen`
 // froze `{{a:1}}.b` → `_` as an EXPOSED VIOLATION pending its own arc.

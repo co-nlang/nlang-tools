@@ -90,11 +90,12 @@ fn l217_self_arith_divergent() {
     assert_divergent("a: a + 1\nout: a", "out");
 }
 
-#[test]
-// RED LINE: pure self-identity is equally informationless
-fn l217_self_identity_divergent() {
-    assert_divergent("x: x\nout: x", "out");
-}
+// MIGRATED (2026-07-16, by the acceptor, in the static-cycle order
+// commit): `l217_self_identity_divergent` pinned `x: x` → ⊥ #divergent,
+// but that is a PURE-REFERENCE cycle — SPEC_12 §1.1 static cycle → Top
+// (solution set = everything; L2-17's canon vector is `a: a+1`, a
+// TRANSFORM cycle, which stays ⊥). Successor gate:
+// red_root_static_self_top in static_cycle_probe_test.rs.
 
 #[test]
 // RED LINE: mutual cycle through two coordinates
@@ -102,11 +103,11 @@ fn l217_mutual_cycle_divergent() {
     assert_divergent("a: b + 1\nb: a + 1\nout: a", "out");
 }
 
-#[test]
-// RED LINE: cycle through path navigation (s.v refers to itself)
-fn l217_path_cycle_divergent() {
-    assert_divergent("s: { v: s.v }\nout: s.v", "out");
-}
+// MIGRATED (2026-07-16, by the acceptor): `l217_path_cycle_divergent`
+// pinned `s: { v: s.v }` → ⊥, but a pure-PATH loop is still a pure
+// reference (projection adds no information) — SPEC_12 §1.1 as amended
+// classifies it static → Top. Successor gate:
+// red_path_pure_cycle_top in static_cycle_probe_test.rs.
 
 #[test]
 // RED LINE: ⊥ canonical display carries %cause tag (Blur-precedent

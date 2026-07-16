@@ -54,7 +54,8 @@ pub fn content_digest(value: &Value) -> [u8; 32] {
 
 fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
     match val {
-        Value::Top => buf.push(0xFF),
+        // Caused Top serializes as bare Top (provenance is observation-only).
+        Value::Top | Value::TopCaused { .. } => buf.push(0xFF),
         Value::Bottom(_) => buf.push(0xFE),
         Value::Atom(kind, _effect, _rank) => serialize_atom(kind, buf),
         Value::Combo(cv) => serialize_combo(cv, buf),

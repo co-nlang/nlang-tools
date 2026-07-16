@@ -1163,7 +1163,9 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             (Value::Atom(AtomKind::Str(x), _, _), Value::Atom(AtomKind::Str(y), _, _)) => {
                 if let Some(f) = op_s { Value::Atom(AtomKind::Str(f(x, y)), res_e, None) } else { BottomCause::Conflict.into() }
             }
-            (Value::Top, _) | (_, Value::Top) => Value::Top,
+            (Value::Top | Value::TopCaused { .. }, _) | (_, Value::Top | Value::TopCaused { .. }) => {
+                Value::Top
+            }
             _ => BottomCause::Conflict.into(),
         }
     }

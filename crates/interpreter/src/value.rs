@@ -21,7 +21,16 @@ pub fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
-    Top, Atom(AtomKind, EffectTag, Option<i64>), Combo(ComboVal), Union(Vec<Value>), Code(Box<Expr>),
+    Top,
+    /// SPEC_12 §1.1 static cycle: lattice-identical to Top (solution set =
+    /// everything) with observation-only provenance. `.%cause` → #static_cycle;
+    /// display / unify / PartialEq treat as bare Top; consumption evaporates
+    /// the cause (operations yield plain Top).
+    TopCaused {
+        /// Loop member coordinates (self = len 1, mutual = 2, …).
+        members: Vec<String>,
+    },
+    Atom(AtomKind, EffectTag, Option<i64>), Combo(ComboVal), Union(Vec<Value>), Code(Box<Expr>),
     Thunk {
         expr: Box<Expr>,
         closure: Vec<ComboVal>,
@@ -41,10 +50,61 @@ pub enum Value {
     },
 }
 
+/// Mint a caused Top for a pure-reference (static) cycle.
+pub fn static_cycle_top(members: Vec<String>) -> Value {
+    let mut m = members;
+    m.sort();
+    m.dedup();
+    Value::TopCaused { members: m }
+}
+
+/// `%cause` carrier for static-cycle Top — closed cocoon, G6-peelable to tag.
+pub fn static_cycle_cause_combo(members: &[String]) -> Value {
+    let mut fields = IndexMap::new();
+    fields.insert(
+        "%type".to_string(),
+        Value::Atom(AtomKind::Tag("static_cycle".to_string()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%val".to_string(),
+        Value::Atom(AtomKind::Tag("static_cycle".to_string()), EffectTag::Pure, None),
+    );
+    // Anti-peel data pad (same pattern as Bottom %cause cocoon).
+    fields.insert("_".to_string(), Value::Top);
+    if !members.is_empty() {
+        let mut mf = IndexMap::new();
+        for (i, name) in members.iter().enumerate() {
+            mf.insert(
+                i.to_string(),
+                Value::Atom(AtomKind::Str(name.clone()), EffectTag::Pure, None),
+            );
+        }
+        mf.insert(
+            "%kind".to_string(),
+            Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None),
+        );
+        fields.insert(
+            "%members".to_string(),
+            Value::Combo(ComboVal::new(mf, false, IndexMap::new(), EffectTag::Pure, vec![])),
+        );
+    }
+    Value::Combo(ComboVal::new(
+        fields,
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Top, Value::Top) => true,
+            // Lattice: caused Top ≡ bare Top (guardrail; cycle_test + `= _`).
+            (Value::Top, Value::Top)
+            | (Value::Top, Value::TopCaused { .. })
+            | (Value::TopCaused { .. }, Value::Top)
+            | (Value::TopCaused { .. }, Value::TopCaused { .. }) => true,
             (Value::Atom(a1, e1, r1), Value::Atom(a2, e2, r2)) => a1 == a2 && e1 == e2 && r1 == r2,
             (Value::Combo(c1), Value::Combo(c2)) => c1 == c2,
             // Union branches are a SET (SPEC_01: `|` commutative + idempotent;
@@ -172,6 +232,8 @@ pub fn strip_local_axis(v: Value) -> Value {
 /// peeling its hybrid shape. Strips local axis (#4). Does **not** alter `to_nlang`.
 pub fn project_value_context(v: Value) -> Value {
     match v {
+        // Display: caused Top looks like bare `_` (provenance meta-only).
+        Value::TopCaused { .. } => Value::Top,
         Value::Combo(c) => {
             // Structural view: full node, no hybrid peel (still strip local).
             if is_structural_view(&c) {
@@ -984,7 +1046,7 @@ pub const TROPICAL_INFINITY: u64 = u64::MAX;
 impl Value {
     pub fn bits(&self) -> u64 {
         match self {
-            Value::Top => 0,
+            Value::Top | Value::TopCaused { .. } => 0,
             Value::Atom(kind, _, _) => match kind {
                 AtomKind::Int(i) => i.bits() as u64,
                 AtomKind::Float(_) => 64,
@@ -1015,7 +1077,7 @@ impl Value {
 
     pub fn tropical_weight(&self) -> u64 {
         match self {
-            Value::Top => 0,
+            Value::Top | Value::TopCaused { .. } => 0,
             Value::Bottom(_) => TROPICAL_INFINITY,
             Value::Atom(_, _, _) => 1,
             Value::Thunk { .. } | Value::Code(_) | Value::Ref(_) | Value::Range { .. } => 1,
@@ -1025,7 +1087,17 @@ impl Value {
         }
     }
 
-    pub fn is_top(&self) -> bool { matches!(self, Value::Top) }
+    pub fn is_top(&self) -> bool {
+        matches!(self, Value::Top | Value::TopCaused { .. })
+    }
+
+    /// Drop static-cycle provenance — lattice/ops consume bare Top only.
+    pub fn bare_top_if_caused(self) -> Value {
+        match self {
+            Value::TopCaused { .. } => Value::Top,
+            other => other,
+        }
+    }
 
     /// True if the value embeds any Blur (fuel-horizon partial) — such values
     /// are observation-relative and must not enter horizon-blind caches
@@ -1127,7 +1199,7 @@ impl Value {
                 AtomKind::Bytes(b) => format!("b\"{:?}\"", b),
                 _ => format!("{:?}", kind),
             },
-            Value::Top => "_".to_string(),
+            Value::Top | Value::TopCaused { .. } => "_".to_string(),
             // Align with to_nlang: `#<tag>` not Debug variant name.
             Value::Bottom(d) => format!("_|_ (%cause: #{})", d.cause.as_tag()),
             Value::Combo(c) => { if c.is_pure_wrapper() { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } } "{...}".to_string() }
@@ -1147,7 +1219,7 @@ impl Value {
     pub fn to_nlang(&self, indent: usize) -> String {
         let pad = "  ".repeat(indent);
         match self {
-            Value::Top => "_".to_string(),
+            Value::Top | Value::TopCaused { .. } => "_".to_string(),
             Value::Atom(kind, effect, rank) => {
                 let mut s = match kind {
                     AtomKind::Int(i) => i.to_string(),
@@ -1266,7 +1338,8 @@ impl Value {
 
     fn hash_recursive_with_salt(&self, hasher: &mut Sha256, salt: &ContentHash) {
         match self {
-            Value::Top => hasher.update([0x00]),
+            // Caused Top hashes as bare Top (CAID / lattice identity).
+            Value::Top | Value::TopCaused { .. } => hasher.update([0x00]),
             Value::Atom(kind, effect, rank) => {
                 hasher.update([0x01]);
                 hasher.update([*effect as u8]);
