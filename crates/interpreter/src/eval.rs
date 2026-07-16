@@ -205,17 +205,69 @@ impl Ouroboros {
         match &expr.kind {
             ExprKind::Atom(_) => EffectTag::Pure,
             ExprKind::Path(path) => {
-                let first = if !path.segments.is_empty() { path.segments[0].trim() } else { "" };
-                if first.starts_with("~%") { return EffectTag::IO; }
-                let mut e = EffectTag::Pure;
-                for scope in ctx.scopes.iter().rev() {
-                    if let Some(v) = scope.get_field(first) { e = e.max(v.effect()); break; }
-                    let ln = format!("/{}", first);
-                    if let Some(v) = scope.get_field(&ln) { e = e.max(v.effect()); break; }
+                // SPEC_09 §4 effect table: read the *stored* effect on the
+                // resolved value (modules/morphisms carry their own tags).
+                // Do NOT blanket-tag `~%…` as IO — ~%Math is pure; ~%Env
+                // morphisms are genuinely IO. Multi-segment walk required
+                // so `~%Math.abs` / `~%Env.get` hit the leaf morphism tag,
+                // not only the module shell (often Pure).
+                if path.segments.is_empty() {
+                    return EffectTag::Pure;
                 }
-                if let Some(v) = ctx.root.get_field(first) { e = e.max(v.effect()); }
-                if let Some(ref s) = ctx.staged { if let Some(v) = s.get_field(first) { e = e.max(v.effect()); } }
-                e
+                let first = path.segments[0].trim();
+                let mut found: Option<Value> = None;
+                for scope in ctx.scopes.iter().rev() {
+                    if let Some(v) = scope.get_field(first) {
+                        found = Some(v.clone());
+                        break;
+                    }
+                    let ln = format!("/{}", first);
+                    if let Some(v) = scope.get_field(&ln) {
+                        found = Some(v.clone());
+                        break;
+                    }
+                }
+                if found.is_none() {
+                    if let Some(v) = ctx.root.get_field(first) {
+                        found = Some(v.clone());
+                    } else {
+                        let ln = format!("/{}", first);
+                        if let Some(v) = ctx.root.get_field(&ln) {
+                            found = Some(v.clone());
+                        }
+                    }
+                }
+                if let Some(ref s) = ctx.staged {
+                    if let Some(v) = s.get_field(first) {
+                        found = Some(v.clone());
+                    } else {
+                        let ln = format!("/{}", first);
+                        if let Some(v) = s.get_field(&ln) {
+                            found = Some(v.clone());
+                        }
+                    }
+                }
+                let Some(mut cur) = found else {
+                    return EffectTag::Pure;
+                };
+                for seg in path.segments.iter().skip(1) {
+                    let seg = seg.trim();
+                    match &cur {
+                        Value::Combo(c) => {
+                            if let Some(v) = c
+                                .get_field(seg)
+                                .or_else(|| c.get_field(&format!("/{}", seg)))
+                                .or_else(|| c.get_field(&format!("@{}", seg)))
+                            {
+                                cur = v.clone();
+                            } else {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                cur.effect()
             }
             ExprKind::Apply(f, arg) => self.predict_effect(f, ctx).max(self.predict_effect(arg, ctx)),
             ExprKind::Pipe(l, r) => self.predict_effect(l, ctx).max(self.predict_effect(r, ctx)),
@@ -428,6 +480,13 @@ impl Ouroboros {
                 let mut rl = IndexMap::new();
                 let mut me = EffectTag::Pure;
                 let mut rv = Vec::new();
+                // T1 (cause_canon): blur spread absorbs the target but does
+                // NOT early-return — remaining sources/fields keep folding
+                // through unify. ⊥ early-return stays lawful (⊥ absorbs
+                // everything including blur). If we finish with a blur
+                // absorb and no later ⊥, emit the blur snapshot (single-
+                // source blur absorb law from blur_spread arc).
+                let mut blur_absorb: Option<crate::value::BlurDetail> = None;
                 for r in relations {
                     let lt = Value::Atom(r.left.clone(), EffectTag::Pure, None).to_string_plain();
                     let rt = Value::Atom(r.right.clone(), EffectTag::Pure, None).to_string_plain();
@@ -458,21 +517,44 @@ impl Ouroboros {
                             let val = self.force(self.eval(&f.value, ctx), ctx);
                             // C3: Bottom spread collapses the whole target,
                             // propagating the source's own %cause (no fresh mint).
+                            // Lawful early-return: ⊥ absorbs blur (and everything).
                             if let Value::Bottom(d) = val {
                                 return Value::Bottom(d);
                             }
                             if matches!(val, Value::Atom(AtomKind::Bottom, _, _)) {
                                 return BottomCause::Conflict.into();
                             }
-                            // SPEC_03 §3.1 Blur row (2026-07-16): spread is a
-                            // full-coordinate read; behind a horizon the field
-                            // set is unknowable → target becomes THAT #blur
-                            // snapshot verbatim (cause/CAID/horizon preserved;
-                            // never mint, never silent no-op). Isomorphic to
-                            // Bottom collapse; early return before field merge
-                            // so {} / {{}} / nested targets share one arm.
+                            // SPEC_03 §3.1 Blur row + cause_canon T1: spread of
+                            // a horizon snapshot absorbs the target into THAT
+                            // #blur (cause/CAID/horizon preserved; never mint).
+                            // Unlike Bottom, do NOT early-return — keep folding
+                            // remaining sources so `{...big, ...bot}` meets
+                            // Blur×Bottom → Bottom #conflict (unify both orders).
                             if let Value::Blur(bd) = val {
-                                return Value::Blur(bd);
+                                me = me.max(bd.effect);
+                                blur_absorb = Some(match blur_absorb.take() {
+                                    None => bd,
+                                    Some(prev) => {
+                                        // Blur×Blur: existing unify arm (not re-adjudicated).
+                                        match self.unify_internal(
+                                            Value::Blur(prev),
+                                            Value::Blur(bd),
+                                            ctx,
+                                        ) {
+                                            Value::Blur(merged) => merged,
+                                            Value::Bottom(d) => return Value::Bottom(d),
+                                            other => {
+                                                // Defensive: prefer a blur if unify yielded one.
+                                                if let Value::Blur(m) = other {
+                                                    m
+                                                } else {
+                                                    return other;
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                                continue;
                             }
                             me = me.max(val.effect());
                             match val {
@@ -639,6 +721,13 @@ impl Ouroboros {
                             }
                         }
                     }
+                }
+                // T1: if a blur source absorbed the target and no later ⊥
+                // collapsed the fold, the combo is that #blur snapshot.
+                // Plain fields interleaved after blur do not resurrect the
+                // target (blur absorbs; same end-state as single-source law).
+                if let Some(bd) = blur_absorb {
+                    return Value::Blur(bd);
                 }
                 let ranks = self.compute_ranks(&rv);
                 for (tag_name, rank) in ranks {
