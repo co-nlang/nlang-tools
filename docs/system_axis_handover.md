@@ -80,7 +80,31 @@ combo 內寫 `~%Config` **不豁免**(同 Q2 ⊥)。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(附量測):
-- [ ] 探針 13/13 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、合法改善、歧異記錄;含幻影 #io 存亡):
+- [x] 交付 commit(s): (本交付 git log `system axis` / `system_reserved`)
+- [x] 根因與修法(附量測):
+  - **根因**:root `~%` Path 鍵(含多段 `~%Math.add`)多段 early-return
+    靜默 Ok;單段寫入 staged 無所有權檢查;combo 字面量可自由鑄造
+    `~%` 欄並影蓋詞法鏈。
+  - **修法**:
+    1. `BottomCause::SystemReserved`(+ as_tag / primary_rank / %cause cocoon;
+       枚舉尾端追加,fmt 合規)。
+    2. **root**:`is_system_axis_lhs_forbidden` → evolve 邊界
+       `Err(SystemReserved)`;豁免 `is_root_config_field_write`
+       (`~%Config` 整段 + 恰一裸名欄,非前綴匹配)。
+    3. **Config 寫入**:staged 開 combo 部分覆寫;observe 先 overlay 到
+       root Config 再 unify(避免 10000&50 格律衝突);observe 從
+       觀測根讀 fuel/strategy 等進 EvalContext。
+    4. **combo**:Path 首段 / Named System 鍵 → 欄位值
+       `⊥ #system_reserved`(不自癒)。
+    5. **force**:Bottom/Blur/Top 不因 effect 升格包進 pure-wrapper
+       (否則 `(c.v).%cause` Lens 誤把 `%cause` 當 on-shell → Top)。
+- [x] 探針 13/13 / workspace / conformance / 語料 四數:
+  - 探針 **13/13**
+  - workspace **1077/0/3**
+  - conformance **101/101**(L2-60/61 綠,62 保綠)
+  - 語料 unit+integration **74/0**(~0.77s)
+- [x] 申報事項:
+  - 幻影 `#io`:combo 影蓋 ⊥ 後,`c.~%Math` 顯示 `_|_ #system_reserved`,
+    不再見 `9 ;; %effect: #io`(隨 ⊥ 鑄造消失)。
+  - 未動 parser 拼法、`~%Config` 未知欄名驗證、`~%` 模組內容表。
+  - Config 整組替換形未立法,未實作。

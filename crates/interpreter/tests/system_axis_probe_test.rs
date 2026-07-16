@@ -103,19 +103,16 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED at order time: evolve Ok, builtin intact — silent lie
 fn red_root_shadow_module_loud() {
     assert_evolve_rejects("~%Math: 5\nout: 1");
 }
 
 #[test]
-#[ignore] // RED at order time: evolve Ok, add still adds — silent lie
 fn red_root_shadow_path_loud() {
     assert_evolve_rejects("~%Math.add: 7\nout: 1");
 }
 
 #[test]
-#[ignore] // RED at order time: novel ~% name freely minted at root
 fn red_root_novel_loud() {
     assert_evolve_rejects("~%Mine: 5\nout: 1");
 }
@@ -125,21 +122,18 @@ fn red_root_novel_loud() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED at order time: field holds 9 (with phantom #io tag)
 fn red_combo_system_key_bottom() {
     // L2-60.
     assert_obs("c: { ~%Math: 9 }\nout: (c.~%Math).%cause", "#system_reserved");
 }
 
 #[test]
-#[ignore] // RED at order time: field holds 5
 fn red_combo_novel_key_bottom() {
     // L2-61.
     assert_obs("d: { ~%Mine: 5 }\nout: (d.~%Mine).%cause", "#system_reserved");
 }
 
 #[test]
-#[ignore] // RED at order time: c.v → `_` (silent scope poison)
 fn red_combo_poison_diagnosable_no_self_heal() {
     // The measured lie: local ~%Math shadows the real module and use
     // sites silently die to `_`. After the fix the illegal field is ⊥

@@ -516,10 +516,13 @@ impl Ouroboros {
                         FieldKey::Named { name, prefix } => {
                             let is_p = matches!(prefix, Some(Prefix::Private));
                             let te = self.predict_effect(&f.value, ctx);
-                            // C4 ancestor: pure re-spread of a name under
-                            // construction → bind ⊥ #divergent at this field
-                            // (avoids force_recursive runaway nesting).
-                            let mut val = if expr_is_pure_circular_spread(&f.value, ctx) {
+                            // SPEC_09: combo-level `~%` definition keys mint ⊥.
+                            let mut val = if matches!(prefix, Some(Prefix::System)) {
+                                BottomCause::SystemReserved.into()
+                            } else if expr_is_pure_circular_spread(&f.value, ctx) {
+                                // C4 ancestor: pure re-spread of a name under
+                                // construction → bind ⊥ #divergent at this field
+                                // (avoids force_recursive runaway nesting).
                                 BottomCause::Divergent.into()
                             } else {
                                 Value::Thunk {
@@ -589,8 +592,17 @@ impl Ouroboros {
                             // baked `_` into eigenstate (sibling / shadowing wrong).
                             // Bare single-segment path keys (`b: …`) parse as Path, not
                             // Named — C4 pure-ancestor check must run here too.
+                            // SPEC_09: combo-level `~%…` definition keys mint
+                            // ⊥ #system_reserved (no self-heal via lexical skip).
                             let te = self.predict_effect(&f.value, ctx);
-                            let val = if expr_is_pure_circular_spread(&f.value, ctx) {
+                            let sys_reserved = p
+                                .segments
+                                .first()
+                                .map(|s| s.trim().starts_with("~%"))
+                                .unwrap_or(false);
+                            let val = if sys_reserved {
+                                BottomCause::SystemReserved.into()
+                            } else if expr_is_pure_circular_spread(&f.value, ctx) {
                                 BottomCause::Divergent.into()
                             } else {
                                 Value::Thunk {
@@ -603,6 +615,8 @@ impl Ouroboros {
                             // Effect: open tracks predicted; closed takes max after force.
                             if !*closed {
                                 me = me.max(te);
+                            } else if sys_reserved {
+                                me = me.max(val.effect());
                             }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
                             let _ = self.inject_path(&mut tmp, &p.segments, val);

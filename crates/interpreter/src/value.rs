@@ -654,6 +654,7 @@ impl BottomDetail {
             BottomCause::SemanticEclipse => "#semantic_eclipse",
             BottomCause::NoContext => "#no_context",
             BottomCause::OutOfHorizon => "#out_of_horizon",
+            BottomCause::SystemReserved => "#system_reserved",
         };
         fields.insert("%type".to_string(), Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None));
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
@@ -753,6 +754,9 @@ pub enum BottomCause {
     NoContext,
     /// `^` parent-anchor overflow (ERROR_CODES §1 #out_of_horizon).
     OutOfHorizon,
+    /// User LHS write to engine-minted `~%` system axis (SPEC_09 ownership;
+    /// ERROR_CODES §1.4 #system_reserved). Append-only tail.
+    SystemReserved,
 }
 
 impl BottomCause {
@@ -772,6 +776,7 @@ impl BottomCause {
             BottomCause::SemanticEclipse => "semantic_eclipse",
             BottomCause::NoContext => "no_context",
             BottomCause::OutOfHorizon => "out_of_horizon",
+            BottomCause::SystemReserved => "system_reserved",
         }
     }
 
@@ -781,7 +786,7 @@ impl BottomCause {
     pub fn primary_rank(self) -> u8 {
         match self {
             BottomCause::Divergent => 0,
-            BottomCause::PrivateAccessViolation => 1,
+            BottomCause::PrivateAccessViolation | BottomCause::SystemReserved => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split
