@@ -73,7 +73,22 @@ L2-59 保綠);語料非 pending **78/0** 不退。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(附量測):
-- [ ] 探針 13/13 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、合法改善、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 git log `blur spread`)
+- [x] 根因與修法(附量測):
+  - **根因**:Combo 字面量 spread 臂對非 Combo/Atom/Top/Bottom 源落入
+    `_ => {}` 靜默 no-op;Blur 與 Top 同路「無效操作」,視界抹除。
+  - **修法**:spread 源 force 後若 `Value::Blur(bd)` → **立即
+    `return Value::Blur(bd)`**(同 Bottom 早退),先於欄位搬運/合併/
+    closed 屬性;目標既有欄被吞,快照原樣(cause/CAID/視界參數隨
+    `BlurDetail` 走,不新鑄)。Top / TopCaused 仍 no-op。
+  - 量測:修前 `{b:1,...big}` → `{b:1}` `%cause _`;修後 `#blur`
+    `%cause #fuel_exhausted`,`p.%caid == big.%caid` → `#true`。
+- [x] 探針 13/13 / workspace / conformance / 語料 四數:
+  - 探針 **13/13**
+  - workspace **1064/0/3**
+  - conformance **98/98**(L2-57/58 綠,L2-59 保綠)
+  - 語料 unit+integration **74/0**(~0.70s;與歷次交付同路徑,無退化)
+- [x] 申報事項(範圍外接觸、合法改善、歧異記錄):
+  - **未動** `&`×blur CAID 非原樣(仍三異;歸 cause 正典審計弧)。
+  - 未碰 `<`/`<=`×blur、前向×spread、循環展開。
+  - 未擴權裁定 Blur 展開至聯集/二源。

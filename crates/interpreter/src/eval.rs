@@ -464,6 +464,16 @@ impl Ouroboros {
                             if matches!(val, Value::Atom(AtomKind::Bottom, _, _)) {
                                 return BottomCause::Conflict.into();
                             }
+                            // SPEC_03 §3.1 Blur row (2026-07-16): spread is a
+                            // full-coordinate read; behind a horizon the field
+                            // set is unknowable → target becomes THAT #blur
+                            // snapshot verbatim (cause/CAID/horizon preserved;
+                            // never mint, never silent no-op). Isomorphic to
+                            // Bottom collapse; early return before field merge
+                            // so {} / {{}} / nested targets share one arm.
+                            if let Value::Blur(bd) = val {
+                                return Value::Blur(bd);
+                            }
                             me = me.max(val.effect());
                             match val {
                                 Value::Combo(ref cv) => {
@@ -488,8 +498,8 @@ impl Ouroboros {
                                 }
                                 // C2: atom / number → {%val: v} (anti-peel shell
                                 // so evolve unify keeps the combo navigable at
-                                // `.%val`); Top → no-op.
-                                Value::Top => {}
+                                // `.%val`); Top / TopCaused → no-op (no constraint).
+                                Value::Top | Value::TopCaused { .. } => {}
                                 Value::Atom(ak, ae, rank) => {
                                     let shell = atom_spread_shell(Value::Atom(ak, ae, rank));
                                     if let Value::Combo(cv) = shell {
@@ -499,8 +509,7 @@ impl Ouroboros {
                                     }
                                 }
                                 // List is Combo (%kind list) — handled above.
-                                // Blur / Union / Range / Ref: no law yet; skip
-                                // (Blur spread-source: measure-only, leave).
+                                // Union / Range / Ref: no law yet; leave.
                                 _ => {}
                             }
                         }

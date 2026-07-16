@@ -98,7 +98,6 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED at order time: p.%cause → `_` (silent no-op erases horizon)
 fn red_blur_spread_absorbs_cause() {
     // L2-57.
     assert_obs(
@@ -111,7 +110,6 @@ fn red_blur_spread_absorbs_cause() {
 }
 
 #[test]
-#[ignore] // RED at order time: → { b: 1 }
 fn red_blur_spread_form() {
     assert_blur_fuel(&format!(
         "big: {}\nout: {{ b: 1, ...big }}",
@@ -120,7 +118,6 @@ fn red_blur_spread_form() {
 }
 
 #[test]
-#[ignore] // RED at order time: order-blind — { ...big, b: 1 } → { b: 1 }
 fn red_blur_spread_order_blind() {
     assert_blur_fuel(&format!(
         "big: {}\nout: {{ ...big, b: 1 }}",
@@ -129,13 +126,11 @@ fn red_blur_spread_order_blind() {
 }
 
 #[test]
-#[ignore] // RED at order time: { ...big } → { } (empty shell)
 fn red_blur_spread_empty_target() {
     assert_blur_fuel(&format!("big: {}\nout: {{ ...big }}", flat_chain(4000)));
 }
 
 #[test]
-#[ignore] // RED at order time (Q2): p is a combo, its %caid ≠ snapshot CAID
 fn red_blur_spread_caid_preserved() {
     // Q2 snapshot verbatimness: absorption carries the SOURCE snapshot —
     // same CAID, not a re-mint at the spread site.
@@ -149,7 +144,6 @@ fn red_blur_spread_caid_preserved() {
 }
 
 #[test]
-#[ignore] // RED at order time: (w.a).%cause → `_` — nested erasure
 fn red_blur_spread_nested_per_node() {
     // L2-58. Per-node: the inner combo absorbs, the OUTER stays a combo.
     let src = format!(
@@ -168,7 +162,6 @@ fn red_blur_spread_nested_per_node() {
 }
 
 #[test]
-#[ignore] // RED at order time: {{ ...big }} → {{ }} (cocoon shell)
 fn red_blur_spread_cocoon_target() {
     // Target kind irrelevant: absorption precedes any target attribute.
     assert_blur_fuel(&format!("big: {}\nout: {{{{ ...big }}}}", flat_chain(4000)));
