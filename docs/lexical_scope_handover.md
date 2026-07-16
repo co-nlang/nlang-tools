@@ -98,3 +98,44 @@ scope 鏈(導航/observe 知道 holder)。注意態射值被外呼時 holder
 - 前向引用×spread(凍結釘在 spread_collision 檔)。
 - `~%` 系統軸解析(L2-23 守,勿動)。
 - lint 層遮蔽提示(想法 D 候選,另議)。
+
+---
+
+## 5. 交付紀錄(2026-07-16,模型 #3)
+
+### 根因
+`seal_defining_scope` 在 `local.is_empty()` 時跳過 frame 注入(私有軸弧
+防公有 Thunk 等值污染)。副作用:公有 combo 的欄 thunk 閉包無 holder
+frame → 兄弟/祖先裸名一律 open-miss `_`;根層仍可經 staged/root 提升
+→ 遮蔽呈**錯值**(外層頂替內層)。
+
+### Diff
+1. **`value.rs` `seal_defining_scope`**(路線 a):移除 local-empty 門;
+   兩段 frame——`snap`=預注入克隆;先把 `snap` 注入 `frame` 自身欄
+   thunk(鏈式兄弟 `e:d+k` 從 frame 取出 `d` 時仍見 `k`);再把
+   `frame` 注入 live combo。公有+私有同一鏈。
+2. **`lib.rs` `force`**:eval 後若結果仍為 Thunk,再 peel(上限 32)。
+   修復 `$.k` 導航留下欄 Thunk 未固——密封後不同 holder 的同值
+   欄在 unify 上不再因 frame 標籤 ⊥(pipe 同態律回歸)。
+
+### 量測(驗收)
+| 項 | 結果 |
+|---|---|
+| 探針 9 紅+11 釘 | **20/20** |
+| workspace | **1004/0/3**(984+20) |
+| 語料 | **74/0** |
+| 語料耗時 | 修前 release **0.68s** → 修後 **1.18s**(可接受,無數量級劣化) |
+| conformance | **85/85**(L2-43~46 綠) |
+| 絆線 `pin_twin_literal_eq` / `pin_caid_stability` | **綠**(未弱化釘;未做 PartialEq 去 frame) |
+| E2 `x={k:5,d:k+1} = {k:5,d:6}` | 修前 **#false** → 修後 **#true**(法向改善,照記) |
+| 私有三釘 / factory / insider / 外部排除 | **綠** |
+
+### 未動聲明
+- eq×thunk 強迫語義(另案);本弧僅 seal+force peel。
+- 前向引用×spread、`~%` 系統軸、lint 遮蔽提示。
+- relation seed / `&` 合併本體 / effect 釋放。
+- Thunk PartialEq / CAID **仍含 frame**(絆線靠同拼寫→同 snap 自然相等)。
+
+### 嘗試後放棄
+- force 時 ambient scopes∪closure:鏈式兄弟可活,但 `cycle_test`
+  `{a:b,b:a}` 由 Top 變 #divergent——未單方遷釘,改用 frame 自密封。

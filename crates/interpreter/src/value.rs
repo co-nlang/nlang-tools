@@ -203,19 +203,21 @@ pub fn project_value_context(v: Value) -> Value {
     }
 }
 
-/// SPEC_04 §3.1 #1/#2/#3.3: inject this combo as a defining scope frame into
-/// every field thunk (and nested values) so bare `~key` resolves via the
-/// scope chain (sibling + ancestor lifting + morphism capture when the
-/// morphism thunk is forced under this frame).
+/// SPEC_04 §2.1 / §3.1 #1/#2/#3.3: inject this combo as a defining scope
+/// frame into every field thunk (and nested values) so bare names — public
+/// *and* private — resolve via the scope chain (sibling + ancestor lifting
+/// + morphism capture when the morphism thunk is forced under this frame).
 ///
-/// Skipped when the combo has no local axis — injecting frames into pure
-/// public combos would poison Thunk PartialEq / unify (identical public
-/// field thunks from different parents would disagree on closure).
+/// Two-step frame (no live Arc):
+/// 1. `snap` = pre-inject clone (field thunks have empty extra frames).
+/// 2. `frame` = clone of `c`, then inject `snap` into *frame's* field thunks
+///    so chained siblings (`e: d + k`) can force `d` out of the frame and
+///    still see `k` on `snap`.
+/// 3. Inject the self-prepared `frame` into `c`'s field thunks.
+///
+/// Thunk PartialEq / CAID still compare full closures; twin-literal and
+/// `%id` tripwires stay green when public spelling matches (equal snaps).
 pub fn seal_defining_scope(c: &mut ComboVal) {
-    if c.local.is_empty() {
-        return;
-    }
-    let frame = c.clone();
     fn inject(v: &mut Value, frame: &ComboVal) {
         match v {
             Value::Thunk { closure, .. } => {
@@ -249,24 +251,34 @@ pub fn seal_defining_scope(c: &mut ComboVal) {
             _ => {}
         }
     }
-    for (_, fv) in c.data.iter_mut() {
-        inject(fv, &frame);
+    fn inject_all(target: &mut ComboVal, frame: &ComboVal) {
+        for (_, fv) in target.data.iter_mut() {
+            inject(fv, frame);
+        }
+        for (_, fv) in target.local.iter_mut() {
+            inject(fv, frame);
+        }
+        for (_, fv) in target.rules.iter_mut() {
+            inject(fv, frame);
+        }
+        for (_, fv) in target.types.iter_mut() {
+            inject(fv, frame);
+        }
+        for (_, fv) in target.meta.iter_mut() {
+            inject(fv, frame);
+        }
+        for (_, fv) in target.system.iter_mut() {
+            inject(fv, frame);
+        }
     }
-    for (_, fv) in c.local.iter_mut() {
-        inject(fv, &frame);
-    }
-    for (_, fv) in c.rules.iter_mut() {
-        inject(fv, &frame);
-    }
-    for (_, fv) in c.types.iter_mut() {
-        inject(fv, &frame);
-    }
-    for (_, fv) in c.meta.iter_mut() {
-        inject(fv, &frame);
-    }
-    for (_, fv) in c.system.iter_mut() {
-        inject(fv, &frame);
-    }
+
+    // snap: unsealed clone — terminals (literals) resolve without siblings.
+    let snap = c.clone();
+    // frame: field thunks carry snap so lookups *from* the frame still see
+    // siblings one hop away (d needs k; e needs d which needs k via snap).
+    let mut frame = c.clone();
+    inject_all(&mut frame, &snap);
+    inject_all(c, &frame);
 }
 
 /// SPEC_01 join idempotence: flatten nested Unions, drop structural

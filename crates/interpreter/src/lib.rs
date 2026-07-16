@@ -1088,15 +1088,21 @@ let mut refl_fields = IndexMap::new();
                 // in_flight rides sub_context clone for nested observation.
                 call_ctx.in_flight.insert(thunk_id.clone());
                 let res = self.eval(&expr, &mut call_ctx);
-                // Path-shaped: solidify one layer under the same in_flight set
-                // so a re-fetched Thunk of the same expr hits content-hash
-                // re-entry (path self-loop). Do not mark path targets into
-                // computing (forward-ref fix).
-                let res = if path_coord.is_some() {
-                    self.force(res, &mut call_ctx)
-                } else {
-                    res
-                };
+                // Solidify residual Thunks under the same in_flight set:
+                // - Path-shaped: re-fetched Thunk of the same expr hits
+                //   content-hash re-entry (path self-loop). Do not mark path
+                //   targets into computing (forward-ref fix).
+                // - Lens / bare field (e.g. `$.k`): navigate leaves the field
+                //   Thunk unforced (GUIDE_03 §11.4); one more force peels to
+                //   the value so lattice unify of sealed siblings (`k:1` from
+                //   different holders) meets on the atom, not frame-tagged
+                //   Thunk identity.
+                let mut res = res;
+                let mut peel = 0u32;
+                while matches!(res, Value::Thunk { .. }) && peel < 32 {
+                    res = self.force(res, &mut call_ctx);
+                    peel += 1;
+                }
                 call_ctx.in_flight.remove(&thunk_id);
                 ctx.fuel = call_ctx.fuel;
                 ctx.in_flight = call_ctx.in_flight;

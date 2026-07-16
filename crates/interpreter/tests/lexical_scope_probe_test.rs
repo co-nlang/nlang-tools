@@ -77,21 +77,18 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_sibling_thunk() {
     // L2-43. Today: `_`.
     assert_obs("c: { k: 5, d: k + 1 }\nout: c.d", "6");
 }
 
 #[test]
-#[ignore]
 fn red_sibling_chained() {
     // d needs k, e needs d and k. Today: `_`.
     assert_obs("c: { k: 5, d: k + 1, e: d + k }\nout: c.e", "11");
 }
 
 #[test]
-#[ignore]
 fn red_display_siblings_resolved() {
     // Collapsed display forces fields — today shows `d: _`.
     let got = observe_nlang("c: { k: 5, d: k + 1 }\nout: c", "out");
@@ -106,7 +103,6 @@ fn red_display_siblings_resolved() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_holder_morphism() {
     // L2-44. Today: `_`. Both spellings (inline + binding split).
     assert_obs("c: { k: 5, f: (x -> x + k) }\nout: 1 |> c.f", "6");
@@ -114,7 +110,6 @@ fn red_holder_morphism() {
 }
 
 #[test]
-#[ignore]
 fn red_holder_morphism_spread() {
     // Morphism body spreads a holder sibling. Today: `_`.
     assert_obs(
@@ -124,7 +119,6 @@ fn red_holder_morphism_spread() {
 }
 
 #[test]
-#[ignore]
 fn red_nested_holder_morphism() {
     // Today: `_`.
     assert_obs("w: { c: { k: 5, f: (x -> x + k) } }\nout: 1 |> w.c.f", "6");
@@ -135,7 +129,6 @@ fn red_nested_holder_morphism() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_grandparent_lifting() {
     // L2-46: lifting through a NON-ROOT ancestor. Today: `_`.
     assert_obs("w: { k: 5, c: { d: k + 1 } }\nout: w.c.d", "6");
@@ -146,14 +139,12 @@ fn red_grandparent_lifting() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_shadowing_inner_first() {
     // L2-45. Today: 6 — the WRONG-VALUE lie (outer k substituted).
     assert_obs("k: 5\nc: { k: 7, d: k + 1 }\nout: c.d", "8");
 }
 
 #[test]
-#[ignore]
 fn red_shadowing_morphism() {
     // Same lie through a morphism body. Today: 6.
     assert_obs("k: 5\nc: { k: 7, f: (x -> x + k) }\nout: 1 |> c.f", "8");
