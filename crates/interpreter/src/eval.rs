@@ -574,25 +574,27 @@ impl Ouroboros {
                         }
                         FieldKey::Path(p) => {
                             // Stage 2 (call-by-observation): build a Thunk carrying the
-                            // current ctx.context_value (P1 binding) and scopes. In a
-                            // closed (cocoon) context, force immediately — cocoon is a
-                            // solidification boundary (GUIDE_03 §11.5). In an open combo,
-                            // leave the thunk lazy — evolve stores it, observe forces it.
+                            // current ctx.context_value (P1 binding) and scopes.
+                            // Closed (cocoon) solidification is deferred until AFTER
+                            // seal_defining_scope — force-at-build without a frame
+                            // baked `_` into eigenstate (sibling / shadowing wrong).
                             // Bare single-segment path keys (`b: …`) parse as Path, not
                             // Named — C4 pure-ancestor check must run here too.
                             let te = self.predict_effect(&f.value, ctx);
                             let val = if expr_is_pure_circular_spread(&f.value, ctx) {
                                 BottomCause::Divergent.into()
                             } else {
-                                let thunk = Value::Thunk {
+                                Value::Thunk {
                                     expr: Box::new(f.value.clone()),
                                     closure: ctx.scopes.clone(),
                                     context: ctx.context_value.clone().map(Box::new),
                                     effect: te,
-                                };
-                                if *closed { self.force(thunk, ctx) } else { thunk }
+                                }
                             };
-                            if !*closed { me = me.max(te); } else { me = me.max(val.effect()); }
+                            // Effect: open tracks predicted; closed takes max after force.
+                            if !*closed {
+                                me = me.max(te);
+                            }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
                             let _ = self.inject_path(&mut tmp, &p.segments, val);
                             // Path-key sibling merge: {a:{x:1}, a.y:2} → a merges.
@@ -614,10 +616,19 @@ impl Ouroboros {
                     }
                 }
                 let mut combo = ComboVal::new(rf, *closed, rl, me, rv);
-                // SPEC_04 §3.1: bare `~key` (and morphism bodies that capture
-                // it) resolve through the defining combo as a scope frame.
+                // SPEC_04 §2.1 / §3.1: bare names resolve through the defining
+                // combo as a scope frame (public + private).
                 crate::value::seal_defining_scope(&mut combo);
                 let mut res = Value::Combo(combo);
+                // GUIDE_03 §11.5: cocoon is a solidification boundary — force
+                // after seal so siblings see the holder frame (inner-first).
+                if *closed {
+                    res = self.force_recursive(res, ctx);
+                    me = me.max(res.effect());
+                    if let Value::Combo(ref mut cv) = res {
+                        cv.effect = me;
+                    }
+                }
                 if let Value::Combo(ref cv) = res {
                     if let Some(mode_v) = cv.fields().get("%eval_mode") {
                         let m = self.force(mode_v.clone(), ctx);

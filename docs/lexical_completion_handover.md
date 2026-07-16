@@ -91,3 +91,42 @@ closed 語境於字面量建構時**先 force 欄位、後跑 seal**,force 當�
 - 互指/自指語義裁定(另案候選)。
 - eq×thunk、前向引用×spread(各自凍結)。
 - 效果隔離、`~%` 系統軸。
+
+---
+
+## 5. 交付紀錄(2026-07-16,模型 #3)
+
+### 根因
+1. **深度牆**:上弧兩段 snap/frame 結構性限深 2——frame 內 thunk 只帶
+   snap,再取下一跳無 ambient holder。
+2. **cocoon**:Path 鍵在 seal 前 `force`(closed 臂),兄弟裸名無 frame
+   → `_` 烤進本徵態;遮蔽錯值=外層根 `k` 頂替。
+
+### Diff
+1. **`force_lexical_name`**(lib.rs):scope 鏈命中欄 → 標記
+   `ctx.lexical_forcing`;`force` 在 lexical 期間**保留 ambient scopes**
+   +  thrunk closure 內層推入 → 任意跳深自然遞迴。
+2. **軟再入**:`in_flight` 再入且 `lexical_forcing` 非空 → `Top`(未解
+   外溯),否則仍 `#divergent`(L2-17 路徑/座標循環)。互指/自指兄
+   弟釘與 `cycle_test` Top 守住。
+3. **`seal_defining_scope`**:回到單段預注入 frame(深度改由解析
+   時上推承擔;絆線同拼寫仍綠)。
+4. **cocoon**:Path 臂不再建構期 force;seal 後 `force_recursive`
+   (GUIDE_03 §11.5 固化邊界保留,僅改 force 時可見 frame)。
+
+### 量測
+| 項 | 結果 |
+|---|---|
+| 本探針 9 紅+8 釘 | **17/17** |
+| 上弧 lexical_scope 21 | **21/21**(無回歸) |
+| workspace | **1022/0/3**(1005+17) |
+| 語料 | **74/0** |
+| 語料耗時 | 上弧後 **1.18s** → 本單 **0.74s**(單段 seal 更輕) |
+| conformance | **88/88**(L2-47~49) |
+| 50 跳鏈 `c0..c50` | **50**(64MiB 棧;預設小棧可能 overflow——oo 主線
+   程已 64MiB;未 panic 於生產配置) |
+| 絆線 / 凍結互指自指 / cocoon miss | **綠** |
+
+### 未動聲明
+- cocoon 未定義鍵 ⊥(凍結 `_`)、互指/自指另裁定、eq×thunk、
+  前向×spread、效果隔離、`~%`、computing/in_flight 真循環 `#divergent`。

@@ -50,9 +50,14 @@ pub struct EvalContext {
     pub computing: HashSet<String>,
     pub call_history: HashMap<String, Vec<ContentHash>>,
     /// L2-17: thunk content-hashes currently being forced in this observation.
-    /// Re-entering the same thunk → ⊥ #divergent (must fire before stack/fuel).
+    /// Re-entering the same thunk → ⊥ #divergent (must fire before stack/fuel),
+    /// unless `lexical_forcing` is non-empty (sibling bare-name soft re-entry
+    /// → Top; SPEC_04 §2.1 completion — mutual/self sibling pins stay `_`).
     /// Survives `sub_context` clones (unlike the legacy `computing` clear).
     pub in_flight: HashSet<ContentHash>,
+    /// Bare names currently being forced out of a scope-frame field (lexical
+    /// chain). Soft re-entry returns Top (open unresolved), not #divergent.
+    pub lexical_forcing: HashSet<String>,
     pub in_math_op: bool,
     pub context_value: Option<Value>,
     pub fuel: u64,
@@ -89,7 +94,8 @@ impl EvalContext {
         let salt = ContentHash::v1(hasher.finalize().to_vec());
         Self { 
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
-            call_history: HashMap::new(), in_flight: HashSet::new(), in_math_op: false, context_value: None, 
+            call_history: HashMap::new(), in_flight: HashSet::new(), lexical_forcing: HashSet::new(),
+            in_math_op: false, context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, memo_enabled: true, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
@@ -1059,6 +1065,13 @@ let mut refl_fields = IndexMap::new();
                 }
                 .content_hash();
                 if ctx.in_flight.contains(&thunk_id) {
+                    // Sibling bare-name soft re-entry (lexical chain): open
+                    // unresolved `_`, not #divergent — frozen pins + cycle_test.
+                    // True cycles (L2-17 path / coordinate) keep #divergent
+                    // when lexical_forcing is empty.
+                    if !ctx.lexical_forcing.is_empty() {
+                        return Value::Top;
+                    }
                     return BottomCause::Divergent.into();
                 }
                 // Holder re-entry: force_coord("s.v") put "s.v" in computing;
@@ -1082,7 +1095,20 @@ let mut refl_fields = IndexMap::new();
                 } else { None };
 
                 let mut call_ctx = self.sub_context(ctx);
-                call_ctx.scopes = closure;
+                // SPEC_04 §2.1 completion: when forcing a field found on the
+                // scope chain (`lexical_forcing` non-empty), keep ambient
+                // frames so chained siblings recurse at any depth. Definition
+                // frames from the thunk still push innermost (rev-search).
+                // Outside lexical force, preserve historical replace semantics
+                // (capture isolation; cycle_test / L2-17 ambient-free).
+                if ctx.lexical_forcing.is_empty() {
+                    call_ctx.scopes = closure;
+                } else {
+                    call_ctx.scopes = ctx.scopes.clone();
+                    for frame in &closure {
+                        call_ctx.scopes.push(frame.clone());
+                    }
+                }
                 call_ctx.context_value = effective_context;
                 call_ctx.dep_collector = inner_collector;
                 // in_flight rides sub_context clone for nested observation.
@@ -1107,6 +1133,7 @@ let mut refl_fields = IndexMap::new();
                 ctx.fuel = call_ctx.fuel;
                 ctx.in_flight = call_ctx.in_flight;
                 ctx.computing = call_ctx.computing;
+                ctx.lexical_forcing = call_ctx.lexical_forcing;
                 let inner_deps = call_ctx.dep_collector.take();
 
                 let res = match res {
@@ -1242,6 +1269,10 @@ let mut refl_fields = IndexMap::new();
             // G6: bare single-segment Ref is returned unforced so observe can
             // treat Ref-mediated paths as structural view (SYNTAX_07 §4 #6).
             // Judgment sites (math/cmp/force_recursive) still force Refs.
+            //
+            // Scope-frame hits use force_lexical_name: ambient frames stay on
+            // the chain (any hop depth) with soft re-entry → Top for mutual
+            // sibling pins (not #divergent).
             let return_or_force = |oo: &Self, n: &str, val: Value, ctx: &mut EvalContext, use_coord: bool| -> Value {
                 if matches!(&val, Value::Ref(_)) {
                     return val;
@@ -1253,23 +1284,26 @@ let mut refl_fields = IndexMap::new();
                 }
             };
 
-            for scope in ctx.scopes.iter().rev() {
-                // Scope frames: plain force (parameter rebinding is not a
+            // Iterate by index so we can call force_lexical without holding
+            // a borrow on ctx.scopes.
+            for i in (0..ctx.scopes.len()).rev() {
+                let scope = ctx.scopes[i].clone();
+                // Scope frames: lexical force (parameter rebinding is not a
                 // coordinate cycle — force_coord here false-triggers HOFs).
-                if let Some(val) = scope.get_field(name) {
-                    return return_or_force(self, name, val.clone(), ctx, false);
+                if let Some(val) = scope.get_field(name).cloned() {
+                    return self.force_lexical_name(name, val, ctx, false);
                 }
-                if let Some(val) = scope.local_fields().get(name) {
-                    return return_or_force(self, name, val.clone(), ctx, false);
+                if let Some(val) = scope.local_fields().get(name).cloned() {
+                    return self.force_lexical_name(name, val, ctx, false);
                 }
                 let prefixes = vec!["/", "@", "~", "~%"];
                 for p in prefixes {
                     let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) };
-                    if let Some(val) = scope.get_field(&alt_name) {
-                        return return_or_force(self, &alt_name, val.clone(), ctx, false);
+                    if let Some(val) = scope.get_field(&alt_name).cloned() {
+                        return self.force_lexical_name(&alt_name, val, ctx, false);
                     }
-                    if let Some(val) = scope.get_local_field(&alt_name) {
-                        return return_or_force(self, &alt_name, val.clone(), ctx, false);
+                    if let Some(val) = scope.get_local_field(&alt_name).cloned() {
+                        return self.force_lexical_name(&alt_name, val, ctx, false);
                     }
                 }
             }
@@ -1643,6 +1677,32 @@ let mut refl_fields = IndexMap::new();
         } else {
             self.force(val, ctx)
         }
+    }
+
+    /// SPEC_04 §2.1: force a value found on a scope-frame field. Marks the
+    /// bare name in `lexical_forcing` so (1) force keeps ambient frames
+    /// (unbounded sibling-chain depth) and (2) re-entry soft-fails to Top
+    /// instead of #divergent (mutual/self sibling frozen pins).
+    fn force_lexical_name(&self, name: &str, val: Value, ctx: &mut EvalContext, use_coord: bool) -> Value {
+        if matches!(&val, Value::Ref(_)) {
+            return val;
+        }
+        if ctx.lexical_forcing.contains(name) {
+            return Value::Top;
+        }
+        let track = matches!(&val, Value::Thunk { .. });
+        if track {
+            ctx.lexical_forcing.insert(name.to_string());
+        }
+        let res = if use_coord {
+            self.force_coord(name, val, ctx)
+        } else {
+            self.force(val, ctx)
+        };
+        if track {
+            ctx.lexical_forcing.remove(name);
+        }
+        res
     }
 
     pub fn remote_fetch(&self, addr: &str, hash: &ContentHash) -> Result<Value, BottomCause> {

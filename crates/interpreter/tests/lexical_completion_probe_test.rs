@@ -77,14 +77,12 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_three_hop_chain() {
     // L2-47. Today: `_` (depth-2 wall).
     assert_obs("c: { k: 5, d: k + 1, e: d + k, g2: e + 1 }\nout: c.g2", "12");
 }
 
 #[test]
-#[ignore]
 fn red_four_hop_chain() {
     assert_obs(
         "c: { k: 5, d: k + 1, e: d + k, g2: e + 1, h2: g2 + e }\nout: c.h2",
@@ -93,7 +91,6 @@ fn red_four_hop_chain() {
 }
 
 #[test]
-#[ignore]
 fn red_morphism_on_deep_sibling() {
     // Morphism body reads a 2-hop sibling — same wall. Today: `_`.
     assert_obs(
@@ -103,7 +100,6 @@ fn red_morphism_on_deep_sibling() {
 }
 
 #[test]
-#[ignore]
 fn red_private_combo_deep_chain() {
     // The wall is combo-universal (private combos included). Today: `_`.
     assert_obs(
@@ -113,7 +109,6 @@ fn red_private_combo_deep_chain() {
 }
 
 #[test]
-#[ignore]
 fn red_display_deep_chain_resolved() {
     // Display shows the wall today: d/e resolved, g2/h2 `_`.
     let got = observe_nlang(
@@ -131,27 +126,23 @@ fn red_display_deep_chain_resolved() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_cocoon_sibling() {
     // L2-48. Today: `_` (closed force runs before seal).
     assert_obs("cc: {{ k: 5, d: k + 1 }}\nout: cc.d", "6");
 }
 
 #[test]
-#[ignore]
 fn red_cocoon_morphism() {
     assert_obs("cc: {{ k: 5, f: (x -> x + k) }}\nout: 1 |> cc.f", "6");
 }
 
 #[test]
-#[ignore]
 fn red_cocoon_shadowing_inner_first() {
     // L2-49. Today: 6 — wrong-value lie #2 (outer k substituted).
     assert_obs("k: 5\ncc: {{ k: 7, d: k + 1 }}\nout: cc.d", "8");
 }
 
 #[test]
-#[ignore]
 fn red_nested_cocoon_sibling() {
     assert_obs("w: { cc: {{ k: 5, d: k + 1 }} }\nout: w.cc.d", "6");
 }
