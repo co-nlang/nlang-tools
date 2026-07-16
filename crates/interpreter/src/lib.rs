@@ -1172,10 +1172,26 @@ let mut refl_fields = IndexMap::new();
                 ctx.cycle_chain = call_ctx.cycle_chain;
                 let inner_deps = call_ctx.dep_collector.take();
 
+                // Do NOT wrap Bottom/Blur/Top in a pure-wrapper for effect
+                // escalation — that shell traps `.%cause` navigation (meta
+                // segment treated as on-shell, peel skipped, open miss Top).
                 let res = match res {
                     Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
-                    Value::Combo(mut cv) if cv.effect < effect => { cv.effect = effect; Value::Combo(cv) },
-                    _ if res.effect() < effect => Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%val".to_string(), res)]), true, IndexMap::new(), effect, vec![])),
+                    Value::Combo(mut cv) if cv.effect < effect => {
+                        cv.effect = effect;
+                        Value::Combo(cv)
+                    }
+                    Value::Bottom(_)
+                    | Value::Blur(_)
+                    | Value::Top
+                    | Value::TopCaused { .. } => res,
+                    _ if res.effect() < effect => Value::Combo(ComboVal::new(
+                        IndexMap::from_iter(vec![("%val".to_string(), res)]),
+                        true,
+                        IndexMap::new(),
+                        effect,
+                        vec![],
+                    )),
                     _ => res,
                 };
 

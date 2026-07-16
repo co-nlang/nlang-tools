@@ -464,6 +464,16 @@ impl Ouroboros {
                             if matches!(val, Value::Atom(AtomKind::Bottom, _, _)) {
                                 return BottomCause::Conflict.into();
                             }
+                            // SPEC_03 §3.1 Blur row (2026-07-16): spread is a
+                            // full-coordinate read; behind a horizon the field
+                            // set is unknowable → target becomes THAT #blur
+                            // snapshot verbatim (cause/CAID/horizon preserved;
+                            // never mint, never silent no-op). Isomorphic to
+                            // Bottom collapse; early return before field merge
+                            // so {} / {{}} / nested targets share one arm.
+                            if let Value::Blur(bd) = val {
+                                return Value::Blur(bd);
+                            }
                             me = me.max(val.effect());
                             match val {
                                 Value::Combo(ref cv) => {
@@ -488,8 +498,8 @@ impl Ouroboros {
                                 }
                                 // C2: atom / number → {%val: v} (anti-peel shell
                                 // so evolve unify keeps the combo navigable at
-                                // `.%val`); Top → no-op.
-                                Value::Top => {}
+                                // `.%val`); Top / TopCaused → no-op (no constraint).
+                                Value::Top | Value::TopCaused { .. } => {}
                                 Value::Atom(ak, ae, rank) => {
                                     let shell = atom_spread_shell(Value::Atom(ak, ae, rank));
                                     if let Value::Combo(cv) = shell {
@@ -499,18 +509,20 @@ impl Ouroboros {
                                     }
                                 }
                                 // List is Combo (%kind list) — handled above.
-                                // Blur / Union / Range / Ref: no law yet; skip
-                                // (Blur spread-source: measure-only, leave).
+                                // Union / Range / Ref: no law yet; leave.
                                 _ => {}
                             }
                         }
                         FieldKey::Named { name, prefix } => {
                             let is_p = matches!(prefix, Some(Prefix::Private));
                             let te = self.predict_effect(&f.value, ctx);
-                            // C4 ancestor: pure re-spread of a name under
-                            // construction → bind ⊥ #divergent at this field
-                            // (avoids force_recursive runaway nesting).
-                            let mut val = if expr_is_pure_circular_spread(&f.value, ctx) {
+                            // SPEC_09: combo-level `~%` definition keys mint ⊥.
+                            let mut val = if matches!(prefix, Some(Prefix::System)) {
+                                BottomCause::SystemReserved.into()
+                            } else if expr_is_pure_circular_spread(&f.value, ctx) {
+                                // C4 ancestor: pure re-spread of a name under
+                                // construction → bind ⊥ #divergent at this field
+                                // (avoids force_recursive runaway nesting).
                                 BottomCause::Divergent.into()
                             } else {
                                 Value::Thunk {
@@ -580,8 +592,17 @@ impl Ouroboros {
                             // baked `_` into eigenstate (sibling / shadowing wrong).
                             // Bare single-segment path keys (`b: …`) parse as Path, not
                             // Named — C4 pure-ancestor check must run here too.
+                            // SPEC_09: combo-level `~%…` definition keys mint
+                            // ⊥ #system_reserved (no self-heal via lexical skip).
                             let te = self.predict_effect(&f.value, ctx);
-                            let val = if expr_is_pure_circular_spread(&f.value, ctx) {
+                            let sys_reserved = p
+                                .segments
+                                .first()
+                                .map(|s| s.trim().starts_with("~%"))
+                                .unwrap_or(false);
+                            let val = if sys_reserved {
+                                BottomCause::SystemReserved.into()
+                            } else if expr_is_pure_circular_spread(&f.value, ctx) {
                                 BottomCause::Divergent.into()
                             } else {
                                 Value::Thunk {
@@ -594,9 +615,21 @@ impl Ouroboros {
                             // Effect: open tracks predicted; closed takes max after force.
                             if !*closed {
                                 me = me.max(te);
+                            } else if sys_reserved {
+                                me = me.max(val.effect());
                             }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
-                            let _ = self.inject_path(&mut tmp, &p.segments, val);
+                            // SPEC_09 ownership (acceptance repair): a forbidden
+                            // path key must NOT materialize its intermediate
+                            // nodes ({~%Math.add: 7} minting ~%Math: {add: ⊥}
+                            // resurrects the silent shadow via the second
+                            // spelling) — the WHOLE field collapses at the
+                            // first segment.
+                            if sys_reserved {
+                                let _ = self.inject_path(&mut tmp, &p.segments[..1], val);
+                            } else {
+                                let _ = self.inject_path(&mut tmp, &p.segments, val);
+                            }
                             // Path-key sibling merge: {a:{x:1}, a.y:2} → a merges.
                             for (k, v) in tmp.fields() {
                                 self.merge_field_into(&mut rf, k, v, ctx);

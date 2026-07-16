@@ -33,7 +33,51 @@ fn field_coords(key: &FieldKey) -> Vec<String> {
         FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
             vec![p.segments[0].trim().to_string()]
         }
+        FieldKey::Path(p) if p.anchor == PathAnchor::Bare && p.segments.len() == 2 => {
+            // ~%Config.fuel form — root module + bare field.
+            vec![
+                p.segments[0].trim().to_string(),
+                format!("{}.{}", p.segments[0].trim(), p.segments[1].trim()),
+            ]
+        }
         _ => vec![],
+    }
+}
+
+/// Root `~%Config.<bare>` horizon-parameter family (SPEC_08 §3.1) — write exempt.
+fn is_root_config_field_write(key: &FieldKey) -> bool {
+    match key {
+        FieldKey::Path(p)
+            if p.anchor == PathAnchor::Bare
+                && p.segments.len() == 2
+                && p.segments[0].trim() == "~%Config" =>
+        {
+            let field = p.segments[1].trim();
+            !field.is_empty() && !field.contains('%') && !field.starts_with('~')
+        }
+        _ => false,
+    }
+}
+
+/// User LHS write to engine-minted `~%` axis (ownership; not Config.bare).
+fn is_system_axis_lhs_forbidden(key: &FieldKey) -> bool {
+    if is_root_config_field_write(key) {
+        return false;
+    }
+    match key {
+        FieldKey::Named {
+            prefix: Some(Prefix::System),
+            ..
+        } => true,
+        FieldKey::Quoted(name) if name.trim().starts_with("~%") => true,
+        FieldKey::Path(p)
+            if p.anchor == PathAnchor::Bare
+                && !p.segments.is_empty()
+                && p.segments[0].trim().starts_with("~%") =>
+        {
+            true
+        }
+        _ => false,
     }
 }
 
@@ -58,6 +102,13 @@ impl Universe {
         let head = engine.store.get_head(base_dir)?; match head { Some(h) => { let commit = engine.store.get_commit(&h)?; let root_val = engine.store.get_value(&commit.root)?; if let Value::Combo(root) = root_val { Ok(Self::new(Some(h), root)) } else { Err(anyhow::anyhow!("Invalid root")) } } None => Ok(Self::new(None, engine.root_with_system())), } }
     
     pub fn evolve(&mut self, engine: &Ouroboros, field: &Field) -> std::result::Result<(), BottomCause> {
+        // SPEC_09 ownership: user LHS on `~%` is illegal (except root
+        // ~%Config.<bare> horizon family). Loud at evolve boundary — same
+        // family as G2-S Evolution Conflict (CLI exit 1).
+        if is_system_axis_lhs_forbidden(&field.key) {
+            return Err(BottomCause::SystemReserved);
+        }
+
         let mut ctx = EvalContext::new(self.root.clone());
         ctx.staged = Some(self.staged.clone());
         ctx.horizon_salt = engine.store.get_horizon_salt();
@@ -113,6 +164,42 @@ impl Universe {
             FieldKey::Quoted(name) => { evolved_coords.push(name.trim().to_string()); }
             FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
                 evolved_coords.push(p.segments[0].trim().to_string());
+            }
+            // Root ~%Config.<bare>: stage an OPEN partial override. Lattice
+            // meet cannot overwrite fuel 10000 with 50; observe overlays
+            // staged Config fields onto the genesis module before unify.
+            FieldKey::Path(p) if is_root_config_field_write(&field.key) => {
+                let bare = p.segments[1].trim().to_string();
+                evolved_coords.push("~%Config".to_string());
+                evolved_coords.push(format!("~%Config.{}", bare));
+                let mut partial = match self.staged.get_field("~%Config").cloned() {
+                    Some(Value::Combo(c)) => c,
+                    _ => ComboVal::new(
+                        IndexMap::new(),
+                        false,
+                        IndexMap::new(),
+                        EffectTag::Pure,
+                        vec![],
+                    ),
+                };
+                partial.closed = false;
+                partial.insert_field(&bare, val);
+                rf.insert("~%Config".to_string(), Value::Combo(partial));
+                let incoming = Value::Combo(ComboVal::new(rf, false, rl, val_effect, vec![]));
+                if !evolved_coords.is_empty() {
+                    engine.invalidate_coords(&evolved_coords);
+                }
+                // Merge open partials only (no root Config in the meet).
+                let res = engine.unify(Value::Combo(self.staged.clone()), incoming);
+                return match res {
+                    Value::Combo(m) => {
+                        self.staged = m;
+                        self.is_dirty = true;
+                        Ok(())
+                    }
+                    Value::Bottom(d) => Err(d.cause),
+                    _ => Err(BottomCause::Conflict),
+                };
             }
             _ => { self.is_dirty = true; return Ok(()); }
         };
@@ -202,9 +289,63 @@ impl Universe {
         } _ => Err(anyhow::anyhow!("Commit failed")), }
     }
     pub fn observe(&self, engine: &Ouroboros, path: &Path) -> Value {
-        let current = engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone()));
+        // Overlay staged ~%Config field overrides onto root before unify so
+        // lattice meet never conflicts genesis fuel with user override.
+        let mut root_for_obs = self.root.clone();
+        let mut staged_for_obs = self.staged.clone();
+        if let Some(Value::Combo(overrides)) = staged_for_obs.get_field("~%Config").cloned() {
+            if let Some(Value::Combo(mut base)) = root_for_obs.get_field("~%Config").cloned() {
+                for (k, v) in overrides.data.iter() {
+                    base.insert_field(k, v.clone());
+                }
+                base.closed = true;
+                root_for_obs.insert_field("~%Config", Value::Combo(base));
+            }
+            // Strip Config from staged so unify does not re-meet overrides.
+            staged_for_obs.insert_field("~%Config", Value::Top);
+        }
+        let current =
+            engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
         if let Value::Combo(r) = current {
-            let mut ctx = EvalContext::new(r);
+            let mut ctx = EvalContext::new(r.clone());
+            // Apply ~%Config horizon params from the observation root
+            // (includes staged overrides — SPEC_08 §3.1).
+            if let Some(Value::Combo(ref cfg)) = r.get_field("~%Config").cloned() {
+                use num_traits::ToPrimitive;
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("fuel").cloned() {
+                    if let Some(f) = n.to_u64() {
+                        ctx.fuel = f;
+                    }
+                }
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_branches").cloned() {
+                    if let Some(v) = n.to_u64() {
+                        ctx.max_branches = v as usize;
+                    }
+                }
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_unification_depth").cloned() {
+                    if let Some(v) = n.to_u64() {
+                        ctx.max_unification_depth = v as usize;
+                    }
+                }
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_lifting_depth").cloned() {
+                    if let Some(v) = n.to_u64() {
+                        ctx.max_lifting_depth = v as usize;
+                    }
+                }
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_pattern_nodes").cloned() {
+                    if let Some(v) = n.to_u64() {
+                        ctx.max_pattern_nodes = v as usize;
+                    }
+                }
+                if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("strategy").cloned() {
+                    use crate::value::ObservationStrategy;
+                    ctx.strategy = match s.trim_start_matches('#') {
+                        "strict" => ObservationStrategy::Strict,
+                        "approximate" => ObservationStrategy::Approximate,
+                        _ => ObservationStrategy::Blur,
+                    };
+                }
+            }
             ctx.refine_map_active = true;
             // Stage 2 (§3.4): force_recursive on the *return value* — solidification
             // moved from evolve to observe (GUIDE_03 §11.5). REPL observes return
