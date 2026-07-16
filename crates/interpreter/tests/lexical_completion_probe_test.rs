@@ -16,9 +16,9 @@
 // ambient-scopes route precisely because it flipped that pin. Re-entry
 // must fall through as unresolved (chain continues outward), never mint
 // #divergent here (adjudication candidate, separate case).
-// NOT in scope: cocoon eigenstate default (`{{a:1}}.b` → `_` today, law
-// says ⊥ — frozen pin, separate case), mutual/self sibling reference
-// semantics (frozen), effect isolation changes.
+// NOT in scope: cocoon eigenstate default (frozen pin MIGRATED
+// 2026-07-16 to cocoon_eigenstate_probe_test.rs — see note below),
+// mutual/self sibling reference semantics (frozen), effect isolation.
 
 use nlang_interpreter::{Ouroboros, Universe};
 use nlang_parser::parse_program;
@@ -201,10 +201,11 @@ fn pin_self_ref_sibling_frozen() {
     assert_obs("c: { d: d + 1 }\nout: c.d", "_");
 }
 
-#[test]
-fn pin_cocoon_closed_miss_frozen() {
-    // FROZEN, EXPOSED VIOLATION — SPEC_03 §1.3 says Cocoon.k = ⊥ for
-    // undefined keys; engine gives `_` today. Separate case (cocoon
-    // eigenstate arc candidate); this order must not change it.
-    assert_obs("cc: {{ a: 1 }}\nout: cc.b", "_");
-}
+// MIGRATED (2026-07-16, by the acceptor): `pin_cocoon_closed_miss_frozen`
+// froze `{{a:1}}.b` → `_` as an EXPOSED VIOLATION pending its own arc.
+// That arc is now docs/cocoon_eigenstate_handover.md — successor gate
+// `red_cocoon_access_bottom` in cocoon_eigenstate_probe_test.rs demands
+// the lawful ⊥ #missing_key (SPEC_03 §1.2 #1/§1.3). Migration performed
+// by the acceptor after the implementer HALTED on the pin conflict per
+// the red-line rule (correct protocol behavior; the pin should have been
+// migrated in the order commit — acceptor oversight, co-owned).
