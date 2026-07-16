@@ -58,6 +58,57 @@ fn spread_target_is_insider(target: &ComboVal, ctx: &EvalContext) -> bool {
     })
 }
 
+/// C4 (SPEC_03 §3.1): direct-name circular spread — path first segment is a
+/// coordinate under construction (`ctx.computing`, filled by evolve / force_coord).
+/// Field spreads parse as `ExprKind::Spread(inner)` (value of `...` key); also
+/// accept bare Path for robustness.
+fn spread_path_is_under_construction(expr: &Expr, ctx: &EvalContext) -> bool {
+    let core = match &expr.kind {
+        ExprKind::Spread(inner) => inner.as_ref(),
+        _ => expr,
+    };
+    match &core.kind {
+        ExprKind::Path(p) if p.anchor == PathAnchor::Bare && !p.segments.is_empty() => {
+            let first = p.segments[0].trim();
+            ctx.computing.contains(first)
+        }
+        _ => false,
+    }
+}
+
+/// C4 ancestor form at construction: `a: { b: { ...a } }` — nested combo whose
+/// *only* fields are spreads of a name under construction. Distinct from the
+/// insider pattern `c2: { ...p, rd: ~s }` which has additional fields and must
+/// remain legal (spread-privacy pin).
+fn expr_is_pure_circular_spread(expr: &Expr, ctx: &EvalContext) -> bool {
+    if ctx.computing.is_empty() {
+        return false;
+    }
+    match &expr.kind {
+        ExprKind::Combo { fields, .. } if !fields.is_empty() => fields.iter().all(|f| {
+            matches!(&f.key, FieldKey::Quoted(name) if name == "...")
+                && spread_path_is_under_construction(&f.value, ctx)
+        }),
+        _ => false,
+    }
+}
+
+/// Atom-spread shell: `{%val: v}` plus a data-axis `_ : _` so evolve unify
+/// does not peel the pure-wrapper (same anti-peel as ⊥ %cause cocoon).
+/// Collapsed observation still projects via `%val` when appropriate.
+fn atom_spread_shell(atom: Value) -> Value {
+    let mut fields = IndexMap::new();
+    fields.insert("%val".to_string(), atom);
+    fields.insert("_".to_string(), Value::Top);
+    Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+}
+
 /// G6: mark a value as structural-view (`<<non-path>>`) so observation
 /// display preserves the full node. Payload is `%node`, **not** `%val`:
 /// pure wrappers (`%val` + %-meta only) are peeled by `collapse()` during
@@ -79,6 +130,24 @@ fn mark_structural_view(inner: Value) -> Value {
 }
 
 impl Ouroboros {
+    /// SPEC_03 §3.1 / §1.1: collision-aware field write — key already present
+    /// → force both sides and `unify_internal` (intersect `&`); absent → insert
+    /// as-is (preserves Thunk laziness on non-colliding keys).
+    fn merge_field_into(
+        &self,
+        map: &mut IndexMap<String, Value>,
+        key: String,
+        incoming: Value,
+        ctx: &mut EvalContext,
+    ) {
+        if let Some(existing) = map.get(&key) {
+            let merged = self.unify_internal(existing.clone(), incoming, ctx);
+            map.insert(key, merged);
+        } else {
+            map.insert(key, incoming);
+        }
+    }
+
     /// E3: if one operand is AST `!(e)` and eval(e) is Range, rewrite meet to
     /// membership negation: x if x∉range else ⊥. Mirror both orders.
     /// Does NOT handle standalone `!(range)` (that stays orthocomplement ⊥).
@@ -379,24 +448,78 @@ impl Ouroboros {
                 for f in fields {
                     match &f.key {
                         FieldKey::Quoted(name) if name == "..." => {
-                            // SPEC_03 §3.1 private preservation: external
-                            // spread excludes the local axis; insider spread
-                            // (target appears in the current scope chain)
-                            // keeps local. Geometric test = combo PartialEq
-                            // against ctx.scopes frames (seal frames).
-                            let val = self.eval(&f.value, ctx);
-                            if let Value::Combo(ref cv) = val {
-                                rf.extend(cv.fields().clone());
-                                if spread_target_is_insider(cv, ctx) {
-                                    rl.extend(cv.local_fields().clone());
+                            // SPEC_03 §3.1: spread is lattice merge (intersect on
+                            // key collision), not last-wins overwrite.
+                            // C4: direct-name circular → ⊥ #divergent before eval
+                            // (under-construction stack / force in_flight).
+                            if spread_path_is_under_construction(&f.value, ctx) {
+                                return BottomCause::Divergent.into();
+                            }
+                            let val = self.force(self.eval(&f.value, ctx), ctx);
+                            // C3: Bottom spread collapses the whole target,
+                            // propagating the source's own %cause (no fresh mint).
+                            if let Value::Bottom(d) = val {
+                                return Value::Bottom(d);
+                            }
+                            if matches!(val, Value::Atom(AtomKind::Bottom, _, _)) {
+                                return BottomCause::Conflict.into();
+                            }
+                            me = me.max(val.effect());
+                            match val {
+                                Value::Combo(ref cv) => {
+                                    // Private preservation: external spread
+                                    // excludes local; insider keeps (geometric).
+                                    // C4 ancestor form (`a: { b: { ...a } }`) is
+                                    // caught by force/in_flight when observe
+                                    // force_recursive re-enters the nested thunk
+                                    // — do NOT treat "spread parent while forcing
+                                    // a child" as divergent (insider pin).
+                                    for (k, v) in cv.fields() {
+                                        self.merge_field_into(&mut rf, k, v, ctx);
+                                    }
+                                    if spread_target_is_insider(cv, ctx) {
+                                        for (k, v) in cv.local_fields() {
+                                            self.merge_field_into(&mut rl, k, v, ctx);
+                                        }
+                                    }
+                                    if !*closed {
+                                        me = me.max(cv.effect);
+                                    }
                                 }
-                                if !*closed { me = me.max(cv.effect); }
+                                // C2: atom / number → {%val: v} (anti-peel shell
+                                // so evolve unify keeps the combo navigable at
+                                // `.%val`); Top → no-op.
+                                Value::Top => {}
+                                Value::Atom(ak, ae, rank) => {
+                                    let shell = atom_spread_shell(Value::Atom(ak, ae, rank));
+                                    if let Value::Combo(cv) = shell {
+                                        for (k, v) in cv.fields() {
+                                            self.merge_field_into(&mut rf, k, v, ctx);
+                                        }
+                                    }
+                                }
+                                // List is Combo (%kind list) — handled above.
+                                // Blur / Union / Range / Ref: no law yet; skip
+                                // (Blur spread-source: measure-only, leave).
+                                _ => {}
                             }
                         }
                         FieldKey::Named { name, prefix } => {
                             let is_p = matches!(prefix, Some(Prefix::Private));
                             let te = self.predict_effect(&f.value, ctx);
-                            let mut val = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
+                            // C4 ancestor: pure re-spread of a name under
+                            // construction → bind ⊥ #divergent at this field
+                            // (avoids force_recursive runaway nesting).
+                            let mut val = if expr_is_pure_circular_spread(&f.value, ctx) {
+                                BottomCause::Divergent.into()
+                            } else {
+                                Value::Thunk {
+                                    expr: Box::new(f.value.clone()),
+                                    closure: ctx.scopes.clone(),
+                                    context: ctx.context_value.clone().map(Box::new),
+                                    effect: te,
+                                }
+                            };
                             if matches!(prefix, Some(Prefix::Logic)) {
                                 val = Value::Combo(ComboVal::new(
                                     IndexMap::from_iter(vec![
@@ -417,13 +540,18 @@ impl Ouroboros {
                                 Some(Prefix::System) => format!("~%{}", name),
                                 _ => name.trim().to_string(),
                             };
-                            if is_p { rl.insert(name.trim().to_string(), val); } else { rf.insert(key, val); }
+                            // §1.1 repeated-key merge = intersect (same as spread).
+                            if is_p {
+                                self.merge_field_into(&mut rl, name.trim().to_string(), val, ctx);
+                            } else {
+                                self.merge_field_into(&mut rf, key, val, ctx);
+                            }
                         }
                         FieldKey::Quoted(name) => {
                             let te = self.predict_effect(&f.value, ctx);
                             let thunk = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
                             if !*closed { me = me.max(te); }
-                            rf.insert(name.trim().to_string(), thunk);
+                            self.merge_field_into(&mut rf, name.trim().to_string(), thunk, ctx);
                         }
                         FieldKey::Pattern(pe) => {
                             let pk = self.eval(pe, ctx).to_string_plain().trim().to_string();
@@ -435,8 +563,14 @@ impl Ouroboros {
                                 te,
                                 vec![]
                             ));
-                            rf.insert(pk, rb);
-                            rf.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+                            self.merge_field_into(&mut rf, pk, rb, ctx);
+                            // Repeated %morphism inserts: #true & #true = #true.
+                            self.merge_field_into(
+                                &mut rf,
+                                "%morphism".to_string(),
+                                Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+                                ctx,
+                            );
                         }
                         FieldKey::Path(p) => {
                             // Stage 2 (call-by-observation): build a Thunk carrying the
@@ -444,19 +578,30 @@ impl Ouroboros {
                             // closed (cocoon) context, force immediately — cocoon is a
                             // solidification boundary (GUIDE_03 §11.5). In an open combo,
                             // leave the thunk lazy — evolve stores it, observe forces it.
+                            // Bare single-segment path keys (`b: …`) parse as Path, not
+                            // Named — C4 pure-ancestor check must run here too.
                             let te = self.predict_effect(&f.value, ctx);
-                            let thunk = Value::Thunk {
-                                expr: Box::new(f.value.clone()),
-                                closure: ctx.scopes.clone(),
-                                context: ctx.context_value.clone().map(Box::new),
-                                effect: te,
+                            let val = if expr_is_pure_circular_spread(&f.value, ctx) {
+                                BottomCause::Divergent.into()
+                            } else {
+                                let thunk = Value::Thunk {
+                                    expr: Box::new(f.value.clone()),
+                                    closure: ctx.scopes.clone(),
+                                    context: ctx.context_value.clone().map(Box::new),
+                                    effect: te,
+                                };
+                                if *closed { self.force(thunk, ctx) } else { thunk }
                             };
-                            let val = if *closed { self.force(thunk, ctx) } else { thunk };
                             if !*closed { me = me.max(te); } else { me = me.max(val.effect()); }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
                             let _ = self.inject_path(&mut tmp, &p.segments, val);
-                            rf.extend(tmp.fields());
-                            rl.extend(tmp.local_fields());
+                            // Path-key sibling merge: {a:{x:1}, a.y:2} → a merges.
+                            for (k, v) in tmp.fields() {
+                                self.merge_field_into(&mut rf, k, v, ctx);
+                            }
+                            for (k, v) in tmp.local_fields() {
+                                self.merge_field_into(&mut rl, k, v, ctx);
+                            }
                         }
                     }
                 }
