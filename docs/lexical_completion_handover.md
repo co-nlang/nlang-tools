@@ -130,3 +130,31 @@ closed 語境於字面量建構時**先 force 欄位、後跑 seal**,force 當�
 ### 未動聲明
 - cocoon 未定義鍵 ⊥(凍結 `_`)、互指/自指另裁定、eq×thunk、
   前向×spread、效果隔離、`~%`、computing/in_flight 真循環 `#divergent`。
+
+---
+
+## 6. 驗收紀錄(2026-07-16,驗收方)
+
+**判定:通過——零代修(第十三例);紀錄義務履行。**
+
+獨立重測:純度乾淨(僅 9 個 `#[ignore]` 移除);本探針 17/17、
+上弧 21 釘無回歸、workspace **1022/0/3**、語料非 pending 全零敗、
+conformance **88/88**(L2-47~49 關門)。
+
+diff 審查:`lexical_forcing` 軟再入=上弧棄案的**手術版**——
+ambient 只在詞法 force 期間保留、L2-17 真循環照舊 #divergent、
+凍結釘(互指/自指/cycle_test Top)全守;cocoon 先 seal 後
+force_recursive(固化邊界保留,effect 於固化後重取 max);單段
+seal 回歸使語料耗時 1.18→0.74s(淨改善)。
+
+對抗性邊界(工單外,全正):**動態作用域洩漏兩形皆淨**——
+param 形 `d:k+1; f:(k->d); 9|>f` → `_`(呼叫方 k 不得滲入詞法
+鏈)、caller-holder 形 `w2:{k:3, use:c.d}` → `_` ✓;cocoon 3 跳
+12 ✓;6 跳鏈 6 ✓;遮蔽×鏈 15 ✓;param 遮蔽兄弟 10 ✓;cocoon
+雙生 %id #true ✓;互指算術 `_`(凍結一致)✓。
+
+記錄:50 跳鏈於 64MiB 棧綠(小棧或 overflow=既有模式,oo 主線
+程已配);cocoon 本徵態預設 ⊥ 另案在佇列。
+
+模型 #3 檔案:零代修第十三例。上弧殘欠清償,SPEC_04 §2.1 全遞迴
+到位。
