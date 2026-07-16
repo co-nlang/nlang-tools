@@ -17,11 +17,13 @@
 // MEASURED on v0.2.16: engine routes #blur through the Top arm
 // ("无效操作") — {b:1, ...big} → {b:1}, %cause `_`, both orders, nested,
 // cocoon target: total horizon erasure.
-// NOT in scope: `&` × blur snapshot NON-preservation (same-program
-// big/%caid vs (big&{b:1}).%caid vs ({b:1}&big).%caid all differ —
-// suspected §3.2.2 #1 violation, ledgered separate case: cause canon
-// audit); `<`/`<=` × blur (§4.10); forward-ref × spread (frozen in
-// spread_collision_probe_test.rs); circular spread (pinned there too).
+// NOT in scope: `<`/`<=` × blur (§4.10); forward-ref × spread (frozen
+// in spread_collision_probe_test.rs); circular spread (pinned there).
+// CORRECTION (2026-07-17, cause-canon audit): the "`&` × blur snapshot
+// NON-preservation" suspicion once noted here is WITHDRAWN — it was a
+// cross-process measurement artifact (per-instance horizon salt). The
+// engine honors §3.2.2 #1; pinned in cause_canon_probe_test.rs
+// (pin_blur_merge_caid_verbatim, L2-65).
 
 use nlang_interpreter::{Ouroboros, Universe};
 use nlang_parser::parse_program;
