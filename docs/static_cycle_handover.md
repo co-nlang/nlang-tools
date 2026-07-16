@@ -99,3 +99,54 @@ SPEC_12 §1.1 修訂+SYNTAX_08 §4 #2 例外+ERROR_CODES #static_cycle:
 - refine_map 儲存層循環(refine_test 釘,另機構)。
 - 態射遞迴/燃料視界(G3 律,勿動)。
 - Blur 展開源、~% 影蓋、cause 正典審計(各自另案)。
+
+---
+
+## 5. 交付紀錄(2026-07-16,模型 #3)
+
+### 根因
+root 之 `computing`/`in_flight` 再入一律 `#divergent`、combo 之
+`lexical_forcing` 再入一律裸 Top——兩套皆無「純引用 vs 變換」判別。
+「再入」本身不是發散;「再入+變換跳」才是。
+
+### Diff
+1. **`Value::TopCaused { members }`**(value.rs):靜止循環產物。
+   - PartialEq / `is_top` / CAID hash / bn_serial / tropical ≡ 裸 Top
+   - 顯示 `_`(to_nlang + project 剝因)
+   - `.%cause`/`.%type` → `#static_cycle` cocoon(`static_cycle_cause_combo`,
+     含 `%members` 列表;G6 剝 `%val` 得標籤)
+   - 消費蒸發:`bare_top_if_caused` / unify 對非 Top 操作數回對方裸值
+2. **鏈染色**(lib.rs EvalContext):`chain_transform_taint` +
+   `cycle_chain`;`expr_is_pure_ref` = `ExprKind::Path` only。
+3. **再入分流** `cycle_reentry`:純 → TopCaused;染 → Divergent。
+   掛點:in_flight、path_coord computing、force_coord computing、
+   lexical_forcing。
+4. **unify 保全 TopCaused**:
+   - CAID 早退 `prefer_caused_top`(Top 與 TopCaused 同 hash 時
+     優先保留因,否則 evolve 合併丟欄 → root `a.%cause` 變裸 `_`)
+   - unify_combo 插入:`!matches!(Top)` 保留 TopCaused、仍丟裸 Top
+5. **memo_soundness_test.rs**(非 probe 名、須申報):`kind_of` match
+   補 `TopCaused` 臂(與 Top 同標 `"Top"`)——exhaustive 編譯修復,
+   非語義改寫。
+
+### 釘遷移(驗收方)
+- 開單:3 純引用形(forward_ref / divergence_probe)
+- 交付中補遷:`pin_self_ref_sibling_frozen`(lexical_completion;
+  `d: d+1` 變換 → 由本探針 `red_combo_transform_self_divergent` 守)
+
+### 量測
+| 項 | 結果 |
+|---|---|
+| 本探針 9 紅+7 釘 | **16/16** |
+| workspace | **1050/0/3**(算式:1038 −4 遷移 +16 本探針 = **1050**;
+  工單「1051」若按 +17 則誤計探針數,實為 16) |
+| 語料 | **74/0**(~0.71s) |
+| conformance | **95/95**(L2-53~56) |
+| 環長 3 `a:b,b:c2,c2:a` | 顯示 `_`;`a.%cause` → `#static_cycle` |
+| cycle_test `== Value::Top` | **綠**(PartialEq) |
+| 序列化 | TopCaused → bn 同裸 Top(觀測期值;未新 tag) |
+
+### 未動聲明
+- refine_map 循環、態射遞迴/燃料視界、Blur 展開、~% 影蓋。
+- BottomCause 枚舉未加 static_cycle(因在 Top 側)。
+- L2-17 變換正典 `a: a+1` 仍 `#divergent`。

@@ -84,16 +84,35 @@ impl Ouroboros {
         self.unify_internal(a, b, &mut ctx)
     }
 
+    /// When CAID equal: keep static-cycle provenance if either side has it.
+    fn prefer_caused_top(a: Value, b: Value) -> Value {
+        match (a, b) {
+            (Value::TopCaused { members: m1 }, Value::TopCaused { members: m2 }) => {
+                let mut m = m1;
+                m.extend(m2);
+                crate::value::static_cycle_top(m)
+            }
+            (Value::TopCaused { members }, _) | (_, Value::TopCaused { members }) => {
+                Value::TopCaused { members }
+            }
+            (a, _) => a,
+        }
+    }
+
     pub fn unify_internal(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
         // Stage 2 (call-by-observation): lazy unify — CAID early-out, Top/Thunk
         // preserve thunk, force only when value-judgment needed.
         let id_a = a.content_hash();
         let id_b = b.content_hash();
-        if id_a == id_b { return a; }
+        if id_a == id_b {
+            // Top and TopCaused share a CAID (lattice identity) — prefer
+            // caused provenance so static-cycle fields survive combo merge.
+            return Self::prefer_caused_top(a, b);
+        }
 
         match (&a, &b) {
-            (Value::Top, Value::Thunk { .. }) => return b,
-            (Value::Thunk { .. }, Value::Top) => return a,
+            (Value::Top | Value::TopCaused { .. }, Value::Thunk { .. }) => return b,
+            (Value::Thunk { .. }, Value::Top | Value::TopCaused { .. }) => return a,
             // Atom(Top) alias — the literal `_` evaluates to Value::Top (eval
             // normalization), but manually constructed Atom(Top) still exists.
             // Re-enter as Value::Top rather than short-circuiting `other.clone()`:
@@ -117,8 +136,8 @@ impl Ouroboros {
             // force below runs in the *caller's* context (engine-level at evolve
             // field-merge), and dereferencing there is evolve-time snapshotting,
             // i.e. exactly the A-case semantics the C ruling rejected.
-            (Value::Top, Value::Ref(_)) => return b,
-            (Value::Ref(_), Value::Top) => return a,
+            (Value::Top | Value::TopCaused { .. }, Value::Ref(_)) => return b,
+            (Value::Ref(_), Value::Top | Value::TopCaused { .. }) => return a,
             // F3 (§3-fix, hygiene note): Ref vs any non-Top concrete value
             // (Combo, Atom, Union, Thunk, etc.) is NOT preserved here — the
             // match falls through to the force path. In an evolve-context
@@ -141,7 +160,9 @@ impl Ouroboros {
         let a = self.force(a, ctx).collapse().clone();
         let b = self.force(b, ctx).collapse().clone();
         let id_a = a.content_hash(); let id_b = b.content_hash();
-        if id_a == id_b { return a; }
+        if id_a == id_b {
+            return Self::prefer_caused_top(a, b);
+        }
 
         // Type-marker × Range (E1) — acceptance repair: this early arm owns
         // ONLY the new value kind (Range). Every other kind DECLINES to the
@@ -177,10 +198,26 @@ impl Ouroboros {
         }
 
         match (&a, &b) {
-            (Value::Top, Value::Union(_)) => {}
-            (Value::Union(_), Value::Top) => {}
-            (Value::Top, _) => return b,
-            (_, Value::Top) => return a,
+            // Caused Top ≡ Top for lattice unit against non-Top (provenance
+            // evaporates on consumption). Two top-like values: prefer
+            // TopCaused so evolve can still store static-cycle provenance
+            // (bare Top fields are dropped by unify_combo).
+            (Value::Top | Value::TopCaused { .. }, Value::Union(_)) => {}
+            (Value::Union(_), Value::Top | Value::TopCaused { .. }) => {}
+            (Value::TopCaused { members }, Value::Top)
+            | (Value::Top, Value::TopCaused { members }) => {
+                return Value::TopCaused {
+                    members: members.clone(),
+                };
+            }
+            (Value::TopCaused { members: m1 }, Value::TopCaused { members: m2 }) => {
+                let mut m = m1.clone();
+                m.extend(m2.iter().cloned());
+                return crate::value::static_cycle_top(m);
+            }
+            (Value::Top, Value::Top) => return Value::Top,
+            (Value::Top | Value::TopCaused { .. }, _) => return b.bare_top_if_caused(),
+            (_, Value::Top | Value::TopCaused { .. }) => return a.bare_top_if_caused(),
             (Value::Bottom(c), _) => return Value::Bottom(c.clone()),
             (_, Value::Bottom(c)) => return Value::Bottom(c.clone()),
             _ => {}
@@ -408,7 +445,10 @@ impl Ouroboros {
                 detail.path = Some(cp); 
                 return Value::Bottom(detail); 
             }
-            if !merged.is_top() { rf.insert(key.clone(), merged); }
+            // Drop bare Top (open miss); keep TopCaused (static-cycle provenance).
+            if !matches!(&merged, Value::Top) {
+                rf.insert(key.clone(), merged);
+            }
         }
         let all_lkeys: HashSet<_> = a.local_keys().into_iter().chain(b.local_keys().into_iter()).collect();
         for key in all_lkeys {
@@ -421,7 +461,9 @@ impl Ouroboros {
                 detail.path = Some(cp); 
                 return Value::Bottom(detail); 
             }
-            if !merged.is_top() { rl.insert(key.clone(), merged); }
+            if !matches!(&merged, Value::Top) {
+                rl.insert(key.clone(), merged);
+            }
         }
         Value::Combo(ComboVal::new(rf, a.closed || b.closed, rl, a.effect.max(b.effect), a.relations.iter().chain(b.relations.iter()).cloned().collect()))
     }

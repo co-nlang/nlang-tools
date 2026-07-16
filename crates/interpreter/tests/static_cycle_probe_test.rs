@@ -87,20 +87,17 @@ fn assert_divergent(src: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_root_static_mutual_top() {
     // L2-53. Today: ⊥ #divergent.
     assert_obs("a: b\nb: a\nout: a", "_");
 }
 
 #[test]
-#[ignore]
 fn red_root_static_self_top() {
     assert_obs("x: x\nout: x", "_");
 }
 
 #[test]
-#[ignore]
 fn red_path_pure_cycle_top() {
     // Pure PATH loop = pure reference (projection adds no information).
     assert_obs("s: { v: s.v }\nout: s.v", "_");
@@ -111,7 +108,6 @@ fn red_path_pure_cycle_top() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_combo_transform_self_divergent() {
     // L2-54 mirror. Both spellings.
     assert_divergent("c: { d: d + 1 }\nout: c.d");
@@ -119,7 +115,6 @@ fn red_combo_transform_self_divergent() {
 }
 
 #[test]
-#[ignore]
 fn red_combo_transform_mutual_divergent() {
     assert_divergent("c: { a2: b2 + 1, b2: a2 + 1 }\nout: c.a2");
 }
@@ -129,14 +124,12 @@ fn red_combo_transform_mutual_divergent() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_static_cycle_cause_combo() {
     // L2-55. Today: `_`.
     assert_obs("c: { a2: b2, b2: a2 }\nout: (c.a2).%cause", "#static_cycle");
 }
 
 #[test]
-#[ignore]
 fn red_static_cycle_cause_root() {
     // Today: #divergent (the over-kill's cause).
     assert_obs("a: b\nb: a\nout: a.%cause", "#static_cycle");
@@ -147,14 +140,12 @@ fn red_static_cycle_cause_root() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_caused_top_unit_law() {
     // ⊤ & 5 = 5; provenance evaporates on consumption. Today: ⊥.
     assert_obs("a: b\nb: a\nout: a & 5", "5");
 }
 
 #[test]
-#[ignore]
 fn red_caused_top_eq_top() {
     // Caused Top ≡ Top under the unique equality (G1). Today: #false.
     assert_obs("a: b\nb: a\nout: a = _", "#true");

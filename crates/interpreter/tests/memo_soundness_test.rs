@@ -90,9 +90,15 @@ fn nondet_operand_bypasses_memo() {
 
 fn kind_of(v: &Value) -> &'static str {
     match v {
-        Value::Top => "Top", Value::Atom(..) => "Atom", Value::Combo(_) => "Combo",
-        Value::Union(_) => "Union", Value::Code(_) => "Code", Value::Thunk { .. } => "Thunk",
-        Value::Bottom(_) => "Bottom", Value::Blur(_) => "Blur", Value::Ref(_) => "Ref",
+        Value::Top | Value::TopCaused { .. } => "Top",
+        Value::Atom(..) => "Atom",
+        Value::Combo(_) => "Combo",
+        Value::Union(_) => "Union",
+        Value::Code(_) => "Code",
+        Value::Thunk { .. } => "Thunk",
+        Value::Bottom(_) => "Bottom",
+        Value::Blur(_) => "Blur",
+        Value::Ref(_) => "Ref",
         Value::Range { .. } => "Range",
     }
 }

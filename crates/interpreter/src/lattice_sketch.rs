@@ -14,7 +14,7 @@ pub fn compute_sketch_v2(value: &Value) -> String {
 
 fn extract_spectral_components(value: &Value) -> (Vec<f64>, Vec<f64>) {
     match value {
-        Value::Top => (vec![0.0; MAX_COMPONENTS], vec![0.0; MAX_COMPONENTS]),
+        Value::Top | Value::TopCaused { .. } => (vec![0.0; MAX_COMPONENTS], vec![0.0; MAX_COMPONENTS]),
         Value::Combo(cv) => {
             let mut entries: Vec<(&str, &Value)> = Vec::new();
             for (k, v) in &cv.system  { entries.push((k, v)); }

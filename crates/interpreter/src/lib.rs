@@ -56,8 +56,15 @@ pub struct EvalContext {
     /// Survives `sub_context` clones (unlike the legacy `computing` clear).
     pub in_flight: HashSet<ContentHash>,
     /// Bare names currently being forced out of a scope-frame field (lexical
-    /// chain). Soft re-entry returns Top (open unresolved), not #divergent.
+    /// chain). Soft re-entry uses cycle_reentry (static → caused Top /
+    /// transform → #divergent).
     pub lexical_forcing: HashSet<String>,
+    /// SPEC_12 §1.1: true if any hop on the current force chain is a
+    /// non-pure-reference expression (arithmetic, apply, …). Pure-ref
+    /// re-entry → caused Top; tainted re-entry → ⊥ #divergent.
+    pub chain_transform_taint: bool,
+    /// Coordinates / bare names on the current force stack (cycle members).
+    pub cycle_chain: Vec<String>,
     pub in_math_op: bool,
     pub context_value: Option<Value>,
     pub fuel: u64,
@@ -95,6 +102,7 @@ impl EvalContext {
         Self { 
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_flight: HashSet::new(), lexical_forcing: HashSet::new(),
+            chain_transform_taint: false, cycle_chain: Vec::new(),
             in_math_op: false, context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, memo_enabled: true, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
@@ -151,6 +159,22 @@ fn path_coord_of(expr: &Expr) -> Option<String> {
                 .join("."),
         ),
         _ => None,
+    }
+}
+
+/// SPEC_12 §1.1: pure-reference hop = path only (any anchor, segments only).
+/// Everything else (arith, apply, pipe, literal construction, …) taints.
+fn expr_is_pure_ref(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::Path(_))
+}
+
+/// Re-entry on a force chain: pure static cycle → caused Top; any transform
+/// hop → ⊥ #divergent.
+fn cycle_reentry(ctx: &EvalContext) -> Value {
+    if ctx.chain_transform_taint {
+        BottomCause::Divergent.into()
+    } else {
+        crate::value::static_cycle_top(ctx.cycle_chain.clone())
     }
 }
 
@@ -893,7 +917,7 @@ let mut refl_fields = IndexMap::new();
     }
 
     pub fn apply_morphism(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
-        let f = self.force(f, ctx); if let Value::Bottom(_) = f { return f; } if let Value::Top = f { return Value::Top; }
+        let f = self.force(f, ctx); if let Value::Bottom(_) = f { return f; } if f.is_top() { return Value::Top; }
         // G3 R1: Blur is not a callable / not a dispatchable arg — absorb
         // (pass through) rather than falling into the non-combo Conflict arm.
         if let Value::Blur(_) = &f { return f; }
@@ -1065,14 +1089,8 @@ let mut refl_fields = IndexMap::new();
                 }
                 .content_hash();
                 if ctx.in_flight.contains(&thunk_id) {
-                    // Sibling bare-name soft re-entry (lexical chain): open
-                    // unresolved `_`, not #divergent — frozen pins + cycle_test.
-                    // True cycles (L2-17 path / coordinate) keep #divergent
-                    // when lexical_forcing is empty.
-                    if !ctx.lexical_forcing.is_empty() {
-                        return Value::Top;
-                    }
-                    return BottomCause::Divergent.into();
+                    // SPEC_12 §1.1: pure-ref cycle → caused Top; transform → ⊥.
+                    return cycle_reentry(ctx);
                 }
                 // Holder re-entry: force_coord("s.v") put "s.v" in computing;
                 // a path-shaped thunk whose expr is that same path is the
@@ -1081,7 +1099,7 @@ let mut refl_fields = IndexMap::new();
                 let path_coord = path_coord_of(&expr);
                 if let Some(ref pc) = path_coord {
                     if ctx.computing.contains(pc) {
-                        return BottomCause::Divergent.into();
+                        return cycle_reentry(ctx);
                     }
                 }
 
@@ -1109,6 +1127,10 @@ let mut refl_fields = IndexMap::new();
                         call_ctx.scopes.push(frame.clone());
                     }
                 }
+                // SPEC_12 §1.1: non-pure-ref hop taints the whole force chain.
+                if !expr_is_pure_ref(&expr) {
+                    call_ctx.chain_transform_taint = true;
+                }
                 call_ctx.context_value = effective_context;
                 call_ctx.dep_collector = inner_collector;
                 // in_flight rides sub_context clone for nested observation.
@@ -1134,6 +1156,10 @@ let mut refl_fields = IndexMap::new();
                 ctx.in_flight = call_ctx.in_flight;
                 ctx.computing = call_ctx.computing;
                 ctx.lexical_forcing = call_ctx.lexical_forcing;
+                // Taint only accumulates (once transform, always transform).
+                ctx.chain_transform_taint =
+                    ctx.chain_transform_taint || call_ctx.chain_transform_taint;
+                ctx.cycle_chain = call_ctx.cycle_chain;
                 let inner_deps = call_ctx.dep_collector.take();
 
                 let res = match res {
@@ -1495,6 +1521,24 @@ let mut refl_fields = IndexMap::new();
                 val = current;
                 continue;
             }
+            // SPEC_12 §1.1: caused Top provenance — meta-only readability.
+            if let Value::TopCaused { ref members } = current {
+                if seg == "%cause" || seg == "%type" {
+                    if seg == "%cause" {
+                        return crate::value::static_cycle_cause_combo(members)
+                            .with_effect(accumulated_effect);
+                    }
+                    return Value::Atom(
+                        AtomKind::Tag("static_cycle".to_string()),
+                        EffectTag::Pure,
+                        None,
+                    )
+                    .with_effect(accumulated_effect);
+                }
+                // Non-meta on open Top: open miss (F4 dual of bare Top).
+                val = Value::Top;
+                continue;
+            }
             // G3 R4 + Blur boundary #4/#5: #blur meta whitelist and
             // coordinate-context absorption (SPEC_08 §3.2.2).
             if let Value::Blur(bd) = current {
@@ -1694,10 +1738,14 @@ let mut refl_fields = IndexMap::new();
         let needs_gate = matches!(val, Value::Thunk { .. } | Value::Ref(_));
         if needs_gate {
             if ctx.computing.contains(coord) {
-                return BottomCause::Divergent.into();
+                return cycle_reentry(ctx);
             }
             ctx.computing.insert(coord.to_string());
+            ctx.cycle_chain.push(coord.to_string());
             let res = self.force(val, ctx);
+            if ctx.cycle_chain.last().map(|s| s == coord).unwrap_or(false) {
+                ctx.cycle_chain.pop();
+            }
             ctx.computing.remove(coord);
             res
         } else {
@@ -1706,19 +1754,20 @@ let mut refl_fields = IndexMap::new();
     }
 
     /// SPEC_04 §2.1: force a value found on a scope-frame field. Marks the
-    /// bare name in `lexical_forcing` so (1) force keeps ambient frames
-    /// (unbounded sibling-chain depth) and (2) re-entry soft-fails to Top
-    /// instead of #divergent (mutual/self sibling frozen pins).
+    /// bare name in `lexical_forcing` so force keeps ambient frames
+    /// (unbounded sibling-chain depth). SPEC_12 §1.1: re-entry is
+    /// cycle_reentry (static → caused Top / transform → #divergent).
     fn force_lexical_name(&self, name: &str, val: Value, ctx: &mut EvalContext, use_coord: bool) -> Value {
         if matches!(&val, Value::Ref(_)) {
             return val;
         }
         if ctx.lexical_forcing.contains(name) {
-            return Value::Top;
+            return cycle_reentry(ctx);
         }
         let track = matches!(&val, Value::Thunk { .. });
         if track {
             ctx.lexical_forcing.insert(name.to_string());
+            ctx.cycle_chain.push(name.to_string());
         }
         let res = if use_coord {
             self.force_coord(name, val, ctx)
@@ -1726,6 +1775,9 @@ let mut refl_fields = IndexMap::new();
             self.force(val, ctx)
         };
         if track {
+            if ctx.cycle_chain.last().map(|s| s == name).unwrap_or(false) {
+                ctx.cycle_chain.pop();
+            }
             ctx.lexical_forcing.remove(name);
         }
         res
