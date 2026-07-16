@@ -127,11 +127,12 @@ fn pin_fwd_then_refine() {
     assert_int("out: a\na: 1..9\na: 5", "out", 5);
 }
 
-#[test] // ACTIVE pin (⊥ side, LOAD-BEARING): pure reference cycle stays
-        // divergent — the chain fix must not un-detect `a: b / b: a`
-fn pin_ref_cycle_still_divergent() {
-    assert_divergent("a: b\nb: a\nout: a", "out");
-}
+// MIGRATED (2026-07-16, by the acceptor): `pin_ref_cycle_still_divergent`
+// froze root `a: b / b: a` → ⊥ as an engineering guard against the chain
+// fix UN-DETECTING cycles. SPEC_12 §1.1 (static-cycle adjudication) rules
+// the pure-reference cycle → Top — a deliberate lawful answer, not a
+// detection loss; transform cycles stay pinned ⊥ right below. Successor
+// gate: red_root_static_mutual_top in static_cycle_probe_test.rs.
 
 #[test] // ACTIVE pin (⊥ side): reference cycle through math stays divergent
 fn pin_ref_cycle_math_still_divergent() {
