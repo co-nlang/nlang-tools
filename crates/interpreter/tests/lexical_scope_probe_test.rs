@@ -226,3 +226,24 @@ fn pin_insider_spread_keeps_local() {
 fn pin_external_spread_excludes_local() {
     assert_obs("p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek", "_");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// ACCEPTANCE-REPAIR PIN (2026-07-16): %id observes solidified content.
+// The delivery's frame injection split %id across nesting depths for
+// identical spellings (root twin #true but cross-depth #false — a content
+// lie the same-depth tripwire missed). Repair: the %id arm hashes
+// force_recursive(current), the same solidification the observe exit uses.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn pin_caid_cross_depth_repair() {
+    assert_obs(
+        "a1: { k: 5, d: k + 1 }\nb1: { q2: { k: 5, d: k + 1 } }\nout: a1.%id == (b1.q2).%id",
+        "#true",
+    );
+    // Local axis still participates (G1 six-axis identity).
+    assert_obs(
+        "x: { ~s: 1, a: 2 }\ny: { a: 2 }\nout: x.%id == y.%id",
+        "#false",
+    );
+}

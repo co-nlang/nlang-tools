@@ -1430,7 +1430,17 @@ let mut refl_fields = IndexMap::new();
                     } else { break; }
                 } else { break; }
             }
-            if seg == "%id" { return Value::Atom(AtomKind::Str(current.content_hash_with_salt(&ctx.horizon_salt).to_string()), EffectTag::Pure, None).with_effect(accumulated_effect); }
+            if seg == "%id" {
+                // %id is an OBSERVATION of content identity — hash the
+                // solidified content, not the lazy plumbing. Sealed frames in
+                // Thunk closures are evaluation machinery: hashing them split
+                // %id across nesting depths for identical spellings
+                // (`a1 = {k:5,d:k+1}` vs `b1.q2` same literal → different
+                // %id), a content lie. force_recursive is the same
+                // solidification the observe exit uses; fuel-guarded.
+                let solid = self.force_recursive(current.clone(), ctx);
+                return Value::Atom(AtomKind::Str(solid.content_hash_with_salt(&ctx.horizon_salt).to_string()), EffectTag::Pure, None).with_effect(accumulated_effect);
+            }
             if seg == "%rank" { if let Value::Atom(_, _, Some(r)) = current { return Value::Atom(AtomKind::Int(BigInt::from(r)), EffectTag::Pure, None).with_effect(accumulated_effect); } }
             
             if let Value::Bottom(ref d) = current {
