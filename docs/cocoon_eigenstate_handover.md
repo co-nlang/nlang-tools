@@ -75,3 +75,41 @@ spread 解封。
 - %kind 材料化(佇列)。
 - Cocoon 密封後拒新欄之其他面(evolve 層,如量測到現況記錄即可)。
 - Blur 展開源、~% 影蓋(各自另案)。
+
+---
+
+## 5. 交付紀錄(2026-07-16,模型 #3)
+
+### 根因
+1. **存取**:`navigate_segments` Combo 臂 miss 一律 `Top`(疊加態開放),
+   未分流 `closed` → cocoon 未定義座標與 open combo 同形 `_`。
+2. **合併**:閉鍵拒絕用 `vb.is_top()` 未看穿 `Thunk(Top)`/`b: _` →
+   Top 欄被誤拒 `#missing_key`。
+3. **聯集**:⊥ 支剔機構已在(G4);存取修好後自動綠。
+
+### Diff
+1. **lib.rs `navigate_segments`**:`c.closed && get_field miss &&
+   !seg.starts_with('%')` → `⊥ #missing_key`(path/message 慣例);
+   %-meta 仍開放(F 系列軸邊界)。
+2. **unify.rs `unify_combo`**:閉鍵拒絕前 `force`+`collapse` 判
+   Top 無約束(§1.2 #2);真非 Top 外來鍵仍 MissingKey。
+
+### 釘衝突
+上弧 `pin_cocoon_closed_miss_frozen`(期望 `_`)與本法定 ⊥ 衝突——
+停下報驗收方;驗收方已遷移該釘(探針檔現 16 測)。全套件基線
+修正:**1022 −1 遷移 +17 = 1038**。
+
+### 量測
+| 項 | 結果 |
+|---|---|
+| 本探針 7 紅+10 釘 | **17/17** |
+| 上弧 lexical_completion | **16/16**(遷移後) |
+| workspace | **1038/0/3** |
+| 語料 | **74/0** |
+| conformance | **91/91**(L2-50~52) |
+| 軸邊界釘(meta/lexical miss/open/atom) | **綠** |
+
+### 未動聲明
+- 互指/自指、%kind 材料化、evolve 層拒新欄、Blur 展開、~% 影蓋。
+- 開放 combo/原子 F4 開放律;裸名詞法 miss ≠ 座標存取。
+- 解封 spread 不走存取面(corpus effect_cocoon 無感)。

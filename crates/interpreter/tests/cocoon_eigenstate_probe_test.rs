@@ -84,7 +84,6 @@ fn assert_missing_key(src: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_cocoon_access_bottom() {
     // L2-50. Today: `_`. Both spellings (inline nav + binding split).
     assert_missing_key("cc: {{ a: 1 }}\nout: cc.b");
@@ -92,25 +91,21 @@ fn red_cocoon_access_bottom() {
 }
 
 #[test]
-#[ignore]
 fn red_cocoon_access_type_meta() {
     assert_obs("cc: {{ a: 1 }}\nout: (cc.b).%type", "#missing_key");
 }
 
 #[test]
-#[ignore]
 fn red_empty_cocoon_access() {
     assert_missing_key("cc: {{}}\nout: cc.x");
 }
 
 #[test]
-#[ignore]
 fn red_nested_cocoon_access() {
     assert_missing_key("w: { cc: {{ a: 1 }} }\nout: w.cc.b");
 }
 
 #[test]
-#[ignore]
 fn red_cause_cocoon_undefined_key() {
     // REAL_04 §1: the %cause carrier IS a cocoon — same law. Today: `_`.
     assert_missing_key("bad: 1 & 2\nout: (bad.%cause).zz");
@@ -121,7 +116,6 @@ fn red_cause_cocoon_undefined_key() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_merge_top_field_allowed() {
     // L2-51. Today: ⊥ #missing_key (misrejection — Top is no constraint).
     assert_obs("cc: {{ a: 1 }}\nr: cc & { a: 1, b: _ }\nout: r.a", "1");
@@ -132,7 +126,6 @@ fn red_merge_top_field_allowed() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_union_missing_cull() {
     // L2-52. Today: `_ | 2`.
     assert_obs("u: {{ a: 1 }} | { b: 2 }\nout: u.b", "2");
