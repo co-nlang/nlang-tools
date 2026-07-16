@@ -1398,6 +1398,17 @@ let mut refl_fields = IndexMap::new();
             accumulated_effect = accumulated_effect.max(current.effect());
             while let Value::Combo(ref c) = current {
                 if c.is_pure_wrapper() {
+                    // Meta / present-key access hits the pure-wrapper shell
+                    // (C2 atom spread `{%val: v}` must answer `.%val`). Peel
+                    // only when the next segment is not on the shell and is
+                    // non-meta — value-context collapse for data descent.
+                    let on_shell = c.get_field(seg).is_some()
+                        || seg.starts_with('%')
+                        || seg == "%id"
+                        || seg == "%rank";
+                    if on_shell {
+                        break;
+                    }
                     if let Some(inner) = c.get_field("%val") {
                         current = self.force(inner.clone(), ctx);
                         accumulated_effect = accumulated_effect.max(current.effect());

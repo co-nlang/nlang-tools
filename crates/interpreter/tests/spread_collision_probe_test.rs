@@ -89,21 +89,18 @@ fn assert_bottom(src: &str, cause_frag: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_collision_field_then_spread() {
     // L2-39. Today: 2 (overwrite).
     assert_bottom("q: { a: 1, ...{ a: 2 } }\nout: q.a", "conflict");
 }
 
 #[test]
-#[ignore]
 fn red_collision_spread_then_field() {
     // Lattice merge is order-blind. Today: 1.
     assert_bottom("q: { ...{ a: 2 }, a: 1 }\nout: q.a", "conflict");
 }
 
 #[test]
-#[ignore]
 fn red_collision_double_spread_spec_example() {
     // SPEC_03 §3.1.1's own visual example. Today: #error.
     assert_bottom(
@@ -113,21 +110,18 @@ fn red_collision_double_spread_spec_example() {
 }
 
 #[test]
-#[ignore]
 fn red_collision_range_refines() {
     // Compatible constraints REFINE: (1..10) & (5..20) = 5..10. Today: 5..20.
     assert_obs("q: { a: 1..10, ...{ a: 5..20 } }\nout: q.a", "5..10");
 }
 
 #[test]
-#[ignore]
 fn red_collision_union_refines() {
     // (1|2) & (2|3) = 2. Today: 2 | 3.
     assert_obs("q: { a: 1 | 2, ...{ a: 2 | 3 } }\nout: q.a", "2");
 }
 
 #[test]
-#[ignore]
 fn red_collision_meta_key() {
     // Same law on the meta axis. Today: 2.
     assert_bottom("q: { %m: 1, ...{ %m: 2 } }\nout: q.%m", "conflict");
@@ -138,14 +132,12 @@ fn red_collision_meta_key() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_repeated_literal_key() {
     // L2-40. Today: 2 (last wins).
     assert_bottom("q: { a: 1, a: 2 }\nout: q.a", "conflict");
 }
 
 #[test]
-#[ignore]
 fn red_path_key_merges_not_replaces() {
     // {a: {x:1}, a.y: 2} → a = {x:1} & {y:2}. Today: a = {y:2}, x lost.
     let got = observe_nlang("q: { a: { x: 1 }, a.y: 2 }\nout: q.a", "out");
@@ -160,14 +152,12 @@ fn red_path_key_merges_not_replaces() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_atom_spread_tag() {
     // L2-41. Today: `_` (silently skipped).
     assert_obs("q: { ...#ok }\nout: q.%val", "#ok");
 }
 
 #[test]
-#[ignore]
 fn red_atom_spread_number() {
     assert_obs("q: { ...5 }\nout: q.%val", "5");
 }
@@ -177,14 +167,12 @@ fn red_atom_spread_number() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_bottom_spread_collapses_target() {
     // Today: {b: 1} (⊥ silently swallowed).
     assert_bottom("bad: 1 & 2\nq: { b: 1, ...bad }\nout: q", "conflict");
 }
 
 #[test]
-#[ignore]
 fn red_bottom_spread_cause_propagates() {
     // Q1 ruling: the source ⊥'s own cause travels — no fresh #conflict
     // minting (horizon erasure). Today: {b: 1}.
@@ -199,14 +187,12 @@ fn red_bottom_spread_cause_propagates() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_circular_self_spread() {
     // L2-42. Today: {x: 1} (spread of the unbound self silently drops).
     assert_bottom("a: { x: 1, ...a }\nout: a", "divergent");
 }
 
 #[test]
-#[ignore]
 fn red_circular_ancestor_spread() {
     // Today: runaway nested expansion until fuel.
     assert_bottom("a: { b: { ...a } }\nout: a.b", "divergent");
