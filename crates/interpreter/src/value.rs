@@ -203,18 +203,17 @@ pub fn project_value_context(v: Value) -> Value {
     }
 }
 
-/// SPEC_04 §3.1 #1/#2/#3.3: inject this combo as a defining scope frame into
-/// every field thunk (and nested values) so bare `~key` resolves via the
-/// scope chain (sibling + ancestor lifting + morphism capture when the
-/// morphism thunk is forced under this frame).
+/// SPEC_04 §2.1 / §3.1 #1/#2/#3.3: inject this combo as a defining scope
+/// frame into every field thunk (and nested values) so bare names — public
+/// *and* private — resolve via the scope chain (sibling + ancestor lifting
+/// + morphism capture when the morphism thunk is forced under this frame).
 ///
-/// Skipped when the combo has no local axis — injecting frames into pure
-/// public combos would poison Thunk PartialEq / unify (identical public
-/// field thunks from different parents would disagree on closure).
+/// Frame is a pre-inject clone (no self-referential closure edges). Chained
+/// sibling depth is **not** limited here: `force_lexical_name` keeps the
+/// ambient frame on the chain when a bare name is forced *out of* a scope
+/// frame (any hop). Twin-literal / `%id` tripwires stay green when public
+/// spelling matches (equal pre-inject frames).
 pub fn seal_defining_scope(c: &mut ComboVal) {
-    if c.local.is_empty() {
-        return;
-    }
     let frame = c.clone();
     fn inject(v: &mut Value, frame: &ComboVal) {
         match v {
