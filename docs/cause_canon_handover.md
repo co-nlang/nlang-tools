@@ -111,3 +111,23 @@ L2-63/64 翻綠、65 保綠);語料非 pending **78/0** 不退;
   - Blur×Blur 多源吸收走既有 unify 臂(本單不重審語義)。
   - 語料目標文案「78/0」與歷次交付路徑 unit+integration **74/0** 同口徑;
     驗收方若用別路徑(含 static/lib)可對 76/0 再核。
+
+## 6. 驗收紀錄(2026-07-17,驗收方)
+
+**PASS——零代修(第十六例)**。交付 commit `e6d1449`。
+
+- **Diff 純度** ✓:T1=blur_absorb 累積器(Blur×Blur 走 unify_internal、
+  ⊥ 穿出、防禦臂)+迴圈尾快照回傳;T2=拆毯+查找後沿剩餘段靜態走欄
+  (`seg`/`/seg`/`@seg`)讀葉效果;T3=Conflict+`get_live_value` 按因分流
+  誠實訊息。探針檔僅 4 個 `#[ignore]` 移除。
+- **獨立重跑** ✓:探針 9/9、workspace **1087/0/3**、conformance
+  **104/104**(L2-63/64 翻綠、65 保綠)、語料非 pending 78/0
+  (67+7+2+0+2,驗收方路徑含 static/lib/loose)。
+- **InvalidPath 活鑄點 = 0** ✓(grep:僅 enum 變體+display/as_tag/
+  primary_rank 讀取臂,serde 解碼保留=F4 承諾兌現)。
+- **對抗全正**:三源任意插位 ⊥(`{...big,...bot,...{c:3}}` 與
+  `{...big,...{c:3},...bot}`)皆 `#conflict`;Blur×Blur 二源 → blur
+  fuel;Top 後綴 no-op;combo 後綴吞沒(單源終態一致);combo 內
+  alias `m: ~%Math` 應用乾淨。
+- 幻影 `#io` 三面(apply/pipe/alias)全根治;真 IO 執行側
+  (effect_flow/env_p36)保綠。
