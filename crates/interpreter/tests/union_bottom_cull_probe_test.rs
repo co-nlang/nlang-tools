@@ -101,28 +101,24 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_nav_thunk_bottom_culled() {
     // T1. Today: `1 | _|_ (%cause: #conflict) ;; …` — thunk ⊥ leaks.
     assert_obs("u: {a: 1}|{a: (2&3)}\nout: u.a", "1");
 }
 
 #[test]
-#[ignore]
 fn red_nav_thunk_bottom_culled_rev() {
     // T1, mirrored order (dual-spelling lesson: pin BOTH orders).
     assert_obs("u: {a: (2&3)}|{a: 1}\nout: u.a", "1");
 }
 
 #[test]
-#[ignore]
 fn red_nav_three_branch_survivor() {
     // T1. Today: `⊥ | ⊥ | 5`.
     assert_obs("u: {a: (1&2)}|{a: (3&4)}|{a: 5}\nout: u.a", "5");
 }
 
 #[test]
-#[ignore]
 fn red_nav_all_bottom_primary_verbatim() {
     // T1+T3. Today: a bare DOUBLE-⊥ union. Law: all-⊥ → single ⊥,
     // primary cause; supplement: the member's ⊥ verbatim (its honest
@@ -139,7 +135,6 @@ fn red_nav_all_bottom_primary_verbatim() {
 }
 
 #[test]
-#[ignore]
 fn red_cause_meta_divergent_priority() {
     // T1. Today: `#divergent | #conflict` — %cause projects over the
     // LEAKED union into a cause union. After cull: single ⊥ whose
@@ -151,14 +146,12 @@ fn red_cause_meta_divergent_priority() {
 }
 
 #[test]
-#[ignore]
 fn red_eq_after_cull() {
     // T1. Today: #false — the leaked ⊥ branch poisons `=` (G1 固化).
     assert_obs("u: {a: 1}|{a: (2&3)}\nout: u.a = 1", "#true");
 }
 
 #[test]
-#[ignore]
 fn red_field_join_culled_on_observe() {
     // T2. Today: `_|_ #conflict ;; … | 5` — force_recursive's Union arm
     // normalizes without culling; the observation exit must apply the
@@ -167,7 +160,6 @@ fn red_field_join_culled_on_observe() {
 }
 
 #[test]
-#[ignore]
 fn red_root_all_bottom_verbatim_message() {
     // T3. Today: `;; empty union after normalize` — engine jargon. The
     // primary member's honest message must survive the all-⊥ collapse

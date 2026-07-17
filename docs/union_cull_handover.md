@@ -82,7 +82,34 @@ workspace 一顆不得翻紅;語料非 pending 不退。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(T1/T2/T3 各附量測;force 深度約定寫明):
-- [ ] 探針 15/15 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、靜止環分歧形若受擾之量測、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` union_cull / lazy bottom)
+- [x] 根因與修法(T1/T2/T3 各附量測;force 深度約定寫明):
+  - **共用**:`value::primary_bottom_from_culled` — 全 ⊥ 時
+    `min_by_key(primary_rank)`(平手=相遇序最左)之 `BottomDetail` **原樣**
+    包成 `Value::Bottom`(訊息/path/involved 保全)。
+  - **T1 導航**(lib.rs `navigate_segments` Union 臂):投影後 **淺 force
+    迴圈**(`while Thunk` → `force`, cap 32;**不** `force_recursive` 整支,
+    combo 內層欄位保持惰性);再比對 Bottom。收集完整 `BottomDetail`(非僅
+    cause);倖存空 → `primary_bottom_from_culled` + `with_effect`。
+    量測:修前 `({a:1}|{a:(2&3)}).a` → `1 | ⊥`;修後 `1`。
+  - **T2 觀測出口**(lib.rs `force_recursive` Union 臂):各支
+    `force_recursive` 後分流 — ⊥ 剔入 culled、餘 normalize_union;全 ⊥ →
+    原樣主因果。量測:修前 `{v:(1&2)|5}.v` → `⊥ | 5`;修後 `5`。
+  - **T3 分配臂**(unify.rs Union 分配):剔 ⊥ 時保留 `BottomDetail`;
+    `results.is_empty()` → 原樣主因果(**不動** sort/cap/nondistrib 臂序)。
+    `normalize_union` 本體**未改**(空鑄防禦仍給其他呼叫者)。
+    量測:修前 root `(1&2)|(3&4)` → `empty union after normalize` 行話;
+    修後 `#conflict` + `Incompatible types`。
+  - 倖存序=相遇序(不重排);Top/blur 支繼續存活。
+- [x] 探針 15/15 / workspace / conformance / 語料 四數:
+  - 探針 **15/15**
+  - workspace **1137/0/3**
+  - conformance **110/110**(L2-69~71 翻綠)
+  - 語料 unit+integration **74/0**
+  - blur_boundary `red_union_nav_blur_branch_survives`、bottom_meta、
+    union_nav 保綠
+- [x] 申報事項(範圍外接觸、靜止環分歧形若受擾之量測、歧異記錄):
+  - **未碰** `normalize_union` 簽名/空鑄、dispatch/apply 分配位、
+    `<`/`<=`×union、canonical 顯示序、詞法鏈本體。
+  - 靜止環×聯集投影分歧(範圍外):本單未釘未追;未另做 CLI/harness
+    對照重測(修法僅在 force/nav/unify 之 ⊥ 剔除,不改 SPEC_12 循環分類)。

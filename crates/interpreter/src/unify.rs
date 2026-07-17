@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::cmp::Ordering;
 use indexmap::IndexMap;
 use crate::{Ouroboros, EvalContext};
-use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail, normalize_union};
+use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail, normalize_union, primary_bottom_from_culled};
 use crate::type_constraint::{TypeConstraint, type_constraint_meet, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
 use crate::lattice_sketch;
@@ -282,20 +282,29 @@ impl Ouroboros {
                     branches.sort_by_key(|b| self.tropical_weight(b));
                 }
                 let mut results: Vec<Value> = Vec::new();
+                // T3 (union_cull): keep culled BottomDetail so all-⊥ can
+                // pass the primary member out verbatim (not normalize_union
+                // "empty union after normalize" jargon). Sort/cap/nondistrib
+                // logic unchanged — arm-order minefield, minimal diff.
+                let mut culled: Vec<BottomDetail> = Vec::new();
                 // Collect without early cap so structural dedupe can free
                 // capacity first (SPEC_01 idempotence before max_branches).
                 for branch in branches.into_iter().take(max_branches * 2) {
                     let r = self.unify_internal(branch, other.clone(), ctx);
-                    match &r {
+                    match r {
                         Value::Bottom(detail) => {
                             if matches!(detail.cause, BottomCause::H1Split | BottomCause::H2Split) {
                                 ctx.had_nondistrib_event = true;
                             }
+                            culled.push(*detail);
                         }
-                        _ => {
-                            results.push(r);
+                        other => {
+                            results.push(other);
                         }
                     }
+                }
+                if results.is_empty() {
+                    return primary_bottom_from_culled(culled);
                 }
                 let deduped = normalize_union(results);
                 match deduped {

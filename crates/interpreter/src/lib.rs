@@ -22,7 +22,7 @@ pub mod genesis;
 pub mod ladd;
 pub mod oml;
 pub mod authority;
-pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union};
+pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, handle_resource_exhausted};
@@ -1281,9 +1281,24 @@ let mut refl_fields = IndexMap::new();
                 for (k, v) in c.local.iter() { new_c.local.insert(k.clone(), self.force_recursive(v.clone(), ctx)); }
                 Value::Combo(new_c)
             }
+            // T2 (union_cull): force each branch, then cull ⊥ (SPEC_08
+            // §3.2.2 #5). Observation exit of field `|` must not leak
+            // `⊥ | 5`. All-⊥ → primary member ⊥ verbatim.
             Value::Union(branches) => {
-                let forced: Vec<Value> = branches.into_iter().map(|b| self.force_recursive(b, ctx)).collect();
-                normalize_union(forced)
+                let mut survivors: Vec<Value> = Vec::new();
+                let mut culled: Vec<BottomDetail> = Vec::new();
+                for b in branches {
+                    let forced = self.force_recursive(b, ctx);
+                    match forced {
+                        Value::Bottom(d) => culled.push(*d),
+                        other => survivors.push(other),
+                    }
+                }
+                if survivors.is_empty() {
+                    primary_bottom_from_culled(culled)
+                } else {
+                    normalize_union(survivors)
+                }
             }
             _ => val
         };
@@ -1658,18 +1673,30 @@ let mut refl_fields = IndexMap::new();
                 // normalize_union. Single-segment recursion — remaining
                 // segments continue on the aggregated result (no double
                 // projection of the full tail).
+                // T1 (union_cull): projected field may be a Stage-2 Thunk
+                // that forces to ⊥ — shallow-force before the Bottom match
+                // (do NOT force_recursive the whole branch; nested combo
+                // fields stay lazy). Collect full BottomDetail; all-⊥ →
+                // primary member ⊥ verbatim (REAL_04 §4 supplement).
                 Value::Union(branches) => {
                     let mut survivors: Vec<Value> = Vec::new();
-                    let mut culled_causes: Vec<BottomCause> = Vec::new();
+                    let mut culled: Vec<BottomDetail> = Vec::new();
                     let mut branch_effect = accumulated_effect;
                     for b in branches {
-                        let projected =
+                        let mut projected =
                             self.navigate_segments(b, &[seg.to_string()], ctx, "");
+                        // Shallow force peel — expose thunk-⊥ to cull.
+                        let mut peel = 0u32;
+                        while matches!(&projected, Value::Thunk { .. }) && peel < 32 {
+                            projected = self.force(projected, ctx);
+                            peel += 1;
+                        }
                         match projected {
                             Value::Bottom(d) => {
-                                // Drop — compatible-survivor rule; remember
-                                // cause for F4c empty-survivor primary pick.
-                                culled_causes.push(d.cause);
+                                // Drop — compatible-survivor rule; keep
+                                // full detail for all-⊥ primary pick.
+                                branch_effect = branch_effect.max(Value::Bottom(d.clone()).effect());
+                                culled.push(*d);
                             }
                             other => {
                                 branch_effect = branch_effect.max(other.effect());
@@ -1678,14 +1705,9 @@ let mut refl_fields = IndexMap::new();
                         }
                     }
                     if survivors.is_empty() {
-                        // F4c: primary cause per REAL_04 §4 (not #invalid_path).
-                        // May be rare after F4a (atoms open-miss as Top); kept
-                        // as a defensive arm.
-                        let primary = culled_causes
-                            .into_iter()
-                            .min_by_key(|c| c.primary_rank())
-                            .unwrap_or(BottomCause::Conflict);
-                        return primary.into();
+                        // F4c + T3: primary-rank member ⊥ out verbatim.
+                        return primary_bottom_from_culled(culled)
+                            .with_effect(branch_effect);
                     }
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);
