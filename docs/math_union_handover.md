@@ -90,3 +90,21 @@ value_context 剝殼後,Union 落原子 match 的 Conflict catch-all。
   - **未碰** Compare/`<`×聯集(§4.10 凍結釘保綠)、`=`(G1 非分配釘保綠)、
     管道/應用分配位、unary 文法、value_context_operand 本體。
   - 整除除零行為變更已申報(上);無其他歧異。
+
+## 6. 驗收紀錄(2026-07-17,驗收方)
+
+**PASS——零代修(第二十一例)**。交付 commit `117d5f0`。
+
+- **Diff 純度** ✓:內核三層拆分按單(expr 層短路序保留/值層
+  peel≤32+支級 ⊥/Blur+Union 臂/分配 helper 左主序+
+  `primary_bottom_from_culled`+normalize+truncate=unify 紀律);
+  探針檔僅 10 個 `#[ignore]` 移除。**越單變更審核通過**:整除/取餘
+  除零靜默 `0` → ⊥ `#numerical_error` = ERROR_CODES 明文(「發生
+  除以零…」)引擎追法,舊 special_float_test 釘的是謊,改寫附法源
+  註解,合法;float Inf/`#_` 路徑實測不動。
+- **獨立重跑** ✓:探針 17/17、workspace **1168/0/3**、conformance
+  **114/114**(L2-74/75 翻綠)、語料非 pending 74/0(67+7)。
+- **對抗全正**:雙聯集×⊥支混笛卡兒 `11 | 21`/去重+相遇序
+  `3 | 2 | 4` 決定性/取餘除零支剔 `1`/直接除零 `#numerical_error`/
+  float 除零 `#_` 不動/型錯支剔 `3`/全 ⊥ 同位階取最左
+  `#numerical_error`(原樣平手律)/math→管道合成 `30 | 100`。
