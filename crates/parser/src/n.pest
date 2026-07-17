@@ -31,8 +31,11 @@ named_key = @{
 
 quoted_key = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
-// interp_str is not a legal field key (SYNTAX_03 §4.10); tag keys are canonical
-field_key = { anon_set | anchored_path | path | named_key | quoted_key | tag }
+// interp_str is not a legal field key (SYNTAX_03 §4.10); tag keys are canonical.
+// LHS definition keys: absolute `_.` ok; parent `^` abolished (SYNTAX_03 §4.4 Q3
+// — caret handover). RHS still uses full `anchored_path` via primary/expr.
+field_root_path = { anchor_root ~ path_segments? }
+field_key = { anon_set | field_root_path | path | named_key | quoted_key | tag }
 field = { (field_key ~ ":" ~ expr) | spread_expr }
 
 expr = { morphism_expr }
