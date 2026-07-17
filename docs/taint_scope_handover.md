@@ -111,3 +111,20 @@ cycle_test、詞法雙弧、全 workspace 一顆不得翻紅;語料非 pending
   - **未碰** math×Top 聯集值語境、TopCaused vs Top 去重、canonical 顯示序、
     `<`/`<=`×union、剔除弧機構本體。
   - 無歧異需裁;cycle_chain 未移除(量測保留方案已四數全綠)。
+
+## 7. 驗收紀錄(2026-07-17,驗收方)
+
+**PASS——零代修(第二十例)**。交付 commit `3a2cb57`。
+
+- **Diff 純度** ✓:單一位點——taint 向上寫回拆除(附法源註解),
+  cycle_chain 寫回保留=工單擇案 A(量測後最小 diff);
+  `in_flight`/`computing`/`fuel`/`lexical_forcing` 寫回未動;探針檔
+  僅 6 個 `#[ignore]` 移除。
+- **獨立重跑** ✓:探針 14/14、workspace **1151/0/3**、conformance
+  **112/112**(L2-72 翻綠、73 保綠)、語料非 pending 74/0(67+7)。
+- **對抗全正**(拆寫回的真風險面=下傳繼承):跨欄變換環**兩拼法**
+  (變換跳在第一/第二欄)皆 `#divergent`、純跨欄環 `#static_cycle`
+  對照、多毒兄弟 `2 | 6 | _`、三態混值|變換|靜止 → `1 | _`
+  (變換依法剔+靜止存活同框)、C 形決定性重跑穩定。
+- 帳面效果:靜止環聯集支不再序依賴抹除;twin-eq 等值謊癒;
+  欄內 join 語境依賴消除(CLI/harness 同判)。
