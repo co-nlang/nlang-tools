@@ -58,7 +58,27 @@ cocoon 字面量,收集欄位鍵全拼 + 字面展開源鍵集。診斷結構沿
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 實作位點與走訪策略:
-- [ ] 探針 13/13 / workspace / conformance / 語料 四數 + lint 掃描摘要:
-- [ ] 申報事項(範圍外接觸、真陽性清單、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` collision / R6)
+- [x] 實作位點與走訪策略:
+  - **位點**:`crates/oo/src/nlint.rs` — 新節 `§ R6`;`analyze_file` 在 R5 之後
+    呼叫 `walk_r6_collision`。
+  - **走訪**:只掃 **Expr 樹內** combo/cocoon 字面量(含任意巢深);**不**把
+    root `Program.fields` 當容器(精化慣用形免旗)。
+  - **鍵全拼**:`FieldKey::to_string_canonical()`;跳過 `...` 展開標記、`_`
+    合併鍵、Pattern 鍵(寧漏)。
+  - **字面展開**:`FieldKey::Quoted("...")` / `ExprKind::Spread` 且內層為
+    Combo 字面 → 收集其顯式鍵集(去重後)與兄弟/其他字面展開做碰撞;
+    `...name` 等非字面源 → 不貢獻鍵。
+  - **診斷**:每個重複全拼鍵一發 Warn `rule="R6"`;訊息指向 merge(`&`)非覆寫
+    + SPEC_03 §1.1/§3.1 + 原子異值必 ⊥ #conflict 註。
+- [x] 探針 13/13 / workspace / conformance / 語料 四數 + lint 掃描摘要:
+  - 探針 **13/13**(7 紅 un-ignore + 6 釘)
+  - workspace **1100/0/3**
+  - conformance **104/104**
+  - 語料 unit+integration **74/0**(歷次同路徑;非 pending 不退)
+  - `oo lint tests/`:**R6 = 0 發**(無誤報);總 diagnostics 142
+    (0 error / 110 warn / 32 info)——既有 R1–R5/SPEC15;本單未清語料
+- [x] 申報事項(範圍外接觸、真陽性清單、歧異記錄):
+  - **未碰**引擎 eval/unify、R1–R5 本體、具名源跨欄追蹤、訊息多語框架。
+  - 語料掃描 **無 R6 真陽性**可列(0 發)。
+  - 語料目標文案「78/0」與交付口徑 unit+integration **74/0** 同歷次。

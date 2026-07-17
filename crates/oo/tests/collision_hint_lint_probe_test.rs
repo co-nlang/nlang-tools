@@ -60,47 +60,40 @@ fn r6_count(src: &str) -> usize {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED at order time: R6 does not exist
 fn red_r6_repeated_atom_key() {
     // Guaranteed ⊥ #conflict at merge — the classic overwrite trap.
     assert_eq!(r6_count("c: { a: 1, a: 2 }\nout: c"), 1);
 }
 
 #[test]
-#[ignore] // RED at order time
 fn red_r6_repeated_combo_key() {
     // Merges fine — still suspicious (likely overwrite intent).
     assert_eq!(r6_count("c: { a: { x: 1 }, a: { y: 2 } }\nout: c"), 1);
 }
 
 #[test]
-#[ignore] // RED at order time
 fn red_r6_repeated_path_key() {
     // Identical FULL path spelling twice.
     assert_eq!(r6_count("c: { a.y: 1, a.y: 2 }\nout: c"), 1);
 }
 
 #[test]
-#[ignore] // RED at order time
 fn red_r6_spread_literal_collision() {
     // Statically visible collision: literal spread key vs sibling field.
     assert_eq!(r6_count("c: { a: 1, ...{ a: 2 } }\nout: c"), 1);
 }
 
 #[test]
-#[ignore] // RED at order time
 fn red_r6_double_literal_spread_collision() {
     assert_eq!(r6_count("c: { ...{ a: 1 }, ...{ a: 2 } }\nout: c"), 1);
 }
 
 #[test]
-#[ignore] // RED at order time
 fn red_r6_cocoon_repeated() {
     assert_eq!(r6_count("cc: {{ a: 1, a: 2 }}\nout: cc"), 1);
 }
 
 #[test]
-#[ignore] // RED at order time
 fn red_r6_nested_literal() {
     // Any nesting depth.
     assert_eq!(r6_count("w: { c: { a: 1, a: 2 } }\nout: w"), 1);

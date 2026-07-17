@@ -524,6 +524,7 @@ pub fn analyze_file(path: &FsPath) -> FileReport {
     walk_pipes(&program, &file, &mut diags);
     walk_r4_use_without_def(&program, &file, &mut diags);
     walk_r5_horizon_hints(&program, &file, &mut diags);
+    walk_r6_collision(&program, &file, &mut diags);
     // SPEC_15 checks (existing static_analyzer) — keep, prefix rule names.
     {
         let mut analyzer = crate::static_analyzer::StaticAnalyzer::new();
@@ -682,6 +683,204 @@ fn walk_r5_expr(expr: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
             for p in parts {
                 if let StringPart::Interpolated(e) = p {
                     walk_r5_expr(e, file, diags);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// =====================================================================
+// § R6 — repeated key / spread collision (SPEC_03 §1.1 / §3.1)
+// =====================================================================
+// Warn only (spelling stays legal). Tier 1 pure syntax — no eval.
+// Fires inside one combo/cocoon literal when:
+//   1. identical full key spelling appears more than once, or
+//   2. a *literal* spread source (`...{…}`) contributes a key that collides
+//      with a sibling field or another literal spread.
+// Never (寧漏勿誤): root program fields (refinement idiom); `...name` named
+// sources; path-key PARTIAL overlap; `_` multi-import merge key.
+
+/// Full key spelling for R6 identity, or None if the key is not flaggable
+/// (`...` marker, `_` merge key, pattern keys).
+fn r6_key_spelling(key: &FieldKey) -> Option<String> {
+    match key {
+        FieldKey::Quoted(s) if s == "..." => None,
+        FieldKey::Named { name, .. } if name.trim() == "_" => None,
+        FieldKey::Path(p) if p.to_key().trim() == "_" => None,
+        // Pattern keys are not plain spellings — never flag (conservative).
+        FieldKey::Pattern(_) => None,
+        other => {
+            let s = other.to_string_canonical();
+            if s.trim() == "_" {
+                None
+            } else {
+                Some(s)
+            }
+        }
+    }
+}
+
+/// Explicit keys of a *literal* combo used as a spread source.
+/// Named / non-combo sources → None (keys unknowable at Tier 1).
+/// Internal duplicates inside the source are de-duplicated here; the
+/// recursive walk on the source combo itself flags those separately.
+fn r6_literal_spread_keys(value: &Expr) -> Option<Vec<(String, (usize, usize))>> {
+    let inner = match &value.kind {
+        ExprKind::Spread(e) => e.as_ref(),
+        _ => value,
+    };
+    match &inner.kind {
+        ExprKind::Combo { fields, .. } => {
+            let mut out = Vec::new();
+            let mut seen = HashSet::new();
+            for f in fields {
+                if let Some(k) = r6_key_spelling(&f.key) {
+                    if seen.insert(k.clone()) {
+                        out.push((k, (f.span.start, f.span.end)));
+                    }
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+fn r6_emit(file: &str, span: (usize, usize), key: &str, diags: &mut Vec<Diagnostic>) {
+    diags.push(Diagnostic {
+        rule: "R6".to_string(),
+        severity: Severity::Warn,
+        loc: Loc {
+            file: file.to_string(),
+            span,
+        },
+        tier: None,
+        demotion_reason: None,
+        msg: format!(
+            "repeated key `{key}` in one container literal merges (`&`), does not \
+             overwrite — distinct atoms collapse to ⊥ #conflict (SPEC_03 §1.1 / §3.1)"
+        ),
+    });
+}
+
+/// Check one combo/cocoon field list for R6 collisions. Does not recurse.
+fn check_r6_combo_fields(fields: &[Field], file: &str, diags: &mut Vec<Diagnostic>) {
+    // spelling → spans of each introduction (field or literal-spread key)
+    let mut occurrences: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+
+    for f in fields {
+        let is_spread = matches!(&f.key, FieldKey::Quoted(s) if s == "...")
+            || matches!(&f.value.kind, ExprKind::Spread(_));
+
+        if is_spread {
+            if let Some(keys) = r6_literal_spread_keys(&f.value) {
+                for (k, span) in keys {
+                    occurrences.entry(k).or_default().push(span);
+                }
+            }
+            // named / non-literal spread: contribute nothing (unknowable)
+            continue;
+        }
+
+        if let Some(k) = r6_key_spelling(&f.key) {
+            occurrences
+                .entry(k)
+                .or_default()
+                .push((f.span.start, f.span.end));
+        }
+    }
+
+    // One diagnostic per key that appears more than once ("每個重複鍵一發").
+    for (key, spans) in occurrences {
+        if spans.len() >= 2 {
+            // Point at the second introduction (the collision site).
+            r6_emit(file, spans[1], &key, diags);
+        }
+    }
+}
+
+fn walk_r6_collision(program: &Program, file: &str, diags: &mut Vec<Diagnostic>) {
+    // Root program fields are intentionally NOT checked (refinement idiom).
+    for field in &program.fields {
+        walk_r6_expr(&field.value, file, diags);
+        if let FieldKey::Pattern(e) = &field.key {
+            walk_r6_expr(e, file, diags);
+        }
+    }
+}
+
+fn walk_r6_expr(expr: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::Combo { fields, .. } => {
+            check_r6_combo_fields(fields, file, diags);
+            for f in fields {
+                walk_r6_expr(&f.value, file, diags);
+                if let FieldKey::Pattern(e) = &f.key {
+                    walk_r6_expr(e, file, diags);
+                }
+            }
+        }
+        ExprKind::Morphism { param, body } => {
+            walk_r6_expr(param, file, diags);
+            walk_r6_expr(body, file, diags);
+        }
+        ExprKind::Pipe(a, b)
+        | ExprKind::Apply(a, b)
+        | ExprKind::Meet(a, b)
+        | ExprKind::Join(a, b)
+        | ExprKind::Add(a, b)
+        | ExprKind::Sub(a, b)
+        | ExprKind::Mul(a, b)
+        | ExprKind::Div(a, b)
+        | ExprKind::Rem(a, b)
+        | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
+        | ExprKind::Lt(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Lte(a, b)
+        | ExprKind::Gte(a, b)
+        | ExprKind::Probe(a, b)
+        | ExprKind::Diff(a, b)
+        | ExprKind::TypeAnnotation(a, b)
+        | ExprKind::LatticeEq(a, b) => {
+            walk_r6_expr(a, file, diags);
+            walk_r6_expr(b, file, diags);
+        }
+        ExprKind::Ternary {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            walk_r6_expr(cond, file, diags);
+            walk_r6_expr(then_branch, file, diags);
+            walk_r6_expr(else_branch, file, diags);
+        }
+        ExprKind::List(items) | ExprKind::Tuple(items) => {
+            for e in items {
+                walk_r6_expr(e, file, diags);
+            }
+        }
+        ExprKind::Unary { expr: e, .. }
+        | ExprKind::Complement(e)
+        | ExprKind::Spread(e)
+        | ExprKind::Structural(e)
+        | ExprKind::AnonSet(e) => walk_r6_expr(e, file, diags),
+        ExprKind::Lens(a, b) => {
+            walk_r6_expr(a, file, diags);
+            walk_r6_expr(b, file, diags);
+        }
+        ExprKind::Range { start, end, step } => {
+            walk_r6_expr(start, file, diags);
+            walk_r6_expr(end, file, diags);
+            if let Some(s) = step {
+                walk_r6_expr(s, file, diags);
+            }
+        }
+        ExprKind::Interpolated(parts) => {
+            for p in parts {
+                if let StringPart::Interpolated(e) = p {
+                    walk_r6_expr(e, file, diags);
                 }
             }
         }
