@@ -22,9 +22,14 @@ fn test_division_by_zero_int() {
 
     let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
     println!("1 / 0 = {:?}", val);
+    // Lattice honesty (math_union arc): integer div/rem by zero is
+    // ⊥ #numerical_error (not silent 0) so union branches can cull.
     match val {
-        Value::Atom(AtomKind::Int(i), _, _) if i == BigInt::zero() => {}
-        other => panic!("FAIL: expected 0 (div by zero protection), got {:?}", other),
+        Value::Bottom(d) if d.cause == BottomCause::NumericalError => {}
+        other => panic!(
+            "FAIL: expected ⊥ #numerical_error (integer div by zero), got {:?}",
+            other
+        ),
     }
 }
 
