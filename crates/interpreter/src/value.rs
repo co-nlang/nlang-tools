@@ -330,6 +330,30 @@ pub fn seal_defining_scope(c: &mut ComboVal) {
     }
 }
 
+/// All-⊥ union collapse (REAL_04 §4 + 2026-07-17 engineering supplement):
+/// pick the primary-rank member (`primary_rank` lower = more primary) and
+/// pass that `_|_` out **verbatim** (message/path/involved preserved).
+/// Ties keep encounter-order leftmost (`min_by_key` first-min). Empty
+/// culled list → tag-only `#conflict` defensive mint.
+pub fn primary_bottom_from_culled(
+    culled: impl IntoIterator<Item = BottomDetail>,
+) -> Value {
+    let detail = culled
+        .into_iter()
+        .min_by_key(|d| d.cause.primary_rank())
+        .unwrap_or(BottomDetail {
+            cause: BottomCause::Conflict,
+            path: None,
+            message: None,
+            expected: None,
+            found: None,
+            involved: vec![],
+            obstruction_degree: None,
+            holonomy: None,
+        });
+    Value::Bottom(Box::new(detail))
+}
+
 /// SPEC_01 join idempotence: flatten nested Unions, drop structural
 /// duplicates (PartialEq, first occurrence kept), collapse to a single
 /// value when one survivor remains. Does not re-sort (eval `|` order /
