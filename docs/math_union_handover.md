@@ -62,7 +62,31 @@ value_context 剝殼後,Union 落原子 match 的 Conflict catch-all。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(內核拆分形制、Union 臂位置、budget 紀律寫明):
-- [ ] 探針 17/17 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` math_union)
+- [x] 根因與修法(內核拆分形制、Union 臂位置、budget 紀律寫明):
+  - **根因**:`eval_math` 無 Union 臂;⊥/Blur 短路與 value_context 剝殼後,
+    Union 落原子 match catch-all → 一律 ⊥ `#conflict`(僭稱知道疊加態)。
+  - **內核拆分**:
+    - `eval_math`:expr force + **操作數級** ⊥ 先於 Blur 短路(G3 trap-2
+      序保留)→ 呼叫 `eval_math_values`。
+    - `eval_math_values`:淺 force 殘 thunk → 支級 ⊥/Blur → **Union 臂**
+      (左主序)→ value_context 剝殼 → 既有原子/複數/字串/Top 矩陣。
+    - `eval_math_distribute_branches`:逐支 force 後遞迴內核;⊥ 收
+      `BottomDetail`;全 ⊥ → `primary_bottom_from_culled`;餘
+      `normalize_union`(不重排);超 `ctx.max_branches` 截斷(與 unify
+      分配臂同紀律:`take(max*2)` 再 truncate)。
+  - **Union 臂位置**:操作數級 ⊥/Blur 短路**之後**、value_context**之前**;
+    支內 Top/blur/⊥ 走既有單值臂(遞迴覆蓋,無特例)。
+  - **合法改善(除零)**:整除/取餘除零由靜默 `0` 改 ⊥ `#numerical_error`
+    (紅門 `10/(0|2)`→`5` 依賴支級 ⊥ 剔除);`special_float_test` 同步。
+    float Inf/`#_` 路徑不動。
+- [x] 探針 17/17 / workspace / conformance / 語料 四數:
+  - 探針 **17/17**
+  - workspace **1168/0/3**
+  - conformance **114/114**(L2-74/75 翻綠)
+  - 語料 unit+integration **74/0**
+  - union_bottom_cull / taint_scope / blur_boundary 保綠
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - **未碰** Compare/`<`×聯集(§4.10 凍結釘保綠)、`=`(G1 非分配釘保綠)、
+    管道/應用分配位、unary 文法、value_context_operand 本體。
+  - 整除除零行為變更已申報(上);無其他歧異。

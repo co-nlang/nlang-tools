@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use nlang_parser::ast::{Expr, ExprKind, FieldKey, Prefix, AtomKind, UnaryOp, PathAnchor};
 use crate::{Ouroboros, EvalContext, CmpOp};
-use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail, ValRelation, RelOp as ValRelOp, normalize_union};
+use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail, ValRelation, RelOp as ValRelOp, normalize_union, primary_bottom_from_culled};
 use crate::type_constraint::{TypeConstraint, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
 use num_bigint::BigInt;
@@ -1213,9 +1213,8 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         if let Value::Bottom(_) = va { return va; }
         let vb = self.force(self.eval(b, ctx), ctx);
         if let Value::Bottom(_) = vb { return vb; }
-        // G3 R1: Blur short-circuit BEFORE value_context_operand — helper
-        // stays peel-only; horizon identity must not reach the atom match
-        // catch-all (which previously minted ⊥ #conflict).
+        // G3 R1: whole-operand Blur short-circuit BEFORE Union distribute and
+        // before value_context_operand — single-value `big + 1` absorbs.
         if let Value::Blur(bd) = &va {
             let mut bd = bd.clone();
             bd.effect = bd.effect.max(vb.effect());
@@ -1226,6 +1225,88 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             bd.effect = bd.effect.max(va.effect());
             return Value::Blur(bd);
         }
+        // SPEC_07 §4: Union distribution after operand-level ⊥/Blur, before
+        // value-context peel (math_union arc).
+        self.eval_math_values(va, vb, ctx, op, &op_i, &op_f, op_s.as_ref())
+    }
+
+    /// Value-level math kernel: Union distribute (left-major) then atom matrix.
+    /// Recursive so branch results re-enter Blur/Top/⊥ single-value arms.
+    fn eval_math_values<FI, FF, FS>(
+        &self,
+        va: Value,
+        vb: Value,
+        ctx: &mut EvalContext,
+        op: MathOp,
+        op_i: &FI,
+        op_f: &FF,
+        op_s: Option<&FS>,
+    ) -> Value
+    where
+        FI: Fn(&BigInt, &BigInt) -> BigInt,
+        FF: Fn(f64, f64) -> f64,
+        FS: Fn(&str, &str) -> String,
+    {
+        // Force residual thunks (field projections may still be lazy).
+        let mut va = va;
+        let mut peel = 0u32;
+        while matches!(&va, Value::Thunk { .. }) && peel < 32 {
+            va = self.force(va, ctx);
+            peel += 1;
+        }
+        let mut vb = vb;
+        peel = 0;
+        while matches!(&vb, Value::Thunk { .. }) && peel < 32 {
+            vb = self.force(vb, ctx);
+            peel += 1;
+        }
+
+        // Branch-level ⊥ / Blur (same order as operand-level: ⊥ then Blur).
+        if let Value::Bottom(_) = &va {
+            return va;
+        }
+        if let Value::Bottom(_) = &vb {
+            return vb;
+        }
+        if let Value::Blur(bd) = &va {
+            let mut bd = bd.clone();
+            bd.effect = bd.effect.max(vb.effect());
+            return Value::Blur(bd);
+        }
+        if let Value::Blur(bd) = &vb {
+            let mut bd = bd.clone();
+            bd.effect = bd.effect.max(va.effect());
+            return Value::Blur(bd);
+        }
+
+        // Union distribution — left-operand-major (SPEC_07 §4). Cull per-
+        // branch ⊥ (union_cull law); all-⊥ → primary member verbatim.
+        // Budget: same discipline as unify Union-distribution arm.
+        if let Value::Union(branches) = va {
+            return self.eval_math_distribute_branches(
+                branches,
+                true,
+                vb,
+                ctx,
+                op,
+                op_i,
+                op_f,
+                op_s,
+            );
+        }
+        if let Value::Union(branches) = vb {
+            return self.eval_math_distribute_branches(
+                branches,
+                false,
+                va,
+                ctx,
+                op,
+                op_i,
+                op_f,
+                op_s,
+            );
+        }
+
         // G6: value-context peels hybrid %val (and pure wrappers); plain
         // combos without %val stay on the Conflict path below.
         let va = match value_context_operand(&va) {
@@ -1236,27 +1317,45 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             Ok(v) => v,
             Err(()) => return BottomCause::Conflict.into(),
         };
-        if let Value::Bottom(_) = va { return va; }
-        if let Value::Bottom(_) = vb { return vb; }
+        if let Value::Bottom(_) = va {
+            return va;
+        }
+        if let Value::Bottom(_) = vb {
+            return vb;
+        }
+        // Nested unions after peel (rare hybrid shells).
+        if matches!(&va, Value::Union(_)) || matches!(&vb, Value::Union(_)) {
+            return self.eval_math_values(va, vb, ctx, op, op_i, op_f, op_s);
+        }
+
         let res_e = va.effect().max(vb.effect());
         let ca = va.collapse();
         let cb = vb.collapse();
-        
+
         if self.is_order_anchor(&ca) || self.is_order_anchor(&cb) {
             return Value::Bottom(Box::new(BottomDetail {
                 cause: BottomCause::ArithmeticOnAnchor,
                 path: None,
-                message: Some("Arithmetic operations on order anchors (#_, #_|_) are prohibited".to_string()),
+                message: Some(
+                    "Arithmetic operations on order anchors (#_, #_|_) are prohibited"
+                        .to_string(),
+                ),
                 expected: None,
-                found: Some(if self.is_order_anchor(&ca) { ca.clone() } else { cb.clone() }),
+                found: Some(if self.is_order_anchor(&ca) {
+                    ca.clone()
+                } else {
+                    cb.clone()
+                }),
                 involved: vec![],
-             ..Default::default() }));
+                ..Default::default()
+            }));
         }
-        
+
         match (ca, cb) {
-            (Value::Atom(AtomKind::Complex(r1, i1), _, _), Value::Atom(AtomKind::Complex(r2, i2), _, _)) => {
-                self.eval_complex_math(*r1, *i1, *r2, *i2, op, res_e)
-            }
+            (
+                Value::Atom(AtomKind::Complex(r1, i1), _, _),
+                Value::Atom(AtomKind::Complex(r2, i2), _, _),
+            ) => self.eval_complex_math(*r1, *i1, *r2, *i2, op, res_e),
             (Value::Atom(AtomKind::Complex(r, i), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
                 self.eval_complex_math(*r, *i, y.to_f64().unwrap_or(0.0), 0.0, op, res_e)
             }
@@ -1270,6 +1369,20 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 self.eval_complex_math(*x, 0.0, *r, *i, op, res_e)
             }
             (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+                // Integer div/rem by zero → ⊥ #numerical_error so union
+                // branches can cull (math_union red gate). Float Inf/#_
+                // path unchanged via sanitize_float_result.
+                if matches!(op, MathOp::Div | MathOp::Rem) && y.is_zero() {
+                    return Value::Bottom(Box::new(BottomDetail {
+                        cause: BottomCause::NumericalError,
+                        path: None,
+                        message: Some("integer division by zero".to_string()),
+                        expected: None,
+                        found: None,
+                        involved: vec![],
+                        ..Default::default()
+                    }));
+                }
                 let result = op_i(x, y);
                 Value::Atom(AtomKind::Int(result), res_e, None)
             }
@@ -1283,12 +1396,64 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 self.sanitize_float_result(op_f(*x, y.to_f64().unwrap_or(0.0)), res_e)
             }
             (Value::Atom(AtomKind::Str(x), _, _), Value::Atom(AtomKind::Str(y), _, _)) => {
-                if let Some(f) = op_s { Value::Atom(AtomKind::Str(f(x, y)), res_e, None) } else { BottomCause::Conflict.into() }
+                if let Some(f) = op_s {
+                    Value::Atom(AtomKind::Str(f(x, y)), res_e, None)
+                } else {
+                    BottomCause::Conflict.into()
+                }
             }
-            (Value::Top | Value::TopCaused { .. }, _) | (_, Value::Top | Value::TopCaused { .. }) => {
-                Value::Top
-            }
+            (Value::Top | Value::TopCaused { .. }, _)
+            | (_, Value::Top | Value::TopCaused { .. }) => Value::Top,
             _ => BottomCause::Conflict.into(),
+        }
+    }
+
+    /// Distribute math over one Union side. `left_is_union` selects which
+    /// operand is branched; the other is held fixed (left-major when both
+    /// are unions via nested recursion on the right).
+    fn eval_math_distribute_branches<FI, FF, FS>(
+        &self,
+        branches: Vec<Value>,
+        left_is_union: bool,
+        other: Value,
+        ctx: &mut EvalContext,
+        op: MathOp,
+        op_i: &FI,
+        op_f: &FF,
+        op_s: Option<&FS>,
+    ) -> Value
+    where
+        FI: Fn(&BigInt, &BigInt) -> BigInt,
+        FF: Fn(f64, f64) -> f64,
+        FS: Fn(&str, &str) -> String,
+    {
+        let max_branches = ctx.max_branches;
+        let mut survivors: Vec<Value> = Vec::new();
+        let mut culled: Vec<BottomDetail> = Vec::new();
+        // Collect without early cap so structural dedupe can free capacity
+        // (same budget discipline as unify Union-distribution).
+        for b in branches.into_iter().take(max_branches.saturating_mul(2).max(2)) {
+            let b = self.force(b, ctx);
+            let r = if left_is_union {
+                self.eval_math_values(b, other.clone(), ctx, op, op_i, op_f, op_s)
+            } else {
+                self.eval_math_values(other.clone(), b, ctx, op, op_i, op_f, op_s)
+            };
+            match r {
+                Value::Bottom(d) => culled.push(*d),
+                other_r => survivors.push(other_r),
+            }
+        }
+        if survivors.is_empty() {
+            return primary_bottom_from_culled(culled);
+        }
+        let deduped = normalize_union(survivors);
+        match deduped {
+            Value::Union(mut bs) if bs.len() > max_branches => {
+                bs.truncate(max_branches);
+                Value::Union(bs)
+            }
+            other => other,
         }
     }
     
