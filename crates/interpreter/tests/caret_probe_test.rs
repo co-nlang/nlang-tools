@@ -84,39 +84,33 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED at order time: `_` (reads current container, no `a` there)
 fn red_caret_parent_basic() {
     assert_obs("c: { a: 1, d: { v: ^.a } }\nout: c.d.v", "1");
 }
 
 #[test]
-#[ignore] // RED at order time: 9 — WRONG-VALUE LIE (current container's a)
 fn red_caret_parent_shadowing() {
     // L2-66. The decisive form: parent and current both define `a`.
     assert_obs("s: { a: 1, d: { a: 9, v: ^.a } }\nout: s.d.v", "1");
 }
 
 #[test]
-#[ignore] // RED at order time: `_`
 fn red_caret_two_level() {
     assert_obs("w: { a: 7, m: { n: { v: ^^.a } } }\nout: w.m.n.v", "7");
 }
 
 #[test]
-#[ignore] // RED at order time: `_` (root universe unreachable)
 fn red_caret_reaches_root() {
     // L2-67. Q1: the container chain tops out AT root, not below it.
     assert_obs("r_a: 42\nc: { d: { v: ^^.r_a } }\nout: c.d.v", "42");
 }
 
 #[test]
-#[ignore] // RED at order time: `_` (dead ref poisons the arithmetic)
 fn red_caret_arith_operand() {
     assert_obs("t: { a: 1, d: { v: ^.a + 1 } }\nout: t.d.v", "2");
 }
 
 #[test]
-#[ignore] // RED at order time: parses Ok (LHS ^ still in grammar)
 fn red_caret_lhs_key_rejected() {
     // Q3 abolition — grammar level, both nested and root-level forms,
     // path-key form included.

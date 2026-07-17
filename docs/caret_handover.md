@@ -69,7 +69,33 @@ L2-66/67 翻綠、68 保綠);語料非 pending **78/0** 不退。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(附量測;Parent(n) 編碼約定寫明):
-- [ ] 探針 13/13 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、態射體內 ^ 歧異記錄、合法改善):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` caret)
+- [x] 根因與修法(附量測;Parent(n) 編碼約定寫明):
+  - **Parent(n) 編碼**(parser **不動**):`^.` → `Parent(0)`,`^^.` → `Parent(1)`,
+    `n` = 第一支 `^` 之後的額外 caret 數(`matches('^').count()-1`)。
+    Display 與 golden_ast 同律。
+  - **T 引擎 off-by-one 根因**:`resolve_path_internal` 之 `Parent(count)` 臂
+    用 `scopes[len-1-count]`,對 `Parent(0)` 落在 **current** frame
+    (`scopes.last()`)——量測:`s.d.v` 之 `^.a` 回 `9`(子層謊言);
+    且 scopes 不含 root → `^^.r_a` 不可達。
+  - **修法(只改 eval 計數,不改 parser 編碼)**:`hops = count + 1`
+    (Parent(0)=上溯 1 層=父)。`hops < len` → `scopes[len-1-hops]`;
+    `hops == len` → **root 宇宙**(Q1 鏈頂);`hops > len` →
+    `#out_of_horizon`。落地後 segment 走 `navigate_segments`(Q2 嚴格座標,
+    缺鍵 open `_`,不外溯)。
+  - **Q3 LHS 廢止**:`n.pest` 定義鍵改 `field_root_path = anchor_root ~
+    path_segments?`(僅 `_.`);`field_key` 不再吃 `anchor_parent`。RHS 仍經
+    primary 之完整 `anchored_path`。`parse_field_key` 認 `field_root_path`。
+  - **註解**:`bottom_meta_probe_test` 「scopes unwired 另案」改為本弧已收帳
+    (僅註,非釘)。
+  - 量測:修前 6 紅全紅;修後探針 13/13;overshoot 雙面保綠。
+- [x] 探針 13/13 / workspace / conformance / 語料 四數:
+  - 探針 **13/13**
+  - workspace **1122/0/3**(開單基線 1116/0/9)
+  - conformance **107/107**(L2-66/67 翻綠、68 保綠)
+  - 語料 unit+integration **74/0**(歷次同路徑)
+  - parser goldens / lexical_scope / lexical_completion / bottom_meta 保綠
+- [x] 申報事項(範圍外接觸、態射體內 ^ 歧異記錄、合法改善):
+  - **未碰** `^`×管道、態射體內 `^` 綁定面(未遇歧異可裁)、
+    `#out_of_horizon` details cocoon、裸名詞法鏈 seal/lexical_forcing 本體。
+  - 詞法鏈與 `_.` 絕對錨獨立保綠(探針釘)。

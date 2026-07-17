@@ -180,10 +180,9 @@ fn red_union_atom_branch_open_miss() {
 
 #[test]
 fn red_parent_overflow_out_of_horizon() {
-    // Canonical tag on ^ depth overflow (ERROR_CODES §1). Note: valid
-    // parent shapes currently also land here (scopes unwired in
-    // observation contexts — separate case); the label is honest either
-    // way ("beyond the penetrable depth").
+    // Canonical tag on ^ depth overflow (ERROR_CODES §1). Valid parent
+    // shapes resolve on the sealed container chain (caret ascent arc);
+    // only true overshoot (past root) lands here.
     let got = observe_nlang("out: ^^^.x", "out");
     assert!(
         got.starts_with("_|_") && got.contains("out_of_horizon"),

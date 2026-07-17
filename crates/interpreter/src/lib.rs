@@ -1457,14 +1457,26 @@ let mut refl_fields = IndexMap::new();
                     forced
                 } None => Value::Top }
             }
-            // F4b: ^ overflow = #out_of_horizon (ERROR_CODES §1), not the
-            // abolished #invalid_path. Valid ^ shapes still land here while
-            // observation-context scopes remain unwired (separate case).
+            // F4b + caret Q1: parent-anchor ascent on the container chain.
+            // Encoding (parser, unchanged): Parent(0) = `^.`, Parent(1) = `^^.`,
+            // … — `n` is "extra carets past the first". hops = n+1 levels up
+            // from the *current* container (scopes.last()). Chain outermost is
+            // the root universe (beyond scopes[0]); hop past root →
+            // #out_of_horizon. Strict coordinate access after landing (Q2):
+            // missing key at that level is open `_`, no further ancestor walk.
             PathAnchor::Parent(count) => {
+                // Parent(0)=^ → 1 hop to parent (NOT the current frame).
+                let hops = count as usize + 1;
                 let len = ctx.scopes.len();
-                if len > count as usize {
-                    Value::Combo(ctx.scopes[len - 1 - (count as usize)].clone())
+                if hops < len {
+                    // Still inside sealed frames: scopes[len-1] is current,
+                    // scopes[len-1-hops] is the designated ancestor.
+                    Value::Combo(ctx.scopes[len - 1 - hops].clone())
+                } else if hops == len {
+                    // Exactly through all frames → root universe.
+                    Value::Combo((*ctx.root).clone())
                 } else {
+                    // Past root.
                     return BottomCause::OutOfHorizon.into();
                 }
             }

@@ -67,7 +67,10 @@ fn parse_field_key(pair: pest::iterators::Pair<Rule>) -> Result<FieldKey, Box<dy
         }
         Rule::quoted_key => Ok(FieldKey::Quoted(inner.as_str()[1..inner.as_str().len()-1].to_string())),
         Rule::tag => Ok(FieldKey::Pattern(Expr::new(ExprKind::Atom(AtomKind::Tag(inner.as_str()[1..].to_string())), Span::new(inner.as_span().start(), inner.as_span().end())))),
-        Rule::path | Rule::anchored_path => Ok(FieldKey::Path(parse_path(inner)?)),
+        // field_root_path = `_.…` only (parent `^` banned on definition keys).
+        Rule::path | Rule::anchored_path | Rule::field_root_path => {
+            Ok(FieldKey::Path(parse_path(inner)?))
+        }
         Rule::anon_set => {
             let expr = parse_expr(inner.into_inner().next().ok_or("Empty anon_set")?)?;
             Ok(FieldKey::Pattern(expr))
