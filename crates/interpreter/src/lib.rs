@@ -1166,9 +1166,19 @@ let mut refl_fields = IndexMap::new();
                 ctx.in_flight = call_ctx.in_flight;
                 ctx.computing = call_ctx.computing;
                 ctx.lexical_forcing = call_ctx.lexical_forcing;
-                // Taint only accumulates (once transform, always transform).
-                ctx.chain_transform_taint =
-                    ctx.chain_transform_taint || call_ctx.chain_transform_taint;
+                // Taint scoping (SPEC_12 §1.1 Q2/Q4; taint_scope arc):
+                // chain_transform_taint is *chain-local*. Downward inheritance
+                // via sub_context clone is correct (a real transform hop
+                // taints its own force chain; re-entry inside that chain
+                // still sees the flag). Upward write-back was the bug —
+                // "once transform, always transform" globalized taint to the
+                // whole observation ctx, so forcing an unrelated non-pure
+                // sibling (even literal `9`) permanently poisoned later
+                // static-cycle re-entries → false #divergent → silent cull.
+                // Do NOT write chain_transform_taint back.
+                // cycle_chain: healthy paths push/pop balanced; write-back
+                // is identity on balanced exit. Keep (minimal diff); members
+                // list for %members still filled at re-entry sites.
                 ctx.cycle_chain = call_ctx.cycle_chain;
                 let inner_deps = call_ctx.dep_collector.take();
 

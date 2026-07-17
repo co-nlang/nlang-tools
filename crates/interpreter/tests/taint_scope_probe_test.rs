@@ -91,7 +91,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_union_static_member_survives() {
     // Today: `9` — branch1's literal force taints the ctx, p.v re-entry
     // reads transform → ⊥ #divergent → culled. Law: static → caused Top
@@ -100,21 +99,18 @@ fn red_union_static_member_survives() {
 }
 
 #[test]
-#[ignore]
 fn red_union_static_member_survives_mid() {
     // Three branches, static member in the middle. Today: `9 | 8`.
     assert_obs("p: {v: p.v}\nu: {v: 9}|p|{v: 8}\nout: u.v", "9 | _ | 8");
 }
 
 #[test]
-#[ignore]
 fn red_union_static_member_alias() {
     // Alias spelling (dual-spelling lesson). Today: `9`.
     assert_obs("p: {v: p.v}\nal: p\nu: {v: 9}|al\nout: u.v", "9 | _");
 }
 
 #[test]
-#[ignore]
 fn red_union_mutual_static_member() {
     // Mutual pure-reference cycle member (SPEC_12 互指 = same tier).
     // Today: `9`.
@@ -125,7 +121,6 @@ fn red_union_mutual_static_member() {
 }
 
 #[test]
-#[ignore]
 fn red_field_join_static_member() {
     // In-field direct `|` — RED in-harness (`9`: observe-time forcing
     // hits the polluted ctx) while the CLI run measures `_ | 9` (evolve
@@ -134,7 +129,6 @@ fn red_field_join_static_member() {
 }
 
 #[test]
-#[ignore]
 fn red_union_twin_eq() {
     // Today: #false — identically-spelled unions solidify differently
     // depending on taint state at force time (equality lie; twin-eq

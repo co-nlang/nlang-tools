@@ -85,7 +85,29 @@ cycle_test、詞法雙弧、全 workspace 一顆不得翻紅;語料非 pending
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(cycle_chain 寫回擇案附量測):
-- [ ] 探針 14/14 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` taint_scope)
+- [x] 根因與修法(cycle_chain 寫回擇案附量測):
+  - **根因**:`force` 收尾
+    `ctx.chain_transform_taint ||= call_ctx.chain_transform_taint`
+    把鏈染色全域化到整個觀測 ctx。force 任何非純引用 thunk(字面量
+    `9` 亦觸發)永久毒染;同觀測內後續靜止環再入讀 taint=true → 誤判
+    變換 → ⊥ `#divergent` → 剔除弧依法剔 → `_` 支靜默消失。序依賴
+    `{v:9}|p` 壞 / `p|{v:9}` 好 = 先行兄弟 force 是否踩毒。
+  - **修法**:拆除 **taint 向上寫回**;下傳繼承(`sub_context` 全克隆)
+    **保留**——真變換環在自身鏈內染色,再入點仍讀到。
+    `in_flight`/`computing`/`fuel`/`lexical_forcing` 寫回不動;
+    `expr_is_pure_ref` / cycle_reentry / 四再入點 / 剔除弧不動。
+  - **cycle_chain 寫回擇案**:量測後 **保留** `ctx.cycle_chain =
+    call_ctx.cycle_chain`(最小 diff)。健康路徑 push/pop 平衡 → 寫回
+    恆等;static_cycle 互指環 `%members` 探針保綠,無需衛生性移除。
+  - 量測:修前 6 紅全紅;修後探針 14/14;變換環釘仍 `#divergent`/剔 `1`。
+- [x] 探針 14/14 / workspace / conformance / 語料 四數:
+  - 探針 **14/14**
+  - workspace **1151/0/3**
+  - conformance **112/112**(L2-72 翻綠、73 保綠)
+  - 語料 unit+integration **74/0**
+  - static_cycle / union_bottom_cull / cycle_test / 詞法雙弧 保綠
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - **未碰** math×Top 聯集值語境、TopCaused vs Top 去重、canonical 顯示序、
+    `<`/`<=`×union、剔除弧機構本體。
+  - 無歧異需裁;cycle_chain 未移除(量測保留方案已四數全綠)。
