@@ -93,13 +93,11 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_numeric_sorted() {
     assert_obs("out: 9 | 2 | 5", "2 | 5 | 9");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_spelling_independent() {
     // THE disease face: first-stored spelling must no longer win.
     // Both spellings of the same value print the one canonical form.
@@ -110,7 +108,6 @@ fn red_display_spelling_independent() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_no_action_at_distance() {
     // Unrelated earlier field must not rewrite m's spelling — and the
     // canonical spelling is sorted regardless of either source spelling.
@@ -118,38 +115,32 @@ fn red_display_no_action_at_distance() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_dedupe_then_sorted() {
     assert_obs("out: 2 | 1 | 2", "1 | 2");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_type_rank_mixed() {
     // numbers < strings < tag atoms (L2-77 twin).
     assert_obs("out: \"b\" | 3 | #t | 1", "1 | 3 | \"b\" | #t");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_strings_lex() {
     assert_obs("out: \"b\" | \"a\"", "\"a\" | \"b\"");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_top_last() {
     assert_obs("u: _ | 9\nout: u", "9 | _");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_float_int_ascending() {
     assert_obs("out: 2.5 | 1 | 3", "1 | 2.5 | 3");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_math_result_sorted() {
     // Distribution EVALUATES left-major (semantics untouched) but the
     // displayed result is canonical: (9|2)+1 → 3 | 10, not 10 | 3.
@@ -157,7 +148,6 @@ fn red_display_math_result_sorted() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_display_blur_after_values() {
     // Blur branch sorts after solid values, before Top.
     let got = observe_nlang(

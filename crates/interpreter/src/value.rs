@@ -330,6 +330,113 @@ pub fn seal_defining_scope(c: &mut ComboVal) {
     }
 }
 
+// ── SPEC_01 §2.4.1 canonical display order (display layer only) ──
+
+/// Type-family rank for union display (lower first).
+/// numbers → strings → tag atoms → structured → #blur → Top → Bottom.
+fn display_family_rank(v: &Value) -> u8 {
+    match v {
+        Value::Atom(AtomKind::Int(_), _, _)
+        | Value::Atom(AtomKind::Float(_), _, _)
+        | Value::Atom(AtomKind::Complex(_, _), _, _) => 0,
+        Value::Atom(AtomKind::Str(_), _, _) => 1,
+        Value::Atom(AtomKind::Tag(_), _, _)
+        | Value::Atom(AtomKind::TagStart, _, _)
+        | Value::Atom(AtomKind::TagEnd, _, _) => 2,
+        Value::Blur(_) => 4,
+        Value::Top | Value::TopCaused { .. } => 5,
+        Value::Bottom(_) => 6,
+        // Range, Combo, Thunk, Ref, Code, Bytes, … — structured family
+        _ => 3,
+    }
+}
+
+/// Numeric key: (magnitude as f64, subrank) with int before float on equal value.
+fn display_numeric_key(v: &Value) -> Option<(f64, u8)> {
+    match v {
+        Value::Atom(AtomKind::Int(i), _, _) => {
+            use num_traits::ToPrimitive;
+            Some((i.to_f64().unwrap_or(f64::NAN), 0))
+        }
+        Value::Atom(AtomKind::Float(f), _, _) => Some((*f, 1)),
+        Value::Atom(AtomKind::Complex(r, i), _, _) => {
+            // Lexicographic on (re, im) via packed comparison of re first.
+            Some((*r, 2 + if *i >= 0.0 { 0 } else { 1 }))
+        }
+        _ => None,
+    }
+}
+
+fn display_string_key(v: &Value) -> Option<&str> {
+    match v {
+        Value::Atom(AtomKind::Str(s), _, _) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn display_tag_key(v: &Value) -> Option<String> {
+    match v {
+        Value::Atom(AtomKind::Tag(t), _, _) => Some(t.clone()),
+        Value::Atom(AtomKind::TagStart, _, _) => Some("_|_".to_string()),
+        Value::Atom(AtomKind::TagEnd, _, _) => Some("_".to_string()),
+        _ => None,
+    }
+}
+
+/// Compare two values for SPEC_01 §2.4.1 display order.
+/// Does **not** use CAID/digest (blur CAID is salt-bearing).
+fn display_order_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let ra = display_family_rank(a);
+    let rb = display_family_rank(b);
+    match ra.cmp(&rb) {
+        Ordering::Equal => {}
+        o => return o,
+    }
+    match ra {
+        0 => {
+            // Numbers: ascending; same magnitude prefers int over float.
+            let ka = display_numeric_key(a);
+            let kb = display_numeric_key(b);
+            match (ka, kb) {
+                (Some((va, sa)), Some((vb, sb))) => {
+                    // Total order with NaN last within numbers.
+                    let o = match (va.is_nan(), vb.is_nan()) {
+                        (true, true) => Ordering::Equal,
+                        (true, false) => Ordering::Greater,
+                        (false, true) => Ordering::Less,
+                        (false, false) => va.partial_cmp(&vb).unwrap_or(Ordering::Equal),
+                    };
+                    o.then_with(|| sa.cmp(&sb))
+                }
+                _ => a.to_nlang(0).cmp(&b.to_nlang(0)),
+            }
+        }
+        1 => {
+            let sa = display_string_key(a).unwrap_or("");
+            let sb = display_string_key(b).unwrap_or("");
+            sa.cmp(sb)
+        }
+        2 => {
+            let ta = display_tag_key(a).unwrap_or_default();
+            let tb = display_tag_key(b).unwrap_or_default();
+            ta.cmp(&tb)
+        }
+        // structured (3), blur (4): canonical display string lex.
+        // Top (5) / Bottom (6): all equal within family (stable keeps order).
+        3 | 4 => a.to_nlang(0).cmp(&b.to_nlang(0)),
+        _ => Ordering::Equal,
+    }
+}
+
+/// SPEC_01 §2.4.1: order union branches for display only.
+/// Stable: equal keys keep encounter order. Never mutates the value vector.
+pub fn canonical_display_order(branches: &[Value]) -> Vec<&Value> {
+    let mut refs: Vec<&Value> = branches.iter().collect();
+    refs.sort_by(|a, b| display_order_cmp(a, b));
+    refs
+}
+
 /// All-⊥ union collapse (REAL_04 §4 + 2026-07-17 engineering supplement):
 /// pick the primary-rank member (`primary_rank` lower = more primary) and
 /// pass that `_|_` out **verbatim** (message/path/involved preserved).
@@ -1289,7 +1396,13 @@ impl Value {
                 s.push_str(&format!("{}}}", pad)); if c.closed { s.push('}'); }
                 s
             }
-            Value::Union(branches) => { let parts: Vec<String> = branches.iter().map(|b| b.to_nlang(indent)).collect(); parts.join(" | ") }
+            // SPEC_01 §2.4.1: display spelling is a function of the value —
+            // sort branches for print only; internal vector stays put.
+            Value::Union(branches) => {
+                let ordered = canonical_display_order(branches);
+                let parts: Vec<String> = ordered.iter().map(|b| b.to_nlang(indent)).collect();
+                parts.join(" | ")
+            }
             // L2-17: Blur-precedent cause tag on the display axis (bn_serial
             // identity axis untouched — Bottom hashes by cause discriminant).
             Value::Bottom(d) => {

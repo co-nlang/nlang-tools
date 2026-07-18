@@ -281,9 +281,10 @@ fn pin_union_commutativity_combo_eq() {
 
 #[test]
 fn pin_union_display_encounter_order() {
-    // Display = deterministic encounter order (canonical display question
-    // ledgered separately; %id already canonicalizes for CAID).
-    assert_obs("out: 2 | 1", "2 | 1");
+    // SPEC_01 §2.4.1 (2026-07-18): display is canonical sorted spelling,
+    // not encounter order. (Former freeze: "canonical display question
+    // ledgered separately" — that case closed by display_order arc.)
+    assert_obs("out: 2 | 1", "1 | 2");
 }
 
 // pin_private_axis_current_behavior MIGRATED 2026-07-15 by the ACCEPTOR:

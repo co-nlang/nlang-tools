@@ -72,9 +72,30 @@ integration 7)不退。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(排序鍵實作、接線位點、禁 digest 遵守寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` display_order)
+- [x] 根因與修法(排序鍵實作、接線位點、禁 digest 遵守寫明):
+  - **根因**:CAID 序無關 + store 去重 → 先存拼法全域獲勝;顯示=演化史
+    函數,非法 §2.4.1「拼法=值的函數」。
+  - **排序鍵**(`value.rs` `canonical_display_order` / `display_order_cmp`):
+    族階 rank — 數(0)→字串(1)→標籤(2)→結構(3)→#blur(4)→Top/TopCaused(5)
+    →⊥ 防禦(6);族內:數值升序(同值 int 前於 float)、字串/標籤字典序、
+    結構/#blur 用該支 `to_nlang(0)` 字串字典序。**禁用** CAID/digest。
+    穩定排序(鍵等保留內部序)。
+  - **接線**:僅 `Value::to_nlang` Union 臂 — 排序後 join `" | "`;內部
+    `Vec` **不**改;`to_string_plain` 佔位不動;`normalize_union`/分配求值
+    序/bn_serial/`=` 不動。
+- [x] 探針/workspace/conformance/語料 四數:
+  - display_order 探針 **17/17**(10 紅+7 釘);遷移紅 taint×4 / math×5 /
+    union_nav×1 全綠
+  - workspace **1185/0/3**
+  - conformance **116/116**
+  - 語料 unit+integration **74/0**
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - 順手遷移舊「相遇序顯示」釘(新法下合法改期望,非改語義):
+    `bottom_meta_probe_test::pin_union_display_encounter_order`、
+    `union_dedupe_probe_test::pin_union_distinct_order_21` → 期望
+    `1 | 2`。
+  - **未碰** normalize_union、tropical 截斷、math/管道左主序求值、
+    bn_serial、`=` 多重集、剔除律。
 
 ## 6. 驗收紀錄(驗收方填)

@@ -88,7 +88,6 @@ fn red_union_nav_distinct_values_superpose() {
 }
 
 #[test]
-#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_union_nav_partial_field_keeps_top_branch() {
     // branch 1 open-miss → _ (kept: honest superposition), branch 2 → 2
     assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "2 | _");

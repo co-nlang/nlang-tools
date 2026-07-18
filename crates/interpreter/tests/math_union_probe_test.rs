@@ -102,14 +102,12 @@ fn red_math_union_right() {
 }
 
 #[test]
-#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_math_union_both_left_major() {
     // Cartesian via nested distribution; left-operand-major order.
     assert_obs("out: (1|2) + (10|20)", "11 | 12 | 21 | 22");
 }
 
 #[test]
-#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_math_union_mul_and_sub() {
     assert_obs("out: (2|9) * 2", "4 | 18");
     assert_obs("out: 0 - (2|9)", "-9 | -2");
@@ -121,7 +119,6 @@ fn red_math_union_string_concat() {
 }
 
 #[test]
-#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_math_union_top_branch_survives() {
     // THE ledgered face: Top branch stays open through math
     // (`_ + 1` → `_` single-value law, per branch).
@@ -129,7 +126,6 @@ fn red_math_union_top_branch_survives() {
 }
 
 #[test]
-#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_math_union_static_top_branch() {
     // Static-cycle Top member (taint-scope arc neighbor face).
     assert_obs("p: {v: p.v}\nu: p.v | 3\nout: u + 1", "4 | _");
@@ -142,7 +138,6 @@ fn red_math_union_divzero_branch_culled() {
 }
 
 #[test]
-#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_math_union_blur_branch_survives() {
     // Blur branch absorbs the op (G3 value context) and survives as a
     // #blur member next to the computed branch.
