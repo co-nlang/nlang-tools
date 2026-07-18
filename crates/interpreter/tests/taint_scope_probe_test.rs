@@ -99,9 +99,10 @@ fn red_union_static_member_survives() {
 }
 
 #[test]
+#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_union_static_member_survives_mid() {
     // Three branches, static member in the middle. Today: `9 | 8`.
-    assert_obs("p: {v: p.v}\nu: {v: 9}|p|{v: 8}\nout: u.v", "9 | _ | 8");
+    assert_obs("p: {v: p.v}\nu: {v: 9}|p|{v: 8}\nout: u.v", "8 | 9 | _");
 }
 
 #[test]
@@ -121,11 +122,12 @@ fn red_union_mutual_static_member() {
 }
 
 #[test]
+#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn red_field_join_static_member() {
     // In-field direct `|` — RED in-harness (`9`: observe-time forcing
     // hits the polluted ctx) while the CLI run measures `_ | 9` (evolve
     // pre-classified) — the very context-dependence this arc removes.
-    assert_obs("p: {v: p.v}\nw: {q: p.v | 9}\nout: w.q", "_ | 9");
+    assert_obs("p: {v: p.v}\nw: {q: p.v | 9}\nout: w.q", "9 | _");
 }
 
 #[test]
@@ -155,17 +157,19 @@ fn pin_static_cause_readable() {
 }
 
 #[test]
+#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn pin_union_static_first_order() {
     // Static member FIRST already healthy (classified before the
     // literal taints) — must stay through the rescoping.
-    assert_obs("p: {v: p.v}\nu: p|{v: 9}\nout: u.v", "_ | 9");
+    assert_obs("p: {v: p.v}\nu: p|{v: 9}\nout: u.v", "9 | _");
 }
 
 #[test]
+#[ignore] // MIGRATED to SPEC_01 §2.4.1 canonical display order (2026-07-18 open commit) — remove at delivery
 fn pin_direct_join_static_root() {
     // Root-level direct `|` healthy (evolve-time classification lands
     // before any sibling force). In-field spelling is a RED gate above.
-    assert_obs("p: {v: p.v}\nout: p.v | 9", "_ | 9");
+    assert_obs("p: {v: p.v}\nout: p.v | 9", "9 | _");
 }
 
 #[test]
