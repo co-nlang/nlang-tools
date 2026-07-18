@@ -63,7 +63,6 @@ fn order_sig(ordered: &[&Value]) -> Vec<u64> {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_blur_tie_is_stable_both_permutations() {
     // Same cause, same fuel, different salts → key ties → STABLE:
     // encounter order preserved for BOTH input permutations. Today the
@@ -103,7 +102,6 @@ fn pin_blur_fuel_orders_lucky_salts() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_blur_fuel_orders_adversarial_salts() {
     // Salt bytes chosen OPPOSITE to fuel order — a salt-leaking key
     // sorts these wrong in at least one permutation.

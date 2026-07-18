@@ -53,9 +53,22 @@ conformance 無法載此面(向量單次執行測不到跨行程非決定),
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(blur 臂鍵構成寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` blur_display_key)
+- [x] 根因與修法(blur 臂鍵構成寫明):
+  - **根因**:`display_order_cmp` 族階 4 與結構族共用 `to_nlang(0)` 字串鍵;
+    blur 顯示內嵌帶鹽 `%caid` → 同 cause 雙 blur 相對序由鹽決定(跨行程翻轉)。
+  - **修法**:族階 4 獨立臂——鍵 =
+    `(cause.as_str() 字典序, fuel_remaining 升序, strategy 序號
+    Blur=0/Strict=1/Approximate=2)`;全等 → `Ordering::Equal`(穩定排序保
+    相遇序)。**不含** salt/caid。族階 3 字串鍵不動;blur 顯示文仍印
+    %caid;`blur_caid`/bn_serial 鹽不動。
+- [x] 探針/workspace/conformance/語料 四數:
+  - 探針 **7/7**
+  - workspace **1192/0/3**
+  - conformance **116/116**(本面非矩陣可載,不動)
+  - 語料 unit+integration **74/0**
+  - display_order 17/17 保綠
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - **未碰** blur 顯示文字、吸收/unify 律、bn_serial 身分鹽、非 blur 族鍵。
 
 ## 6. 驗收紀錄(驗收方填)

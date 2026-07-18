@@ -422,9 +422,30 @@ fn display_order_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             let tb = display_tag_key(b).unwrap_or_default();
             ta.cmp(&tb)
         }
-        // structured (3), blur (4): canonical display string lex.
+        // structured (3): canonical display string lex (no salt).
+        3 => a.to_nlang(0).cmp(&b.to_nlang(0)),
+        // #blur (4): SPEC_01 §2.4.1 #5 amended — key is
+        // (cause name lex, fuel_remaining asc, strategy). NEVER %caid/salt
+        // (display string embeds salted caid → cross-process flip).
+        // Full key tie → Equal so stable sort keeps encounter order.
+        4 => match (a, b) {
+            (Value::Blur(ba), Value::Blur(bb)) => {
+                let strat = |s: ObservationStrategy| -> u8 {
+                    match s {
+                        ObservationStrategy::Blur => 0,
+                        ObservationStrategy::Strict => 1,
+                        ObservationStrategy::Approximate => 2,
+                    }
+                };
+                ba.cause
+                    .as_str()
+                    .cmp(bb.cause.as_str())
+                    .then_with(|| ba.horizon.fuel_remaining.cmp(&bb.horizon.fuel_remaining))
+                    .then_with(|| strat(ba.horizon.strategy).cmp(&strat(bb.horizon.strategy)))
+            }
+            _ => Ordering::Equal,
+        },
         // Top (5) / Bottom (6): all equal within family (stable keeps order).
-        3 | 4 => a.to_nlang(0).cmp(&b.to_nlang(0)),
         _ => Ordering::Equal,
     }
 }
