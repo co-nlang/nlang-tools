@@ -110,9 +110,10 @@ fn pin_union_distinct_order_12() {
     assert_obs("out: 1 | 2", "1 | 2");
 }
 
-#[test] // ACTIVE pin: eval `|` preserves writing order (no re-sorting)
+#[test] // ACTIVE pin: display is SPEC_01 §2.4.1 canonical (sorted), not
+        // writing order — internal vector still encounter-order.
 fn pin_union_distinct_order_21() {
-    assert_obs("out: 2 | 1", "2 | 1");
+    assert_obs("out: 2 | 1", "1 | 2");
 }
 
 #[test] // ACTIVE pin (TRAP): Int(1) and Float(1.0) are structurally
