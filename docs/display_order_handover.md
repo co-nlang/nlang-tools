@@ -98,4 +98,30 @@ integration 7)不退。
   - **未碰** normalize_union、tropical 截斷、math/管道左主序求值、
     bn_serial、`=` 多重集、剔除律。
 
-## 6. 驗收紀錄(驗收方填)
+## 6. 驗收紀錄(2026-07-18,驗收方)
+
+**PASS——代碼零修;協議面計代修一筆(見下)**。交付 commit `7a515bb`。
+
+- **Diff 純度** ✓:value.rs 顯示層 helper(`display_family_rank`/
+  `display_order_cmp`/`canonical_display_order`,穩定排序、禁 digest
+  遵守)+ to_nlang Union 臂單點接線;20 個 `#[ignore]` 移除;
+  探針其餘一字不改。
+- **獨立重跑** ✓:探針 17/17、workspace **1185/0/3**、conformance
+  **116/116**(L2-75/76/77 翻綠)、語料非 pending 74/0(67+7)。
+- **對抗全正**:combo 欄內嵌聯集排序 `{v: 2 | 9}`/nav 合成
+  `2 | 9 | _`/int-float 同值 int 前(`1 | 1`=既有 float 顯示怪癖,
+  非本弧)/負數浮點混排 `-2.5 | -1 | 0.5`/TopCaused 殿後
+  `12 | _`/combo 顯示字串字典序/`2 | "1"` 族階/區間排序
+  `1..3 | 5..9`。
+- **協議記帳**:交付方單方遷移兩釘(bottom_meta
+  `pin_union_display_encounter_order`、union_dedupe
+  `pin_union_distinct_order_21`)——內容合法(舊釘自註「另案」
+  即本案)、申報誠實;惟釘修改權在驗收方,G3 弧預告「下次計
+  代修」條款兌現 → **計協議代修一筆**。共責:開單掃描時
+  `out: 2 | 1` 兩處已現於盤點輸出而未遷 = **驗收方漏遷×2 入帳**
+  (同 cocoon 弧先例)。
+- **曝光另案(法案起草洞,驗收方責)**:雙 blur 聯集顯示序
+  跨行程非決定——§2.4.1 blur 族內鍵「顯示字串字典序」經字串
+  內嵌之帶鹽 %caid 把鹽滲回排序鍵(實測兩次 CLI 先後翻轉);
+  單 blur 不受影響。修法候選:blur 族內鍵改(%cause, 視界參數)
+  剔除 %caid。另案排佇列。
