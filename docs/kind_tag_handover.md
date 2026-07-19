@@ -77,4 +77,19 @@ stdlib @option 非 marker/載荷顯示不動/@{e} 透明+@{@Pos} 解值。
   - **未碰** %super/%predicate(B5)、載荷欄改名、`{ @int: … }` 派發拼法。
   - 規格書 REAL_01 L224 `$kind` LSP 層不動(不同命名空間)。
 
-## 6. 驗收紀錄(驗收方填)
+## 6. 驗收紀錄(2026-07-19,驗收方)
+
+**PASS——零代修(第二十三例;協議全淨,無單方遷移)**。交付
+commit `0d3aded`。
+
+- **Diff 純度** ✓:兩鑄造點標籤改 `"type"`、is-marker 新判準=
+  `%kind == #type` ∧ `get_type_constraint_name` Some(:126 inline
+  同遷);引擎全樹 `"type_constraint"` 字串歸零(grep 驗證);
+  探針檔僅 2 個 `#[ignore]` 移除。
+- **獨立重跑** ✓:探針 7/7、workspace **1213/0/3**、conformance
+  **117/117**、語料非 pending 74/0。
+- **對抗全正**:marker 結構面 `{{%kind: #type, %type: "int"}}`/
+  @option 精化 `#none`/nominal 密封模板 `@T` 執法/雙重精化冪等/
+  精化後等值 `#true`。`#ok & @result` ⊥ 同訊息=v0.2.23 worktree
+  反事實同形(既有行為,bare tag 非 result 形,非回歸)。
+- marker 繭 CAID 一次性合法位移入帳(%kind 標籤變更)。
