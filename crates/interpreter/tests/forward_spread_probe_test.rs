@@ -160,6 +160,25 @@ fn red_fwd_cyclic_spread_divergent() {
 }
 
 #[test]
+fn repair_pin_fwd_cocoon_target() {
+    // ACCEPTANCE REPAIR (2026-07-19): cocoon literals force_recursive at
+    // construction (GUIDE_03 §11.5) — during evolve the forward source was
+    // consumed as a Top no-op and the rebuild dropped pending. Repair =
+    // in_evolve phase flag (closed-combo requeue) + pending survives the
+    // force_recursive rebuild. Both container spellings, one law.
+    assert_obs("q: {{...later, b: 1}}\nlater: {a: 7}\nout: q.a", "7");
+    assert_obs("later: {a: 7}\nq: {{...later, b: 1}}\nout: q.a", "7");
+}
+
+#[test]
+fn repair_pin_never_defined_eq_noop() {
+    // Repair guard: never-defined no-op must stay eq-transparent
+    // (requeue is CLOSED-only during evolve precisely for this face).
+    assert_obs("q: {...never, b: 1}\nq2: {b: 1}\nout: q = q2", "#true");
+    assert_obs("q: {{...never, b: 1}}\nout: (q.a).%cause", "#missing_key");
+}
+
+#[test]
 fn pin_spread_privacy_unchanged() {
     // Outsider spread still excludes ~ fields (spread_privacy law).
     assert_obs("p: {v: 1, ~s: 9}\nq: {...p}\nout: q.v", "1");

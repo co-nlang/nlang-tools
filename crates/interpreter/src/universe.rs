@@ -112,6 +112,12 @@ impl Universe {
         let mut ctx = EvalContext::new(self.root.clone());
         ctx.staged = Some(self.staged.clone());
         ctx.horizon_salt = engine.store.get_horizon_salt();
+        // forward_spread acceptance repair: cocoon literals force_recursive
+        // at construction (GUIDE_03 §11.5) — during evolve a forward source
+        // is open-miss Top only because it is not defined YET; mark the
+        // phase so expansion re-queues instead of consuming (cocoon face:
+        // {{...later, b: 1}} with later defined below).
+        ctx.in_evolve = true;
 
         // Coordinate(s) this field will occupy — marked in-flight during eval
         // so self-ref (`a: a + 1`) is ⊥ #divergent, not open-miss Top (L2-17).

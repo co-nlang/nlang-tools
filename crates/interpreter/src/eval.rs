@@ -239,9 +239,16 @@ impl Ouroboros {
                     }
                 }
                 Value::Top | Value::TopCaused { .. } => {
-                    if !ctx.memo_enabled {
-                        // Engine-internal (system root): keep pending for later
-                        // observation expand against the real universe root.
+                    if !ctx.memo_enabled || (ctx.in_evolve && c.closed) {
+                        // Engine-internal (system root): binding may not be on
+                        // this root — requeue. Evolve-phase CLOSED combo: the
+                        // cocoon construction force (GUIDE_03 §11.5) runs
+                        // before later fields evolve — requeue so the sealed
+                        // key set can still gain the forward source at
+                        // observation. Open combos during evolve consume as
+                        // no-op (baseline-preserving: evolve-time computed
+                        // expressions over pending combos = pre-existing
+                        // eager-computation debt, ledgered).
                         c.pending_spreads.push(src_for_requeue);
                     }
                     // Observation: Top no-op (never-defined / open hole).

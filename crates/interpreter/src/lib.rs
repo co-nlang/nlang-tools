@@ -66,6 +66,11 @@ pub struct EvalContext {
     /// Coordinates / bare names on the current force stack (cycle members).
     pub cycle_chain: Vec<String>,
     pub in_math_op: bool,
+    /// forward_spread acceptance repair: evolve-phase marker — pending
+    /// spread sources that resolve Top during evolve are re-queued (the
+    /// binding may simply not exist YET); only observation-time force
+    /// consumes Top as a true no-op (never-defined / open hole).
+    pub in_evolve: bool,
     pub context_value: Option<Value>,
     pub fuel: u64,
     pub timeout_deadline: Option<u64>,
@@ -103,7 +108,7 @@ impl EvalContext {
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_flight: HashSet::new(), lexical_forcing: HashSet::new(),
             chain_transform_taint: false, cycle_chain: Vec::new(),
-            in_math_op: false, context_value: None, 
+            in_math_op: false, in_evolve: false, context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, memo_enabled: true, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
@@ -1297,6 +1302,9 @@ let mut refl_fields = IndexMap::new();
                         new_c.closed = c.closed;
                         new_c.effect = c.effect;
                         new_c.relations = c.relations.clone();
+                        // forward_spread acceptance repair: re-queued pending
+                        // sources (evolve-phase Top) must survive the rebuild.
+                        new_c.pending_spreads = c.pending_spreads.clone();
                         for (k, v) in c.all_fields_iter() {
                             new_c.insert_field(&k, self.force_recursive(v, ctx));
                         }
