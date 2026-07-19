@@ -67,9 +67,30 @@ closed(cocoon)跳過=屏蔽已實作——**只缺讀取臂**。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(讀取臂位置、& 合一 effect 處置寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(聯集分配機構歧異、範圍外接觸、其他):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` — message 含 effect_meta)
+- [x] 根因與修法(讀取臂位置、& 合一 effect 處置寫明):
+  - **根因**:`Value::effect()` / combo 構造 join+cocoon 屏蔽已健康;
+    `navigate_segments` 無 `.%effect` 讀取臂 → 常規值一律 open miss `_`。
+  - **讀取臂**(`lib.rs` `navigate_segments`):
+    1. Combo:欄位查找**之後**(spoof 顯式 `%effect` 欄優先)、closed-miss
+       **之前** → `effect_tag_atom(c.effect)`(純 Tag 原子,無 re-taint)。
+    2. 非 Combo/Union/Bottom/Blur:force 後若段=`%effect` →
+       `effect_tag_atom(current.effect())` 早返回。
+    3. Union:既有 per-branch 投影自然分配;投影後**早返回**
+       `normalize_union`(勿 `with_effect(accumulated)` 否則印出
+       `#io ;; %effect: #io | …`)。
+  - **⊥/blur**:白名單臂未動——`%effect` 非白名單,⊥ F1 傳過、blur 吸收。
+  - **& 合一**:`unify_combo` 既有 `a.effect.max(b.effect)` 即 join;未改
+    合一語義本體,紅門 `u1.%effect` → `#io` 自然綠。
+  - **顯示**:`;; %effect:` 尾註零改動(SPEC_11 §3.4 法定)。
+  - **語料**:`git mv tests/effect_taint.n tests/unit/`(內容不動)。
+- [x] 探針/workspace/conformance/語料 四數:
+  - effect_meta 探針 **12/12**(7 紅解凍 + 5 釘)
+  - workspace **1248/0/3**
+  - conformance **123/123**(L2-83/84 翻綠)
+  - 語料 unit+integration **75/0**(含遷入 effect_taint)
+- [x] 申報事項(聯集分配機構歧異、範圍外接觸、其他):
+  - 聯集分配:無特例臂,既有 Union 投影 + 早返回純標籤即可;無歧異。
+  - **未碰** EffectTag 枚舉、CAID/content_hash、顯示層、⊥/blur 白名單。
 
 ## 6. 驗收紀錄(驗收方)

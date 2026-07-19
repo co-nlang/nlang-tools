@@ -190,6 +190,17 @@ fn cycle_reentry(ctx: &EvalContext, reentered: Option<&str>) -> Value {
     }
 }
 
+/// SPEC_08 §4.1: `.%effect` answer — pure tag atom (tag body without `#`).
+fn effect_tag_atom(e: EffectTag) -> Value {
+    let name = match e {
+        EffectTag::Pure => "pure",
+        EffectTag::State => "state",
+        EffectTag::IO => "io",
+        EffectTag::NonDet => "nondet",
+    };
+    Value::Atom(AtomKind::Tag(name.to_string()), EffectTag::Pure, None)
+}
+
 pub type BuiltinFn = dyn Fn(Value, &Ouroboros, &mut EvalContext) -> Value + Send + Sync;
 
 #[derive(Clone)]
@@ -1602,7 +1613,21 @@ let mut refl_fields = IndexMap::new();
                 return Value::Atom(AtomKind::Str(solid.content_hash_with_salt(&ctx.horizon_salt).to_string()), EffectTag::Pure, None).with_effect(accumulated_effect);
             }
             if seg == "%rank" { if let Value::Atom(_, _, Some(r)) = current { return Value::Atom(AtomKind::Int(BigInt::from(r)), EffectTag::Pure, None).with_effect(accumulated_effect); } }
-            
+            // SPEC_08 §4.1 元欄觀測 (effect_meta): `.%effect` → effect tag
+            // atom. Pure carrier (no re-taint via accumulated_effect — the
+            // answer *is* the tag; `#io  ;; %effect: #io` would lie).
+            // ⊥ / #blur handled below on their whitelist arms (F1 / absorb);
+            // Combo path: field lookup first (spoof), then this lens before
+            // closed-miss. Non-combo values answer here after force.
+            if seg == "%effect"
+                && !matches!(
+                    &current,
+                    Value::Bottom(_) | Value::Blur(_) | Value::Combo(_) | Value::Union(_)
+                )
+            {
+                return effect_tag_atom(current.effect());
+            }
+
             if let Value::Bottom(ref d) = current {
                 if seg == "%cause" {
                     return d.as_cause_combo().with_effect(accumulated_effect);
@@ -1676,8 +1701,14 @@ let mut refl_fields = IndexMap::new();
                     } else {
                         path_so_far = seg.to_string();
                     }
+                    // SPEC_08 §4.1: explicit `%effect` field (SYNTAX_08) wins;
+                    // else engine tag lens — *before* closed-miss so cocoon
+                    // `.%effect` is #pure shield, not #missing_key.
                     let target = match found {
                         Some(v) => v,
+                        None if seg == "%effect" => {
+                            return effect_tag_atom(c.effect);
+                        }
                         None if c.closed && !seg.starts_with('%') => {
                             // SPEC_03 §1.2 #1 / §1.3: Cocoon eigenstate —
                             // undefined coordinate → ⊥ #missing_key.
@@ -1743,6 +1774,13 @@ let mut refl_fields = IndexMap::new();
                         // F4c + T3: primary-rank member ⊥ out verbatim.
                         return primary_bottom_from_culled(culled)
                             .with_effect(branch_effect);
+                    }
+                    // SPEC_08 §4.1: union distributes `.%effect` per branch;
+                    // answers are pure tag atoms — do not re-taint with the
+                    // path's accumulated IO/nondet (would print
+                    // `#io ;; %effect: #io | #pure ;; %effect: #io`).
+                    if seg == "%effect" {
+                        return normalize_union(survivors);
                     }
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);

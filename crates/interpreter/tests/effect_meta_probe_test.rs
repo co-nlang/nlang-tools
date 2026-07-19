@@ -84,21 +84,18 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_effect_read_io_atom() {
     // L2-83 twin.
     assert_obs("t: ~%Time.now _\nout: t.%effect", "#io");
 }
 
 #[test]
-#[ignore]
 fn red_effect_read_pure_default() {
     assert_obs("out: (42).%effect", "#pure");
     assert_obs("pc: { v: 1 }\nout: pc.%effect", "#pure");
 }
 
 #[test]
-#[ignore]
 fn red_effect_read_combo_contagion() {
     // §4.2.1 structural contagion — already joined at construction
     // (open combos: me = max(field effects)); the lens just exposes it.
@@ -106,7 +103,6 @@ fn red_effect_read_combo_contagion() {
 }
 
 #[test]
-#[ignore]
 fn red_effect_read_cocoon_shield() {
     // L2-84 twin. §4.2.1 Shield: contagion stops at the cocoon wall —
     // the cocoon's OWN tag stays #pure even with an io field inside.
@@ -114,13 +110,11 @@ fn red_effect_read_cocoon_shield() {
 }
 
 #[test]
-#[ignore]
 fn red_effect_read_nondet() {
     assert_obs("r: ~%Math./random _\nout: r.%effect", "#nondet");
 }
 
 #[test]
-#[ignore]
 fn red_effect_read_union_distributes() {
     // Unions distribute lenses per projection (SPEC_07); canonical
     // display order sorts tag atoms lexically (SPEC_01 §2.4.1).
@@ -128,7 +122,6 @@ fn red_effect_read_union_distributes() {
 }
 
 #[test]
-#[ignore]
 fn red_effect_read_unify_join() {
     // §4.1 composition: & unification joins effects (pure ∘ io = io).
     // This is the honest twin of the orphan tests/effect_taint.n.
