@@ -59,17 +59,16 @@ pub fn static_cycle_top(members: Vec<String>) -> Value {
 }
 
 /// `%cause` carrier for static-cycle Top — closed cocoon, G6-peelable to tag.
+/// REAL_04 §1 (2026-07-19): core = %val only; no fossil %type.
+/// Anti-peel data pad `_`→Top is engine scaffolding — stripped at display
+/// (to_nlang) so it never appears in user-visible projections.
 pub fn static_cycle_cause_combo(members: &[String]) -> Value {
     let mut fields = IndexMap::new();
-    fields.insert(
-        "%type".to_string(),
-        Value::Atom(AtomKind::Tag("static_cycle".to_string()), EffectTag::Pure, None),
-    );
     fields.insert(
         "%val".to_string(),
         Value::Atom(AtomKind::Tag("static_cycle".to_string()), EffectTag::Pure, None),
     );
-    // Anti-peel data pad (same pattern as Bottom %cause cocoon).
+    // Anti-peel data pad (is_pure_wrapper requires empty data).
     fields.insert("_".to_string(), Value::Top);
     if !members.is_empty() {
         let mut mf = IndexMap::new();
@@ -224,6 +223,13 @@ pub fn strip_local_axis(v: Value) -> Value {
         }
         other => other,
     }
+}
+
+/// Engine anti-peel scaffolding: data key `_` bound to Top (printed as `_`).
+/// Not user-visible (REAL_04 cocoon_shape law 3). User fields named `_` with
+/// any non-Top value still display.
+fn is_engine_scaffold_field(key: &str, val: &Value) -> bool {
+    key == "_" && matches!(val, Value::Top | Value::TopCaused { .. })
 }
 
 /// G6: collapsed-observation projection (SYNTAX_06 §4 #6 value-context).
@@ -808,10 +814,10 @@ impl BottomDetail {
             BottomCause::OutOfHorizon => "#out_of_horizon",
             BottomCause::SystemReserved => "#system_reserved",
         };
-        fields.insert("%type".to_string(), Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None));
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
         // value-context projection; <<path>> keeps the full chain.
+        // Fossil %type twin removed (cocoon_shape arc 2026-07-19).
         fields.insert(
             "%val".to_string(),
             Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None),
@@ -819,7 +825,8 @@ impl BottomDetail {
         // Non-empty data axis so lattice unify does not treat this as a pure
         // wrapper and peel to the bare tag during evolve field-merge (which
         // would erase the cocoon before `m.%val` can navigate). Collapsed
-        // observation still peels %val (project_value_context).
+        // observation still peels %val (project_value_context). Engine
+        // scaffolding: stripped at display (to_nlang) — never user-visible.
         fields.insert(
             "_".to_string(),
             Value::Top,
@@ -1410,10 +1417,25 @@ impl Value {
                 s.push('\n');
                 let fields = c.fields();
                 let mut keys: Vec<_> = fields.keys().collect(); keys.sort();
-                for k in keys { let v = fields.get(k).unwrap(); s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1))); }
+                for k in keys {
+                    let v = fields.get(k).unwrap();
+                    // Engine anti-peel scaffolding (`_: _` / `_`→Top) is not
+                    // user-visible (REAL_04 cocoon_shape law 3). User data
+                    // fields named `_` with a non-Top value still print.
+                    if is_engine_scaffold_field(k, v) {
+                        continue;
+                    }
+                    s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1)));
+                }
                 let local = c.local_fields();
                 let mut lkeys: Vec<_> = local.keys().collect(); lkeys.sort();
-                for k in lkeys { let v = local.get(k).unwrap(); s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1))); }
+                for k in lkeys {
+                    let v = local.get(k).unwrap();
+                    if is_engine_scaffold_field(k, v) {
+                        continue;
+                    }
+                    s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1)));
+                }
                 s.push_str(&format!("{}}}", pad)); if c.closed { s.push('}'); }
                 s
             }

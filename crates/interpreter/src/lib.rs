@@ -1570,14 +1570,8 @@ let mut refl_fields = IndexMap::new();
                 if seg == "%cause" {
                     return d.as_cause_combo().with_effect(accumulated_effect);
                 }
-                if seg == "%type" {
-                    return Value::Atom(
-                        AtomKind::Tag(d.cause.as_tag().to_string()),
-                        EffectTag::Pure,
-                        None,
-                    )
-                    .with_effect(accumulated_effect);
-                }
+                // %type alias retired (cocoon_shape 2026-07-19): non-meta on
+                // ⊥ passes the bottom through (F1 compositionality).
                 // F1: ⊥ navigation is compositional (x.a.b ≡ (x.a).b) — same
                 // shape as the Blur continue repair. Non-meta segments pass
                 // the bottom through so a later meta segment still answers.
@@ -1585,18 +1579,11 @@ let mut refl_fields = IndexMap::new();
                 continue;
             }
             // SPEC_12 §1.1: caused Top provenance — meta-only readability.
+            // %type alias retired: only %cause is meta-readable here.
             if let Value::TopCaused { ref members } = current {
-                if seg == "%cause" || seg == "%type" {
-                    if seg == "%cause" {
-                        return crate::value::static_cycle_cause_combo(members)
-                            .with_effect(accumulated_effect);
-                    }
-                    return Value::Atom(
-                        AtomKind::Tag("static_cycle".to_string()),
-                        EffectTag::Pure,
-                        None,
-                    )
-                    .with_effect(accumulated_effect);
+                if seg == "%cause" {
+                    return crate::value::static_cycle_cause_combo(members)
+                        .with_effect(accumulated_effect);
                 }
                 // Non-meta on open Top: open miss (F4 dual of bare Top).
                 val = Value::Top;
@@ -1604,8 +1591,9 @@ let mut refl_fields = IndexMap::new();
             }
             // G3 R4 + Blur boundary #4/#5: #blur meta whitelist and
             // coordinate-context absorption (SPEC_08 §3.2.2).
+            // Whitelist = %cause / %caid only (%type fossil retired).
             if let Value::Blur(bd) = current {
-                if seg == "%cause" || seg == "%type" {
+                if seg == "%cause" {
                     return Value::Atom(
                         AtomKind::Tag(bd.cause.as_str().to_string()),
                         EffectTag::Pure,
@@ -1626,7 +1614,7 @@ let mut refl_fields = IndexMap::new();
                 // (never mint #invalid_path — nothing is known behind a
                 // horizon). Navigation stays compositional (x.a.b ≡ (x.a).b):
                 // remaining segments continue on the blur so a later meta
-                // segment (%cause/%type/%caid) still answers honestly.
+                // segment (%cause/%caid) still answers honestly.
                 let mut bd = bd;
                 bd.effect = bd.effect.max(accumulated_effect);
                 val = Value::Blur(bd);

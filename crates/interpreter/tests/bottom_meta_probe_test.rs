@@ -89,8 +89,14 @@ fn flat_chain(n: usize) -> String {
 
 #[test]
 fn red_bottom_nav_compositional_type() {
-    // L2-28. Today: whole ⊥ display (bail-out discards `%type`).
-    assert_obs("bad: 1 & 2\nout: bad.name.%type", "#conflict");
+    // L2-28. cocoon_shape 2026-07-19: %type alias retired — non-meta on
+    // ⊥ passes the ⊥ through (F1); still compositional with intermediate
+    // open-miss segments.
+    let got = observe_nlang("bad: 1 & 2\nout: bad.name.%type", "out");
+    assert!(
+        got.starts_with("_|_") && got.contains("#conflict"),
+        "⊥.%type must pass the ⊥ through: {got:?}"
+    );
 }
 
 #[test]
@@ -101,7 +107,12 @@ fn red_bottom_nav_compositional_cause() {
 
 #[test]
 fn red_divergent_nav_compositional() {
-    assert_obs("a: a + 1\nout: a.name.%type", "#divergent");
+    // %type retired: compositional nav still carries the ⊥ #divergent.
+    let got = observe_nlang("a: a + 1\nout: a.name.%type", "out");
+    assert!(
+        got.starts_with("_|_") && got.contains("#divergent"),
+        "divergent ⊥.%type must pass through: {got:?}"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -212,7 +223,12 @@ fn pin_bottom_nonmeta_tail_passthrough() {
 
 #[test]
 fn pin_bottom_type_direct() {
-    assert_obs("bad: 1 & 2\nout: bad.%type", "#conflict");
+    // cocoon_shape: %type is not a meta read — ⊥ passes through verbatim.
+    let got = observe_nlang("bad: 1 & 2\nout: bad.%type", "out");
+    assert!(
+        got.starts_with("_|_") && got.contains("#conflict"),
+        "⊥.%type must pass the ⊥ through: {got:?}"
+    );
 }
 
 #[test]
