@@ -47,8 +47,11 @@ impl TypeConstraint {
         !matches!(Self::from_name(name), TypeConstraint::Unknown(_))
     }
 
-    /// Opaque `{{%kind: #type_constraint, %type: "…"}}` marker used for
+    /// Opaque `{{%kind: #type, %type: "…"}}` constraint marker used for
     /// builtins and the Unknown not-found fallback.
+    /// SPEC_03 §4 / kind_tag B3 (2026-07-19): role tag is canonical `#type`;
+    /// distinguish markers from stdlib type nodes (`%kind: #type` + `%name`)
+    /// via the payload field `%type` (engine-internal spelling, B2).
     pub fn marker_value(type_name: &str) -> Value {
         use crate::value::{ComboVal, EffectTag};
         use indexmap::IndexMap;
@@ -57,7 +60,7 @@ impl TypeConstraint {
                 (
                     "%kind".to_string(),
                     Value::Atom(
-                        AtomKind::Tag("type_constraint".to_string()),
+                        AtomKind::Tag("type".to_string()),
                         EffectTag::Pure,
                         None,
                     ),
@@ -239,10 +242,16 @@ pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
     }
 }
 
+/// True iff this combo is a **constraint marker** (nominal / builtin `@Name`
+/// refine payload), not a stdlib type node.
+/// Kind-tag B3: both mint `%kind: #type`; markers also carry the internal
+/// payload field `%type: "Name"`, while stdlib type nodes carry `%name`.
 pub fn is_type_constraint_combo(cv: &crate::value::ComboVal) -> bool {
-    cv.get_field("%kind").map(|k| {
-        k.to_string_plain().trim_start_matches('#') == "type_constraint"
-    }).unwrap_or(false)
+    let kind_is_type = cv
+        .get_field("%kind")
+        .map(|k| k.to_string_plain().trim_start_matches('#') == "type")
+        .unwrap_or(false);
+    kind_is_type && get_type_constraint_name(cv).is_some()
 }
 
 pub fn get_type_constraint_name(cv: &crate::value::ComboVal) -> Option<String> {
