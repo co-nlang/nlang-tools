@@ -93,4 +93,32 @@ closed(cocoon)跳過=屏蔽已實作——**只缺讀取臂**。
   - 聯集分配:無特例臂,既有 Union 投影 + 早返回純標籤即可;無歧異。
   - **未碰** EffectTag 枚舉、CAID/content_hash、顯示層、⊥/blur 白名單。
 
-## 6. 驗收紀錄(驗收方)
+## 6. 驗收紀錄(2026-07-20,驗收方)
+
+**PASS——一件代修(驗收代修;對抗抓漏巢繭屏蔽穿透)**。交付
+commit `8006b1d`、代修 `ed840c4`。
+
+- **Diff 純度** ✓:`effect_tag_atom` helper+三臂(非容器早返回/
+  combo 欄位後 closed-miss 前/union 逐支後 normalize 早返回)按單;
+  無 re-taint 自防謊(`#io ;; %effect: #io` 預先擋掉=交付方自抓);
+  ⊥/blur 白名單、顯示層、EffectTag 枚舉、CAID 全未動;探針僅 7 個
+  `#[ignore]` 移除;孤兒 effect_taint.n 零改動遷 unit。
+- **獨立重跑** ✓:探針 12/12、workspace 1248/0/3、conformance
+  123/123(L2-83/84 翻綠)、語料 75/0(孤兒空洞真轉真綠)。代修後
+  13/13、**1249/0/3**、123/123、75/0。
+- **對抗**(9/10 正):聯集去重單支 #pure/鏈式 (t.%effect).%effect
+  → #pure/欄值面 (c.v).%effect → #io/eq #true/⊥ 支剔除後單支/
+  繭內值標籤保全 (k.v).%effect → #io/態射 #pure/spoof 非標籤值
+  99 照欄位優先/雙繭 #pure。
+- **代修=巢繭屏蔽穿透**:`w: { k: {{v: io}} }` 之 `w.%effect` →
+  `#io` 違 §4.2.1(傳染須止於繭壁)——`predict_effect` 之 Combo
+  臂無視 `closed` 走表達式樹 join;同繭**別名拼法**已 `#pure`
+  (值側健康)=字面量/別名分歧。基線期誤 join 不可觀測(無讀取
+  臂),鏡頭一裝即成謊。修=`if *closed { return Pure }` 一行;
+  代修釘三面(字面量/別名一致/開放巢照傳)。開放巢 `w2.%effect`
+  → #io、雙繭 → #pure 皆守。
+- **共責**:紅門釘了繭**自身**標籤(L2-84)漏了**對外傳染**面
+  ——屏蔽/傳染類法門要**內外雙面**(自身讀值+跨壁 join),
+  教訓記帳。
+- **既有債確認**:誤 join 為交付前既有(構造時已算),本弧鏡頭
+  曝光;非交付引入。
