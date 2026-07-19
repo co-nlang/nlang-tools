@@ -92,4 +92,21 @@ timeout〕、4 釘全綠)。
 - [x] 申報事項(範圍外接觸、歧異記錄):
   - 無歧異。整組替換形立法仍另案。
 
-## 6. 驗收紀錄(驗收方)
+## 6. 驗收紀錄(2026-07-20,驗收方)
+
+**PASS——零代修(協議全淨)**。交付 commit `9ddfa86`。
+
+- **Diff 純度** ✓:旋鈕表 const+`is_known_config_knob`+
+  `validate_config_knob_value`(collapse 後驗;⊥/Top/錯型拒)+
+  `effective_config`(創世 ∧ 覆寫,closed)三處復用(evolve 驗證
+  /observe overlay/lib.rs 雙綁定點,staged 殘片永不綁定);
+  `InvalidConfig` 枚舉尾端追加;探針僅 6 個 `#[ignore]` 移除;
+  system_axis 機構/消費端/parser 未碰。
+- **獨立重跑** ✓:探針 10/10、workspace **1259/0/3**、conformance
+  123/123、語料 75/0——四數全中目標。
+- **對抗全正**:別名綁定 `m: ~%Config` 透讀 timeout 1000/覆寫
+  strategy #strict 可見;spread `{...~%Config}` RHS 匯入 sp.
+  max_branches 64;雙覆寫並存;float 50.5 大聲拒;CLI 帶名報錯
+  `InvalidConfig at ~%Config.fool` exit 1(同 G2-S 訊息族)。
+- **記錄**:universe.rs `default_cache_id` unused-import 警告=
+  既有噪音(交付前同形),雜務另案。
