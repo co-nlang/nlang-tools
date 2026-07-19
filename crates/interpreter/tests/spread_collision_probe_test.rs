@@ -275,8 +275,7 @@ fn pin_enum_relation_seed_untouched() {
 
 #[test]
 fn pin_forward_ref_spread_frozen() {
-    // FROZEN CURRENT BEHAVIOR — separate case (Q3 ruling): spread is
-    // eager at construction, so a forward-referenced source contributes
-    // nothing today. Do NOT fix in this order; do not regress either.
-    assert_obs("q: { ...later, b: 1 }\nlater: { a: 7 }\nout: q.a", "_");
+    // UNFROZEN 2026-07-19 (forward_spread arc): spread expands at
+    // observation convergence — source position is irrelevant.
+    assert_obs("q: { ...later, b: 1 }\nlater: { a: 7 }\nout: q.a", "7")
 }

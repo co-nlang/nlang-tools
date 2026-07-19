@@ -382,6 +382,20 @@ impl Ouroboros {
     }
 
     fn unify_combo(&self, a: ComboVal, b: ComboVal, ctx: &mut EvalContext) -> Value {
+        // forward_spread: expand deferred sources before field lattice merge
+        // so `{...(1,2)} |> {s: …}` sees numeric keys from the unbox.
+        // Engine-internal expand may re-queue unresolved Top (wrong root);
+        // residual pending must survive ComboVal::new below.
+        let a = match self.expand_combo_pending(a, ctx) {
+            Value::Combo(c) => c,
+            other => return self.unify_internal(other, Value::Combo(b), ctx),
+        };
+        let b = match self.expand_combo_pending(b, ctx) {
+            Value::Combo(c) => c,
+            other => return self.unify_internal(Value::Combo(a), other, ctx),
+        };
+        let mut pending_spreads = a.pending_spreads.clone();
+        pending_spreads.extend(b.pending_spreads.iter().cloned());
         // Phase 1b: phase-aware merge entry
         match phase_merge_decision(&a, &b) {
             MergeDecision::H2Split => return make_h2_split_bottom(&a, &b),
@@ -474,7 +488,21 @@ impl Ouroboros {
                 rl.insert(key.clone(), merged);
             }
         }
-        Value::Combo(ComboVal::new(rf, a.closed || b.closed, rl, a.effect.max(b.effect), a.relations.iter().chain(b.relations.iter()).cloned().collect()))
+        let mut out = ComboVal::new(
+            rf,
+            a.closed || b.closed,
+            rl,
+            a.effect.max(b.effect),
+            a.relations
+                .iter()
+                .chain(b.relations.iter())
+                .cloned()
+                .collect(),
+        );
+        // Preserve deferred spreads that expand could not resolve yet
+        // (forward_spread: evolve/observe-entry unify vs system root).
+        out.pending_spreads = pending_spreads;
+        Value::Combo(out)
     }
     
     pub fn check_subtype_relation(&self, child: &TypeConstraint, parent: &TypeConstraint) -> bool {
