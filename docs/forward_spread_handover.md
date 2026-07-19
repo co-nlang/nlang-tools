@@ -61,9 +61,37 @@
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(pending/thunk 形制、C4 武裝點、CAID 時序寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(cross-dep 記錄義務、範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` — message 含 forward_spread)
+- [x] 根因與修法(pending/thunk 形制、C4 武裝點、CAID 時序寫明):
+  - **根因**:combo 構造急切 force 展開源;前向未定源=Top → no-op。
+  - **形制(b)**:`ComboVal.pending_spreads: Vec<Value>` 存源 Thunk
+    (serde skip,預設空);構造只入佇列;擴張在
+    `expand_combo_pending`(與急切臂同律:交集/`⊥`/blur/Top no-op/私有)。
+  - **擴張觸發**:`force`/`force_recursive`、`navigate_segments`(段前)、
+    `force_coord`(仍在 computing 內擴張,C4 可見)、`unify_combo` 前。
+  - **關鍵補丁(交付期病灶)**:`engine.unify`/`eval_context` 用系統 root
+    (`memo_enabled=false`)——evolve 合併 staged 與 observe 入口 unify 若
+    急切 expand,前向名解析為 Top 並 `mem::take` 清空 pending,後續觀測
+    永久靜默。修法:(1) 引擎內部 expand 遇 Top **回佇**源 Thunk;
+    觀測 ctx(`memo_enabled`)才真 Top no-op。(2) `unify_combo` 結果
+    **保留**殘餘 `pending_spreads`(原 `ComboVal::new` 丟棄)。
+  - **C4**:構造時 `spread_path_is_under_construction`;擴張時再檢 +
+    展開 force 前 `chain_transform_taint=true`(別名繞道→`#divergent`
+    非 static Top);`force_coord` 對 pending Combo 亦入 computing。
+  - **CAID/時序**:in-session evolve 可暫存含 pending 的 combo(thunk 形);
+    observe/force 後 solid。pending 不進 serde / 不進 content_hash
+    (落庫前應 force solid;本 harness 路徑均 expand 後觀測)。harness 與
+    CLI 語境行為一致(見 cross-dep)。
+- [x] 探針/workspace/conformance/語料 四數:
+  - forward_spread 探針 **10/10** + 遷移紅 pin_forward_ref_spread 綠
+    (= 工單 11 紅門合計)
+  - workspace **1234/0/3**
+  - conformance **121/121**(L2-81/82 翻綠)
+  - 語料 unit+integration **74/0**
+- [x] 申報事項(cross-dep 記錄義務、範圍外接觸、歧異記錄):
+  - **cross-dep** `q: {...src, b:1}; src: {a: q.b}` → 實測 **`1`**
+    (harness observe 與 `oo run --observe` 一致;達理想逐座標惰性)。
+  - **未碰** spread_privacy 本體、collision 交集本體、Top no-op 分界
+    (僅改 expand 時序與 unify 保留 pending)。
 
 ## 6. 驗收紀錄(驗收方填)

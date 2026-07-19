@@ -88,27 +88,23 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_fwd_spread_basic_field() {
     // L2-81 twin.
     assert_obs("q: {...later, b: 1}\nlater: {a: 7}\nout: q.a", "7");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_fwd_spread_collision_intersect() {
     assert_obs("w: {a: 1..5, ...src}\nsrc: {a: 1}\nout: w.a", "1");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_fwd_spread_bottom_propagates() {
     // L2-82 twin: ⊥ source spreads its cause regardless of position.
     assert_obs("w: {b: 1, ...bot}\nbot: 1 & 2\nout: (w).%cause", "#conflict");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_fwd_spread_blur_absorbs() {
     // Blur source absorbs the target verbatim (SPEC_03 §3.1 Blur row).
     let got = observe_nlang(
@@ -122,13 +118,11 @@ fn red_fwd_spread_blur_absorbs() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_fwd_spread_alias_chain() {
     assert_obs("q: {...al, b: 1}\nal: src\nsrc: {a: 7}\nout: q.a", "7");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_fwd_spread_commutativity_eq() {
     // The law face itself: both textual orders give the SAME combo.
     assert_obs(
@@ -157,7 +151,6 @@ fn pin_never_defined_source_noop() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_fwd_cyclic_spread_divergent() {
     // CALIBRATION FINDING: today `_` — the eager no-op disease MASKS
     // the cycle (source never expands). After the timing fix the

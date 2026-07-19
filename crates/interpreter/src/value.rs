@@ -307,6 +307,10 @@ pub fn seal_defining_scope(c: &mut ComboVal) {
                 for (_, fv) in inner.system.iter_mut() {
                     inject(fv, frame);
                 }
+                // forward_spread: pending spread thunks need the holder frame too.
+                for ps in inner.pending_spreads.iter_mut() {
+                    inject(ps, frame);
+                }
             }
             Value::Union(branches) => {
                 for b in branches.iter_mut() {
@@ -542,6 +546,12 @@ pub struct ComboVal {
     pub effect: EffectTag,
     pub relations: Vec<ValRelation>,
     pub masa_ref: MasaRef,
+    /// SPEC_03 §3.1 timing (forward_spread 2026-07-19): spread sources held
+    /// as Thunks until observation convergence — not expanded at construction.
+    /// Empty after expand. Skipped in serde (re-expand from source on load is
+    /// not required for in-session evolve/observe; store solidifies via force).
+    #[serde(skip, default)]
+    pub pending_spreads: Vec<Value>,
     #[serde(skip, default = "default_cache_id")]
     pub cache_id: Arc<RwLock<Option<ContentHash>>>,
     #[serde(skip, default)]
@@ -563,6 +573,7 @@ impl Default for ComboVal {
             effect: EffectTag::Pure,
             relations: vec![],
             masa_ref: MasaRef::Top,
+            pending_spreads: Vec::new(),
             cache_id: default_cache_id(),
             legacy_fields: IndexMap::new(),
             legacy_local: IndexMap::new(),
@@ -746,6 +757,7 @@ impl PartialEq for ComboVal {
         self.data == other.data && self.types == other.types && self.rules == other.rules 
             && self.meta == other.meta && self.system == other.system && self.local == other.local
             && self.closed == other.closed && self.effect == other.effect && self.relations == other.relations
+            && self.pending_spreads == other.pending_spreads
     }
 }
 

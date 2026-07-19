@@ -274,7 +274,6 @@ fn pin_enum_relation_seed_untouched() {
 }
 
 #[test]
-#[ignore] // MIGRATED to SPEC_03 §3.1 forward-spread timing law (2026-07-19 open commit) — remove at delivery
 fn pin_forward_ref_spread_frozen() {
     // UNFROZEN 2026-07-19 (forward_spread arc): spread expands at
     // observation convergence — source position is irrelevant.

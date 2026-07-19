@@ -148,6 +148,126 @@ impl Ouroboros {
         }
     }
 
+    /// SPEC_03 §3.1 timing (forward_spread): expand deferred spread sources
+    /// at observation/force convergence. Applies the same laws as the former
+    /// eager construction arm (intersect merge, ⊥ collapse, blur absorb,
+    /// Top no-op, private exclusion, C4 under-construction guard).
+    ///
+    /// Engine-internal unify (`memo_enabled == false`) runs against the
+    /// pristine system root — open-miss Top there is *not* "never-defined",
+    /// it is "binding not on this root". Re-queue those sources so evolve/
+    /// observe-entry unify cannot silently consume forward spreads.
+    /// Observation contexts (memo_enabled) treat Top as true no-op.
+    pub(crate) fn expand_combo_pending(
+        &self,
+        mut c: ComboVal,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        if c.pending_spreads.is_empty() {
+            return Value::Combo(c);
+        }
+        let spreads = std::mem::take(&mut c.pending_spreads);
+        let mut blur_absorb: Option<crate::value::BlurDetail> = None;
+        for src in spreads {
+            // C4 re-check at expansion (cycle via alias detour).
+            if let Value::Thunk { ref expr, .. } = src {
+                if spread_path_is_under_construction(expr, ctx) {
+                    return BottomCause::Divergent.into();
+                }
+            }
+            // Keep original for re-queue (force consumes the Thunk).
+            let src_for_requeue = src.clone();
+            // Spread expansion is not a pure-ref hop: if forcing the source
+            // re-enters the combo under construction (alias detour
+            // `al: a; a: {...al}`), classify as #divergent not static Top.
+            let saved_taint = ctx.chain_transform_taint;
+            ctx.chain_transform_taint = true;
+            let val = self.force(src, ctx);
+            ctx.chain_transform_taint = saved_taint;
+            if let Value::Bottom(d) = val {
+                return Value::Bottom(d);
+            }
+            if matches!(val, Value::Atom(AtomKind::Bottom, _, _)) {
+                return BottomCause::Conflict.into();
+            }
+            if let Value::Blur(bd) = val {
+                c.effect = c.effect.max(bd.effect);
+                blur_absorb = Some(match blur_absorb.take() {
+                    None => bd,
+                    Some(prev) => match self.unify_internal(
+                        Value::Blur(prev),
+                        Value::Blur(bd),
+                        ctx,
+                    ) {
+                        Value::Blur(merged) => merged,
+                        Value::Bottom(d) => return Value::Bottom(d),
+                        other => {
+                            if let Value::Blur(m) = other {
+                                m
+                            } else {
+                                return other;
+                            }
+                        }
+                    },
+                });
+                continue;
+            }
+            c.effect = c.effect.max(val.effect());
+            match val {
+                Value::Combo(ref cv) => {
+                    for (k, v) in cv.fields() {
+                        if let Some(existing) = c.get_field(&k).cloned() {
+                            let merged = self.unify_internal(existing, v, ctx);
+                            c.insert_field(&k, merged);
+                        } else {
+                            c.insert_field(&k, v);
+                        }
+                    }
+                    if spread_target_is_insider(cv, ctx) {
+                        for (k, v) in cv.local_fields() {
+                            let bare = k.trim().trim_start_matches('~').to_string();
+                            if let Some(existing) = c.local.get(&bare).cloned() {
+                                let merged = self.unify_internal(existing, v, ctx);
+                                c.local.insert(bare, merged);
+                            } else {
+                                c.local.insert(bare, v);
+                            }
+                        }
+                    }
+                    if !c.closed {
+                        c.effect = c.effect.max(cv.effect);
+                    }
+                }
+                Value::Top | Value::TopCaused { .. } => {
+                    if !ctx.memo_enabled {
+                        // Engine-internal (system root): keep pending for later
+                        // observation expand against the real universe root.
+                        c.pending_spreads.push(src_for_requeue);
+                    }
+                    // Observation: Top no-op (never-defined / open hole).
+                }
+                Value::Atom(ak, ae, rank) => {
+                    let shell = atom_spread_shell(Value::Atom(ak, ae, rank));
+                    if let Value::Combo(cv) = shell {
+                        for (k, v) in cv.fields() {
+                            if let Some(existing) = c.get_field(&k).cloned() {
+                                let merged = self.unify_internal(existing, v, ctx);
+                                c.insert_field(&k, merged);
+                            } else {
+                                c.insert_field(&k, v);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(bd) = blur_absorb {
+            return Value::Blur(bd);
+        }
+        Value::Combo(c)
+    }
+
     /// E3: if one operand is AST `!(e)` and eval(e) is Range, rewrite meet to
     /// membership negation: x if x∉range else ⊥. Mirror both orders.
     /// Does NOT handle standalone `!(range)` (that stays orthocomplement ⊥).
@@ -487,6 +607,10 @@ impl Ouroboros {
                 // absorb and no later ⊥, emit the blur snapshot (single-
                 // source blur absorb law from blur_spread arc).
                 let mut blur_absorb: Option<crate::value::BlurDetail> = None;
+                // SPEC_03 §3.1 timing (forward_spread): defer source expansion
+                // until observation convergence so forward-defined sources
+                // participate. Eager construction made position change results.
+                let mut pending_spreads: Vec<Value> = Vec::new();
                 for r in relations {
                     let lt = Value::Atom(r.left.clone(), EffectTag::Pure, None).to_string_plain();
                     let rt = Value::Atom(r.right.clone(), EffectTag::Pure, None).to_string_plain();
@@ -511,88 +635,23 @@ impl Ouroboros {
                             // key collision), not last-wins overwrite.
                             // C4: direct-name circular → ⊥ #divergent before eval
                             // (under-construction stack / force in_flight).
+                            // Guard stays armed at construction AND re-checked at
+                            // expansion (forward_spread cycle red gate).
                             if spread_path_is_under_construction(&f.value, ctx) {
                                 return BottomCause::Divergent.into();
                             }
-                            let val = self.force(self.eval(&f.value, ctx), ctx);
-                            // C3: Bottom spread collapses the whole target,
-                            // propagating the source's own %cause (no fresh mint).
-                            // Lawful early-return: ⊥ absorbs blur (and everything).
-                            if let Value::Bottom(d) = val {
-                                return Value::Bottom(d);
-                            }
-                            if matches!(val, Value::Atom(AtomKind::Bottom, _, _)) {
-                                return BottomCause::Conflict.into();
-                            }
-                            // SPEC_03 §3.1 Blur row + cause_canon T1: spread of
-                            // a horizon snapshot absorbs the target into THAT
-                            // #blur (cause/CAID/horizon preserved; never mint).
-                            // Unlike Bottom, do NOT early-return — keep folding
-                            // remaining sources so `{...big, ...bot}` meets
-                            // Blur×Bottom → Bottom #conflict (unify both orders).
-                            if let Value::Blur(bd) = val {
-                                me = me.max(bd.effect);
-                                blur_absorb = Some(match blur_absorb.take() {
-                                    None => bd,
-                                    Some(prev) => {
-                                        // Blur×Blur: existing unify arm (not re-adjudicated).
-                                        match self.unify_internal(
-                                            Value::Blur(prev),
-                                            Value::Blur(bd),
-                                            ctx,
-                                        ) {
-                                            Value::Blur(merged) => merged,
-                                            Value::Bottom(d) => return Value::Bottom(d),
-                                            other => {
-                                                // Defensive: prefer a blur if unify yielded one.
-                                                if let Value::Blur(m) = other {
-                                                    m
-                                                } else {
-                                                    return other;
-                                                }
-                                            }
-                                        }
-                                    }
-                                });
-                                continue;
-                            }
-                            me = me.max(val.effect());
-                            match val {
-                                Value::Combo(ref cv) => {
-                                    // Private preservation: external spread
-                                    // excludes local; insider keeps (geometric).
-                                    // C4 ancestor form (`a: { b: { ...a } }`) is
-                                    // caught by force/in_flight when observe
-                                    // force_recursive re-enters the nested thunk
-                                    // — do NOT treat "spread parent while forcing
-                                    // a child" as divergent (insider pin).
-                                    for (k, v) in cv.fields() {
-                                        self.merge_field_into(&mut rf, k, v, ctx);
-                                    }
-                                    if spread_target_is_insider(cv, ctx) {
-                                        for (k, v) in cv.local_fields() {
-                                            self.merge_field_into(&mut rl, k, v, ctx);
-                                        }
-                                    }
-                                    if !*closed {
-                                        me = me.max(cv.effect);
-                                    }
-                                }
-                                // C2: atom / number → {%val: v} (anti-peel shell
-                                // so evolve unify keeps the combo navigable at
-                                // `.%val`); Top / TopCaused → no-op (no constraint).
-                                Value::Top | Value::TopCaused { .. } => {}
-                                Value::Atom(ak, ae, rank) => {
-                                    let shell = atom_spread_shell(Value::Atom(ak, ae, rank));
-                                    if let Value::Combo(cv) = shell {
-                                        for (k, v) in cv.fields() {
-                                            self.merge_field_into(&mut rf, k, v, ctx);
-                                        }
-                                    }
-                                }
-                                // List is Combo (%kind list) — handled above.
-                                // Union / Range / Ref: no law yet; leave.
-                                _ => {}
+                            // Defer expansion: source as Thunk; expand at force /
+                            // navigate convergence so forward-defined sources
+                            // resolve (SPEC_03 §3.1 timing clause).
+                            let te = self.predict_effect(&f.value, ctx);
+                            pending_spreads.push(Value::Thunk {
+                                expr: Box::new(f.value.clone()),
+                                closure: ctx.scopes.clone(),
+                                context: ctx.context_value.clone().map(Box::new),
+                                effect: te,
+                            });
+                            if !*closed {
+                                me = me.max(te);
                             }
                         }
                         FieldKey::Named { name, prefix } => {
@@ -726,6 +785,8 @@ impl Ouroboros {
                 // collapsed the fold, the combo is that #blur snapshot.
                 // Plain fields interleaved after blur do not resurrect the
                 // target (blur absorbs; same end-state as single-source law).
+                // Note: blur absorb from *deferred* spreads is applied at
+                // expand time, not here (construction no longer forces sources).
                 if let Some(bd) = blur_absorb {
                     return Value::Blur(bd);
                 }
@@ -738,6 +799,7 @@ impl Ouroboros {
                     }
                 }
                 let mut combo = ComboVal::new(rf, *closed, rl, me, rv);
+                combo.pending_spreads = pending_spreads;
                 // SPEC_04 §2.1 / §3.1: bare names resolve through the defining
                 // combo as a scope frame (public + private).
                 crate::value::seal_defining_scope(&mut combo);

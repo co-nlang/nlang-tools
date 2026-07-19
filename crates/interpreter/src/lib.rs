@@ -1250,6 +1250,12 @@ let mut refl_fields = IndexMap::new();
                 }
                 self.resolve_path_internal(&path, ctx)
             }
+            // forward_spread: private force_coord skips the computing gate and
+            // only calls force — expand pending spreads here too so bits/pipe
+            // on `~d: {...~c, z:3}` see merged fields.
+            Value::Combo(c) if !c.pending_spreads.is_empty() => {
+                self.expand_combo_pending(c, ctx)
+            }
             _ => val,
         }
     }
@@ -1283,13 +1289,26 @@ let mut refl_fields = IndexMap::new();
             // final field). force_recursive must keep forcing until non-Thunk.
             Value::Thunk { .. } => self.force_recursive(val, ctx),
             Value::Combo(c) => {
-                let mut new_c = ComboVal::default();
-                new_c.closed = c.closed;
-                new_c.effect = c.effect;
-                for (k, v) in c.all_fields_iter() { new_c.insert_field(&k, self.force_recursive(v, ctx)); }
-                // also force local fields (all_fields_iter skips them)
-                for (k, v) in c.local.iter() { new_c.local.insert(k.clone(), self.force_recursive(v.clone(), ctx)); }
-                Value::Combo(new_c)
+                // forward_spread: expand deferred sources before solidifying fields.
+                let expanded = self.expand_combo_pending(c, ctx);
+                match expanded {
+                    Value::Combo(c) => {
+                        let mut new_c = ComboVal::default();
+                        new_c.closed = c.closed;
+                        new_c.effect = c.effect;
+                        new_c.relations = c.relations.clone();
+                        for (k, v) in c.all_fields_iter() {
+                            new_c.insert_field(&k, self.force_recursive(v, ctx));
+                        }
+                        for (k, v) in c.local.iter() {
+                            new_c
+                                .local
+                                .insert(k.clone(), self.force_recursive(v.clone(), ctx));
+                        }
+                        Value::Combo(new_c)
+                    }
+                    other => other,
+                }
             }
             // T2 (union_cull): force each branch, then cull ⊥ (SPEC_08
             // §3.2.2 #5). Observation exit of field `|` must not leak
@@ -1525,6 +1544,16 @@ let mut refl_fields = IndexMap::new();
             let seg = seg.trim();
             let mut current = self.force(val, ctx);
             accumulated_effect = accumulated_effect.max(current.effect());
+            // forward_spread: expand deferred sources before field ops so
+            // ⊥/blur absorb and field merge are visible to this segment.
+            if let Value::Combo(c) = current {
+                if !c.pending_spreads.is_empty() {
+                    current = self.expand_combo_pending(c, ctx);
+                    accumulated_effect = accumulated_effect.max(current.effect());
+                } else {
+                    current = Value::Combo(c);
+                }
+            }
             while let Value::Combo(ref c) = current {
                 if c.is_pure_wrapper() {
                     // Meta / present-key access hits the pure-wrapper shell
@@ -1622,7 +1651,7 @@ let mut refl_fields = IndexMap::new();
             }
 
             match current {
-                Value::Combo(ref c) => {
+                Value::Combo(c) => {
                     // SPEC_04 §3.1 #3/#5: dotted descent into a private (`~`)
                     // segment is external locating → ⊥ #private_access_violation.
                     // System axis `~%…` is exempt (not the local axis).
@@ -1801,9 +1830,11 @@ let mut refl_fields = IndexMap::new();
         if coord.starts_with('~') {
             return self.force(val, ctx);
         }
-        // Only gate re-entry for Thunk / Ref bindings — solid values (Combo,
-        // Atom, …) re-force is identity or cheap and HOF-safe.
-        let needs_gate = matches!(val, Value::Thunk { .. } | Value::Ref(_));
+        // Gate re-entry for Thunk / Ref, and for Combo still holding deferred
+        // spreads (forward_spread): expanding `...al` that aliases back to
+        // this coord must hit #divergent, not re-enter expand forever.
+        let needs_gate = matches!(val, Value::Thunk { .. } | Value::Ref(_))
+            || matches!(&val, Value::Combo(c) if !c.pending_spreads.is_empty());
         if needs_gate {
             if ctx.computing.contains(coord) {
                 return cycle_reentry(ctx, Some(coord));
@@ -1811,6 +1842,15 @@ let mut refl_fields = IndexMap::new();
             ctx.computing.insert(coord.to_string());
             ctx.cycle_chain.push(coord.to_string());
             let res = self.force(val, ctx);
+            // Expand deferred spreads WHILE still under this coord so
+            // alias-detour re-entry (`...al` → `a`) sees computing and
+            // chain_transform_taint (forward_spread C4).
+            let res = match res {
+                Value::Combo(c) if !c.pending_spreads.is_empty() => {
+                    self.expand_combo_pending(c, ctx)
+                }
+                other => other,
+            };
             if ctx.cycle_chain.last().map(|s| s == coord).unwrap_or(false) {
                 ctx.cycle_chain.pop();
             }
