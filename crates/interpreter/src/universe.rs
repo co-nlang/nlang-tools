@@ -59,6 +59,65 @@ fn is_root_config_field_write(key: &FieldKey) -> bool {
     }
 }
 
+/// SPEC_09 §6 closed knob table — non-negative Int knobs.
+const CONFIG_INT_KNOBS: &[&str] = &[
+    "fuel",
+    "timeout",
+    "max_branches",
+    "max_unification_depth",
+    "max_lifting_depth",
+    "max_pattern_nodes",
+];
+
+fn is_known_config_knob(name: &str) -> bool {
+    CONFIG_INT_KNOBS.contains(&name) || name == "strategy"
+}
+
+/// Validate a root `~%Config.<bare>` RHS after evaluation (SPEC_09 §6).
+/// Unknown name / wrong type / ⊥ / Top → `InvalidConfig` (evolve-loud;
+/// never stored as a node-level ⊥).
+fn validate_config_knob_value(name: &str, val: &Value) -> Result<(), BottomCause> {
+    if !is_known_config_knob(name) {
+        return Err(BottomCause::InvalidConfig);
+    }
+    // Collapse pure-wrappers / force residues — validation is on the value.
+    let v = val.collapse();
+    if matches!(v, Value::Top | Value::TopCaused { .. } | Value::Bottom(_)) {
+        return Err(BottomCause::InvalidConfig);
+    }
+    if name == "strategy" {
+        return match v {
+            Value::Atom(AtomKind::Tag(s), _, _) => match s.trim_start_matches('#') {
+                "blur" | "strict" | "approximate" => Ok(()),
+                _ => Err(BottomCause::InvalidConfig),
+            },
+            _ => Err(BottomCause::InvalidConfig),
+        };
+    }
+    // Non-negative integer knobs.
+    match v {
+        Value::Atom(AtomKind::Int(n), _, _) if *n >= 0i64.into() => Ok(()),
+        _ => Err(BottomCause::InvalidConfig),
+    }
+}
+
+/// Genesis ∧ staged overrides — effective closed config (display + resolve).
+pub(crate) fn effective_config(root: &ComboVal, staged: Option<&ComboVal>) -> Option<ComboVal> {
+    let mut base = match root.get_field("~%Config") {
+        Some(Value::Combo(c)) => c.clone(),
+        _ => return None,
+    };
+    if let Some(s) = staged {
+        if let Some(Value::Combo(over)) = s.get_field("~%Config") {
+            for (k, v) in over.fields() {
+                base.insert_field(&k, v);
+            }
+        }
+    }
+    base.closed = true;
+    Some(base)
+}
+
 /// User LHS write to engine-minted `~%` axis (ownership; not Config.bare).
 fn is_system_axis_lhs_forbidden(key: &FieldKey) -> bool {
     if is_root_config_field_write(key) {
@@ -174,8 +233,16 @@ impl Universe {
             // Root ~%Config.<bare>: stage an OPEN partial override. Lattice
             // meet cannot overwrite fuel 10000 with 50; observe overlays
             // staged Config fields onto the genesis module before unify.
+            // SPEC_09 §6: closed knob family — name + evaluated type loud
+            // at evolve (`InvalidConfig`); never silent accept.
             FieldKey::Path(p) if is_root_config_field_write(&field.key) => {
                 let bare = p.segments[1].trim().to_string();
+                // Name membership before type check (unknown never stages).
+                if !is_known_config_knob(&bare) {
+                    return Err(BottomCause::InvalidConfig);
+                }
+                // Type after eval — `fuel: 40 + 10` is lawful 50.
+                validate_config_knob_value(&bare, &val)?;
                 evolved_coords.push("~%Config".to_string());
                 evolved_coords.push(format!("~%Config.{}", bare));
                 let mut partial = match self.staged.get_field("~%Config").cloned() {
@@ -297,15 +364,13 @@ impl Universe {
     pub fn observe(&self, engine: &Ouroboros, path: &Path) -> Value {
         // Overlay staged ~%Config field overrides onto root before unify so
         // lattice meet never conflicts genesis fuel with user override.
+        // SPEC_09 §6 display: binding is the EFFECTIVE config (genesis ∧
+        // overrides, all seven knobs) — not the staged fragment alone.
         let mut root_for_obs = self.root.clone();
         let mut staged_for_obs = self.staged.clone();
-        if let Some(Value::Combo(overrides)) = staged_for_obs.get_field("~%Config").cloned() {
-            if let Some(Value::Combo(mut base)) = root_for_obs.get_field("~%Config").cloned() {
-                for (k, v) in overrides.data.iter() {
-                    base.insert_field(k, v.clone());
-                }
-                base.closed = true;
-                root_for_obs.insert_field("~%Config", Value::Combo(base));
+        if staged_for_obs.get_field("~%Config").is_some() {
+            if let Some(eff) = effective_config(&self.root, Some(&self.staged)) {
+                root_for_obs.insert_field("~%Config", Value::Combo(eff));
             }
             // Strip Config from staged so unify does not re-meet overrides.
             staged_for_obs.insert_field("~%Config", Value::Top);
