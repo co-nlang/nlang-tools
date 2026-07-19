@@ -150,9 +150,10 @@ fn red_pipe_blur_arg_carries_body_absorbs() {
 
 #[test]
 fn red_runaway_type_meta_fuel_exhausted() {
-    // L2-21.
+    // L2-21. cocoon_shape: blur meta whitelist is %cause/%caid only —
+    // read the BlurCause tag via %cause (former %type alias retired).
     assert_obs(
-        "/recursive: x -> /recursive (x + 1)\nout: (/recursive 1).%type",
+        "/recursive: x -> /recursive (x + 1)\nout: (/recursive 1).%cause",
         "#fuel_exhausted",
     );
 }

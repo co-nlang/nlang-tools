@@ -92,7 +92,6 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_cocoon_structural_no_pad() {
     // Law 3: scaffolding must not appear in the structural view.
     let got = observe_nlang("e: 1 & 2\nout: <<e.%cause>>", "out");
@@ -103,7 +102,6 @@ fn red_cocoon_structural_no_pad() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_cocoon_structural_no_type_field() {
     // Law 2: the %type twin column is gone from the cocoon.
     let got = observe_nlang("e: 1 & 2\nout: <<e.%cause>>", "out");
@@ -114,7 +112,6 @@ fn red_cocoon_structural_no_type_field() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_divergent_cocoon_clean() {
     // Second mint site (divergent family): no %type, no pad.
     let got = observe_nlang("m: {a: m.a + 1}\nout: <<(m.a).%cause>>", "out");
@@ -125,7 +122,6 @@ fn red_divergent_cocoon_clean() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_static_cycle_cocoon_clean() {
     // Third mint site (static-cycle cause combo): %members stays law,
     // %type/pad go.
@@ -137,7 +133,6 @@ fn red_static_cycle_cocoon_clean() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_bottom_type_seg_passthrough() {
     // Law 2: `.%type` on ⊥ is no meta read — ⊥ passes through verbatim.
     let got = observe_nlang("e: 1 & 2\nout: e.%type", "out");
@@ -148,7 +143,6 @@ fn red_bottom_type_seg_passthrough() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_blur_type_seg_absorbed() {
     // Law 2 + SPEC_08 #5: `.%type` on #blur is absorbed like any
     // ordinary segment (today: alias returns the BlurCause tag).

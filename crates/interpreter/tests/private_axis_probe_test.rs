@@ -108,8 +108,13 @@ fn red_root_anchor_dotted_blocked() {
 
 #[test]
 fn red_violation_type_meta() {
-    // L2-32 mirror.
-    assert_obs("p: { ~s: 1 }\nout: (p.~s).%type", "#private_access_violation");
+    // L2-32 mirror. cocoon_shape: %type is not a meta alias — ⊥ passes
+    // through with its cause (read via .%cause for the tag form).
+    let got = observe_nlang("p: { ~s: 1 }\nout: (p.~s).%type", "out");
+    assert!(
+        got.starts_with("_|_") && got.contains("#private_access_violation"),
+        "⊥.%type must pass private_access_violation through: {got:?}"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -236,6 +241,6 @@ fn pin_root_private_spread_lives() {
 
 #[test]
 fn pin_blur_and_bottom_meta_unaffected() {
-    // Adjacent arcs stay closed: ⊥ %type tag path untouched.
-    assert_obs("bad: 1 & 2\nout: bad.%type", "#conflict");
+    // Adjacent: ⊥ %cause still collapses to the tag; %type is passthrough.
+    assert_obs("bad: 1 & 2\nout: bad.%cause", "#conflict");
 }

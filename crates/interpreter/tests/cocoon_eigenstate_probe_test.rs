@@ -92,7 +92,13 @@ fn red_cocoon_access_bottom() {
 
 #[test]
 fn red_cocoon_access_type_meta() {
-    assert_obs("cc: {{ a: 1 }}\nout: (cc.b).%type", "#missing_key");
+    // cocoon_shape: %type alias retired — use passthrough form; %cause
+    // still collapses to the class tag.
+    let got = observe_nlang("cc: {{ a: 1 }}\nout: (cc.b).%type", "out");
+    assert!(
+        got.starts_with("_|_") && got.contains("#missing_key"),
+        "⊥.%type must pass #missing_key through: {got:?}"
+    );
 }
 
 #[test]

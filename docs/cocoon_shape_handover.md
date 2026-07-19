@@ -67,9 +67,26 @@ integration 7)不退。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(墊欄機構選項寫明、CAID 位移記錄):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` cocoon_shape)
+- [x] 根因與修法(墊欄機構選項寫明、CAID 位移記錄):
+  - **%type 廢止**:`as_cause_combo`、`static_cycle_cause_combo` 刪
+    `%type` insert;lib.rs navigate 刪 ⊥/TopCaused/Blur 上
+    `seg == "%type"` 別名臂——⊥ 落 F1 傳出、blur 落 #5 吸收(無特例)。
+  - **墊欄(選 a)**:保留 data 軸 `_`→Top 防 pure-wrapper 剝殼(格合併
+    語義);`to_nlang` 顯示出口以 `is_engine_scaffold_field` 剝除
+    (`key=="_"` 且值為 Top/TopCaused)。用戶 `_: 5` 等非 Top 值照印。
+  - **CAID 位移**:cause 繭移除 `%type` 欄 → 繭 content hash 一次性合法
+    位移(預期);墊欄仍參與內部 hash(僅顯示不可見)。
+- [x] 探針/workspace/conformance/語料 四數:
+  - 探針 **14/14**
+  - workspace **1206/0/3**
+  - conformance **117/117**(L2-78 翻綠)
+  - 語料 unit+integration **74/0**
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - 遷移舊 `%type` 別名期望(新法合法):bottom_meta×3、cocoon_eigenstate
+    ×1、private_axis×2、blur_horizon L2-21 改讀 `%cause`;語料
+    `tests/unit/test_causal_chain.n` 三處 `.%type`→`.%cause`。
+  - **未碰** type_constraint/dispatch 之 @Name `%type` 存放、%kind 鑄造、
+    %cause/%caid 白名單、%val/%members 核。
 
 ## 6. 驗收紀錄(驗收方填)
