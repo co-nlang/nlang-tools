@@ -94,4 +94,33 @@
   - **未碰** spread_privacy 本體、collision 交集本體、Top no-op 分界
     (僅改 expand 時序與 unify 保留 pending)。
 
-## 6. 驗收紀錄(驗收方填)
+## 6. 驗收紀錄(2026-07-19,驗收方)
+
+**PASS——一件代修(驗收代修;交付漏 cocoon 目標面)**。交付
+commit `6822ff3`、代修 `f072e6b`。
+
+- **Diff 純度** ✓:形制 (b)(`pending_spreads` thunk 佇列+四觸發
+  點擴張+unify 保留 pending+交付期自抓 root-unify 消耗病)按單;
+  PartialEq 含 pending、serde/content_hash 排除;探針僅 ignore
+  移除。交付紀錄品質高(關鍵補丁自申報)。
+- **獨立重跑** ✓:探針 10/10+遷移紅綠、workspace 1234/0/3、
+  conformance 121/121、語料 74/0(代修後 1236/0/3 含代修釘×2)。
+- **對抗**:聯集支顯示擴張後正典序/CAID 前向 vs 實心孿生
+  `#true`(身分收斂!)/雙前向鏈/eq 前向 vs 實心/去重坍縮單支
+  ——全正。**抓漏:cocoon 目標面**——`{{...later, b: 1}}` 前向
+  `#missing_key` vs 倒序 `7`(顯示 `{{b: 1}}` 證 pending 未擴):
+  繭構造 force_recursive 於 evolve 期跑,觀測類 ctx 把「尚未定義」
+  當「永不定義」消耗 no-op;且 force_recursive 重建丟 pending。
+- **代修**(反事實:未修=cocoon 面 ⊥、修後六面全綠):
+  (1) `EvalContext.in_evolve` 相位旗標(Universe::evolve 置位),
+  evolve 期 **closed combo** 之 Top 源回佇(開放 combo 保基線
+  消耗——never-eq 面 `q = {b:1}` `#true` 守住);(2)
+  force_recursive combo 重建保留 pending。代修釘×2(cocoon 雙序
+  /never eq+本徵態)。
+- **共責**:紅門只釘 `{}` 目標——**容器雙形({}/{{}})與拼法
+  雙形同級,門要雙釘**(教訓入紅線)。
+- **既有債記帳**:evolve 期急切計算×pending 開放 combo(如
+  `out: q = q2` 寫在源定義之前)=基線同形(v0.2.25 急切展開
+  同樣答錯),前向計算通用族另案。
+- **cross-dep 記錄**:`src: {a: q.b}` → `1`(交付申報,驗收
+  複測 ✓;達逐座標惰性理想)。
