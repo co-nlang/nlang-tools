@@ -398,7 +398,12 @@ impl Ouroboros {
             }
             ExprKind::Apply(f, arg) => self.predict_effect(f, ctx).max(self.predict_effect(arg, ctx)),
             ExprKind::Pipe(l, r) => self.predict_effect(l, ctx).max(self.predict_effect(r, ctx)),
-            ExprKind::Combo { fields, .. } => {
+            ExprKind::Combo { fields, closed, .. } => {
+                // §4.2.1 Shield: a cocoon literal predicts its OWN tag
+                // (#pure) — contagion stops at the wall. Joining through
+                // it leaked the interior into the parent's %effect
+                // (literal/alias spelling divergence; acceptance repair).
+                if *closed { return EffectTag::Pure; }
                 let mut e = EffectTag::Pure;
                 for f in fields { e = e.max(self.predict_effect(&f.value, ctx)); }
                 e
