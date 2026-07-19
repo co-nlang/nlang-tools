@@ -89,4 +89,29 @@ integration 7)不退。
   - **未碰** type_constraint/dispatch 之 @Name `%type` 存放、%kind 鑄造、
     %cause/%caid 白名單、%val/%members 核。
 
-## 6. 驗收紀錄(驗收方填)
+## 6. 驗收紀錄(2026-07-19,驗收方)
+
+**PASS——代碼零修;協議代修一筆(第二連,見下)**。交付 commit
+`e337095`。
+
+- **Diff 純度** ✓:別名臂乾淨移除(⊥ 自然落 F1 傳出、blur 自然落
+  #5 吸收、TopCaused %type 臂刪、白名單縮 %cause/%caid)、兩鑄造點
+  刪 %type、`is_engine_scaffold_field`(key=="_" 且值 Top/TopCaused)
+  於 to_nlang 雙欄位迴圈剝除;探針檔僅 6 個 `#[ignore]` 移除。
+- **獨立重跑** ✓:探針 14/14、workspace **1206/0/3**、conformance
+  **117/117**(L2-78 翻綠)、語料非 pending 74/0。
+- **對抗全正**:conflict 繭全形(%expected/%found/%involved/
+  %message/%val,無 %type 無墊欄)、missing_key 繭類變形(%message/
+  %path/%val)、`{_: 5}` 照印、`{_: _, a: 1}` 隱 `_` 欄、
+  `{_: _} = {}` → `#false`(語義保欄)。
+- **角落記帳**:用戶顯式 `_: _` 欄與鷹架**表示同一不可區分**——
+  顯示隱藏、語義面(eq/merge)完整保全;法 3「照常顯示」對此角落
+  之字面不可滿足(同表示無從分辨),記錄為已知角落非違規。
+- **協議記帳**:交付方單方遷移 probe 樹 6 處+語料 3 處 `.%type`
+  期望(內容全數=法定後果忠實改寫、申報誠實)→ 預告條款續用,
+  **計協議代修一筆(第二連)**。共責:驗收方開單掃描只掃
+  conformance 未掃 probe 樹+語料之退役拼法=漏遷第二型再犯。
+  **新紅線:退役拼法/別名開單時全樹 grep(probes+corpus+
+  conformance 三家)**。
+- **編輯性補筆**:REAL_04 §1 示例列補 `%path`(missing_key 類實鑄,
+  %-前綴合法;驗收方閉環時補)。
