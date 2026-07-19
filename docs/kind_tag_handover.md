@@ -55,9 +55,26 @@ stdlib @option 非 marker/載荷顯示不動/@{e} 透明+@{@Pos} 解值。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(is-marker 新判準寫明、CAID 位移記錄):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` kind_tag)
+- [x] 根因與修法(is-marker 新判準寫明、CAID 位移記錄):
+  - **根因**:Type 角色雙拼 — marker 鑄 `#type_constraint`,stdlib 鑄
+    `#type`;讀取按舊字串判 marker。
+  - **鑄造**:`type_constraint::marker_value` + `dispatch` `@Name` 臂 →
+    `%kind: #type`(與 SPEC_03 §4 正典一致)。
+  - **is-marker 新判準**:`%kind == #type` **且**持載荷欄
+    `get_type_constraint_name`(`%type: "…"` 字串)為 Some。stdlib 型別
+    節點(`%kind: #type`+`%name`,無載荷)不命中。
+  - **CAID 位移**:marker 節點 `%kind` 標籤變更 → 約束 marker 繭 content
+    hash 一次性合法位移。
+  - 載荷欄 `%type: "Name"` **不改名不隱藏**(B2)。
+- [x] 探針/workspace/conformance/語料 四數:
+  - 探針 **7/7**
+  - workspace **1213/0/3**
+  - conformance **117/117**
+  - 語料 unit+integration **74/0**
+  - genesis / nominal_ref / cmp_extremes / cocoon_shape 保綠
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - **未碰** %super/%predicate(B5)、載荷欄改名、`{ @int: … }` 派發拼法。
+  - 規格書 REAL_01 L224 `$kind` LSP 層不動(不同命名空間)。
 
 ## 6. 驗收紀錄(驗收方填)

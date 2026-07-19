@@ -80,7 +80,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_marker_kind_is_type() {
     // Builtin marker cocoon in structural view: canonical role tag.
     let got = observe_nlang("out: <<@{ @int }>>", "out");
@@ -91,7 +90,6 @@ fn red_marker_kind_is_type() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_marker_kind_str_builtin() {
     // Second builtin spelling — same law, guards a per-site miss.
     let got = observe_nlang("out: <<@{ @str }>>", "out");

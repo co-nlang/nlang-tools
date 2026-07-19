@@ -93,12 +93,13 @@ impl Ouroboros {
             if type_name.starts_with('{') {
                 return Value::Top;
             }
+            // kind_tag B3: canonical role tag `#type` + payload `%type`.
             return Value::Combo(ComboVal::new(
                 IndexMap::from_iter(vec![
                     (
                         "%kind".to_string(),
                         Value::Atom(
-                            AtomKind::Tag("type_constraint".to_string()),
+                            AtomKind::Tag("type".to_string()),
                             EffectTag::Pure,
                             None,
                         ),
