@@ -100,13 +100,11 @@ fn assert_clean(src: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_config_unknown_name_loud() {
     assert_loud("~%Config.fool: 50\nout: 1 + 1");
 }
 
 #[test]
-#[ignore]
 fn red_config_typo_lie_face_loud() {
     // THE lie face: user believes fuel is raised; the horizon still
     // blurs at 10000. Silence is forbidden — this must be loud.
@@ -114,7 +112,6 @@ fn red_config_typo_lie_face_loud() {
 }
 
 #[test]
-#[ignore]
 fn red_config_wrong_type_int_loud() {
     assert_loud("~%Config.fuel: \"lots\"\nout: 1 + 1");
     // Negative after evaluation is not a non-negative Int.
@@ -122,7 +119,6 @@ fn red_config_wrong_type_int_loud() {
 }
 
 #[test]
-#[ignore]
 fn red_config_wrong_type_strategy_loud() {
     assert_loud("~%Config.strategy: 5\nout: 1 + 1");
     // Tag, but outside the lawful set {#blur, #strict, #approximate}.
@@ -130,7 +126,6 @@ fn red_config_wrong_type_strategy_loud() {
 }
 
 #[test]
-#[ignore]
 fn red_config_bottom_top_loud() {
     // ⊥ and Top are not knob values — no silent no-op, no node ⊥.
     assert_loud("~%Config.fuel: 1 & 2\nout: 1 + 1");
@@ -138,7 +133,6 @@ fn red_config_bottom_top_loud() {
 }
 
 #[test]
-#[ignore]
 fn red_config_effective_display() {
     // SPEC_09 §6: observing ~%Config shows the EFFECTIVE config —
     // genesis ∧ overrides, all seven knobs — not the staged fragment.

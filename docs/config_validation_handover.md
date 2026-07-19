@@ -66,9 +66,30 @@ timeout〕、4 釘全綠)。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(驗證點位置、InvalidConfig 變體、顯示面機構寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` — message 含 config_validation)
+- [x] 根因與修法(驗證點位置、InvalidConfig 變體、顯示面機構寫明):
+  - **根因**:root `~%Config.<bare>` 豁免只驗 shape,名/型靜默收下;
+    路徑解析 staged 優先 → 綁定殘片非有效配置。
+  - **驗證點**(`universe.rs` evolve Config 寫入分支):
+    1. 名籍(求值前/後皆可;交付在 eval 後、staging 前):七鈕表外 →
+       `Err(InvalidConfig)`。
+    2. 型別(求值後):`fuel` 等六鈕 = 非負 Int;`strategy` ∈
+       {#blur,#strict,#approximate};`_|_`/`Top`/錯型一律
+       `InvalidConfig`(**不**鑄節點級 ⊥)。
+  - **變體**:`BottomCause::InvalidConfig` 枚舉尾端追加;as_tag=
+    `invalid_config`;primary_rank 與 system_reserved 同級。
+  - **顯示/解析**:`effective_config(root, staged)` = 創世 ∧ 覆寫、
+    closed。observe overlay 用其寫入 root;`resolve_path` /
+    `resolve_path_internal` 對 `~%Config` 名**跳過 staged 殘片**,
+    回傳有效配置(故 `out: ~%Config` 七鈕全列)。
+  - **未碰** system_axis 拒整組/combo 內 Config、消費端 pattern、
+    `%fuel`、parser。
+- [x] 探針/workspace/conformance/語料 四數:
+  - config_validation 探針 **10/10**
+  - workspace **1259/0/3**
+  - conformance **123/123**(本弧無向量,不退)
+  - 語料 unit+integration **75/0**
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - 無歧異。整組替換形立法仍另案。
 
 ## 6. 驗收紀錄(驗收方)

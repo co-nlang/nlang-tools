@@ -825,6 +825,7 @@ impl BottomDetail {
             BottomCause::NoContext => "#no_context",
             BottomCause::OutOfHorizon => "#out_of_horizon",
             BottomCause::SystemReserved => "#system_reserved",
+            BottomCause::InvalidConfig => "#invalid_config",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -928,6 +929,10 @@ pub enum BottomCause {
     /// User LHS write to engine-minted `~%` system axis (SPEC_09 ownership;
     /// ERROR_CODES §1.4 #system_reserved). Append-only tail.
     SystemReserved,
+    /// Root `~%Config.<bare>` name/type violation (SPEC_09 §6 closed knob
+    /// family; ERROR_CODES #invalid_config). Evolve-boundary named error —
+    /// never a node-level ⊥. Append-only tail (fmt discipline).
+    InvalidConfig,
 }
 
 impl BottomCause {
@@ -948,6 +953,7 @@ impl BottomCause {
             BottomCause::NoContext => "no_context",
             BottomCause::OutOfHorizon => "out_of_horizon",
             BottomCause::SystemReserved => "system_reserved",
+            BottomCause::InvalidConfig => "invalid_config",
         }
     }
 
@@ -957,7 +963,9 @@ impl BottomCause {
     pub fn primary_rank(self) -> u8 {
         match self {
             BottomCause::Divergent => 0,
-            BottomCause::PrivateAccessViolation | BottomCause::SystemReserved => 1,
+            BottomCause::PrivateAccessViolation
+            | BottomCause::SystemReserved
+            | BottomCause::InvalidConfig => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split

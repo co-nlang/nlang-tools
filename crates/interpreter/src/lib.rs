@@ -1422,6 +1422,16 @@ let mut refl_fields = IndexMap::new();
                     }
                 }
             }
+            // SPEC_09 §6: ~%Config binding = effective (genesis ∧ overrides),
+            // never the staged fragment alone (display + path reads).
+            if name == "~%Config" {
+                if let Some(eff) =
+                    crate::universe::effective_config(&ctx.root, ctx.staged.as_ref())
+                {
+                    self.record_dep(ctx, "~%Config");
+                    return Value::Combo(eff);
+                }
+            }
             if let Some(ref s) = ctx.staged {
                 // Public staged fields use force_coord (self/mutual cycles).
                 // Local (~private) fields: plain force — re-entry during HOF
@@ -1485,6 +1495,16 @@ let mut refl_fields = IndexMap::new();
                     let prefixes = vec!["/", "@", "~", "~%"];
                     for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = scope.get_field(&alt_name) { found = Some(val.clone()); break; } if let Some(val) = scope.get_local_field(&alt_name) { found = Some(val.clone()); break; } }
                     if found.is_some() { break; }
+                }
+                // SPEC_09 §6: never bind staged Config fragment as ~%Config;
+                // multi-segment reads (~%Config.timeout) need genesis ∧ override.
+                if found.is_none() && name == "~%Config" {
+                    if let Some(eff) =
+                        crate::universe::effective_config(&ctx.root, ctx.staged.as_ref())
+                    {
+                        found = Some(Value::Combo(eff));
+                        self.record_dep(ctx, "~%Config");
+                    }
                 }
                 if found.is_none() { if let Some(ref s) = ctx.staged { if let Some(val) = s.get_field(name).or_else(|| s.get_local_field(name)) { found = Some(val.clone()); self.record_dep(ctx, name); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = s.get_field(&alt_name).or_else(|| s.get_local_field(&alt_name)) { found = Some(val.clone()); self.record_dep(ctx, &alt_name); break; } } } } }
                 if found.is_none() { if let Some(val) = ctx.root.get_field(name).or_else(|| ctx.root.get_local_field(name)) { found = Some(val.clone()); self.record_dep(ctx, name); } else { let prefixes = vec!["/", "@", "~", "~%"]; for p in prefixes { let alt_name = if name.starts_with(p) { name.trim_start_matches(p).to_string() } else { format!("{}{}", p, name) }; if let Some(val) = ctx.root.get_field(&alt_name).or_else(|| ctx.root.get_local_field(&alt_name)) { found = Some(val.clone()); self.record_dep(ctx, &alt_name); break; } } } }
