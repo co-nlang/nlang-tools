@@ -171,6 +171,28 @@ fn pin_bottom_meta_whitelist_unchanged() {
 }
 
 #[test]
+fn repair_pin_cocoon_shield_in_parent() {
+    // ACCEPTANCE REPAIR (2026-07-20): predict_effect's Combo arm joined
+    // fields regardless of `closed` — a cocoon LITERAL inside a combo
+    // leaked its interior io into the parent's %effect (#io), while the
+    // ALIAS spelling of the same cocoon stayed #pure (value-side effect
+    // is healthy). §4.2.1: contagion stops at the cocoon wall in BOTH
+    // spellings; open-in-open nesting still propagates.
+    assert_obs(
+        "w: { k: {{ v: ~%Time.now _ }} }\nout: w.%effect",
+        "#pure",
+    );
+    assert_obs(
+        "kref: {{ v: ~%Time.now _ }}\nw3: { k: kref }\nout: w3.%effect",
+        "#pure",
+    );
+    assert_obs(
+        "w2: { c: { v: ~%Time.now _ } }\nout: w2.%effect",
+        "#io",
+    );
+}
+
+#[test]
 fn pin_blur_meta_whitelist_unchanged() {
     // Blur meta whitelist stays %cause/%caid — %effect read on a blur
     // absorbs (horizon snapshot; SPEC_08 §3.2.2 #5).
