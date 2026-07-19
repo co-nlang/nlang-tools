@@ -84,7 +84,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_body_tail_definition_side() {
     // L2-79 twin. chain [c, root]: ^^ = root (5). Today leaks to h (9).
     assert_obs(
@@ -94,14 +93,12 @@ fn red_body_tail_definition_side() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_body_root_def_holder_level() {
     // L2-80 twin. Root-held: chain [root]; ^ = root (5). Today: h (9).
     assert_obs("k: 5\nf: (n -> ^.k)\nh: {k: 9, r: 3 |> f}\nout: h.r", "5");
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_body_call_site_independent() {
     // THE literal-locality face: same literal, two call sites, ONE value.
     let src_h = "k: 5\nc: {k: 7, f: (n -> ^^.k)}\nh: {k: 9, r: 3 |> c.f}\nout: h.r";
@@ -111,7 +108,6 @@ fn red_body_call_site_independent() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_body_overshoot_honest() {
     // chain [c, root]: ^^^ overshoots → ⊥ #out_of_horizon (existing
     // law). Today the chimera supplies h and answers 5.
@@ -122,7 +118,6 @@ fn red_body_overshoot_honest() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_body_deep_def_tail() {
     // Two frames [d, c] then root: ^^^ = root (5). Today: h (9).
     assert_obs(
@@ -132,7 +127,6 @@ fn red_body_deep_def_tail() {
 }
 
 #[test]
-#[ignore] // RED GATE — remove at delivery
 fn red_body_apply_form() {
     // Dual-spelling lesson: morphism apply, same law as pipe.
     assert_obs(

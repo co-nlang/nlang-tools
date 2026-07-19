@@ -56,9 +56,26 @@ integration 7)不退。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(鏈源改法、捕獲時點寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` caret_body)
+- [x] 根因與修法(鏈源改法、捕獲時點寫明):
+  - **根因**:`apply_single_rule` 以 `sub_context(ctx)` 繼承**呼叫點**
+    scopes,再 `push` 定義 `%closure` frames + 參數 frame → 嵌合鏈
+    [呼叫…|定義 frames|param];`^` hop 耗盡 frames 後洩入呼叫容器。
+  - **修法**:體求值前 `call_ctx.scopes.clear()`,只裝載定義時捕獲的
+    `%closure` frames(態射建立時 `ctx.scopes` 快照,含 seal 持有鏈),
+    再 push 參數 frame 作「體當前層」。`^` hop 仍走既有
+    `Parent` 臂(`hops=count+1`;`hops==len`→root;`hops>len`→
+    `#out_of_horizon`)。`$` 仍經 `context_value`;裸名仍經定義 frames。
+  - **捕獲時點**:定義側——`ExprKind::Morphism` 建 `%closure` 時讀
+    當下 scopes(欄位 force/seal 已置持有鏈);呼叫點不再改寫 `^` 鏈。
+- [x] 探針/workspace/conformance/語料 四數:
+  - 探針 **11/11**
+  - workspace **1224/0/3**
+  - conformance **119/119**(L2-79/80 翻綠)
+  - 語料 unit+integration **74/0**
+  - caret_probe_test(欄位 RHS) **13/13** 保綠
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - **未碰** 欄位 RHS `^` 求值、裸名詞法機構本體、`$` P1–P5、overshoot
+    鑄造機構(復用)。
 
 ## 6. 驗收紀錄(驗收方填)

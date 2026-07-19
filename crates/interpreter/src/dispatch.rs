@@ -202,6 +202,15 @@ impl Ouroboros {
             if let Some(Value::Code(expr)) = rc.get_field("%code") {
                 let mut call_ctx = self.sub_context(ctx);
 
+                // SPEC_07 §4.2.3 (caret_body 2026-07-19): body `^` is a
+                // definition-time path abbreviation — hop chain =
+                // [definition frames (holder → …)] + body (param frame as
+                // current), then root via Parent hops==len. Must NOT inherit
+                // call-site scopes after frames (chimera leak: same literal
+                // `^^` read different worlds per call site). Bare-name lexical
+                // resolution still uses these definition frames only; `$` is
+                // the sole call-site data channel (context_value below).
+                call_ctx.scopes.clear();
                 if let Some(Value::Combo(cc)) = rc.get_field("%closure") {
                     for (_, sv) in &cc.fields() {
                         if let Value::Combo(s) = sv {
@@ -254,6 +263,8 @@ impl Ouroboros {
                     }
                 }
 
+                // Param frame = body "current" level (isomorphic to nested
+                // literal inside the holder); ^ = holder, ^^ = holder's parent.
                 call_ctx
                     .scopes
                     .push(ComboVal::new(arg_map, false, IndexMap::new(), EffectTag::Pure, vec![]));
