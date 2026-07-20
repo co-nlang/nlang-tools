@@ -857,4 +857,47 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             _ => BottomCause::Conflict.into()
         }
     }) as Arc<BuiltinFn>);
+
+    // ── Order wave W1: numeric order predicates (SPEC_09 §3) ───────────
+    // Binary {0: x, 1: y} → #true | #false; int/float cross by value;
+    // non-numeric → ⊥ #conflict (math-family error form).
+    fn numeric_pair(x: &Value, y: &Value) -> Option<(f64, f64)> {
+        let to_f = |v: &Value| -> Option<f64> {
+            match v {
+                Value::Atom(AtomKind::Int(n), _, _) => n.to_f64(),
+                Value::Atom(AtomKind::Float(f), _, _) => Some(*f),
+                _ => None,
+            }
+        };
+        Some((to_f(x)?, to_f(y)?))
+    }
+    fn bool_tag(b: bool, e: EffectTag) -> Value {
+        Value::Atom(
+            AtomKind::Tag(if b { "true".into() } else { "false".into() }),
+            e,
+            None,
+        )
+    }
+    macro_rules! math_cmp_pred {
+        ($name:expr, $op:expr) => {
+            m.insert($name.to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+                if let Value::Combo(ref c) = arg {
+                    if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
+                        let x = oo.force(vx.clone(), ctx).collapse().clone();
+                        let y = oo.force(vy.clone(), ctx).collapse().clone();
+                        let res_e = x.effect().max(y.effect());
+                        return match numeric_pair(&x, &y) {
+                            Some((a, b)) => bool_tag(($op)(a, b), res_e),
+                            None => BottomCause::Conflict.into(),
+                        };
+                    }
+                }
+                Value::Top
+            }) as Arc<BuiltinFn>);
+        };
+    }
+    math_cmp_pred!("math.lt", |a: f64, b: f64| a < b);
+    math_cmp_pred!("math.lte", |a: f64, b: f64| a <= b);
+    math_cmp_pred!("math.gt", |a: f64, b: f64| a > b);
+    math_cmp_pred!("math.gte", |a: f64, b: f64| a >= b);
 }

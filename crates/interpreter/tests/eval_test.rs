@@ -66,13 +66,15 @@ fn test_math_eval() {
 
 #[test]
 fn test_cmp_eval() {
+    // MIGRATED (2026-07-20, order-wave W2 open): numeric-order deviation
+    // retired — subset semantics: {10} ⊅ {5} → #false (SYNTAX_06 §4 #10).
     let input = "check: 10 > 5";
     let program = parse_program(input).unwrap();
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
 
     let val = oo.eval_observed(&program.fields[0].value, &mut ctx);
-    assert_eq!(val, Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+    assert_eq!(val, Value::Atom(AtomKind::Tag("false".to_string()), EffectTag::Pure, None));
 }
 
 #[test]

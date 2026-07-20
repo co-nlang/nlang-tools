@@ -79,11 +79,15 @@ fn strict_subset_at_extremes() {
 
 #[test]
 fn finite_numeric_compare_unchanged() {
-    assert_is_tag("r: 3 < 5", "true");
+    // MIGRATED (2026-07-20, order-wave W2 open): the documented §4.10
+    // deviation (numeric order on atoms) is retired — SYNTAX_06 §2.5/§4
+    // #10 subset semantics land: distinct singletons never contain each
+    // other. Numeric magnitude moved to ~%Math./lt family (W1).
+    assert_is_tag("r: 3 < 5", "false");
     assert_is_tag("r: 5 < 3", "false");
-    assert_is_tag("r: 3 <= 5", "true"); // documented §4.10 deviation pin (numeric, not subset)
-    assert_is_tag("r: 5 >= 3", "true");
-    assert_is_tag("r: 5.5 <= 6", "true");
+    assert_is_tag("r: 3 <= 5", "false");
+    assert_is_tag("r: 5 >= 3", "false");
+    assert_is_tag("r: 5.5 <= 6", "false");
 }
 
 #[test]
