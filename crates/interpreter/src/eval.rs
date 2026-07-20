@@ -1783,6 +1783,31 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             CmpOp::Eq | CmpOp::Ne => unreachable!("atomic family handled above"),
         }
 
+        // SYNTAX_06 §4 #13 (W3): order × #blur follows `=` two-stage law.
+        // Before meet reduction (unify must not consume the horizon).
+        // Same CAID → reflexive (<=/>= #true, </> #false); else absorb
+        // left-priority (never #false / #conflict).
+        match (&ca, &cb) {
+            (Value::Blur(ba), Value::Blur(bb)) if ba.blur_caid() == bb.blur_caid() => {
+                return bool_tag(match op {
+                    CmpOp::Lte | CmpOp::Gte => true,
+                    CmpOp::Lt | CmpOp::Gt => false,
+                    CmpOp::Eq | CmpOp::Ne => unreachable!(),
+                });
+            }
+            (Value::Blur(bd), _) => {
+                let mut bd = bd.clone();
+                bd.effect = bd.effect.max(cb.effect());
+                return Value::Blur(bd);
+            }
+            (_, Value::Blur(bd)) => {
+                let mut bd = bd.clone();
+                bd.effect = bd.effect.max(ca.effect());
+                return Value::Blur(bd);
+            }
+            _ => {}
+        }
+
         // Poset tags with declared ranks (SYNTAX_10) — lattice order by rank.
         // Kept before atom-subset flip so #h1 < #h2 stays the real ≤.
         if let (Value::Atom(ak, _, rx), Value::Atom(bk, _, ry)) = (&ca, &cb) {
@@ -1825,7 +1850,8 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             }
         };
 
-        // Meet-subset: (A & B) = A. Used for atom×type-marker (1 <= @int).
+        // Meet-subset: A <= B ⟺ (A & B) = A after solidify (G1 PartialEq).
+        // Atom shortcuts + general non-atom wiring (W3).
         let subset_lte = |oo: &Self, a: &Value, b: &Value, ctx: &mut EvalContext| -> bool {
             if let Some(same) = numeric_same(a, b) {
                 return same;
@@ -1836,7 +1862,16 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             let meet = oo.unify_internal(a.clone(), b.clone(), ctx);
             match meet {
                 Value::Bottom(_) => false,
-                m => m.collapse() == a.collapse(),
+                // Blur from meet is undetermined — not a definite subset fact.
+                Value::Blur(_) => false,
+                m => {
+                    let m = oo.force_recursive(m, ctx);
+                    let a_s = oo.force_recursive(a.clone(), ctx);
+                    if matches!(m, Value::Blur(_)) || matches!(a_s, Value::Blur(_)) {
+                        return false;
+                    }
+                    m == a_s
+                }
             }
         };
 
@@ -1891,7 +1926,16 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             });
         }
 
-        // W3 freeze: combo/union order stays ⊥ #conflict.
-        BottomCause::Conflict.into()
+        // W3: non-atom order via the same meet reduction (combo / union /
+        // mixed). Bidirectional meets independent; proper = lte ∧ ¬gte.
+        let ab = subset_lte(self, &ca, &cb, ctx);
+        let ba = subset_lte(self, &cb, &ca, ctx);
+        bool_tag(match op {
+            CmpOp::Lte => ab,
+            CmpOp::Gte => ba,
+            CmpOp::Lt => ab && !ba,
+            CmpOp::Gt => ba && !ab,
+            CmpOp::Eq | CmpOp::Ne => unreachable!(),
+        })
     }
 }

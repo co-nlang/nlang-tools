@@ -178,9 +178,8 @@ fn pin_atomic_eq_family_untouched() {
 
 #[test]
 fn pin_combo_union_order_still_frozen() {
-    // W3 pending: order on non-atoms stays ⊥ #conflict until its arc.
-    let got = observe_nlang("out: ({a: 1} <= {a: @int}).%cause", "out");
-    assert_eq!(got, "#conflict", "combo order frozen until W3: {got:?}");
-    let got = observe_nlang("out: ((1 | 2) <= (1 | 2 | 3)).%cause", "out");
-    assert_eq!(got, "#conflict", "union order frozen until W3: {got:?}");
+    // MIGRATED (2026-07-20, order-wave W3 open): the W3 fence comes
+    // down — non-atom order lands via the subset reduction.
+    assert_obs("out: {a: 1} <= {a: @int}", "#true");
+    assert_obs("out: (1 | 2) <= (1 | 2 | 3)", "#true");
 }
