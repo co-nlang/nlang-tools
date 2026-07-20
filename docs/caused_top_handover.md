@@ -78,7 +78,7 @@ workspace **1306/0/3**(基線 1293/0/17);conformance **131/131**
 **交付紀錄**(交付方填;先寫再回報):
 
 - [x] 交付 commit(s):
-  - tools: `d25e483` caused_top (ruling C): bare Top absorbs; caused Top is diagnostic
+  - tools: `f132452` caused_top (ruling C) + `1d0d4c0` §5 note
   - spec: `cf0db61` L2-56 retarget bare Top no-cause (open-miss is L2-91)
 - [x] 根因與修法(TopCaused 形制、缺欄鑄造點、正規化三處寫明):
   1. **TopCaused 形制**(`value.rs`):`TopCaused { cause, members }` —
