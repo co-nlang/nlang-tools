@@ -495,6 +495,9 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
             let path = parse_path_only(&name)?;
             let result = universe.observe(&engine, &path);
             
+            // SPEC_16 §2.2 (ruling B): PASS = definite fact decided by this
+            // observation. FAIL = ⊥ / #false / #fail / Top (undetermined —
+            // vacuous truth forbidden) / #blur (horizon undetermined).
             match result {
                 Value::Bottom(b) => {
                     println!("FAIL: {:?} - {} (%cause: {:?})", file, name, b.cause);
@@ -502,6 +505,22 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
                 }
                 Value::Atom(AtomKind::Tag(ref t), _, _) if t == "false" || t == "fail" => {
                     println!("FAIL: {:?} - {} (Returned #{})", file, name, t);
+                    failed += 1;
+                }
+                Value::Top | Value::TopCaused { .. } => {
+                    println!(
+                        "FAIL: {:?} - {} (undetermined: observation decided nothing)",
+                        file, name
+                    );
+                    failed += 1;
+                }
+                Value::Blur(d) => {
+                    println!(
+                        "FAIL: {:?} - {} (blur %cause: {})",
+                        file,
+                        name,
+                        d.cause.as_str()
+                    );
                     failed += 1;
                 }
                 _ => {

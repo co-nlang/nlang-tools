@@ -60,7 +60,6 @@ fn run_test_cmd(content: &str) -> (bool, String) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_top_test_fails() {
     // The vacuous-truth face itself: `(_) == 5` observes to Top.
     let (ok, text) = run_test_cmd("test_vacuous: (_) == 5\n");
@@ -72,7 +71,6 @@ fn red_top_test_fails() {
 }
 
 #[test]
-#[ignore]
 fn red_top_alias_test_fails() {
     // Orphan-twin shape: an undefined meta read compared to a tag.
     let (ok, text) = run_test_cmd("q: 5\ntest_ghost: q.%nonsense == #io\n");
@@ -81,7 +79,6 @@ fn red_top_alias_test_fails() {
 }
 
 #[test]
-#[ignore]
 fn red_blur_test_fails() {
     // Runaway recursion blurs at the horizon — undetermined, not proof.
     let (ok, text) = run_test_cmd(

@@ -54,9 +54,24 @@ test_canonical `.%type` 退役拼法=本弧開單遷移 `.%cause` 真綠)。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(match 臂位置與訊息形制寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` — message 含 test_verdict)
+- [x] 根因與修法(match 臂位置與訊息形制寫明):
+  - **根因**:`oo test` 觀測 match 字面「非 ⊥ 即過」→ Top/blur 空洞 PASS。
+  - **位點**:`crates/oo/src/main.rs` `run_test` 觀測結果 match
+    (Bottom / #false|#fail 既有 FAIL 臂之後、catch-all PASS 之前):
+    - `Value::Top | Value::TopCaused { .. }` → FAIL
+      `FAIL: {file} - {name} (undetermined: observation decided nothing)`
+    - `Value::Blur(d)` → FAIL
+      `FAIL: {file} - {name} (blur %cause: {d.cause.as_str()})`
+      (含 fuel_exhausted 等視界因)
+  - exit code 機構不動(failed>0 → exit 1);static-only / 發現規則 /
+    Summary / 語料 / interpreter 均未動。
+- [x] 探針/workspace/conformance/語料 四數:
+  - test_verdict 探針 **8/8**
+  - workspace **1267/0/3**
+  - conformance **123/123** 不退
+  - 語料 unit+integration **75/0** 不退
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - 本弧純 oo runner;無 interpreter 接觸、無歧異。
 
 ## 6. 驗收紀錄(驗收方)
