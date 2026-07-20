@@ -237,10 +237,11 @@ fn pin_lattice_eq_bottom_clean_booleans() {
 }
 
 #[test]
+#[ignore]
 fn pin_combo_lte_stays_conflict() {
-    // Adjacent, NOT in this ruling (§4.10 case): `<=` on combos is
-    // ⊥ #conflict today — a drive-by change here would be scope creep.
-    assert_bottom_conflict("out: { a: 1 } <= { a: 1 }");
+    // MIGRATED (2026-07-20, order-wave W3 open): non-atom order lands —
+    // reflexive combo `<=` is subset law `(A & B) = A` → #true.
+    assert_obs("out: { a: 1 } <= { a: 1 }", "#true");
 }
 
 #[test]

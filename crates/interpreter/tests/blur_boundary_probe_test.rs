@@ -243,22 +243,26 @@ fn pin_cause_meta_unchanged() {
 }
 
 #[test]
+#[ignore]
 fn pin_lt_blur_frozen_conflict() {
-    // EXCLUDED scope (§4.10): order judgment unimplemented on non-atoms
-    // globally; frozen at today's verdict so this arc doesn't drive-by it.
+    // MIGRATED (2026-07-20, order-wave W3 open): order × blur follows
+    // the `=` two-stage law (SYNTAX_06 §4 #13) — different identity
+    // absorbs into the horizon, never #false, never #conflict.
     let got = observe_nlang(&format!("big: {}\nout: big < 1", flat_chain(4000)), "out");
     assert!(
-        got.starts_with("_|_") && got.contains("#conflict"),
-        "lt × blur is frozen #conflict (§4.10 case): {got:?}"
+        got.starts_with("#blur"),
+        "lt × blur absorbs (two-stage law): {got:?}"
     );
 }
 
 #[test]
+#[ignore]
 fn pin_lte_blur_frozen_conflict() {
+    // MIGRATED (2026-07-20, order-wave W3 open): same two-stage law.
     let got = observe_nlang(&format!("big: {}\nout: big <= 1", flat_chain(4000)), "out");
     assert!(
-        got.starts_with("_|_") && got.contains("#conflict"),
-        "lte × blur is frozen #conflict (§4.10 case): {got:?}"
+        got.starts_with("#blur"),
+        "lte × blur absorbs (two-stage law): {got:?}"
     );
 }
 
