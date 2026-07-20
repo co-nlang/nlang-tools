@@ -71,9 +71,33 @@ test_comparison)。
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(謂詞分派位點、cmp 臂改法、poset 分支保全寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` — message 含 order_wave)
+- [x] 根因與修法(謂詞分派位點、cmp 臂改法、poset 分支保全寫明):
+  - **W1**:`lib.rs` math_morphisms 登錄 `/lt` `/lte` `/gt` `/gte` →
+    `math.lt` 等;`builtins/math.rs` 二元 `{0,1}` 數值比(int/float 依
+    值跨比)→ `#true`/`#false`;非數值 → ⊥ `#conflict`。柯里/管道同
+    既有 math 態射(pipe 慣例: `3 |> ~%Math./lt 5` = lt(5,3))。
+  - **W2**:`eval.rs` `eval_binary_cmp` set 族:
+    1. 極值表不動(⊥ ⊆ x、x ⊆ Top…)。
+    2. **poset 有 rank 標籤**先走 rank 數值序(保全 `#h1 < #h2`)。
+    3. 原子×原子:同單集(數值依值含 3≡3.0;其餘 PartialEq)→
+       `<=`/`>=` `#true`、`<`/`>` `#false`;異單集 → 全 `#false`
+       (**非 ⊥**)。
+    4. 原子×型別標記:meet 歸約 `(A & B) = A`;真子集 `ab && !ba`。
+    5. 型別×型別:既有 `check_subtype_relation`(+同名自反)。
+    6. combo/union → 仍 `#conflict`(W3 凍結)。
+  - **遷移**:`test_comparison.n` `10 > 5` → `~%Math./gt 10 5`;
+    連帶 `test_entropy.n` 熵增長行 `>` → `~%Math./gt`(W2 翻面副產);
+    `SEED_MATH` 更新(四謂詞入創世模組);開單遷移紅 cmp_extremes/
+    eval_test 解凍;L1-20/L2-10 已於開單側就緒。
+- [x] 探針/workspace/conformance/語料 四數:
+  - order_wave 探針 **11/11**(+ cmp_extremes/eval 遷移紅綠)
+  - workspace **1278/0/3**
+  - conformance **123/123**(L1-20/L2-10 綠)
+  - 語料 unit+integration **75/0**
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - 破壞性:原子 `<` 族數值偏差退役(Layer 1);數值比一律走
+    `~%Math./lt` 族。
+  - 未碰 `=`/`==`、blur×序、W3/W4、parser。
 
 ## 6. 驗收紀錄(驗收方)

@@ -78,7 +78,6 @@ fn strict_subset_at_extremes() {
 // --- active guards: the finite side must not move ---------------------------
 
 #[test]
-#[ignore]
 fn finite_numeric_compare_unchanged() {
     // MIGRATED (2026-07-20, order-wave W2 open): the documented §4.10
     // deviation (numeric order on atoms) is retired — SYNTAX_06 §2.5/§4

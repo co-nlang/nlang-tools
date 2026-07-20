@@ -84,7 +84,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_math_lt_lte() {
     assert_obs("out: ~%Math./lt 3 5", "#true");
     assert_obs("out: ~%Math./lt 5 3", "#false");
@@ -93,7 +92,6 @@ fn red_math_lt_lte() {
 }
 
 #[test]
-#[ignore]
 fn red_math_gt_gte() {
     assert_obs("out: ~%Math./gt 7 2", "#true");
     assert_obs("out: ~%Math./gt 2 7", "#false");
@@ -102,7 +100,6 @@ fn red_math_gt_gte() {
 }
 
 #[test]
-#[ignore]
 fn red_math_predicates_mixed_numeric() {
     // Int/float cross-compare by numeric value (SYNTAX_02).
     assert_obs("out: ~%Math./lt 3 3.5", "#true");
@@ -110,7 +107,6 @@ fn red_math_predicates_mixed_numeric() {
 }
 
 #[test]
-#[ignore]
 fn red_math_predicate_curry_pipe() {
     // Same morphism machinery as the rest of ~%Math: currying + pipe.
     assert_obs("out: 3 |> ~%Math./lt 5", "#false");
@@ -122,7 +118,6 @@ fn red_math_predicate_curry_pipe() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_atom_order_flip() {
     // L1-20 twin: distinct singletons never contain each other —
     // clean #false, NOT ⊥ (`=` family does not absorb).
@@ -133,7 +128,6 @@ fn red_atom_order_flip() {
 }
 
 #[test]
-#[ignore]
 fn red_subtype_atom_vs_type() {
     // A <= B ⟺ (A & B) = A: 1 & @int = 1 → the singleton is a proper
     // subset of the int space.

@@ -1783,59 +1783,115 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             CmpOp::Eq | CmpOp::Ne => unreachable!("atomic family handled above"),
         }
 
-        let op_fn = |x: f64, y: f64| match op {
-            CmpOp::Lt => x < y,
-            CmpOp::Gt => x > y,
-            CmpOp::Lte => x <= y,
-            CmpOp::Gte => x >= y,
-            CmpOp::Eq | CmpOp::Ne => unreachable!(),
-        };
-
-        match (&ca, &cb) {
-            (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                return bool_tag(op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)));
-            }
-            (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                return bool_tag(op_fn(*x, *y));
-            }
-            (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                return bool_tag(op_fn(x.to_f64().unwrap_or(0.0), *y));
-            }
-            (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                return bool_tag(op_fn(*x, y.to_f64().unwrap_or(0.0)));
-            }
-            _ => {}
-        }
-
+        // Poset tags with declared ranks (SYNTAX_10) — lattice order by rank.
+        // Kept before atom-subset flip so #h1 < #h2 stays the real ≤.
         if let (Value::Atom(ak, _, rx), Value::Atom(bk, _, ry)) = (&ca, &cb) {
             if matches!(ak, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
                 && matches!(bk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
             {
                 if let (Some(rx_val), Some(ry_val)) = (rx, ry) {
-                    return bool_tag(op_fn(*rx_val as f64, *ry_val as f64));
+                    let x = *rx_val as f64;
+                    let y = *ry_val as f64;
+                    return bool_tag(match op {
+                        CmpOp::Lt => x < y,
+                        CmpOp::Gt => x > y,
+                        CmpOp::Lte => x <= y,
+                        CmpOp::Gte => x >= y,
+                        CmpOp::Eq | CmpOp::Ne => unreachable!(),
+                    });
                 }
             }
         }
 
-        if matches!(op, CmpOp::Lte | CmpOp::Gte) {
-            if let (Value::Combo(ac), Value::Combo(bc)) = (&ca, &cb) {
-                if is_type_constraint_combo(ac) && is_type_constraint_combo(bc) {
-                    if let (Some(na), Some(nb)) =
-                        (get_type_constraint_name(ac), get_type_constraint_name(bc))
-                    {
-                        let ta = TypeConstraint::from_name(&na);
-                        let tb = TypeConstraint::from_name(&nb);
-                        let result = match op {
-                            CmpOp::Lte => self.check_subtype_relation(&ta, &tb),
-                            CmpOp::Gte => self.check_subtype_relation(&tb, &ta),
-                            _ => false,
-                        };
-                        return bool_tag(result);
-                    }
+        // W2 (SYNTAX_06 §2.5 / §4 #10): atom order = subset, not magnitude.
+        // A <= B ⟺ (A & B) = A. Distinct singletons never contain each other
+        // → clean #false (not ⊥). Numeric magnitude lives in ~%Math./lt family.
+        // Numbers by value: 3 and 3.0 are one singleton.
+        let numeric_same = |x: &Value, y: &Value| -> Option<bool> {
+            match (x, y) {
+                (Value::Atom(AtomKind::Int(a), _, _), Value::Atom(AtomKind::Int(b), _, _)) => {
+                    Some(a == b)
+                }
+                (Value::Atom(AtomKind::Float(a), _, _), Value::Atom(AtomKind::Float(b), _, _)) => {
+                    Some(a == b)
+                }
+                (Value::Atom(AtomKind::Int(a), _, _), Value::Atom(AtomKind::Float(b), _, _)) => {
+                    Some(a.to_f64() == Some(*b))
+                }
+                (Value::Atom(AtomKind::Float(a), _, _), Value::Atom(AtomKind::Int(b), _, _)) => {
+                    Some(Some(*a) == b.to_f64())
+                }
+                _ => None,
+            }
+        };
+
+        // Meet-subset: (A & B) = A. Used for atom×type-marker (1 <= @int).
+        let subset_lte = |oo: &Self, a: &Value, b: &Value, ctx: &mut EvalContext| -> bool {
+            if let Some(same) = numeric_same(a, b) {
+                return same;
+            }
+            if matches!(a, Value::Atom(..)) && matches!(b, Value::Atom(..)) {
+                return a == b;
+            }
+            let meet = oo.unify_internal(a.clone(), b.clone(), ctx);
+            match meet {
+                Value::Bottom(_) => false,
+                m => m.collapse() == a.collapse(),
+            }
+        };
+
+        // Atom × atom (incl. numeric / string): same singleton or #false.
+        if matches!((&ca, &cb), (Value::Atom(..), Value::Atom(..))) {
+            let same = numeric_same(&ca, &cb).unwrap_or_else(|| ca == cb);
+            return bool_tag(match op {
+                CmpOp::Lte | CmpOp::Gte => same,
+                // Distinct singletons are incomparable; equal → not proper subset.
+                CmpOp::Lt | CmpOp::Gt => false,
+                CmpOp::Eq | CmpOp::Ne => unreachable!(),
+            });
+        }
+
+        let is_tc = |v: &Value| {
+            matches!(v, Value::Combo(c) if is_type_constraint_combo(c))
+        };
+
+        // Type-marker ≤ via subtype table (pin @int <= @num) — before meet.
+        if let (Value::Combo(ac), Value::Combo(bc)) = (&ca, &cb) {
+            if is_type_constraint_combo(ac) && is_type_constraint_combo(bc) {
+                if let (Some(na), Some(nb)) =
+                    (get_type_constraint_name(ac), get_type_constraint_name(bc))
+                {
+                    let ta = TypeConstraint::from_name(&na);
+                    let tb = TypeConstraint::from_name(&nb);
+                    let ab = self.check_subtype_relation(&ta, &tb) || na == nb;
+                    let ba = self.check_subtype_relation(&tb, &ta) || na == nb;
+                    return bool_tag(match op {
+                        CmpOp::Lte => ab,
+                        CmpOp::Gte => ba,
+                        CmpOp::Lt => ab && !ba,
+                        CmpOp::Gt => ba && !ab,
+                        CmpOp::Eq | CmpOp::Ne => unreachable!(),
+                    });
                 }
             }
         }
 
+        // Atom × type-constraint (or reverse): (A & B) = A reduction.
+        if (matches!(&ca, Value::Atom(..)) && is_tc(&cb))
+            || (is_tc(&ca) && matches!(&cb, Value::Atom(..)))
+        {
+            let ab = subset_lte(self, &ca, &cb, ctx);
+            let ba = subset_lte(self, &cb, &ca, ctx);
+            return bool_tag(match op {
+                CmpOp::Lte => ab,
+                CmpOp::Gte => ba,
+                CmpOp::Lt => ab && !ba,
+                CmpOp::Gt => ba && !ab,
+                CmpOp::Eq | CmpOp::Ne => unreachable!(),
+            });
+        }
+
+        // W3 freeze: combo/union order stays ⊥ #conflict.
         BottomCause::Conflict.into()
     }
 }

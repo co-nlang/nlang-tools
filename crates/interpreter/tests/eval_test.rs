@@ -65,7 +65,6 @@ fn test_math_eval() {
 }
 
 #[test]
-#[ignore]
 fn test_cmp_eval() {
     // MIGRATED (2026-07-20, order-wave W2 open): numeric-order deviation
     // retired — subset semantics: {10} ⊅ {5} → #false (SYNTAX_06 §4 #10).

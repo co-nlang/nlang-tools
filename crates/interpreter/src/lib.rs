@@ -369,6 +369,11 @@ impl Ouroboros {
             ("/trunc",    "math.trunc"),
             ("/fract",    "math.fract"),
             ("/to_float", "math.to_float"),
+            // Order wave W1 (SPEC_09 §3): numeric order predicates.
+            ("/lt",  "math.lt"),
+            ("/lte",  "math.lte"),
+            ("/gt",  "math.gt"),
+            ("/gte", "math.gte"),
         ];
         for (n, b) in math_morphisms { math_builtins.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::Pure, vec![]))); }
         math_builtins.insert("/random".to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str("math.random".to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::NonDet, vec![])));

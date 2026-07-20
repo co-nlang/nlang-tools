@@ -15,7 +15,7 @@ test_combo_bits: (~c |> ~%Math./bits) == 592
 ;; 3. 增量驗證
 ~d: { ...~c, z: 3 }
 ;; 增量後實測值(v0.2 模型;2026-07-12 對齊)
-test_entropy_growth: (~d |> ~%Math./bits) > (~c |> ~%Math./bits)
+test_entropy_growth: ~%Math./gt (~d |> ~%Math./bits) (~c |> ~%Math./bits)
 test_entropy_exact: (~d |> ~%Math./bits) == 856
 
 ;; 4. 格論邊界
