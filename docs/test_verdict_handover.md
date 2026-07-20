@@ -74,4 +74,18 @@ test_canonical `.%type` 退役拼法=本弧開單遷移 `.%cause` 真綠)。
 - [x] 申報事項(範圍外接觸、歧異記錄):
   - 本弧純 oo runner;無 interpreter 接觸、無歧異。
 
-## 6. 驗收紀錄(驗收方)
+## 6. 驗收紀錄(2026-07-20,驗收方)
+
+**PASS——零代修(協議全淨)**。交付 commit `79a6ef5`。
+
+- **Diff 純度** ✓:main.rs 判定 match 恰兩臂(Top/TopCaused=
+  undetermined 帶欄名、Blur=帶 %cause)+法源註;catch-all 前、
+  既有 FAIL 臂後,按單;exit 機構/static-only/發現規則/Summary/
+  interpreter 全未動;探針純 3 個 `#[ignore]` 移除。
+- **獨立重跑** ✓:探針 8/8、workspace **1267/0/3**、conformance
+  123/123、語料 **75/0**——四數全中;**收緊後語料無一翻紅**
+  (開單普查零漏網獲證)。
+- **對抗全正**:混合檔(1 passed 1 failed、exit 1、空洞者帶名)
+  /別名 Top 直測 FAIL/`(1&2) | _` 剔除後 Top FAIL(TopCaused
+  鄰面)/`--static-only` 照舊設計不觀測。
+- 儀器誠實弧結:自此「語料 N/0」不再可能含空洞真。
