@@ -243,7 +243,6 @@ fn pin_cause_meta_unchanged() {
 }
 
 #[test]
-#[ignore]
 fn pin_lt_blur_frozen_conflict() {
     // MIGRATED (2026-07-20, order-wave W3 open): order × blur follows
     // the `=` two-stage law (SYNTAX_06 §4 #13) — different identity
@@ -256,7 +255,6 @@ fn pin_lt_blur_frozen_conflict() {
 }
 
 #[test]
-#[ignore]
 fn pin_lte_blur_frozen_conflict() {
     // MIGRATED (2026-07-20, order-wave W3 open): same two-stage law.
     let got = observe_nlang(&format!("big: {}\nout: big <= 1", flat_chain(4000)), "out");

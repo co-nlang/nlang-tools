@@ -237,7 +237,6 @@ fn pin_lattice_eq_bottom_clean_booleans() {
 }
 
 #[test]
-#[ignore]
 fn pin_combo_lte_stays_conflict() {
     // MIGRATED (2026-07-20, order-wave W3 open): non-atom order lands —
     // reflexive combo `<=` is subset law `(A & B) = A` → #true.

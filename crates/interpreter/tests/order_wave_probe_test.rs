@@ -177,7 +177,6 @@ fn pin_atomic_eq_family_untouched() {
 }
 
 #[test]
-#[ignore]
 fn pin_combo_union_order_still_frozen() {
     // MIGRATED (2026-07-20, order-wave W3 open): the W3 fence comes
     // down — non-atom order lands via the subset reduction.

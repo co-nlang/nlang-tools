@@ -84,7 +84,6 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_combo_subtype() {
     // L2-85 twin + §3 examples verbatim.
     assert_obs("out: {a: 1} <= {a: @int}", "#true");
@@ -98,7 +97,6 @@ fn red_combo_subtype() {
 }
 
 #[test]
-#[ignore]
 fn red_combo_proper_and_reflexive() {
     assert_obs("out: {a: 1} < {a: @int}", "#true");
     assert_obs("out: {a: 1} < {a: 1}", "#false");
@@ -111,7 +109,6 @@ fn red_combo_proper_and_reflexive() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_union_inclusion() {
     // L2-86 twin.
     assert_obs("out: (1 | 2) <= (1 | 2 | 3)", "#true");
@@ -123,7 +120,6 @@ fn red_union_inclusion() {
 }
 
 #[test]
-#[ignore]
 fn red_mixed_atom_union_type() {
     assert_obs("out: 1 <= (1 | 2)", "#true");
     assert_obs("out: (1 | 2) <= 1", "#false");
@@ -137,7 +133,6 @@ fn red_mixed_atom_union_type() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_blur_order_reflexive_same_caid() {
     // Same binding = same horizon identity: the set equals itself.
     let src = format!("big: {}\n", flat_chain(4000));
@@ -146,7 +141,6 @@ fn red_blur_order_reflexive_same_caid() {
 }
 
 #[test]
-#[ignore]
 fn red_blur_order_absorbs() {
     // Different identity: undetermined within the horizon — absorb,
     // never #false, never #conflict.

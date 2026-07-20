@@ -199,10 +199,10 @@ fn pin_eq_union_structural_not_distributive() {
 
 #[test]
 fn pin_cmp_union_frozen() {
-    // FROZEN (另案 = §4.10 order relations): `<` × union is ledgered,
-    // unadjudicated. Today ⊥ #conflict — freeze the shape so this arc
-    // cannot drive-by change it; adjudication belongs to §4.10.
-    assert_obs("out: ((2|9) < 5).%cause", "#conflict");
+    // MIGRATED (2026-07-20, order-wave W3): union order lands via meet
+    // reduction — distinct sets are incomparable → clean #false (not ⊥).
+    // Numeric magnitude remains ~%Math./lt family.
+    assert_obs("out: (2 | 9) < 5", "#false");
 }
 
 #[test]

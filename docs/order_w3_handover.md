@@ -64,9 +64,27 @@ workspace **1288/0/3**(基線 1278/0/13);conformance
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(blur 臂位置、歸約式、真子集實作寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(範圍外接觸、歧異記錄):
+- [x] 交付 commit(s): (本交付 commit,見 `git log` — message 含 order_w3)
+- [x] 根因與修法(blur 臂位置、歸約式、真子集實作寫明):
+  - **根因**:非原子 set 族 cmp 末端凍結 `#conflict`;meet+等值原料已健康。
+  - **blur 臂**(極值之後、poset/原子/歸約之前):`SYNTAX_06 §4 #13`
+    二段律,復用 `=` 之 `blur_caid()`:
+    - 雙側 Blur 且 CAID 同 → 自反(`<=`/`>=` `#true`,`<`/`>` `#false`)
+    - 否則吸收(左優先原樣,effect max)——不得 `#false`/`#conflict`
+  - **通用歸約**(`subset_lte`,W2 原子捷徑保留):`lte(A,B) =
+    force(unify(A,B)) == force(A)`(G1 PartialEq);Bottom/Blur meet →
+    false。`gte` 鏡像;`lt = lte ∧ ¬gte`、`gt` 鏡像;雙向各自獨立 meet。
+  - 末端原 `#conflict` 凍結拆除 → combo/union/混合走歸約。
+  - **遷移**:order_wave 圍欄、combo_equality 自反 lte、blur_boundary
+    lt/lte 吸收;math_union `pin_cmp_union_frozen` 副產翻為
+    `(2|9)<5` → `#false`(W3 法)。
+- [x] 探針/workspace/conformance/語料 四數:
+  - order_w3 探針 **10/10**(+ 遷移紅四/五處綠)
+  - workspace **1288/0/3**
+  - conformance **125/125**(L2-85/86 翻綠)
+  - 語料 unit+integration **75/0**
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - 未碰 W4、`=`/`==`、parser、二元 builtin×聯集分派。
+  - math_union 凍結釘非開單列名遷移,因 W3 接線自然翻面,已改釘並申報。
 
 ## 6. 驗收紀錄(驗收方)
