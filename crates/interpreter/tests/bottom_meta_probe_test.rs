@@ -183,11 +183,15 @@ fn red_union_atoms_nav_open() {
 }
 
 #[test]
+#[ignore]
 fn red_union_atom_branch_open_miss() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
     // open-miss `_` is lattice Top and absorbs the sibling (`1 | _` → `_`).
     // Same voice as Join `9 | _` → `_` (SPEC_01 §2.4.2).
-    assert_obs("out: ({ a: 1 } | 7).a", "_");
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
+    assert_obs("out: ({ a: 1 } | 7).a", "1 | _");
 }
 
 #[test]

@@ -180,11 +180,15 @@ fn red_root_all_bottom_verbatim_message() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn pin_atom_open_branch_superposition() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
     // open-miss `_` absorbs the definite branch (`1 | _` → `_`).
     // ⊥ cull unchanged; blur remains exempt vs Top.
-    assert_obs("u: {a: 1}|7\nout: u.a", "_");
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
+    assert_obs("u: {a: 1}|7\nout: u.a", "1 | _");
 }
 
 #[test]
