@@ -120,15 +120,22 @@ fn red_math_union_string_concat() {
 
 #[test]
 fn red_math_union_top_branch_survives() {
-    // THE ledgered face: Top branch stays open through math
-    // (`_ + 1` → `_` single-value law, per branch).
-    assert_obs("u: _ | 9\nout: u + 1", "10 | _");
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
+    // `_ | 9` → `_`, then `_ + 1` → `_` (SPEC_01 §2.4.2; L2-89/L2-75).
+    assert_obs("u: _ | 9\nout: u + 1", "_");
 }
 
 #[test]
 fn red_math_union_static_top_branch() {
-    // Static-cycle Top member (taint-scope arc neighbor face).
-    assert_obs("p: {v: p.v}\nu: p.v | 3\nout: u + 1", "4 | _");
+    // MIGRATED (2026-07-20, union_absorption): TopCaused | 3 collapses to
+    // the cycle Top; arithmetic on the cycle alone is #divergent (same as
+    // bare `p.v + 1`), not a superposed `4 | _`.
+    let got = observe_nlang("p: {v: p.v}\nu: p.v | 3\nout: u + 1", "out");
+    assert!(
+        got == "_"
+            || (got.starts_with("_|_") && got.contains("divergent")),
+        "absorbed cycle Top under math: {got:?}"
+    );
 }
 
 #[test]

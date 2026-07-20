@@ -148,6 +148,200 @@ impl Ouroboros {
         }
     }
 
+    /// SYNTAX_06 §2.1: A <= B ⟺ (A & B) = A after solidify (G1 PartialEq).
+    /// Atom shortcuts (numeric-by-value, singleton PartialEq) + general
+    /// non-atom wiring (W3). Sets `union_absorb_fence` around the meet so
+    /// absorption normalization cannot re-enter (union_absorption fixpoint).
+    pub(crate) fn subset_lte(&self, a: &Value, b: &Value, ctx: &mut EvalContext) -> bool {
+        self.subset_lte_inner(a, b, ctx, true)
+    }
+
+    /// Absorption uses `solidify=false`: raw-branch compare only — never
+    /// force_recursive (recursive types like `@Tree | ()` would diverge).
+    fn subset_lte_inner(
+        &self,
+        a: &Value,
+        b: &Value,
+        ctx: &mut EvalContext,
+        solidify: bool,
+    ) -> bool {
+        // Numbers by value: 3 and 3.0 are one singleton.
+        match (a, b) {
+            (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+                return x == y;
+            }
+            (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
+                return x == y;
+            }
+            (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
+                return x.to_f64() == Some(*y);
+            }
+            (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+                return Some(*x) == y.to_f64();
+            }
+            _ => {}
+        }
+        if matches!(a, Value::Atom(..)) && matches!(b, Value::Atom(..)) {
+            return a == b;
+        }
+        let saved = ctx.union_absorb_fence;
+        ctx.union_absorb_fence = true;
+        let meet = self.unify_internal(a.clone(), b.clone(), ctx);
+        ctx.union_absorb_fence = saved;
+        match meet {
+            Value::Bottom(_) => false,
+            Value::Blur(_) => false,
+            m => {
+                if solidify {
+                    let m = self.force_recursive(m, ctx);
+                    let a_s = self.force_recursive(a.clone(), ctx);
+                    if matches!(m, Value::Blur(_)) || matches!(a_s, Value::Blur(_)) {
+                        return false;
+                    }
+                    m == a_s
+                } else {
+                    // Raw-branch absorption: collapse only, no force.
+                    m.collapse() == a.collapse()
+                }
+            }
+        }
+    }
+
+    /// SPEC_01 §2.4.2: union normalize with absorption.
+    /// Cull ⊥ → idempotent dedupe → absorb (b <= a removes b); Top family
+    /// collapses; #blur exempt both ways. Fence: absorption meets use pure
+    /// dedupe only (no nested absorb).
+    pub(crate) fn normalize_union_absorbing(
+        &self,
+        branches: impl IntoIterator<Item = Value>,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        if ctx.union_absorb_fence {
+            return normalize_union(branches);
+        }
+
+        // Reuse flatten + dedupe from pure normalize, but cull bottoms first.
+        fn push_flat(v: Value, out: &mut Vec<Value>) {
+            match v {
+                Value::Union(inner) => {
+                    for b in inner {
+                        push_flat(b, out);
+                    }
+                }
+                other => out.push(other),
+            }
+        }
+        let mut flat = Vec::new();
+        for b in branches {
+            push_flat(b, &mut flat);
+        }
+        // Cull ⊥ (G4) — keep details for all-⊥ primary-member collapse.
+        let mut culled: Vec<BottomDetail> = Vec::new();
+        let mut non_bot: Vec<Value> = Vec::new();
+        for b in flat {
+            match b {
+                Value::Bottom(d) => culled.push(*d),
+                Value::Atom(AtomKind::Bottom, _, _) => culled.push(BottomDetail {
+                    cause: BottomCause::Conflict,
+                    path: None,
+                    message: None,
+                    expected: None,
+                    found: None,
+                    involved: vec![],
+                    obstruction_degree: None,
+                    holonomy: None,
+                }),
+                other => non_bot.push(other),
+            }
+        }
+        // Idempotent dedupe (G1 PartialEq).
+        let mut unique: Vec<Value> = Vec::new();
+        for b in non_bot {
+            if !unique.iter().any(|u| u == &b) {
+                unique.push(b);
+            }
+        }
+        if unique.is_empty() {
+            // T3: primary member ⊥ verbatim (not normalize jargon).
+            return primary_bottom_from_culled(culled);
+        }
+
+        // Partition blur (exempt) vs non-blur.
+        let mut blurs: Vec<Value> = Vec::new();
+        let mut rest: Vec<Value> = Vec::new();
+        for b in unique {
+            match b {
+                Value::Blur(_) => blurs.push(b),
+                other => rest.push(other),
+            }
+        }
+
+        // Top family shortcut among non-blur: collapse to single Top
+        // (caused preferred; multiple caused → leftmost).
+        let mut bare_top = false;
+        let mut caused_tops: Vec<Value> = Vec::new();
+        let mut non_tops: Vec<Value> = Vec::new();
+        for b in rest {
+            match b {
+                Value::Top => bare_top = true,
+                Value::TopCaused { .. } => caused_tops.push(b),
+                other => non_tops.push(other),
+            }
+        }
+        let rest = if !caused_tops.is_empty() || bare_top {
+            // Everything non-blur is ≤ Top — collapse to one Top.
+            if let Some(t) = caused_tops.into_iter().next() {
+                vec![t]
+            } else {
+                vec![Value::Top]
+            }
+        } else {
+            // Absorb: drop b if some a with b <= a (strictly maximal antichain).
+            // Equal pairs already deduped. Fence meets during checks.
+            let n = non_tops.len();
+            let mut keep = vec![true; n];
+            for i in 0..n {
+                if !keep[i] {
+                    continue;
+                }
+                for j in 0..n {
+                    if i == j || !keep[j] {
+                        continue;
+                    }
+                    // If non_tops[i] <= non_tops[j] and not equal (deduped),
+                    // i is absorbed by j. Shallow check only — solidify would
+                    // diverge on recursive types (@Tree | ()).
+                    if self.subset_lte_inner(&non_tops[i], &non_tops[j], ctx, false) {
+                        keep[i] = false;
+                        break;
+                    }
+                }
+            }
+            non_tops
+                .into_iter()
+                .zip(keep)
+                .filter_map(|(b, k)| if k { Some(b) } else { None })
+                .collect()
+        };
+
+        let mut out = rest;
+        out.extend(blurs);
+        match out.len() {
+            0 => Value::Bottom(Box::new(BottomDetail {
+                cause: BottomCause::Conflict,
+                path: None,
+                message: Some("empty union after normalize".to_string()),
+                expected: None,
+                found: None,
+                involved: vec![],
+                obstruction_degree: None,
+                holonomy: None,
+            })),
+            1 => out.into_iter().next().unwrap(),
+            _ => Value::Union(out),
+        }
+    }
+
     /// SPEC_03 §3.1 timing (forward_spread): expand deferred spread sources
     /// at observation/force convergence. Applies the same laws as the former
     /// eager construction arm (intersect merge, ⊥ collapse, blur absorb,
@@ -318,7 +512,7 @@ impl Ouroboros {
                     out.push(r);
                 }
             }
-            return normalize_union(out);
+            return self.normalize_union_absorbing(out, ctx);
         }
         let meet = self.unify_internal(x.clone(), range, ctx);
         if matches!(meet, Value::Bottom(_)) {
@@ -874,7 +1068,7 @@ impl Ouroboros {
                             out.push(res);
                         }
                     }
-                    return normalize_union(out);
+                    return self.normalize_union_absorbing(out, ctx);
                 }
                 self.pipe_apply(lv, r, ctx)
             }
@@ -993,7 +1187,8 @@ impl Ouroboros {
             ExprKind::Join(a, b) => {
                 let va = self.eval(a, ctx);
                 let vb = self.eval(b, ctx);
-                normalize_union(vec![va, vb])
+                // SPEC_01 §2.4.2: absorb after dedupe (union_absorption).
+                self.normalize_union_absorbing(vec![va, vb], ctx)
             }
             ExprKind::Diff(a, b) => {
                 let va = self.eval(a, ctx);
@@ -1521,7 +1716,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         if survivors.is_empty() {
             return primary_bottom_from_culled(culled);
         }
-        let deduped = normalize_union(survivors);
+        let deduped = self.normalize_union_absorbing(survivors, ctx);
         match deduped {
             Value::Union(mut bs) if bs.len() > max_branches => {
                 bs.truncate(max_branches);
@@ -1809,7 +2004,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         }
 
         // Poset tags with declared ranks (SYNTAX_10) — lattice order by rank.
-        // Kept before atom-subset flip so #h1 < #h2 stays the real ≤.
+        // Kept before atom-subset so #h1 < #h2 stays the real ≤.
         if let (Value::Atom(ak, _, rx), Value::Atom(bk, _, ry)) = (&ca, &cb) {
             if matches!(ak, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
                 && matches!(bk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd)
@@ -1828,59 +2023,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             }
         }
 
-        // W2 (SYNTAX_06 §2.5 / §4 #10): atom order = subset, not magnitude.
-        // A <= B ⟺ (A & B) = A. Distinct singletons never contain each other
-        // → clean #false (not ⊥). Numeric magnitude lives in ~%Math./lt family.
-        // Numbers by value: 3 and 3.0 are one singleton.
-        let numeric_same = |x: &Value, y: &Value| -> Option<bool> {
-            match (x, y) {
-                (Value::Atom(AtomKind::Int(a), _, _), Value::Atom(AtomKind::Int(b), _, _)) => {
-                    Some(a == b)
-                }
-                (Value::Atom(AtomKind::Float(a), _, _), Value::Atom(AtomKind::Float(b), _, _)) => {
-                    Some(a == b)
-                }
-                (Value::Atom(AtomKind::Int(a), _, _), Value::Atom(AtomKind::Float(b), _, _)) => {
-                    Some(a.to_f64() == Some(*b))
-                }
-                (Value::Atom(AtomKind::Float(a), _, _), Value::Atom(AtomKind::Int(b), _, _)) => {
-                    Some(Some(*a) == b.to_f64())
-                }
-                _ => None,
-            }
-        };
-
-        // Meet-subset: A <= B ⟺ (A & B) = A after solidify (G1 PartialEq).
-        // Atom shortcuts + general non-atom wiring (W3).
-        let subset_lte = |oo: &Self, a: &Value, b: &Value, ctx: &mut EvalContext| -> bool {
-            if let Some(same) = numeric_same(a, b) {
-                return same;
-            }
-            if matches!(a, Value::Atom(..)) && matches!(b, Value::Atom(..)) {
-                return a == b;
-            }
-            let meet = oo.unify_internal(a.clone(), b.clone(), ctx);
-            match meet {
-                Value::Bottom(_) => false,
-                // Blur from meet is undetermined — not a definite subset fact.
-                Value::Blur(_) => false,
-                m => {
-                    let m = oo.force_recursive(m, ctx);
-                    let a_s = oo.force_recursive(a.clone(), ctx);
-                    if matches!(m, Value::Blur(_)) || matches!(a_s, Value::Blur(_)) {
-                        return false;
-                    }
-                    m == a_s
-                }
-            }
-        };
-
-        // Atom × atom (incl. numeric / string): same singleton or #false.
+        // W2: atom order = subset, not magnitude. Distinct singletons never
+        // contain each other → clean #false. Numbers by value (3 ≡ 3.0).
         if matches!((&ca, &cb), (Value::Atom(..), Value::Atom(..))) {
-            let same = numeric_same(&ca, &cb).unwrap_or_else(|| ca == cb);
+            let same = self.subset_lte(&ca, &cb, ctx);
             return bool_tag(match op {
                 CmpOp::Lte | CmpOp::Gte => same,
-                // Distinct singletons are incomparable; equal → not proper subset.
                 CmpOp::Lt | CmpOp::Gt => false,
                 CmpOp::Eq | CmpOp::Ne => unreachable!(),
             });
@@ -1890,7 +2038,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             matches!(v, Value::Combo(c) if is_type_constraint_combo(c))
         };
 
-        // Type-marker ≤ via subtype table (pin @int <= @num) — before meet.
+        // Type-marker ≤ via subtype table (pin @int <= @num).
         if let (Value::Combo(ac), Value::Combo(bc)) = (&ca, &cb) {
             if is_type_constraint_combo(ac) && is_type_constraint_combo(bc) {
                 if let (Some(na), Some(nb)) =
@@ -1911,12 +2059,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             }
         }
 
-        // Atom × type-constraint (or reverse): (A & B) = A reduction.
+        // Atom × type-constraint (or reverse): meet reduction.
         if (matches!(&ca, Value::Atom(..)) && is_tc(&cb))
             || (is_tc(&ca) && matches!(&cb, Value::Atom(..)))
         {
-            let ab = subset_lte(self, &ca, &cb, ctx);
-            let ba = subset_lte(self, &cb, &ca, ctx);
+            let ab = self.subset_lte(&ca, &cb, ctx);
+            let ba = self.subset_lte(&cb, &ca, ctx);
             return bool_tag(match op {
                 CmpOp::Lte => ab,
                 CmpOp::Gte => ba,
@@ -1928,8 +2076,8 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
 
         // W3: non-atom order via the same meet reduction (combo / union /
         // mixed). Bidirectional meets independent; proper = lte ∧ ¬gte.
-        let ab = subset_lte(self, &ca, &cb, ctx);
-        let ba = subset_lte(self, &cb, &ca, ctx);
+        let ab = self.subset_lte(&ca, &cb, ctx);
+        let ba = self.subset_lte(&cb, &ca, ctx);
         bool_tag(match op {
             CmpOp::Lte => ab,
             CmpOp::Gte => ba,

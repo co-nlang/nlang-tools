@@ -184,9 +184,10 @@ fn red_union_atoms_nav_open() {
 
 #[test]
 fn red_union_atom_branch_open_miss() {
-    // Successor of G4's red_union_nav_bottom_branch_dropped (`1`): the
-    // atom branch is an open miss now, kept like any Top-miss branch.
-    assert_obs("out: ({ a: 1 } | 7).a", "1 | _");
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
+    // open-miss `_` is lattice Top and absorbs the sibling (`1 | _` → `_`).
+    // Same voice as Join `9 | _` → `_` (SPEC_01 §2.4.2).
+    assert_obs("out: ({ a: 1 } | 7).a", "_");
 }
 
 #[test]

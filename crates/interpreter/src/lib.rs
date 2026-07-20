@@ -71,6 +71,10 @@ pub struct EvalContext {
     /// binding may simply not exist YET); only observation-time force
     /// consumes Top as a true no-op (never-defined / open hole).
     pub in_evolve: bool,
+    /// Fixed-point fence (union_absorption): while true, union normalize
+    /// stays pure dedupe — absorption's internal meets must not re-enter
+    /// the absorbing normalizer (single-layer; compare raw branches).
+    pub union_absorb_fence: bool,
     pub context_value: Option<Value>,
     pub fuel: u64,
     pub timeout_deadline: Option<u64>,
@@ -108,7 +112,8 @@ impl EvalContext {
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_flight: HashSet::new(), lexical_forcing: HashSet::new(),
             chain_transform_taint: false, cycle_chain: Vec::new(),
-            in_math_op: false, in_evolve: false, context_value: None, 
+            in_math_op: false, in_evolve: false, union_absorb_fence: false,
+            context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, memo_enabled: true, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
@@ -961,7 +966,7 @@ let mut refl_fields = IndexMap::new();
                     out.push(res);
                 }
             }
-            return normalize_union(out);
+            return self.normalize_union_absorbing(out, ctx);
         }
         if !f.is_morphism() { if arg.is_morphism() { return self.apply_morphism(arg, f, ctx); } }
         match f {
@@ -1350,7 +1355,8 @@ let mut refl_fields = IndexMap::new();
                 if survivors.is_empty() {
                     primary_bottom_from_culled(culled)
                 } else {
-                    normalize_union(survivors)
+                    // SPEC_01 §2.4.2: absorb after solidify+cull.
+                    self.normalize_union_absorbing(survivors, ctx)
                 }
             }
             _ => val
@@ -1805,14 +1811,14 @@ let mut refl_fields = IndexMap::new();
                     // path's accumulated IO/nondet (would print
                     // `#io ;; %effect: #io | #pure ;; %effect: #io`).
                     if seg == "%effect" {
-                        return normalize_union(survivors);
+                        return self.normalize_union_absorbing(survivors, ctx);
                     }
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);
                     } else {
                         path_so_far = seg.to_string();
                     }
-                    val = normalize_union(survivors);
+                    val = self.normalize_union_absorbing(survivors, ctx);
                     accumulated_effect = branch_effect;
                 }
                 // F3+F4a: atom/Top/other non-navigable → open miss `_`

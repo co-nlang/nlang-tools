@@ -89,8 +89,9 @@ fn red_union_nav_distinct_values_superpose() {
 
 #[test]
 fn red_union_nav_partial_field_keeps_top_branch() {
-    // branch 1 open-miss → _ (kept: honest superposition), branch 2 → 2
-    assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "2 | _");
+    // MIGRATED (2026-07-20, union_absorption): Top absorbs non-blur
+    // siblings — partial open-miss collapses (`2 | _` → `_`).
+    assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "_");
 }
 
 // red_union_nav_bottom_branch_dropped MIGRATED 2026-07-14 by the ACCEPTOR:

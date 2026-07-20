@@ -306,7 +306,7 @@ impl Ouroboros {
                 if results.is_empty() {
                     return primary_bottom_from_culled(culled);
                 }
-                let deduped = normalize_union(results);
+                let deduped = self.normalize_union_absorbing(results, ctx);
                 match deduped {
                     Value::Union(mut bs) if bs.len() > max_branches => {
                         bs.truncate(max_branches);

@@ -87,7 +87,6 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_absorb_type_covers_atom() {
     // L2-87 twin: the singleton lives inside the type space.
     assert_obs("out: (@int | 1) = @int", "#true");
@@ -96,7 +95,6 @@ fn red_absorb_type_covers_atom() {
 }
 
 #[test]
-#[ignore]
 fn red_absorb_combo_refinement() {
     // a ∨ (a ∧ b) = a — the refined branch folds back in.
     assert_obs("out: ({a: 1} | {a: 1, b: 2}) = {a: 1}", "#true");
@@ -104,7 +102,6 @@ fn red_absorb_combo_refinement() {
 }
 
 #[test]
-#[ignore]
 fn red_absorb_top_collapses() {
     // L2-89 twin: everything is a subset of Top — both spellings.
     assert_obs("out: 9 | _", "_");
@@ -112,7 +109,6 @@ fn red_absorb_top_collapses() {
 }
 
 #[test]
-#[ignore]
 fn red_absorb_cures_coverage_order() {
     // The W3 under-approximation faces turn mathematically true:
     // after absorption the meet normalizes back to A itself.
