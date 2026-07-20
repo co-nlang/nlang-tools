@@ -1,7 +1,9 @@
 ;; G1+G3 結案(2026-07-13):原 pending 兩阻塞已除。
 ;; 1. test_canonical_order:combo 結構等值用 `=`(G1 #12;SYNTAX_06 §4 #11)
-;; 2. test_fuel_exhaustion:runaway 視界 %type = #fuel_exhausted(G3 R3;
-;;    #divergent 保留給偵測循環 L2-17)
+;; 2. test_fuel_exhaustion:runaway 視界 %cause = #fuel_exhausted(G3 R3;
+;;    #divergent 保留給偵測循環 L2-17)。2026-07-20 開單遷移:退役拼法
+;;    .%type→.%cause(cocoon 弧語料漏網;舊形 blur 吸收後靠「非 ⊥ 即過」
+;;    空洞通過,從未驗證過斷言本身)
 ;; 測試語義規範化與 MBU 計費
 
 ;; 1. 語義規範化 (欄位重排)
@@ -14,5 +16,5 @@ test_canonical_order: ~messy = { a: 1, b: 2, z: 3 }
 
 ;; 2. MBU 計費與燃料耗盡
 /recursive: x -> /recursive (x + 1)
-~exhausted: (/recursive 1).%type
+~exhausted: (/recursive 1).%cause
 test_fuel_exhaustion: ~exhausted == #fuel_exhausted

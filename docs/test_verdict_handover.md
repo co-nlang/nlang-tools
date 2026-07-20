@@ -1,0 +1,91 @@
+# 工單:oo test 判定收緊(空洞真禁止,SPEC_16 §2.2 裁定 B)
+
+**開單**:2026-07-20(驗收方)。**基線**:dev @ 本工單 commit。
+**協議提醒**:完成後**先把交付紀錄寫進本檔 §5 再回報**。
+
+## 1. 法源(裁定 B,2026-07-20)
+
+**SPEC_16 §2.2 改寫**:測試即觀測,通過=「這次觀測決定了一個
+定形事實」。**Pass**=收斂為定形值(含 #true;定形非布林=合法
+冒煙斷言)。**Fail**=`_|_`(報 %cause)/`#false`/`#fail`(駁斥)
+/`_` Top/TopCaused(**未定**——空洞真禁止)/`#blur`(視界內
+未定,報 blur %cause)。
+
+## 2. 病灶(v0.2.28 量測)
+
+runner 照舊法字面「非 ⊥ 即過」:`(_) == 5` → `_` → PASS 空洞;
+runaway blur → PASS。實案兩枚均已治(effect_taint=元讀弧真綠;
+test_canonical `.%type` 退役拼法=本弧開單遷移 `.%cause` 真綠)。
+語料普查:除上述外 75 檔無其他非定形 test。
+
+## 3. 修法方向與位點
+
+- 位點=`crates/oo/src/main.rs` test 子命令觀測結果 match
+  (~L497):現有臂 Bottom→FAIL、Tag false/fail→FAIL、`_`→PASS。
+  增兩臂於 catch-all 前:
+  - `Value::Top | Value::TopCaused{..}` → FAIL,訊息含
+    undetermined 類字樣+欄名;
+  - `Value::Blur(d)` → FAIL,訊息含 blur %cause(如
+    fuel_exhausted)+欄名。
+- exit code 機構照舊(failed>0 → exit 1)。
+- **不動**:`--static-only` 臂(設計即不觀測)、測試發現規則
+  (`test_`/`~%test` 前綴)、Summary 格式、語料內容(開單遷移
+  已由驗收方完成)、interpreter crate(本弧純 oo runner)。
+
+## 4. 門(紅)與釘
+
+**已預提交+校準**(3 紅全紅正因〔空洞地過著〕、5 釘全綠)。
+
+- `crates/oo/tests/test_verdict_probe_test.rs`(新檔,CLI 整合
+  =CARGO_BIN_EXE_oo):紅=Top 空洞面 `(_)==5`(exit≠0+FAIL 帶
+  欄名)/未定比較 `q.%nonsense == #io`/blur runaway(FAIL 含
+  fuel_exhausted)。釘=#true 過/定形 combo 冒煙過/#false 失/
+  ⊥ 失帶因/遷移後 `.%cause` 拼法真綠。
+- 無 conformance 向量(CLI harness 面),矩陣 123 不動。
+
+交付=移除全部 3 個 `#[ignore]`,探針檔**其餘一字不改**(修改權
+在驗收方)。全 workspace 一顆不得翻紅;語料非 pending 不退。
+
+## 5. 目標與交付紀錄
+
+**目標**(基線實測 2026-07-20,先量後寫):探針 8/8;workspace
+**1267/0/3**(基線 1264/0/6);conformance **123/123** 不退;
+語料非 pending **75/0** 不退(含開單遷移後 test_canonical)。
+
+**交付紀錄**(交付方填;先寫再回報):
+
+- [x] 交付 commit(s): (本交付 commit,見 `git log` — message 含 test_verdict)
+- [x] 根因與修法(match 臂位置與訊息形制寫明):
+  - **根因**:`oo test` 觀測 match 字面「非 ⊥ 即過」→ Top/blur 空洞 PASS。
+  - **位點**:`crates/oo/src/main.rs` `run_test` 觀測結果 match
+    (Bottom / #false|#fail 既有 FAIL 臂之後、catch-all PASS 之前):
+    - `Value::Top | Value::TopCaused { .. }` → FAIL
+      `FAIL: {file} - {name} (undetermined: observation decided nothing)`
+    - `Value::Blur(d)` → FAIL
+      `FAIL: {file} - {name} (blur %cause: {d.cause.as_str()})`
+      (含 fuel_exhausted 等視界因)
+  - exit code 機構不動(failed>0 → exit 1);static-only / 發現規則 /
+    Summary / 語料 / interpreter 均未動。
+- [x] 探針/workspace/conformance/語料 四數:
+  - test_verdict 探針 **8/8**
+  - workspace **1267/0/3**
+  - conformance **123/123** 不退
+  - 語料 unit+integration **75/0** 不退
+- [x] 申報事項(範圍外接觸、歧異記錄):
+  - 本弧純 oo runner;無 interpreter 接觸、無歧異。
+
+## 6. 驗收紀錄(2026-07-20,驗收方)
+
+**PASS——零代修(協議全淨)**。交付 commit `79a6ef5`。
+
+- **Diff 純度** ✓:main.rs 判定 match 恰兩臂(Top/TopCaused=
+  undetermined 帶欄名、Blur=帶 %cause)+法源註;catch-all 前、
+  既有 FAIL 臂後,按單;exit 機構/static-only/發現規則/Summary/
+  interpreter 全未動;探針純 3 個 `#[ignore]` 移除。
+- **獨立重跑** ✓:探針 8/8、workspace **1267/0/3**、conformance
+  123/123、語料 **75/0**——四數全中;**收緊後語料無一翻紅**
+  (開單普查零漏網獲證)。
+- **對抗全正**:混合檔(1 passed 1 failed、exit 1、空洞者帶名)
+  /別名 Top 直測 FAIL/`(1&2) | _` 剔除後 Top FAIL(TopCaused
+  鄰面)/`--static-only` 照舊設計不觀測。
+- 儀器誠實弧結:自此「語料 N/0」不再可能含空洞真。
