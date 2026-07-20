@@ -127,29 +127,12 @@ fn red_math_union_top_branch_survives() {
 
 #[test]
 fn red_math_union_static_top_branch() {
-    // MIGRATED (2026-07-20, union_absorption): TopCaused | 3 collapses to
-    // the cycle Top; arithmetic on the cycle alone is #divergent (same as
-    // bare `p.v + 1`), not a superposed `4 | _`.
-    // ACCEPTANCE REPAIR (2026-07-20): the delivery loosened this into a
-    // disjunction (`_` OR ⊥#divergent) — a gate accepting two shapes
-    // pins neither, and it was masking a real divergence.
-    //
-    // After absorption the union is the bare static-cycle Top, so this
-    // now exercises `TopCaused(#static_cycle) + 1` ALONE — and that face
-    // is context-dependent: CLI `oo run` → `_` (lawful: SPEC_12 Q4, the
-    // cycle cause is 格律中立 + 不傳播 and evaporates on consumption),
-    // in-harness → ⊥ #divergent. Counterfactual @v0.2.31: the bare face
-    // `out: p.v + 1` ALREADY diverged the same way — PRE-EXISTING debt,
-    // merely exposed here because absorption removed the live `3` branch
-    // that used to mask it. Ledgered as its own arc; pinned at today's
-    // in-harness reality so any movement is deliberate, with the lawful
-    // CLI verdict recorded above.
-    let got = observe_nlang("p: {v: p.v}\nu: p.v | 3\nout: u + 1", "out");
-    assert_eq!(
-        got, "_|_ (%cause: #divergent)",
-        "KNOWN DEFECT pin (pre-existing CLI/harness divergence on \
-         static-cycle Top under math; CLI says `_`): {got:?}"
-    );
+    // MOVED under caused_top (ruling C): diagnostic TopCaused no longer
+    // collapses with `3`, so `p.v | 3` stands as two branches; `+ 1`
+    // evaporates the cause on the cycle branch (→ bare Top) then bare-Top
+    // absorption folds `Top | 4` → `_`. Exact pin — was #divergent when
+    // absorption wrongly swallowed the live `3` branch first.
+    assert_obs("p: {v: p.v}\nu: p.v | 3\nout: u + 1", "_");
 }
 
 #[test]

@@ -186,9 +186,13 @@ fn pin_static_cycle_no_poison() {
 
 #[test]
 fn pin_plain_top_no_cause() {
-    // L2-56 mirror: ordinary open Top never grows a cause.
-    assert_obs("c: { a: 1 }\nout: (c.b).%cause", "_");
+    // L2-56 / L2-91 split (caused_top ruling C, 2026-07-20):
+    // navigation open-miss is caused Top `#no_coordinate`; bare-name miss
+    // and literal `_` stay causeless (spread no-op law keys off bare Top).
+    // MIGRATED-2: was both faces `_` under pre-ruling-C open-miss=bare.
+    assert_obs("c: { a: 1 }\nout: (c.b).%cause", "#no_coordinate");
     assert_obs("out: zz.%cause", "_");
+    assert_obs("t: _\nout: t.%cause", "_");
 }
 
 #[test]

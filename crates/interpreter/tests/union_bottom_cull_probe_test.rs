@@ -180,7 +180,6 @@ fn red_root_all_bottom_verbatim_message() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn pin_atom_open_branch_superposition() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
     // open-miss `_` absorbs the definite branch (`1 | _` → `_`).

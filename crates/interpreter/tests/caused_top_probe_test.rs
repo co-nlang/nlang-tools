@@ -91,7 +91,6 @@ fn flat_chain(n: usize) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_open_miss_carries_cause() {
     // L2-91 twin. Display stays `_`; only the provenance is new.
     assert_obs("q: { a: 1 }\nout: (q.b).%cause", "#no_coordinate");
@@ -112,7 +111,6 @@ fn pin_bare_top_has_no_cause() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_union_nav_open_miss_survives() {
     // L2-92 twin: branch 2 has no `.a` — that is a diagnostic, not a
     // licence to swallow branch 1.
@@ -121,7 +119,6 @@ fn red_union_nav_open_miss_survives() {
 }
 
 #[test]
-#[ignore]
 fn red_caused_top_neither_absorbs_nor_absorbed() {
     // Direct join of a static-cycle Top with a value: both stand.
     assert_obs("p: { v: p.v }\nout: p.v | 9", "9 | _");
@@ -133,7 +130,6 @@ fn red_caused_top_neither_absorbs_nor_absorbed() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_container_with_caused_top_cannot_absorb() {
     // L2-72 twin. `{v: _#static_cycle}` ⊇ `{v: 9}` ONLY because v is
     // undetermined — absorbing would erase the known 9.

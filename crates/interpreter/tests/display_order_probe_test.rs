@@ -200,7 +200,6 @@ fn pin_all_bottom_verbatim() {
 }
 
 #[test]
-#[ignore]
 fn pin_nav_cull_value_unchanged() {
     // Union nav projection semantics unchanged (only spelling law).
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse.

@@ -183,7 +183,6 @@ fn red_union_atoms_nav_open() {
 }
 
 #[test]
-#[ignore]
 fn red_union_atom_branch_open_miss() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
     // open-miss `_` is lattice Top and absorbs the sibling (`1 | _` → `_`).

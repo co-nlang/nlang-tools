@@ -231,10 +231,13 @@ impl Ouroboros {
         }
     }
 
-    /// SPEC_01 §2.4.2: union normalize with absorption.
-    /// Cull ⊥ → idempotent dedupe → absorb (b <= a removes b); Top family
-    /// collapses; #blur exempt both ways. Fence: absorption meets use pure
-    /// dedupe only (no nested absorb).
+    /// SPEC_01 §2.4.2 (+ ruling C): union normalize with absorption.
+    /// Cull ⊥ → Top-family / diagnostic peel (BEFORE PartialEq dedupe) →
+    /// absorb among non-diagnostics → reattach diagnostics.
+    /// Diagnostic members (blur + caused Top): never absorb, never absorbed;
+    /// a value containing a diagnostic at any depth may not act as absorber.
+    /// Bare Top alone collapses non-diagnostic siblings. Fence: nested
+    /// normalize stays pure dedupe.
     pub(crate) fn normalize_union_absorbing(
         &self,
         branches: impl IntoIterator<Item = Value>,
@@ -244,7 +247,6 @@ impl Ouroboros {
             return normalize_union(branches);
         }
 
-        // Reuse flatten + dedupe from pure normalize, but cull bottoms first.
         fn push_flat(v: Value, out: &mut Vec<Value>) {
             match v {
                 Value::Union(inner) => {
@@ -259,7 +261,7 @@ impl Ouroboros {
         for b in branches {
             push_flat(b, &mut flat);
         }
-        // Cull ⊥ (G4) — keep details for all-⊥ primary-member collapse.
+        // Cull ⊥ (G4).
         let mut culled: Vec<BottomDetail> = Vec::new();
         let mut non_bot: Vec<Value> = Vec::new();
         for b in flat {
@@ -278,70 +280,92 @@ impl Ouroboros {
                 other => non_bot.push(other),
             }
         }
-        // Idempotent dedupe (G1 PartialEq).
+        if non_bot.is_empty() {
+            return primary_bottom_from_culled(culled);
+        }
+
+        // Shallow-peel Thunks once so diagnostic Tops surface before
+        // classification. Without this, `Thunk(p.v) | 9` lets the thunk
+        // absorb 9 via unify (meet forces the cycle to TopCaused ≡ unit).
+        // Isolated probe ctx: no memo pollution / taint write-back.
+        let peeled: Vec<Value> = non_bot
+            .into_iter()
+            .map(|v| {
+                let mut probe = ctx.clone();
+                probe.union_absorb_fence = true;
+                probe.memo_enabled = false;
+                let mut v = v;
+                let mut n = 0u32;
+                while matches!(&v, Value::Thunk { .. }) && n < 8 {
+                    v = self.force(v, &mut probe);
+                    n += 1;
+                }
+                ctx.fuel = probe.fuel;
+                v
+            })
+            .collect();
+
+        // BEFORE PartialEq dedupe: peel diagnostics + bare Top so caused
+        // and bare are never merged by first-wins equality (ruling C).
+        let mut diagnostics: Vec<Value> = Vec::new();
+        let mut bare_top = false;
+        let mut others: Vec<Value> = Vec::new();
+        for b in peeled {
+            match b {
+                Value::Blur(_) | Value::TopCaused { .. } => diagnostics.push(b),
+                Value::Top => bare_top = true,
+                other => others.push(other),
+            }
+        }
+
+        // Dedupe non-diagnostic others (G1 PartialEq).
         let mut unique: Vec<Value> = Vec::new();
-        for b in non_bot {
+        for b in others {
             if !unique.iter().any(|u| u == &b) {
                 unique.push(b);
             }
         }
-        if unique.is_empty() {
-            // T3: primary member ⊥ verbatim (not normalize jargon).
-            return primary_bottom_from_culled(culled);
-        }
-
-        // Partition blur (exempt) vs non-blur.
-        let mut blurs: Vec<Value> = Vec::new();
-        let mut rest: Vec<Value> = Vec::new();
-        for b in unique {
-            match b {
-                Value::Blur(_) => blurs.push(b),
-                other => rest.push(other),
+        // Dedupe diagnostics left-first (PartialEq collapses equal Tops;
+        // first-wins preserves leftmost cause when causes PartialEq-match).
+        let mut diag_unique: Vec<Value> = Vec::new();
+        for d in diagnostics {
+            if !diag_unique.iter().any(|u| u == &d) {
+                diag_unique.push(d);
             }
         }
 
-        // Top family shortcut among non-blur: collapse to single Top
-        // (caused preferred; multiple caused → leftmost).
-        let mut bare_top = false;
-        let mut caused_tops: Vec<Value> = Vec::new();
-        let mut non_tops: Vec<Value> = Vec::new();
-        for b in rest {
-            match b {
-                Value::Top => bare_top = true,
-                Value::TopCaused { .. } => caused_tops.push(b),
-                other => non_tops.push(other),
-            }
-        }
-        let rest = if !caused_tops.is_empty() || bare_top {
-            // Everything non-blur is ≤ Top — collapse to one Top.
-            if let Some(t) = caused_tops.into_iter().next() {
-                vec![t]
-            } else {
-                vec![Value::Top]
-            }
+        // Bare Top absorbs all non-diagnostic siblings (user said "anything").
+        let rest = if bare_top {
+            vec![Value::Top]
         } else {
-            // Absorb: drop b if some a with b <= a (strictly maximal antichain).
-            // Equal pairs already deduped. Fence meets during checks.
-            let n = non_tops.len();
+            // Absorb among others: drop i if some j with i <= j AND j is a
+            // lawful absorber (no diagnostic at any depth; residual Thunk
+            // also disqualified — unknown content).
+            const DIAG_DEPTH: u32 = 8;
+            let n = unique.len();
             let mut keep = vec![true; n];
+            let can_absorb: Vec<bool> = unique
+                .iter()
+                .map(|a| {
+                    !matches!(a, Value::Thunk { .. })
+                        && !crate::value::contains_diagnostic(a, DIAG_DEPTH)
+                })
+                .collect();
             for i in 0..n {
                 if !keep[i] {
                     continue;
                 }
                 for j in 0..n {
-                    if i == j || !keep[j] {
+                    if i == j || !keep[j] || !can_absorb[j] {
                         continue;
                     }
-                    // If non_tops[i] <= non_tops[j] and not equal (deduped),
-                    // i is absorbed by j. Shallow check only — solidify would
-                    // diverge on recursive types (@Tree | ()).
-                    if self.subset_lte_inner(&non_tops[i], &non_tops[j], ctx, false) {
+                    if self.subset_lte_inner(&unique[i], &unique[j], ctx, false) {
                         keep[i] = false;
                         break;
                     }
                 }
             }
-            non_tops
+            unique
                 .into_iter()
                 .zip(keep)
                 .filter_map(|(b, k)| if k { Some(b) } else { None })
@@ -349,18 +373,9 @@ impl Ouroboros {
         };
 
         let mut out = rest;
-        out.extend(blurs);
+        out.extend(diag_unique);
         match out.len() {
-            0 => Value::Bottom(Box::new(BottomDetail {
-                cause: BottomCause::Conflict,
-                path: None,
-                message: Some("empty union after normalize".to_string()),
-                expected: None,
-                found: None,
-                involved: vec![],
-                obstruction_degree: None,
-                holonomy: None,
-            })),
+            0 => primary_bottom_from_culled(culled),
             1 => out.into_iter().next().unwrap(),
             _ => Value::Union(out),
         }

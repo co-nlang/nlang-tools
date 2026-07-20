@@ -22,12 +22,17 @@ pub fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Top,
-    /// SPEC_12 §1.1 static cycle: lattice-identical to Top (solution set =
-    /// everything) with observation-only provenance. `.%cause` → #static_cycle;
-    /// display / unify / PartialEq treat as bare Top; consumption evaporates
-    /// the cause (operations yield plain Top).
+    /// Caused Top (SPEC_01 §2.4.2 ruling C / SPEC_12 §1.1): lattice-identical
+    /// to bare Top (solution set = everything) with observation-only
+    /// provenance. Display / unify / PartialEq treat as bare Top;
+    /// consumption evaporates the cause (operations yield plain Top).
+    /// Diagnostic member under absorption — never absorbs / never absorbed.
+    /// `cause`: `"static_cycle"` | `"no_coordinate"` (ERROR_CODES tags).
     TopCaused {
-        /// Loop member coordinates (self = len 1, mutual = 2, …).
+        /// Provenance tag body (no leading `#`).
+        cause: String,
+        /// Loop member coordinates for static_cycle (self = len 1, mutual = 2, …).
+        /// Empty for open-miss `#no_coordinate`.
         members: Vec<String>,
     },
     Atom(AtomKind, EffectTag, Option<i64>), Combo(ComboVal), Union(Vec<Value>), Code(Box<Expr>),
@@ -55,18 +60,35 @@ pub fn static_cycle_top(members: Vec<String>) -> Value {
     let mut m = members;
     m.sort();
     m.dedup();
-    Value::TopCaused { members: m }
+    Value::TopCaused {
+        cause: "static_cycle".to_string(),
+        members: m,
+    }
 }
 
-/// `%cause` carrier for static-cycle Top — closed cocoon, G6-peelable to tag.
+/// Mint a caused Top for open-miss navigation (undefined coordinate on an
+/// open combo). Display stays `_`; `.%cause` → `#no_coordinate`.
+pub fn no_coordinate_top() -> Value {
+    Value::TopCaused {
+        cause: "no_coordinate".to_string(),
+        members: Vec::new(),
+    }
+}
+
+/// `%cause` carrier for caused Top — closed cocoon, G6-peelable to tag.
 /// REAL_04 §1 (2026-07-19): core = %val only; no fossil %type.
 /// Anti-peel data pad `_`→Top is engine scaffolding — stripped at display
 /// (to_nlang) so it never appears in user-visible projections.
 pub fn static_cycle_cause_combo(members: &[String]) -> Value {
+    caused_top_cause_combo("static_cycle", members)
+}
+
+/// Generic `%cause` carrier for any caused-Top tag.
+pub fn caused_top_cause_combo(cause: &str, members: &[String]) -> Value {
     let mut fields = IndexMap::new();
     fields.insert(
         "%val".to_string(),
-        Value::Atom(AtomKind::Tag("static_cycle".to_string()), EffectTag::Pure, None),
+        Value::Atom(AtomKind::Tag(cause.to_string()), EffectTag::Pure, None),
     );
     // Anti-peel data pad (is_pure_wrapper requires empty data).
     fields.insert("_".to_string(), Value::Top);
@@ -94,6 +116,49 @@ pub fn static_cycle_cause_combo(members: &[String]) -> Value {
         EffectTag::Pure,
         vec![],
     ))
+}
+
+/// True if this value is a diagnostic member (blur or caused Top) — SPEC_01
+/// §2.4.2 ruling C exemption.
+pub fn is_diagnostic_member(v: &Value) -> bool {
+    matches!(v, Value::Blur(_) | Value::TopCaused { .. })
+}
+
+/// True if any diagnostic member occurs within `max_depth` of `v`.
+/// Bounded walk — no force, no thunk expand (normalization must not open
+/// a new fuel horizon).
+pub fn contains_diagnostic(v: &Value, max_depth: u32) -> bool {
+    contains_diagnostic_inner(v, max_depth, 0)
+}
+
+fn contains_diagnostic_inner(v: &Value, max_depth: u32, depth: u32) -> bool {
+    if depth > max_depth {
+        return false;
+    }
+    match v {
+        Value::Blur(_) | Value::TopCaused { .. } => true,
+        Value::Combo(c) => {
+            c.all_fields_iter()
+                .any(|(_, fv)| contains_diagnostic_inner(&fv, max_depth, depth + 1))
+                || c.local
+                    .values()
+                    .any(|fv| contains_diagnostic_inner(fv, max_depth, depth + 1))
+        }
+        Value::Union(bs) => bs
+            .iter()
+            .any(|b| contains_diagnostic_inner(b, max_depth, depth + 1)),
+        Value::Range { start, end, step } => {
+            contains_diagnostic_inner(start, max_depth, depth + 1)
+                || contains_diagnostic_inner(end, max_depth, depth + 1)
+                || step
+                    .as_ref()
+                    .map(|s| contains_diagnostic_inner(s, max_depth, depth + 1))
+                    .unwrap_or(false)
+        }
+        // Thunk / Code / Ref / Atom / Top / Bottom: no nested diagnostic visible
+        // without force — treat as non-diagnostic for absorption qualification.
+        _ => false,
+    }
 }
 
 impl PartialEq for Value {

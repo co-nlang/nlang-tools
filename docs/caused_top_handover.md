@@ -77,9 +77,44 @@ workspace **1306/0/3**(基線 1293/0/17);conformance **131/131**
 
 **交付紀錄**(交付方填;先寫再回報):
 
-- [ ] 交付 commit(s):
-- [ ] 根因與修法(TopCaused 形制、缺欄鑄造點、正規化三處寫明):
-- [ ] 探針/workspace/conformance/語料 四數:
-- [ ] 申報事項(深度檢查成本、CAID 位移面、範圍外接觸):
+- [x] 交付 commit(s):
+  - tools: `d25e483` caused_top (ruling C): bare Top absorbs; caused Top is diagnostic
+  - spec: `cf0db61` L2-56 retarget bare Top no-cause (open-miss is L2-91)
+- [x] 根因與修法(TopCaused 形制、缺欄鑄造點、正規化三處寫明):
+  1. **TopCaused 形制**(`value.rs`):`TopCaused { cause, members }` —
+     `cause` ∈ `{"static_cycle","no_coordinate"}`;`no_coordinate_top()` /
+     `caused_top_cause_combo`;`contains_diagnostic` 有界深度掃描(預設 8,
+     不 force)。PartialEq 不動(各 Top 互等)。
+  2. **缺欄鑄造**(`lib.rs` navigate):開放 Combo 缺鍵與 F3/F4a 非可導航
+     → `no_coordinate_top()`;Cocoon 缺欄仍 ⊥ `#missing_key`;`_` 字面量
+     仍裸 Top。`%cause` 讀 `caused_top_cause_combo(cause, members)`。
+  3. **正規化**(`eval.rs` `normalize_union_absorbing`):先淺剝 Thunk(隔離
+     probe ctx,`memo_enabled=false`,fence 開)→ 診斷/裸 Top 在 PartialEq
+     去重**之前**剝離 → 裸 Top 吞非診斷支 → 其餘做 subset 吸收,吸收方若
+     含診斷或殘留 Thunk 則失格 → 診斷支回掛。
+  4. **順帶修**(delivery repairs,否則 workspace 翻紅):
+     - `universe.rs` evolve:forward-open-miss 再化 Thunk 須含
+       `#no_coordinate`(先前只 match 裸 Top → 根欄 `3 |> c.f` 把
+       `^^.k` 凍成 caused Top,永不重 force;caret 根站點回歸)。
+     - `lib.rs` force:Join/Meet/Diff 為格結構、非 transform hop,不設
+       `chain_transform_taint`(否則欄位 thunk `p.v | 9` 把純環誤判
+       `#divergent` 後剔除;taint_scope field-join 面)。
+  5. **遷移**:13 `#[ignore]` 全撤;math_union static pin 精確 `_`(非析
+     取);static_cycle `pin_plain_top_no_cause` / union_nav partial-field
+     MIGRATED-2;L2-56 改釘裸 `_` 無因(與 L2-91 分工)。
+- [x] 探針/workspace/conformance/語料 四數:
+  - caused_top 探針 **11/11**
+  - workspace **1307/0/3**(interpreter+parser+oo;目標 1306/0/3)
+  - conformance **131/131**(L2-72/90/91/92 綠;L2-56 改釘)
+  - 語料 unit+integration **75/0**(68+7)
+- [x] 申報事項(深度檢查成本、CAID 位移面、範圍外接觸):
+  - `contains_diagnostic` 深度界 8、不 force —— 正規化不開新視界。
+  - CAID:Top/TopCaused 仍同格等(PartialEq);無新 breaking 於本弧
+    (破壞性 #2 已在吸收弧就地改寫,本弧只補裁定 C 診斷豁免)。
+  - 範圍外:`expr_is_lattice_structural` 略擴 taint 邊界(Join 族);
+    evolve 再化條件含 `no_coordinate`。裸名未定義仍裸 Top(spread
+    no-op 法源,ledgered,不動)。
+  - math_union static pin 移動為精確 `_`(消費後裸 Top 吸收),已申報
+    非析取放寬。
 
 ## 6. 驗收紀錄(驗收方)

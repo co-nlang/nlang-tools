@@ -91,7 +91,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_union_static_member_survives() {
     // MIGRATED (2026-07-20, union_absorption): static-cycle Top is lattice
     // Top-family — absorbs sibling values (`9 | _` → `_`, SPEC_01 §2.4.2).
@@ -103,7 +102,6 @@ fn red_union_static_member_survives() {
 }
 
 #[test]
-#[ignore]
 fn red_union_static_member_survives_mid() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
     // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
@@ -113,7 +111,6 @@ fn red_union_static_member_survives_mid() {
 }
 
 #[test]
-#[ignore]
 fn red_union_static_member_alias() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
     // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
@@ -123,7 +120,6 @@ fn red_union_static_member_alias() {
 }
 
 #[test]
-#[ignore]
 fn red_union_mutual_static_member() {
     // MIGRATED-2 (2026-07-20, caused_top ruling C): mutual-cycle caused
     // Top is a diagnostic member — exempt from absorption.
@@ -134,7 +130,6 @@ fn red_union_mutual_static_member() {
 }
 
 #[test]
-#[ignore]
 fn red_field_join_static_member() {
     // MIGRATED (2026-07-20, union_absorption): if the cycle classifies as
     // Top, Top-family collapse → `_`; if it still solidifies as ⊥ and is
@@ -177,7 +172,6 @@ fn pin_static_cause_readable() {
 }
 
 #[test]
-#[ignore]
 fn pin_union_static_first_order() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
     // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
@@ -187,7 +181,6 @@ fn pin_union_static_first_order() {
 }
 
 #[test]
-#[ignore]
 fn pin_direct_join_static_root() {
     // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
     // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /

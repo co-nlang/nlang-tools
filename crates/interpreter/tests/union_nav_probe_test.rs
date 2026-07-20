@@ -89,9 +89,12 @@ fn red_union_nav_distinct_values_superpose() {
 
 #[test]
 fn red_union_nav_partial_field_keeps_top_branch() {
-    // MIGRATED (2026-07-20, union_absorption): Top absorbs non-blur
-    // siblings — partial open-miss collapses (`2 | _` → `_`).
-    assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "_");
+    // MIGRATED (2026-07-20, union_absorption): bare Top absorbed siblings
+    // (`2 | _` → `_`).
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): open-miss is caused Top
+    // `#no_coordinate` = diagnostic member — exempt both ways; partial field
+    // keeps the live branch (L2-92 twin face).
+    assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "2 | _");
 }
 
 // red_union_nav_bottom_branch_dropped MIGRATED 2026-07-14 by the ACCEPTOR:
