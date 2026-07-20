@@ -184,10 +184,34 @@ impl Ouroboros {
         if matches!(a, Value::Atom(..)) && matches!(b, Value::Atom(..)) {
             return a == b;
         }
-        let saved = ctx.union_absorb_fence;
-        ctx.union_absorb_fence = true;
-        let meet = self.unify_internal(a.clone(), b.clone(), ctx);
-        ctx.union_absorb_fence = saved;
+        // ACCEPTANCE REPAIR (2026-07-20): the absorption probe must not
+        // leave evaluation state behind. Its meet forces thunks, and the
+        // residue (taint / cycle chain / in-flight marks) made a later
+        // static-cycle re-entry classify as transform → ⊥ #divergent →
+        // culled: `w: {q: p.v | 9}` read `9` in-harness but `_` via CLI
+        // — a force-order-dependent verdict (the disease the taint-scope
+        // arc cured; SPEC_00 Invariant 1 convergence determinism).
+        // Absorption is a QUERY: probe on an isolated context, charge the
+        // fuel back so the horizon stays honest, discard the rest.
+        // The solidify path (cmp家族, W3-shipped) keeps its own ctx.
+        let meet = if solidify {
+            let saved_fence = ctx.union_absorb_fence;
+            ctx.union_absorb_fence = true;
+            let m = self.unify_internal(a.clone(), b.clone(), ctx);
+            ctx.union_absorb_fence = saved_fence;
+            m
+        } else {
+            let mut probe = ctx.clone();
+            probe.union_absorb_fence = true;
+            // The probe must not publish through the engine-global force
+            // memo either: a value forced under probe conditions would be
+            // read back by the real evaluation (that is how the ⊥ verdict
+            // reached the union and culled the static-cycle branch).
+            probe.memo_enabled = false;
+            let m = self.unify_internal(a.clone(), b.clone(), &mut probe);
+            ctx.fuel = probe.fuel;
+            m
+        };
         match meet {
             Value::Bottom(_) => false,
             Value::Blur(_) => false,

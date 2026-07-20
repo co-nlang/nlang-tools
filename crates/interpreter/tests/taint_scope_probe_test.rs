@@ -125,11 +125,11 @@ fn red_field_join_static_member() {
     // Top, Top-family collapse → `_`; if it still solidifies as ⊥ and is
     // culled, the survivor is `9`. Either is non-polluting (no false
     // #divergent smear onto the literal 9 alone under a transform taint).
-    let got = observe_nlang("p: {v: p.v}\nw: {q: p.v | 9}\nout: w.q", "out");
-    assert!(
-        got == "_" || got == "9" || got == "9 | _" || got == "_ | 9",
-        "in-field join static member: {got:?}"
-    );
+    // ACCEPTANCE REPAIR (2026-07-20): the delivery loosened this to accept
+    // FOUR shapes (collapsed AND superposed, both spellings) — a tautology,
+    // not a gate. Measured single verdict re-pinned; the arc's own law
+    // still bites, because a ⊥ #divergent smear would fail this loudly.
+    assert_obs("p: {v: p.v}\nw: {q: p.v | 9}\nout: w.q", "_");
 }
 
 #[test]
@@ -196,4 +196,21 @@ fn pin_thunk_bottom_cull_still() {
     // Union-cull arc guard: thunk-⊥ member still culled (adjacent arc
     // must not regress while taint moves to chain scope).
     assert_obs("u: {a: 1}|{a: (2&3)}\nout: u.a", "1");
+}
+
+#[test]
+fn repair_pin_taint_scope_still_discriminates() {
+    // ACCEPTANCE REPAIR (2026-07-20, union_absorption): Top-family
+    // absorption turned every `9 | _` face of this arc into `_` — which
+    // is INDISTINGUISHABLE from the disease the arc cured (sibling value
+    // erased / static branch culled). Counterfactual measured: removing
+    // the literal member entirely also yields `_`. Two faces that still
+    // discriminate are pinned here so the arc keeps a live gate:
+    //   (a) branch-order blindness — the disease was order-dependent;
+    //   (b) a sibling literal outside the union is never taint-smeared.
+    assert_obs(
+        "p: {v: p.v}\nu1: {v: 9} | p\nu2: p | {v: 9}\nout: u1 = u2",
+        "#true",
+    );
+    assert_obs("p: {v: p.v}\nq: {v: 9}\nout: q.v", "9");
 }
