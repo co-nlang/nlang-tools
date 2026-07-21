@@ -84,17 +84,35 @@ impl Ouroboros {
         self.unify_internal(a, b, &mut ctx)
     }
 
-    /// When CAID equal: keep static-cycle provenance if either side has it.
+    /// When CAID equal: keep caused-Top provenance if either side has it.
+    /// Prefer static_cycle over no_coordinate when both are caused; merge
+    /// members when both are static_cycle.
     fn prefer_caused_top(a: Value, b: Value) -> Value {
         match (a, b) {
-            (Value::TopCaused { members: m1 }, Value::TopCaused { members: m2 }) => {
-                let mut m = m1;
-                m.extend(m2);
-                crate::value::static_cycle_top(m)
+            (
+                Value::TopCaused {
+                    cause: c1,
+                    members: m1,
+                },
+                Value::TopCaused {
+                    cause: c2,
+                    members: m2,
+                },
+            ) => {
+                // Prefer static_cycle; merge members when both static.
+                if c1 == "static_cycle" || c2 == "static_cycle" {
+                    let mut m = m1;
+                    m.extend(m2);
+                    crate::value::static_cycle_top(m)
+                } else {
+                    Value::TopCaused {
+                        cause: c1,
+                        members: m1,
+                    }
+                }
             }
-            (Value::TopCaused { members }, _) | (_, Value::TopCaused { members }) => {
-                Value::TopCaused { members }
-            }
+            (Value::TopCaused { cause, members }, _)
+            | (_, Value::TopCaused { cause, members }) => Value::TopCaused { cause, members },
             (a, _) => a,
         }
     }
@@ -204,16 +222,33 @@ impl Ouroboros {
             // (bare Top fields are dropped by unify_combo).
             (Value::Top | Value::TopCaused { .. }, Value::Union(_)) => {}
             (Value::Union(_), Value::Top | Value::TopCaused { .. }) => {}
-            (Value::TopCaused { members }, Value::Top)
-            | (Value::Top, Value::TopCaused { members }) => {
+            (Value::TopCaused { cause, members }, Value::Top)
+            | (Value::Top, Value::TopCaused { cause, members }) => {
+                // Caused preferred over bare (ruling C / Top family priority).
                 return Value::TopCaused {
+                    cause: cause.clone(),
                     members: members.clone(),
                 };
             }
-            (Value::TopCaused { members: m1 }, Value::TopCaused { members: m2 }) => {
-                let mut m = m1.clone();
-                m.extend(m2.iter().cloned());
-                return crate::value::static_cycle_top(m);
+            (
+                Value::TopCaused {
+                    cause: c1,
+                    members: m1,
+                },
+                Value::TopCaused {
+                    cause: c2,
+                    members: m2,
+                },
+            ) => {
+                if c1 == "static_cycle" || c2 == "static_cycle" {
+                    let mut m = m1.clone();
+                    m.extend(m2.iter().cloned());
+                    return crate::value::static_cycle_top(m);
+                }
+                return Value::TopCaused {
+                    cause: c1.clone(),
+                    members: m1.clone(),
+                };
             }
             (Value::Top, Value::Top) => return Value::Top,
             (Value::Top | Value::TopCaused { .. }, _) => return b.bare_top_if_caused(),
@@ -306,7 +341,7 @@ impl Ouroboros {
                 if results.is_empty() {
                     return primary_bottom_from_culled(culled);
                 }
-                let deduped = normalize_union(results);
+                let deduped = self.normalize_union_absorbing(results, ctx);
                 match deduped {
                     Value::Union(mut bs) if bs.len() > max_branches => {
                         bs.truncate(max_branches);

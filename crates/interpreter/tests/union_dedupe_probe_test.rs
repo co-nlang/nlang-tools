@@ -122,7 +122,9 @@ fn pin_union_distinct_order_21() {
         // → "1 | 1"; a print-string-based dedupe would wrongly collapse
         // to "1" and fail this pin.
 fn pin_union_int_float_kept() {
-    assert_obs("out: 1 | 1.0", "1 | 1");
+    // MIGRATED (2026-07-20, union_absorption + W2 numeric-by-value):
+    // 1 and 1.0 are one singleton under subset law — absorption keeps one.
+    assert_obs("out: 1 | 1.0", "1");
 }
 
 #[test] // ACTIVE pin: overlapping but non-identical ranges are kept

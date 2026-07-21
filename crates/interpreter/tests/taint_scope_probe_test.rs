@@ -92,28 +92,37 @@ fn assert_obs(src: &str, expect: &str) {
 
 #[test]
 fn red_union_static_member_survives() {
-    // Today: `9` — branch1's literal force taints the ctx, p.v re-entry
-    // reads transform → ⊥ #divergent → culled. Law: static → caused Top
-    // survivor, honest `9 | _`.
+    // MIGRATED (2026-07-20, union_absorption): static-cycle Top is lattice
+    // Top-family — absorbs sibling values (`9 | _` → `_`, SPEC_01 §2.4.2).
+    // Taint-scope survival of the cycle branch is preserved (not culled as ⊥).
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
     assert_obs("p: {v: p.v}\nu: {v: 9}|p\nout: u.v", "9 | _");
 }
 
 #[test]
 fn red_union_static_member_survives_mid() {
-    // Three branches, static member in the middle. Today: `9 | 8`.
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
     assert_obs("p: {v: p.v}\nu: {v: 9}|p|{v: 8}\nout: u.v", "8 | 9 | _");
 }
 
 #[test]
 fn red_union_static_member_alias() {
-    // Alias spelling (dual-spelling lesson). Today: `9`.
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
     assert_obs("p: {v: p.v}\nal: p\nu: {v: 9}|al\nout: u.v", "9 | _");
 }
 
 #[test]
 fn red_union_mutual_static_member() {
-    // Mutual pure-reference cycle member (SPEC_12 互指 = same tier).
-    // Today: `9`.
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): mutual-cycle caused
+    // Top is a diagnostic member — exempt from absorption.
     assert_obs(
         "a1: {v: b1.v}\nb1: {v: a1.v}\nu: {v: 9}|a1\nout: u.v",
         "9 | _",
@@ -122,9 +131,17 @@ fn red_union_mutual_static_member() {
 
 #[test]
 fn red_field_join_static_member() {
-    // In-field direct `|` — RED in-harness (`9`: observe-time forcing
-    // hits the polluted ctx) while the CLI run measures `_ | 9` (evolve
-    // pre-classified) — the very context-dependence this arc removes.
+    // MIGRATED (2026-07-20, union_absorption): if the cycle classifies as
+    // Top, Top-family collapse → `_`; if it still solidifies as ⊥ and is
+    // culled, the survivor is `9`. Either is non-polluting (no false
+    // #divergent smear onto the literal 9 alone under a transform taint).
+    // ACCEPTANCE REPAIR (2026-07-20): the delivery loosened this to accept
+    // FOUR shapes (collapsed AND superposed, both spellings) — a tautology,
+    // not a gate. Measured single verdict re-pinned; the arc's own law
+    // still bites, because a ⊥ #divergent smear would fail this loudly.
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
     assert_obs("p: {v: p.v}\nw: {q: p.v | 9}\nout: w.q", "9 | _");
 }
 
@@ -156,15 +173,19 @@ fn pin_static_cause_readable() {
 
 #[test]
 fn pin_union_static_first_order() {
-    // Static member FIRST already healthy (classified before the
-    // literal taints) — must stay through the rescoping.
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
     assert_obs("p: {v: p.v}\nu: p|{v: 9}\nout: u.v", "9 | _");
 }
 
 #[test]
 fn pin_direct_join_static_root() {
-    // Root-level direct `|` healthy (evolve-time classification lands
-    // before any sibling force). In-field spelling is a RED gate above.
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
     assert_obs("p: {v: p.v}\nout: p.v | 9", "9 | _");
 }
 
@@ -194,4 +215,21 @@ fn pin_thunk_bottom_cull_still() {
     // Union-cull arc guard: thunk-⊥ member still culled (adjacent arc
     // must not regress while taint moves to chain scope).
     assert_obs("u: {a: 1}|{a: (2&3)}\nout: u.a", "1");
+}
+
+#[test]
+fn repair_pin_taint_scope_still_discriminates() {
+    // ACCEPTANCE REPAIR (2026-07-20, union_absorption): Top-family
+    // absorption turned every `9 | _` face of this arc into `_` — which
+    // is INDISTINGUISHABLE from the disease the arc cured (sibling value
+    // erased / static branch culled). Counterfactual measured: removing
+    // the literal member entirely also yields `_`. Two faces that still
+    // discriminate are pinned here so the arc keeps a live gate:
+    //   (a) branch-order blindness — the disease was order-dependent;
+    //   (b) a sibling literal outside the union is never taint-smeared.
+    assert_obs(
+        "p: {v: p.v}\nu1: {v: 9} | p\nu2: p | {v: 9}\nout: u1 = u2",
+        "#true",
+    );
+    assert_obs("p: {v: p.v}\nq: {v: 9}\nout: q.v", "9");
 }

@@ -120,15 +120,19 @@ fn red_math_union_string_concat() {
 
 #[test]
 fn red_math_union_top_branch_survives() {
-    // THE ledgered face: Top branch stays open through math
-    // (`_ + 1` → `_` single-value law, per branch).
-    assert_obs("u: _ | 9\nout: u + 1", "10 | _");
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
+    // `_ | 9` → `_`, then `_ + 1` → `_` (SPEC_01 §2.4.2; L2-89/L2-75).
+    assert_obs("u: _ | 9\nout: u + 1", "_");
 }
 
 #[test]
 fn red_math_union_static_top_branch() {
-    // Static-cycle Top member (taint-scope arc neighbor face).
-    assert_obs("p: {v: p.v}\nu: p.v | 3\nout: u + 1", "4 | _");
+    // MOVED under caused_top (ruling C): diagnostic TopCaused no longer
+    // collapses with `3`, so `p.v | 3` stands as two branches; `+ 1`
+    // evaporates the cause on the cycle branch (→ bare Top) then bare-Top
+    // absorption folds `Top | 4` → `_`. Exact pin — was #divergent when
+    // absorption wrongly swallowed the live `3` branch first.
+    assert_obs("p: {v: p.v}\nu: p.v | 3\nout: u + 1", "_");
 }
 
 #[test]

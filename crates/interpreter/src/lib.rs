@@ -71,6 +71,10 @@ pub struct EvalContext {
     /// binding may simply not exist YET); only observation-time force
     /// consumes Top as a true no-op (never-defined / open hole).
     pub in_evolve: bool,
+    /// Fixed-point fence (union_absorption): while true, union normalize
+    /// stays pure dedupe — absorption's internal meets must not re-enter
+    /// the absorbing normalizer (single-layer; compare raw branches).
+    pub union_absorb_fence: bool,
     pub context_value: Option<Value>,
     pub fuel: u64,
     pub timeout_deadline: Option<u64>,
@@ -108,7 +112,8 @@ impl EvalContext {
             root: Arc::new(root), root_caid_cache: None, scopes: Vec::new(), staged: None, computing: HashSet::new(), 
             call_history: HashMap::new(), in_flight: HashSet::new(), lexical_forcing: HashSet::new(),
             chain_transform_taint: false, cycle_chain: Vec::new(),
-            in_math_op: false, in_evolve: false, context_value: None, 
+            in_math_op: false, in_evolve: false, union_absorb_fence: false,
+            context_value: None, 
             fuel: 10000, timeout_deadline: None, depth: 0, dep_collector: None, memo_enabled: true, 
             horizon_salt: salt, strategy: ObservationStrategy::Blur,
             max_branches: 64, max_unification_depth: 256, max_pattern_nodes: 1024, max_lifting_depth: 32,
@@ -168,9 +173,21 @@ fn path_coord_of(expr: &Expr) -> Option<String> {
 }
 
 /// SPEC_12 §1.1: pure-reference hop = path only (any anchor, segments only).
-/// Everything else (arith, apply, pipe, literal construction, …) taints.
+/// Everything else (arith, apply, pipe, literal construction, …) taints —
+/// except lattice join/meet/diff, which are structural superposition of
+/// branches, not a transform of either coordinate (taint_scope field-join
+/// face: forcing `p.v | 9` must not reclassify pure-cycle `p.v` as
+/// `#divergent`; caused_top ruling C needs the diagnostic branch to stand).
 fn expr_is_pure_ref(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::Path(_))
+}
+
+/// Lattice structural ops: do not set `chain_transform_taint` when forced.
+fn expr_is_lattice_structural(expr: &Expr) -> bool {
+    matches!(
+        &expr.kind,
+        ExprKind::Join(_, _) | ExprKind::Meet(_, _) | ExprKind::Diff(_, _)
+    )
 }
 
 /// Re-entry on a force chain: pure static cycle → caused Top; any transform
@@ -961,7 +978,7 @@ let mut refl_fields = IndexMap::new();
                     out.push(res);
                 }
             }
-            return normalize_union(out);
+            return self.normalize_union_absorbing(out, ctx);
         }
         if !f.is_morphism() { if arg.is_morphism() { return self.apply_morphism(arg, f, ctx); } }
         match f {
@@ -1159,7 +1176,9 @@ let mut refl_fields = IndexMap::new();
                     }
                 }
                 // SPEC_12 §1.1: non-pure-ref hop taints the whole force chain.
-                if !expr_is_pure_ref(&expr) {
+                // Lattice join/meet/diff are structural (see
+                // `expr_is_lattice_structural`) — not transform hops.
+                if !expr_is_pure_ref(&expr) && !expr_is_lattice_structural(&expr) {
                     call_ctx.chain_transform_taint = true;
                 }
                 call_ctx.context_value = effective_context;
@@ -1350,7 +1369,8 @@ let mut refl_fields = IndexMap::new();
                 if survivors.is_empty() {
                     primary_bottom_from_culled(culled)
                 } else {
-                    normalize_union(survivors)
+                    // SPEC_01 §2.4.2: absorb after solidify+cull.
+                    self.normalize_union_absorbing(survivors, ctx)
                 }
             }
             _ => val
@@ -1665,14 +1685,18 @@ let mut refl_fields = IndexMap::new();
                 val = current;
                 continue;
             }
-            // SPEC_12 §1.1: caused Top provenance — meta-only readability.
-            // %type alias retired: only %cause is meta-readable here.
-            if let Value::TopCaused { ref members } = current {
+            // SPEC_12 §1.1 / SPEC_01 §2.4.2: caused Top provenance —
+            // meta-only readability (#static_cycle / #no_coordinate).
+            if let Value::TopCaused {
+                ref cause,
+                ref members,
+            } = current
+            {
                 if seg == "%cause" {
-                    return crate::value::static_cycle_cause_combo(members)
+                    return crate::value::caused_top_cause_combo(cause, members)
                         .with_effect(accumulated_effect);
                 }
-                // Non-meta on open Top: open miss (F4 dual of bare Top).
+                // Non-meta on caused Top: consumption evaporates cause → bare Top.
                 val = Value::Top;
                 continue;
             }
@@ -1752,7 +1776,9 @@ let mut refl_fields = IndexMap::new();
                             }))
                             .with_effect(accumulated_effect);
                         }
-                        None => Value::Top,
+                        // Open-combo missing key: caused Top #no_coordinate
+                        // (ruling C — diagnostic member, not bare lattice Top).
+                        None => crate::value::no_coordinate_top(),
                     };
                     // Leave the field unforced (Stage 2: open terms stay Thunk
                     // until observation). Cycle detection for the full path is
@@ -1805,26 +1831,26 @@ let mut refl_fields = IndexMap::new();
                     // path's accumulated IO/nondet (would print
                     // `#io ;; %effect: #io | #pure ;; %effect: #io`).
                     if seg == "%effect" {
-                        return normalize_union(survivors);
+                        return self.normalize_union_absorbing(survivors, ctx);
                     }
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);
                     } else {
                         path_so_far = seg.to_string();
                     }
-                    val = normalize_union(survivors);
+                    val = self.normalize_union_absorbing(survivors, ctx);
                     accumulated_effect = branch_effect;
                 }
-                // F3+F4a: atom/Top/other non-navigable → open miss `_`
-                // (never mint abolished #invalid_path). Compositional:
-                // further segments keep open-world Top.
+                // F3+F4a: atom/Top/other non-navigable → open miss with
+                // cause #no_coordinate (ruling C). Never mint abolished
+                // #invalid_path. Compositional further segments continue.
                 _ => {
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);
                     } else {
                         path_so_far = seg.to_string();
                     }
-                    val = Value::Top;
+                    val = crate::value::no_coordinate_top();
                 }
             }
         }

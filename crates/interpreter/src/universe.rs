@@ -189,12 +189,21 @@ impl Universe {
             ctx.computing.remove(c);
         }
 
-        // Forward / mutual refs evaluate to Top (open miss) under sequential
-        // evolve. Reify as a Thunk so later observation can force once both
-        // bindings exist — and so mutual cycles hit force_coord / in_flight.
-        // Literal `_` stays Top (open-world hole). Stage 3 live-Ref results
-        // are concrete (not Top) and pass through unchanged.
-        if matches!(val, Value::Top) && !is_literal_top(&field.value) {
+        // Forward / mutual refs evaluate to open-miss Top under sequential
+        // evolve (ctx.root is the *committed* root; staged siblings are not
+        // visible yet). Reify as a Thunk so later observation can force once
+        // both bindings exist — and so mutual cycles hit force_coord /
+        // in_flight. Ruling C: open-miss is now caused Top `#no_coordinate`
+        // (diagnostic), not bare Top — both faces are forward-miss signals
+        // here. Static-cycle TopCaused stays concrete (real answer). Literal
+        // `_` stays bare Top (open-world hole). Stage 3 live-Ref results are
+        // concrete (not Top) and pass through unchanged.
+        let is_forward_open_miss = matches!(val, Value::Top)
+            || matches!(
+                &val,
+                Value::TopCaused { cause, .. } if cause == "no_coordinate"
+            );
+        if is_forward_open_miss && !is_literal_top(&field.value) {
             val = Value::Thunk {
                 expr: Box::new(field.value.clone()),
                 closure: ctx.scopes.clone(),

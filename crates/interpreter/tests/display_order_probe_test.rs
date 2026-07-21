@@ -132,7 +132,9 @@ fn red_display_strings_lex() {
 
 #[test]
 fn red_display_top_last() {
-    assert_obs("u: _ | 9\nout: u", "9 | _");
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse —
+    // `9 | _` → `_` (SPEC_01 §2.4.2); display order of Top is moot.
+    assert_obs("u: _ | 9\nout: u", "_");
 }
 
 #[test]
@@ -200,6 +202,10 @@ fn pin_all_bottom_verbatim() {
 #[test]
 fn pin_nav_cull_value_unchanged() {
     // Union nav projection semantics unchanged (only spelling law).
+    // MIGRATED (2026-07-20, union_absorption): Top-family collapse.
+    // MIGRATED-2 (2026-07-20, caused_top ruling C): the open-miss /
+    // static-cycle Top is a CAUSED Top = diagnostic member — exempt from
+    // absorption (SPEC_01 §2.4.2). Bare `_` still absorbs.
     assert_obs("u: {a: 1}|7\nout: u.a", "1 | _");
 }
 
