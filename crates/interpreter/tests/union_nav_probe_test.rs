@@ -91,9 +91,17 @@ fn red_union_nav_distinct_values_superpose() {
 fn red_union_nav_partial_field_keeps_top_branch() {
     // MIGRATED (2026-07-20, union_absorption): bare Top absorbed siblings
     // (`2 | _` → `_`).
-    // MIGRATED-2 (2026-07-20, caused_top ruling C): open-miss is caused Top
-    // `#no_coordinate` = diagnostic member — exempt both ways; partial field
-    // keeps the live branch (L2-92 twin face).
+    // RE-ANNOTATED at acceptance (2026-07-21, ruling A): `2 | _` is
+    // correct as a LAZY navigation cross-section, NOT because the two
+    // branches are incomparable (they are not — `{a:1,b:2} <= {a:1}`, so
+    // the VALUE absorbs to `{a:1}` and `u = {a:1}` is #true). Navigation
+    // stays lazy (SPEC_01 §2.4.2 note / call-by-observation): it projects
+    // each stored branch without solidifying `u` first, so the absorbed
+    // sibling's `.b = 2` remains visible. The body (CAID / display / `=` /
+    // `<=`) lives on the solidified face and IS absorbed; the two faces
+    // sit at different convergence depths by design. Solidifying `u`
+    // here would re-open the recursive-type divergence — a query uses
+    // `=` / `<=` to force. Verdict pinned at today's lazy reality.
     assert_obs("out: ({ a: 1 } | { a: 1, b: 2 }).b", "2 | _");
 }
 
