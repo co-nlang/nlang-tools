@@ -125,8 +125,8 @@ their payload spelling; verify no CAID shift in acceptance).
 
 ## 5. Delivery record
 
-- **commits (tools):** `d14e068` type_super R1. Spec vectors L2-93..96 were
-  pre-committed (no deliverer edit).
+- **commits (tools):** `e80b9a2` type_super R1 (amended tip). Spec vectors
+  L2-93..96 were pre-committed (no deliverer edit).
 - **engine:**
   1. **`%name` rename** — `TypeConstraint::marker_value` + dispatch
      type-path mint: payload field `%type` → `%name`. Reader
