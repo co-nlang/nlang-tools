@@ -157,16 +157,28 @@ their payload spelling; verify no CAID shift in acceptance).
   - `@float → @complex` per §2.1 tree (acceptor closes §2.3 wording).
   - No CAID-sensitive store migration (markers re-minted per observation).
 
-## 6. Acceptance (acceptor)
+## 6. Acceptance (acceptor) — PASS, zero repairs (2026-07-22)
 
-- [ ] diff purity: only `#[ignore]` removed from probes; no probe/vector edit.
-- [ ] 4 numbers re-run on delivered head: probes 14/0/0, workspace 1321/0/3,
-      conformance 135/135, corpus 75/0.
-- [ ] adversarial: `%super` chain to `@any`; `@any`/atom open-miss honest;
-      `%type` gone everywhere (display + read); `%predicate` still `_`;
-      generic `&` and membership unchanged; no CAID shift on type markers.
-- [ ] spec closure: SPEC_05 §3.2 rewrite (R1: %super derived / %predicate
-      retired / %name), SPEC_03 §4 table (drop %predicate from `@T` row),
-      SPEC_02 §30, REAL_04 §1 (drop %predicate mention), §2.3 float wording,
-      R2 ledger entry (nominal + cross-engine exchange), CHANGELOG, GLOSSARY
-      (%super / %name).
+- [x] diff purity: exactly 8 `#[ignore]` removed from probes, nothing else;
+      conformance vectors untouched (spec HEAD 0910a3d).
+- [x] 4 numbers RE-MEASURED on delivered head (not self-reported): probes
+      **14/0/0**, workspace **1321/0/3**, conformance **135/135**, unit corpus
+      **68/0**. The 5 `oo test tests/` failures are all pre-existing
+      `tests/pending/` (3 parse errors + 2 federation conflicts) — out of the
+      curated corpus (v0.2.32 recorded 75/0, so pending/ was already excluded),
+      categorically unrelated to type reflection.
+- [x] adversarial: `%super` chain `((@int).%super).%super = @any` ✓; `@any`
+      & atom open-miss honest ✓; `%type` gone on record/list/bool/morphism
+      (read + display) ✓, `%name` reads through ✓; `%predicate` still `_` ✓;
+      generic `&`/membership pins green ✓; **`@float → @complex` per §2.1 tree**
+      ✓ (deliverer did NOT follow the §2.3 non-immediate row).
+- [x] CAID check: `(@int).%caid` = `_` (marker CAID not observable); the
+      payload rename shifts the marker content-hash INTERNALLY only —
+      unobservable, uncommitted (2026-07-19 "spelling not committed"),
+      re-minted per observation; conformance + workspace green confirm no
+      CAID-dependent test broke. **Not breaking; no CHANGELOG breaking entry.**
+- [x] spec closure (spec `local`): SPEC_05 §3.2 rewrite (R1 + R2 ledger),
+      SPEC_03 §4 table (drop %predicate, add %name), SPEC_02 §30, REAL_04 §1
+      (drop %predicate), SPEC_09 §2.3 immediate-vs-transitive parent clarify,
+      CHANGELOG 增量. GLOSSARY skipped (no meta-field entries there — no
+      precedent; %kind/%val absent too).
