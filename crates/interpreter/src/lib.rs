@@ -27,7 +27,9 @@ pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, handle_resource_exhausted};
 use crate::builtins::create_default_builtins;
-use crate::type_constraint::TypeConstraint;
+use crate::type_constraint::{
+    TypeConstraint, get_type_constraint_name, is_type_constraint_combo, is_user_field_type_combo,
+};
 use anyhow::Result;
 use sha2::Digest;
 
@@ -1597,6 +1599,40 @@ let mut refl_fields = IndexMap::new();
         }
     }
 
+    /// Shallow-force public + local fields and test for embedded type markers.
+    /// Used by derived `%super` for user field-types whose `@T` fields are
+    /// still Stage-2 Thunks at observation (not yet solid markers).
+    fn combo_embeds_type_marker_shallow(
+        &self,
+        c: &ComboVal,
+        ctx: &mut EvalContext,
+    ) -> bool {
+        let check = |v: Value, oo: &Self, ctx: &mut EvalContext| -> bool {
+            let mut v = v;
+            let mut n = 0u32;
+            while matches!(&v, Value::Thunk { .. }) && n < 8 {
+                v = oo.force(v, ctx);
+                n += 1;
+            }
+            match v {
+                Value::Combo(ref inner) if is_type_constraint_combo(inner) => true,
+                Value::Combo(ref inner) => oo.combo_embeds_type_marker_shallow(inner, ctx),
+                _ => false,
+            }
+        };
+        for (_, v) in c.all_fields_iter() {
+            if check(v, self, ctx) {
+                return true;
+            }
+        }
+        for v in c.local.values() {
+            if check(v.clone(), self, ctx) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn navigate_segments(&self, start: Value, segments: &[String], ctx: &mut EvalContext, path_prefix: &str) -> Value {
         let mut val = start;
         let mut accumulated_effect = val.effect();
@@ -1753,10 +1789,37 @@ let mut refl_fields = IndexMap::new();
                     // SPEC_08 §4.1: explicit `%effect` field (SYNTAX_08) wins;
                     // else engine tag lens — *before* closed-miss so cocoon
                     // `.%effect` is #pure shield, not #missing_key.
+                    // type_super R1: `.%super` is DERIVED hierarchy reflection
+                    // (SPEC_09 §2.1 tree) — intercept before closed-miss /
+                    // open-miss so type markers answer the parent marker.
                     let target = match found {
                         Some(v) => v,
                         None if seg == "%effect" => {
                             return effect_tag_atom(c.effect);
+                        }
+                        None if seg == "%super" => {
+                            if is_type_constraint_combo(&c) {
+                                match get_type_constraint_name(&c)
+                                    .as_deref()
+                                    .and_then(TypeConstraint::super_parent)
+                                {
+                                    // @any (⊤): no super — honest open-miss.
+                                    None => Value::Top,
+                                    Some(parent) => TypeConstraint::marker_value(parent)
+                                        .with_effect(accumulated_effect),
+                                }
+                            } else if is_user_field_type_combo(&c)
+                                || self.combo_embeds_type_marker_shallow(&c, ctx)
+                            {
+                                // User field-structure type → @combo.
+                                // Fields may still be Thunks of `@T` at
+                                // observation — shallow-force to see markers.
+                                TypeConstraint::marker_value("combo")
+                                    .with_effect(accumulated_effect)
+                            } else {
+                                // Non-type value: ordinary open-miss.
+                                crate::value::no_coordinate_top()
+                            }
                         }
                         None if c.closed && !seg.starts_with('%') => {
                             // SPEC_03 §1.2 #1 / §1.3: Cocoon eigenstate —

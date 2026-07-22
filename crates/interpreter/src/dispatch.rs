@@ -93,7 +93,7 @@ impl Ouroboros {
             if type_name.starts_with('{') {
                 return Value::Top;
             }
-            // kind_tag B3: canonical role tag `#type` + payload `%type`.
+            // kind_tag B3 + type_super R1: `#type` + `%name` (fossil `%type` retired).
             return Value::Combo(ComboVal::new(
                 IndexMap::from_iter(vec![
                     (
@@ -105,7 +105,7 @@ impl Ouroboros {
                         ),
                     ),
                     (
-                        "%type".to_string(),
+                        "%name".to_string(),
                         Value::Atom(
                             AtomKind::Str(type_name.to_string()),
                             EffectTag::Pure,
