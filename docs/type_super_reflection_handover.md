@@ -125,7 +125,37 @@ their payload spelling; verify no CAID shift in acceptance).
 
 ## 5. Delivery record
 
-*(model #3 fills in: commits, any engine repairs, deviations.)*
+- **commits (tools):** `d14e068` type_super R1. Spec vectors L2-93..96 were
+  pre-committed (no deliverer edit).
+- **engine:**
+  1. **`%name` rename** — `TypeConstraint::marker_value` + dispatch
+     type-path mint: payload field `%type` → `%name`. Reader
+     `get_type_constraint_name` follows. Marker shape remains closed
+     cocoon `{{%kind: #type, %name: "…"}}`.
+  2. **`is_type_constraint_combo`** — after name unify with stdlib
+     nodes, markers are distinguished by *closed + ≤2 public fields*
+     (stdlib `@option`/`@result`/`@list` nodes carry extra members and
+     stay off the meet arm).
+  3. **`%super` derived** — navigate Combo missing-key path intercepts
+     `.%super` before closed/open miss: type markers →
+     `TypeConstraint::super_parent` (SPEC_09 §2.1 tree; `@float→@complex`;
+     fixed-width → `@int`; unknown → `@combo`; `@any` → bare Top open-miss).
+     User field-types (`@Box: { value: @int }`) → `@combo`, including when
+     nested `@T` fields are still Stage-2 Thunks (shallow-force probe).
+  4. **`%predicate`** — untouched; remains ordinary open-miss (pin green).
+- **probes:** only `#[ignore]` removed (8); assertions untouched.
+- **numbers (delivered head):**
+  | suite | result |
+  | :-- | :-- |
+  | `type_super_probe_test` | **14 / 0 / 0** |
+  | workspace (interpreter+parser+oo) | **1321 / 0 / 3** |
+  | conformance | **135 / 135** |
+  | corpus unit+integration | **75 / 0** (68+7) |
+- **deviations / notes:**
+  - User field-type detection uses embedded type-marker (solid or
+    shallow-forced Thunk), not a stored `%kind` on the user combo.
+  - `@float → @complex` per §2.1 tree (acceptor closes §2.3 wording).
+  - No CAID-sensitive store migration (markers re-minted per observation).
 
 ## 6. Acceptance (acceptor)
 

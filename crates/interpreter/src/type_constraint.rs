@@ -47,11 +47,11 @@ impl TypeConstraint {
         !matches!(Self::from_name(name), TypeConstraint::Unknown(_))
     }
 
-    /// Opaque `{{%kind: #type, %type: "…"}}` constraint marker used for
+    /// Opaque `{{%kind: #type, %name: "…"}}` constraint marker used for
     /// builtins and the Unknown not-found fallback.
-    /// SPEC_03 §4 / kind_tag B3 (2026-07-19): role tag is canonical `#type`;
-    /// distinguish markers from stdlib type nodes (`%kind: #type` + `%name`)
-    /// via the payload field `%type` (engine-internal spelling, B2).
+    /// SPEC_03 §4 / kind_tag B3 + type_super R1 (2026-07-22): role tag is
+    /// canonical `#type`; name payload is `%name` (fossil `%type` retired —
+    /// unifies with stdlib type-node spelling).
     pub fn marker_value(type_name: &str) -> Value {
         use crate::value::{ComboVal, EffectTag};
         use indexmap::IndexMap;
@@ -66,7 +66,7 @@ impl TypeConstraint {
                     ),
                 ),
                 (
-                    "%type".to_string(),
+                    "%name".to_string(),
                     Value::Atom(
                         AtomKind::Str(type_name.to_string()),
                         EffectTag::Pure,
@@ -79,6 +79,25 @@ impl TypeConstraint {
             EffectTag::Pure,
             vec![],
         ))
+    }
+
+    /// SPEC_09 §2.1 hierarchy tree — immediate parent type name (no `@`).
+    /// `None` = lattice top (`@any`) has no super (honest open-miss).
+    /// Fixed-width ints → `int`; unknown / user names → `combo`.
+    pub fn super_parent(type_name: &str) -> Option<&'static str> {
+        let n = type_name.trim_start_matches('@');
+        match n {
+            "any" => None,
+            "unit" | "bool" | "str" | "list" | "combo" | "morphism" | "type" | "caid"
+            | "num" | "option" | "result" => Some("any"),
+            "complex" | "int" => Some("num"),
+            // §2.1 tree (not §2.3 non-immediate table): float under complex.
+            "float" => Some("complex"),
+            "record" => Some("combo"),
+            n if is_fixed_width_int_name(n) => Some("int"),
+            // User / unknown type names → field-structure family.
+            _ => Some("combo"),
+        }
     }
 
     pub fn validate_value(&self, value: &Value) -> ValidationResult {
@@ -242,23 +261,78 @@ pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
     }
 }
 
-/// True iff this combo is a **constraint marker** (nominal / builtin `@Name`
-/// refine payload), not a stdlib type node.
-/// Kind-tag B3: both mint `%kind: #type`; markers also carry the internal
-/// payload field `%type: "Name"`, while stdlib type nodes carry `%name`.
+/// True iff this combo is a **constraint marker** (builtin / Unknown `@Name`
+/// refine payload). Markers are the closed two-field cocoon
+/// `{{%kind: #type, %name: "…"}}` minted by [`TypeConstraint::marker_value`].
+/// Rich stdlib type nodes (`@option`/`@result`/`@list` on root) also carry
+/// `%kind`+`%name` but have additional members — they are not markers.
+/// Path resolution short-circuits builtins to markers, so meet sites see
+/// markers; this predicate keys on the closed marker shape (no extra public
+/// data fields beyond the reflection pair).
 pub fn is_type_constraint_combo(cv: &crate::value::ComboVal) -> bool {
     let kind_is_type = cv
         .get_field("%kind")
         .map(|k| k.to_string_plain().trim_start_matches('#') == "type")
         .unwrap_or(false);
-    kind_is_type && get_type_constraint_name(cv).is_some()
+    if !kind_is_type || get_type_constraint_name(cv).is_none() {
+        return false;
+    }
+    // Marker = closed cocoon whose only public payload is %kind + %name.
+    // (stdlib type nodes add %fmap / %some / … and must not take the meet arm.)
+    cv.closed && marker_field_count(cv) <= 2
 }
 
+fn marker_field_count(cv: &crate::value::ComboVal) -> usize {
+    cv.fields().len()
+}
+
+/// Type name from the marker / type-node `%name` payload (R1).
 pub fn get_type_constraint_name(cv: &crate::value::ComboVal) -> Option<String> {
-    cv.get_field("%type").and_then(|t| {
-        match t {
-            crate::value::Value::Atom(AtomKind::Str(name), _, _) => Some(name.clone()),
-            _ => None,
-        }
+    cv.get_field("%name").and_then(|t| match t {
+        crate::value::Value::Atom(AtomKind::Str(name), _, _) => Some(name.clone()),
+        _ => None,
     })
+}
+
+/// Fixed-width integer type names (`u8`..`u256`, `i8`..`i256`) under `@int`.
+fn is_fixed_width_int_name(n: &str) -> bool {
+    let rest = if let Some(r) = n.strip_prefix('u') {
+        r
+    } else if let Some(r) = n.strip_prefix('i') {
+        r
+    } else {
+        return false;
+    };
+    matches!(rest, "8" | "16" | "32" | "64" | "128" | "256")
+}
+
+/// User field-structure type: a non-marker combo that embeds type markers
+/// (e.g. `@Box: { value: @int }`). Its hierarchy parent is `@combo`.
+pub fn is_user_field_type_combo(cv: &crate::value::ComboVal) -> bool {
+    if is_type_constraint_combo(cv) {
+        return false;
+    }
+    embeds_type_marker(cv)
+}
+
+fn embeds_type_marker(cv: &crate::value::ComboVal) -> bool {
+    for (_, v) in cv.all_fields_iter() {
+        match v {
+            crate::value::Value::Combo(ref inner) if is_type_constraint_combo(inner) => {
+                return true;
+            }
+            crate::value::Value::Combo(ref inner) if embeds_type_marker(inner) => return true,
+            _ => {}
+        }
+    }
+    for v in cv.local.values() {
+        match v {
+            crate::value::Value::Combo(ref inner) if is_type_constraint_combo(inner) => {
+                return true;
+            }
+            crate::value::Value::Combo(ref inner) if embeds_type_marker(inner) => return true,
+            _ => {}
+        }
+    }
+    false
 }

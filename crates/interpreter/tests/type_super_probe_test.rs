@@ -91,7 +91,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_super_numeric_chain() {
     // Unambiguous §2.1 immediate parents (int/complex directly under num).
     assert_obs("out: (@int).%super = @num", "#true");
@@ -100,7 +99,6 @@ fn red_super_numeric_chain() {
 }
 
 #[test]
-#[ignore]
 fn red_super_fixed_width_to_int() {
     // Fixed-width投影 sit under @int (§2.1 tree; FFI boundary row §2.3).
     assert_obs("out: (@u8).%super = @int", "#true");
@@ -108,13 +106,11 @@ fn red_super_fixed_width_to_int() {
 }
 
 #[test]
-#[ignore]
 fn red_super_record_to_combo() {
     assert_obs("out: (@record).%super = @combo", "#true");
 }
 
 #[test]
-#[ignore]
 fn red_super_chain_navigable() {
     // The back-link is a real type value → the chain composes to the top.
     assert_obs("out: ((@int).%super).%super = @any", "#true");
@@ -123,7 +119,6 @@ fn red_super_chain_navigable() {
 }
 
 #[test]
-#[ignore]
 fn red_super_user_type_is_combo() {
     // A user-defined field-structure type is a @combo (§2.1: @combo =
     // 任意欄位結構). Its handler family is the structural combo.
@@ -135,7 +130,6 @@ fn red_super_user_type_is_combo() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_name_reflection_via_name() {
     // The type NAME reads through `%name` (was the internal %type payload).
     assert_obs("out: (@int).%name", "\"int\"");
@@ -143,7 +137,6 @@ fn red_name_reflection_via_name() {
 }
 
 #[test]
-#[ignore]
 fn red_type_payload_retired() {
     // The last %type fossil: `.%type` on a type marker is now an ordinary
     // open-miss (the payload field was renamed to %name).
@@ -151,7 +144,6 @@ fn red_type_payload_retired() {
 }
 
 #[test]
-#[ignore]
 fn red_display_no_type_leak() {
     // The marker's display must not leak the fossil %type; it shows %name.
     let got = observe_nlang("out: @int", "out");
