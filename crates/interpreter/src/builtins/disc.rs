@@ -107,33 +107,62 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         } else { (None, arg.collapse().to_string_plain()) };
 
         if let Ok(hash) = ContentHash::parse(&caid_str) {
+            // SPEC_08 §4.2.4: user-facing fetch solidifies active → #cached
+            // (observation projection). Store remains raw (get_value).
+            let observe = |val: Value| val.solidify_effects();
             if let Some(name) = node_name {
                 let peer_opt = if let Ok(peers) = oo.peers.read() { peers.get(&name).cloned() } else { None };
                 if let Some(peer) = peer_opt {
                     match peer {
-                        Peer::Local(store) => { if let Ok(val) = store.get_value(&hash) { return val; } }
-                        Peer::Remote(addr) => { if let Ok(val) = oo.remote_fetch(&addr, &hash) { return val; } }
+                        Peer::Local(store) => {
+                            if let Ok(val) = store.get_value(&hash) {
+                                return observe(val);
+                            }
+                        }
+                        Peer::Remote(addr) => {
+                            if let Ok(val) = oo.remote_fetch(&addr, &hash) {
+                                return observe(val);
+                            }
+                        }
                     }
                 }
             } else {
                 let mut results = Vec::new();
-                if let Ok(val) = oo.store.get_value(&hash) { results.push(val); }
-                
-                let peers_copy = if let Ok(peers) = oo.peers.read() { peers.values().cloned().collect::<Vec<_>>() } else { vec![] };
+                if let Ok(val) = oo.store.get_value(&hash) {
+                    results.push(observe(val));
+                }
+
+                let peers_copy = if let Ok(peers) = oo.peers.read() {
+                    peers.values().cloned().collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
                 for peer in peers_copy {
                     match peer {
-                        Peer::Local(store) => { if let Ok(val) = store.get_value(&hash) { results.push(val); } }
-                        Peer::Remote(addr) => { if let Ok(val) = oo.remote_fetch(&addr, &hash) { return val; } }
+                        Peer::Local(store) => {
+                            if let Ok(val) = store.get_value(&hash) {
+                                results.push(observe(val));
+                            }
+                        }
+                        Peer::Remote(addr) => {
+                            if let Ok(val) = oo.remote_fetch(&addr, &hash) {
+                                return observe(val);
+                            }
+                        }
                     }
                 }
-                
-                if results.is_empty() { return BottomCause::Conflict.into(); }
-                
+
+                if results.is_empty() {
+                    return BottomCause::Conflict.into();
+                }
+
                 let mut final_val = results.remove(0);
                 for v in results {
                     let merged = oo.unify_internal(final_val.clone(), v.clone(), ctx);
                     if let Value::Bottom(_) = merged {
-                        if v.bits() > final_val.bits() { final_val = v; }
+                        if v.bits() > final_val.bits() {
+                            final_val = v;
+                        }
                     } else {
                         final_val = merged;
                     }
@@ -262,18 +291,28 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             // Determine which CAID to fetch at this hop
             let fetch_target = explicit_target.as_deref().unwrap_or(chosen.as_str());
 
-            // Try local store, then connected peers
+            // Try local store, then connected peers.
+            // SPEC_08 §4.2.4: user-facing find solidifies active → #cached.
             if let Ok(hash) = crate::value::ContentHash::parse(fetch_target) {
-                if let Ok(val) = oo.store.get_value(&hash) { return val; }
-                let peers_copy: Vec<_> = oo.peers.read()
-                    .map(|p| p.values().cloned().collect()).unwrap_or_default();
+                if let Ok(val) = oo.store.get_value(&hash) {
+                    return val.solidify_effects();
+                }
+                let peers_copy: Vec<_> = oo
+                    .peers
+                    .read()
+                    .map(|p| p.values().cloned().collect())
+                    .unwrap_or_default();
                 for peer in peers_copy {
                     match peer {
                         crate::Peer::Local(store) => {
-                            if let Ok(val) = store.get_value(&hash) { return val; }
+                            if let Ok(val) = store.get_value(&hash) {
+                                return val.solidify_effects();
+                            }
                         }
                         crate::Peer::Remote(addr) => {
-                            if let Ok(val) = oo.remote_fetch(&addr, &hash) { return val; }
+                            if let Ok(val) = oo.remote_fetch(&addr, &hash) {
+                                return val.solidify_effects();
+                            }
                         }
                     }
                 }

@@ -1473,6 +1473,75 @@ impl Value {
         }
     }
 
+    /// SPEC_08 §4.2.4 observation projection: any active tag
+    /// (`#io`/`#nondet`/`#state`) collapses to a single `#cached`. Pure and
+    /// already-cached are unchanged. Multi-active sets → single Cached.
+    pub fn solidify_active_effect(e: EffectTag) -> EffectTag {
+        if e.contains(EffectTag::IO)
+            || e.contains(EffectTag::NonDet)
+            || e.contains(EffectTag::State)
+        {
+            EffectTag::Cached
+        } else {
+            e
+        }
+    }
+
+    /// Recursively solidify active effects on a store-fetched value (observation
+    /// projection only — does not write back to the store).
+    pub fn solidify_effects(self) -> Self {
+        match self {
+            Value::Atom(k, e, r) => Value::Atom(k, Self::solidify_active_effect(e), r),
+            Value::Combo(mut c) => {
+                c.effect = Self::solidify_active_effect(c.effect);
+                for map in [
+                    &mut c.data,
+                    &mut c.types,
+                    &mut c.rules,
+                    &mut c.meta,
+                    &mut c.system,
+                    &mut c.local,
+                ] {
+                    for (_, v) in map.iter_mut() {
+                        *v = std::mem::replace(v, Value::Top).solidify_effects();
+                    }
+                }
+                for v in c.pending_spreads.iter_mut() {
+                    *v = std::mem::replace(v, Value::Top).solidify_effects();
+                }
+                Value::Combo(c)
+            }
+            Value::Union(branches) => {
+                Value::Union(branches.into_iter().map(|b| b.solidify_effects()).collect())
+            }
+            Value::Blur(mut bd) => {
+                bd.effect = Self::solidify_active_effect(bd.effect);
+                if let Some(p) = bd.partial.take() {
+                    bd.partial = Some(Box::new((*p).solidify_effects()));
+                }
+                Value::Blur(bd)
+            }
+            Value::Range { start, end, step } => Value::Range {
+                start: Box::new((*start).solidify_effects()),
+                end: Box::new((*end).solidify_effects()),
+                step: step.map(|s| Box::new((*s).solidify_effects())),
+            },
+            Value::Thunk {
+                expr,
+                closure,
+                context,
+                effect,
+            } => Value::Thunk {
+                expr,
+                closure,
+                context: context.map(|c| Box::new((*c).solidify_effects())),
+                effect: Self::solidify_active_effect(effect),
+            },
+            // Top / TopCaused / Bottom / Code / Ref: no active effect surface.
+            other => other,
+        }
+    }
+
     pub fn is_morphism(&self) -> bool {
         if let Value::Combo(ref c) = self {
             if c.contains_key("%morphism") || c.contains_key("%rules") || c.contains_key("%builtin") {
