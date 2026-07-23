@@ -98,7 +98,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_compose_io_nondet() {
     // Two incomparable active effects join to a two-tag set — the IO fact
     // survives instead of being swallowed by #nondet (scalar max).
@@ -109,7 +108,6 @@ fn red_compose_io_nondet() {
 }
 
 #[test]
-#[ignore]
 fn red_compose_io_state() {
     // Scalar max returned #io (IO=2 > State=1), dropping #state entirely.
     assert_obs(
@@ -119,7 +117,6 @@ fn red_compose_io_state() {
 }
 
 #[test]
-#[ignore]
 fn red_compose_nondet_state() {
     assert_obs(
         "c: { a: (~%Math./random _), b: (~%Engine./equivalence_map _) }\nout: c.%effect",
@@ -128,7 +125,6 @@ fn red_compose_nondet_state() {
 }
 
 #[test]
-#[ignore]
 fn red_compose_three_tags() {
     // Full three-way join — scalar max kept only #nondet.
     assert_obs(
@@ -138,7 +134,6 @@ fn red_compose_three_tags() {
 }
 
 #[test]
-#[ignore]
 fn red_compose_unify_join() {
     // §4.2.2 morphism/§4.1 unification contagion: & joins the two sides'
     // effects. {a:io} & {b:nondet} → the union, not the max.
@@ -149,7 +144,6 @@ fn red_compose_unify_join() {
 }
 
 #[test]
-#[ignore]
 fn red_compose_idempotent_multi() {
     // §4.1 idempotency E|E=E within a multi-tag set: two io fields + one
     // nondet dedup to exactly {io, nondet}, never #io | #io | #nondet.
@@ -160,7 +154,6 @@ fn red_compose_idempotent_multi() {
 }
 
 #[test]
-#[ignore]
 fn red_compose_display_tail() {
     // SPEC_11 §3.4 diagnostic tail must render the whole set, in the same
     // canonical order as the `.%effect` read (baseline showed #nondet).

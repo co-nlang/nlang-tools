@@ -210,14 +210,55 @@ fn cycle_reentry(ctx: &EvalContext, reentered: Option<&str>) -> Value {
 }
 
 /// SPEC_08 §4.1: `.%effect` answer — pure tag atom (tag body without `#`).
+/// SPEC_08 §4.1: `.%effect` answer — pure tag atom(s). Multi-tag sets become
+/// a normalize_union of tag atoms (display order = alphabetical via §2.4.1).
 fn effect_tag_atom(e: EffectTag) -> Value {
-    let name = match e {
-        EffectTag::Pure => "pure",
-        EffectTag::State => "state",
-        EffectTag::IO => "io",
-        EffectTag::NonDet => "nondet",
-    };
-    Value::Atom(AtomKind::Tag(name.to_string()), EffectTag::Pure, None)
+    if e.is_pure() {
+        return Value::Atom(
+            AtomKind::Tag("pure".to_string()),
+            EffectTag::Pure,
+            None,
+        );
+    }
+    let mut atoms = Vec::new();
+    // Alphabetical: io, nondet, state (, cached) — same as Display.
+    if e.contains(EffectTag::IO) {
+        atoms.push(Value::Atom(
+            AtomKind::Tag("io".to_string()),
+            EffectTag::Pure,
+            None,
+        ));
+    }
+    if e.contains(EffectTag::NonDet) {
+        atoms.push(Value::Atom(
+            AtomKind::Tag("nondet".to_string()),
+            EffectTag::Pure,
+            None,
+        ));
+    }
+    if e.contains(EffectTag::State) {
+        atoms.push(Value::Atom(
+            AtomKind::Tag("state".to_string()),
+            EffectTag::Pure,
+            None,
+        ));
+    }
+    if e.contains(EffectTag::Cached) {
+        atoms.push(Value::Atom(
+            AtomKind::Tag("cached".to_string()),
+            EffectTag::Pure,
+            None,
+        ));
+    }
+    match atoms.len() {
+        0 => Value::Atom(
+            AtomKind::Tag("pure".to_string()),
+            EffectTag::Pure,
+            None,
+        ),
+        1 => atoms.into_iter().next().unwrap(),
+        _ => crate::value::normalize_union(atoms),
+    }
 }
 
 pub type BuiltinFn = dyn Fn(Value, &Ouroboros, &mut EvalContext) -> Value + Send + Sync;
@@ -1107,10 +1148,28 @@ let mut refl_fields = IndexMap::new();
                             }
                             let mut res = entry.value.clone();
                             res = match res {
-                                Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
-                                Value::Combo(mut cv) if cv.effect < effect => { cv.effect = effect; Value::Combo(cv) },
-                                _ if res.effect() < effect => Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%val".to_string(), res)]), true, IndexMap::new(), effect, vec![])),
-                                _ => res,
+                                Value::Atom(kind, old_e, r) => {
+                                    Value::Atom(kind, old_e.union(effect), r)
+                                }
+                                Value::Combo(mut cv) => {
+                                    cv.effect = cv.effect.union(effect);
+                                    Value::Combo(cv)
+                                }
+                                Value::Bottom(_)
+                                | Value::Blur(_)
+                                | Value::Top
+                                | Value::TopCaused { .. } => res,
+                                other if !other.effect().contains_all(effect) => {
+                                    let e = effect.union(other.effect());
+                                    Value::Combo(ComboVal::new(
+                                        IndexMap::from_iter(vec![("%val".to_string(), other)]),
+                                        true,
+                                        IndexMap::new(),
+                                        e,
+                                        vec![],
+                                    ))
+                                }
+                                other => other.with_effect(effect),
                             };
                             return res;
                         }
@@ -1228,23 +1287,26 @@ let mut refl_fields = IndexMap::new();
                 // escalation — that shell traps `.%cause` navigation (meta
                 // segment treated as on-shell, peel skipped, open miss Top).
                 let res = match res {
-                    Value::Atom(kind, old_e, r) if old_e < effect => Value::Atom(kind, effect, r),
-                    Value::Combo(mut cv) if cv.effect < effect => {
-                        cv.effect = effect;
+                    Value::Atom(kind, old_e, r) => Value::Atom(kind, old_e.union(effect), r),
+                    Value::Combo(mut cv) => {
+                        cv.effect = cv.effect.union(effect);
                         Value::Combo(cv)
                     }
                     Value::Bottom(_)
                     | Value::Blur(_)
                     | Value::Top
                     | Value::TopCaused { .. } => res,
-                    _ if res.effect() < effect => Value::Combo(ComboVal::new(
-                        IndexMap::from_iter(vec![("%val".to_string(), res)]),
-                        true,
-                        IndexMap::new(),
-                        effect,
-                        vec![],
-                    )),
-                    _ => res,
+                    other if !other.effect().contains_all(effect) => {
+                        let e = effect.union(other.effect());
+                        Value::Combo(ComboVal::new(
+                            IndexMap::from_iter(vec![("%val".to_string(), other)]),
+                            true,
+                            IndexMap::new(),
+                            e,
+                            vec![],
+                        ))
+                    }
+                    other => other.with_effect(effect),
                 };
 
                 let deps = inner_deps.unwrap_or_default();
@@ -1260,7 +1322,9 @@ let mut refl_fields = IndexMap::new();
                     let memoizable = match &res {
                         Value::Bottom(d) if matches!(d.cause, BottomCause::Divergent) => true,
                         Value::Bottom(_) => false,
-                        _ => !res.contains_blur() && res.effect() < EffectTag::NonDet,
+                        // Memoize only when NonDet is absent (nondet must not
+                        // be cached across observations).
+                        _ => !res.contains_blur() && !res.effect().contains(EffectTag::NonDet),
                     };
                     if memoizable {
                         if let Ok(mut memo) = self.force_memo.write() {
@@ -1643,13 +1707,13 @@ let mut refl_fields = IndexMap::new();
             }
             let seg = seg.trim();
             let mut current = self.force(val, ctx);
-            accumulated_effect = accumulated_effect.max(current.effect());
+            accumulated_effect = accumulated_effect.union(current.effect());
             // forward_spread: expand deferred sources before field ops so
             // ⊥/blur absorb and field merge are visible to this segment.
             if let Value::Combo(c) = current {
                 if !c.pending_spreads.is_empty() {
                     current = self.expand_combo_pending(c, ctx);
-                    accumulated_effect = accumulated_effect.max(current.effect());
+                    accumulated_effect = accumulated_effect.union(current.effect());
                 } else {
                     current = Value::Combo(c);
                 }
@@ -1669,7 +1733,7 @@ let mut refl_fields = IndexMap::new();
                     }
                     if let Some(inner) = c.get_field("%val") {
                         current = self.force(inner.clone(), ctx);
-                        accumulated_effect = accumulated_effect.max(current.effect());
+                        accumulated_effect = accumulated_effect.union(current.effect());
                     } else { break; }
                 } else if crate::value::is_structural_view(c) {
                     // G6 acceptance repair: the structural-view mark is a
@@ -1678,7 +1742,7 @@ let mut refl_fields = IndexMap::new();
                     // (SYNTAX_07 §4 #7: post-`>>` field access collapses).
                     if let Some(inner) = crate::value::structural_node(c) {
                         current = self.force(inner.clone(), ctx);
-                        accumulated_effect = accumulated_effect.max(current.effect());
+                        accumulated_effect = accumulated_effect.union(current.effect());
                     } else { break; }
                 } else { break; }
             }
@@ -1763,7 +1827,7 @@ let mut refl_fields = IndexMap::new();
                 // remaining segments continue on the blur so a later meta
                 // segment (%cause/%caid) still answers honestly.
                 let mut bd = bd;
-                bd.effect = bd.effect.max(accumulated_effect);
+                bd.effect = bd.effect.union(accumulated_effect);
                 val = Value::Blur(bd);
                 continue;
             }
@@ -1875,11 +1939,11 @@ let mut refl_fields = IndexMap::new();
                             Value::Bottom(d) => {
                                 // Drop — compatible-survivor rule; keep
                                 // full detail for all-⊥ primary pick.
-                                branch_effect = branch_effect.max(Value::Bottom(d.clone()).effect());
+                                branch_effect = branch_effect.union(Value::Bottom(d.clone()).effect());
                                 culled.push(*d);
                             }
                             other => {
-                                branch_effect = branch_effect.max(other.effect());
+                                branch_effect = branch_effect.union(other.effect());
                                 survivors.push(other);
                             }
                         }

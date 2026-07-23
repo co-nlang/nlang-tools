@@ -264,14 +264,14 @@ impl Ouroboros {
             return r;
         }
 
-        let nondet = a.effect() >= EffectTag::NonDet || b.effect() >= EffectTag::NonDet;
+        let nondet = a.effect().contains(EffectTag::NonDet) || b.effect().contains(EffectTag::NonDet);
         let cache_key = if id_a.digest <= id_b.digest { (id_a, id_b) } else { (id_b, id_a) };
         if !nondet {
             if let Ok(memo) = self.unify_memo.read() { if let Some(cached_res) = memo.get(&cache_key) { return cached_res.clone(); } }
         }
         let mut result = self.do_unify(a.clone(), b.clone(), ctx);
-        let combined_effect = a.effect().max(b.effect());
-        if let Value::Combo(ref mut cv) = result { cv.effect = cv.effect.max(combined_effect); }
+        let combined_effect = a.effect().union(b.effect());
+        if let Value::Combo(ref mut cv) = result { cv.effect = cv.effect.union(combined_effect); }
         if !nondet && !matches!(result, Value::Bottom(_)) && !result.contains_blur() {
             if let Ok(mut memo) = self.unify_memo.write() {
                 const UNIFY_MEMO_CAP: usize = 100_000;
@@ -285,9 +285,9 @@ impl Ouroboros {
     fn do_unify(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
         match (a, b) {
             (Value::Atom(AtomKind::Tag(ta), ae, ra), Value::Atom(AtomKind::Tag(tb), be, rb)) if ta.trim_start_matches('#') == tb.trim_start_matches('#') => {
-                Value::Atom(AtomKind::Tag(ta), ae.max(be), ra.or(rb))
+                Value::Atom(AtomKind::Tag(ta), ae.union(be), ra.or(rb))
             }
-            (Value::Atom(ak, ae, ra), Value::Atom(bk, be, rb)) if ak == bk => Value::Atom(ak, ae.max(be), ra.or(rb)),
+            (Value::Atom(ak, ae, ra), Value::Atom(bk, be, rb)) if ak == bk => Value::Atom(ak, ae.union(be), ra.or(rb)),
             (Value::Atom(ak, ae, ra), Value::Combo(mut cv)) | (Value::Combo(mut cv), Value::Atom(ak, ae, ra)) => { 
                 if is_type_constraint_combo(&cv) {
                     if let Some(type_name) = get_type_constraint_name(&cv) {
@@ -364,7 +364,7 @@ impl Ouroboros {
                     (Some(p), None) | (None, Some(p)) => Some(Box::new(p.clone())),
                     (None, None) => None,
                 };
-                let eff = ba.effect.max(bb.effect);
+                let eff = ba.effect.union(bb.effect);
                 let base = if ba.horizon.fuel_remaining <= bb.horizon.fuel_remaining { ba } else { bb };
                 Value::Blur(BlurDetail {
                     cause: base.cause.clone(),
@@ -527,7 +527,7 @@ impl Ouroboros {
             rf,
             a.closed || b.closed,
             rl,
-            a.effect.max(b.effect),
+            a.effect.union(b.effect),
             a.relations
                 .iter()
                 .chain(b.relations.iter())

@@ -42,7 +42,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     for (_k, v) in &c0.fields() { if _k.parse::<usize>().is_ok() { res.insert(count.to_string(), v.clone()); count += 1; } }
                     for (_k, v) in &c1.fields() { if _k.parse::<usize>().is_ok() { res.insert(count.to_string(), v.clone()); count += 1; } }
                     res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c0.effect.max(c1.effect), vec![]));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c0.effect.union(c1.effect), vec![]));
                 }
             }
         }
@@ -102,11 +102,11 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         let mut tuple = IndexMap::new();
                         tuple.insert("0".to_string(), v1.clone());
                         tuple.insert("1".to_string(), v2.clone());
-                        res.insert(i.to_string(), Value::Combo(ComboVal::new(tuple, true, IndexMap::new(), v1.effect().max(v2.effect()), vec![])));
+                        res.insert(i.to_string(), Value::Combo(ComboVal::new(tuple, true, IndexMap::new(), v1.effect().union(v2.effect()), vec![])));
                         i += 1;
                     }
                     res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c1.effect.max(c2.effect), vec![]));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), c1.effect.union(c2.effect), vec![]));
                 }
             }
         }
@@ -143,7 +143,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 
                 if let (Value::Combo(lc), f) = (lv.collapse().clone(), fv) {
                     let mut res = IndexMap::new(); let mut max_e = f.effect();
-                    for (k, v) in &lc.fields() { if k.parse::<usize>().is_ok() { let item = oo.force(v.clone(), ctx); let mapped = oo.apply_morphism(f.clone(), item, ctx); let solidified = oo.force_recursive(mapped, ctx); max_e = max_e.max(solidified.effect()); res.insert(k.clone(), solidified); } }
+                    for (k, v) in &lc.fields() { if k.parse::<usize>().is_ok() { let item = oo.force(v.clone(), ctx); let mapped = oo.apply_morphism(f.clone(), item, ctx); let solidified = oo.force_recursive(mapped, ctx); max_e = max_e.union(solidified.effect()); res.insert(k.clone(), solidified); } }
                     for (k, v) in &lc.fields() { if !k.parse::<usize>().is_ok() { res.insert(k.clone(), v.clone()); } }
                     let mut out = lc.clone();
                     for (k, v) in res { out.insert_field(&k, v); }
@@ -191,7 +191,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let mut res = IndexMap::new(); let mut count = 0;
                     for (k, v) in &lc.fields() { if k.parse::<usize>().is_ok() { let item = oo.force(v.clone(), ctx); let pred = oo.apply_morphism(f.clone(), item.clone(), ctx); if pred.to_string_plain().trim_start_matches('#') == "true" { res.insert(count.to_string(), item); count += 1; } } }
                     res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), lc.effect.max(f.effect()), vec![]));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), lc.effect.union(f.effect()), vec![]));
                 }
             }
         }

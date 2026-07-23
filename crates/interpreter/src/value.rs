@@ -6,12 +6,96 @@ use serde::{Serialize, Deserialize};
 use ring::{signature::{self, KeyPair as _}, rand};
 use std::sync::{Arc, RwLock};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum EffectTag { Pure = 0, State = 1, IO = 2, NonDet = 3 }
+/// Effect label **set** (SPEC_08 §4.1 join-semilattice). Composition is
+/// set-union, not a total-order max — `io`/`nondet`/`state` are incomparable
+/// siblings (effect_union arc 1, 2026-07-23).
+///
+/// Bit layout: bit0=IO, bit1=NonDet, bit2=State, bit3=Cached; `0` = Pure.
+/// No `PartialOrd`/`Ord` — forbids silent scalar collapse via `.max()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EffectTag(u8);
+
+impl EffectTag {
+    // Legacy names (not SCREAMING_SNAKE) keep ~480 call sites stable.
+    #[allow(non_upper_case_globals)]
+    pub const Pure: EffectTag = EffectTag(0);
+    #[allow(non_upper_case_globals)]
+    pub const IO: EffectTag = EffectTag(0b0001);
+    #[allow(non_upper_case_globals)]
+    pub const NonDet: EffectTag = EffectTag(0b0010);
+    #[allow(non_upper_case_globals)]
+    pub const State: EffectTag = EffectTag(0b0100);
+    /// Reserved (§4.2.4); no producer in arc 1.
+    #[allow(non_upper_case_globals)]
+    pub const Cached: EffectTag = EffectTag(0b1000);
+
+    pub fn union(self, o: EffectTag) -> EffectTag {
+        EffectTag(self.0 | o.0)
+    }
+    /// True if `o` is a non-empty subset of `self`.
+    pub fn contains(self, o: EffectTag) -> bool {
+        o.0 != 0 && (self.0 & o.0) == o.0
+    }
+    /// True if every bit of `o` is set in `self` (Pure is always covered).
+    pub fn contains_all(self, o: EffectTag) -> bool {
+        (self.0 & o.0) == o.0
+    }
+    pub fn is_pure(self) -> bool {
+        self.0 == 0
+    }
+    /// Thunk CAID serial byte: single-tag legacy ordinals unchanged
+    /// (Pure=0, State=1, IO=2, NonDet=3); multi-tag / Cached use high bit.
+    pub fn to_serial_byte(self) -> u8 {
+        match self.0 {
+            0 => 0,          // Pure
+            0b0100 => 1,     // State (legacy)
+            0b0001 => 2,     // IO (legacy)
+            0b0010 => 3,     // NonDet (legacy)
+            bits => 0x80 | bits,
+        }
+    }
+    /// Tag names present in the set, alphabetical (io, nondet, pure, state).
+    fn tag_names(self) -> Vec<&'static str> {
+        if self.0 == 0 {
+            return vec!["pure"];
+        }
+        let mut names = Vec::new();
+        // Alphabetical emission: io, nondet, state (, cached)
+        if self.0 & Self::IO.0 != 0 {
+            names.push("io");
+        }
+        if self.0 & Self::NonDet.0 != 0 {
+            names.push("nondet");
+        }
+        if self.0 & Self::State.0 != 0 {
+            names.push("state");
+        }
+        if self.0 & Self::Cached.0 != 0 {
+            names.push("cached");
+        }
+        names
+    }
+}
+
+impl std::ops::BitOr for EffectTag {
+    type Output = EffectTag;
+    fn bitor(self, rhs: EffectTag) -> EffectTag {
+        self.union(rhs)
+    }
+}
 
 impl fmt::Display for EffectTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self { EffectTag::Pure => write!(f, "#pure"), EffectTag::State => write!(f, "#state"), EffectTag::IO => write!(f, "#io"), EffectTag::NonDet => write!(f, "#nondet") }
+        let names = self.tag_names();
+        let mut first = true;
+        for n in names {
+            if !first {
+                write!(f, " | ")?;
+            }
+            write!(f, "#{n}")?;
+            first = false;
+        }
+        Ok(())
     }
 }
 
@@ -1366,11 +1450,26 @@ impl Value {
     }
     pub fn with_effect(self, e: EffectTag) -> Self {
         match self {
-            Value::Atom(ak, old_e, r) => Value::Atom(ak, old_e.max(e), r),
-            Value::Combo(mut cv) => { cv.effect = cv.effect.max(e); Value::Combo(cv) },
-            Value::Union(branches) => Value::Union(branches.into_iter().map(|b| b.with_effect(e)).collect()),
-            Value::Thunk { expr, closure, context, effect } => Value::Thunk { expr, closure, context, effect: effect.max(e) },
-            _ => self
+            Value::Atom(ak, old_e, r) => Value::Atom(ak, old_e.union(e), r),
+            Value::Combo(mut cv) => {
+                cv.effect = cv.effect.union(e);
+                Value::Combo(cv)
+            }
+            Value::Union(branches) => {
+                Value::Union(branches.into_iter().map(|b| b.with_effect(e)).collect())
+            }
+            Value::Thunk {
+                expr,
+                closure,
+                context,
+                effect,
+            } => Value::Thunk {
+                expr,
+                closure,
+                context,
+                effect: effect.union(e),
+            },
+            _ => self,
         }
     }
 
@@ -1391,12 +1490,14 @@ impl Value {
             Value::Atom(_, e, None) => *e,
             Value::Atom(_, e, Some(_)) => *e,
             Value::Thunk { effect, .. } => *effect, 
-            Value::Union(b) => b.iter().map(|v| v.effect()).max().unwrap_or(EffectTag::Pure), 
+            Value::Union(b) => b
+                .iter()
+                .fold(EffectTag::Pure, |acc, v| acc.union(v.effect())),
             Value::Blur(bd) => bd.effect,
             Value::Range { start, end, step } => {
-                let mut e = start.effect().max(end.effect());
+                let mut e = start.effect().union(end.effect());
                 if let Some(s) = step {
-                    e = e.max(s.effect());
+                    e = e.union(s.effect());
                 }
                 e
             }
@@ -1411,7 +1512,7 @@ impl Value {
                 if c.is_pure_wrapper() {
                     if let Some(v) = c.get_field("%val") {
                         let (inner, inner_e) = v.collapse_with_effect();
-                        (inner, inner_e.max(c.effect))
+                        (inner, inner_e.union(c.effect))
                     } else {
                         (self.clone(), c.effect)
                     }
@@ -1422,8 +1523,10 @@ impl Value {
             Value::Atom(_, e, _) => (self.clone(), *e),
             Value::Thunk { effect, .. } => (self.clone(), *effect),
             Value::Union(branches) => {
-                let max_e = branches.iter().map(|b| b.effect()).max().unwrap_or(EffectTag::Pure);
-                (self.clone(), max_e)
+                let u = branches
+                    .iter()
+                    .fold(EffectTag::Pure, |acc, b| acc.union(b.effect()));
+                (self.clone(), u)
             }
             Value::Blur(bd) => (self.clone(), bd.effect),
             _ => (self.clone(), EffectTag::Pure),
@@ -1485,7 +1588,9 @@ impl Value {
                     _ => format!("{:?}", kind),
                 };
                 if let Some(r) = rank { s.push_str(&format!("  ;; %rank: {}", r)); }
-                if *effect > EffectTag::Pure { s.push_str(&format!("  ;; %effect: {}", effect)); }
+                if !effect.is_pure() {
+                    s.push_str(&format!("  ;; %effect: {}", effect));
+                }
                 s
             },
             Value::Combo(c) => {
@@ -1521,7 +1626,15 @@ impl Value {
                     }
                     s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1)));
                 }
-                s.push_str(&format!("{}}}", pad)); if c.closed { s.push('}'); }
+                s.push_str(&format!("{}}}", pad));
+                if c.closed {
+                    s.push('}');
+                }
+                // SPEC_08 §4.1 / effect_union: non-pure combo carries the
+                // set-rendered diagnostic tail (same order as `.%effect`).
+                if !c.effect.is_pure() {
+                    s.push_str(&format!("  ;; %effect: {}", c.effect));
+                }
                 s
             }
             // SPEC_01 §2.4.1: display spelling is a function of the value —
@@ -1558,7 +1671,10 @@ impl Value {
 
     pub fn content_hash_with_salt(&self, salt: &ContentHash) -> ContentHash {
         let mut hasher = Sha256::new(); 
-        if self.effect() > EffectTag::Pure { hasher.update(b"HORIZON_SALT_V1"); hasher.update(&salt.digest); }
+        if !self.effect().is_pure() {
+            hasher.update(b"HORIZON_SALT_V1");
+            hasher.update(&salt.digest);
+        }
         self.hash_recursive_with_salt(&mut hasher, salt);
         ContentHash::v1(hasher.finalize().to_vec())
     }
@@ -1612,7 +1728,7 @@ impl Value {
             Value::Top | Value::TopCaused { .. } => hasher.update([0x00]),
             Value::Atom(kind, effect, rank) => {
                 hasher.update([0x01]);
-                hasher.update([*effect as u8]);
+                hasher.update([effect.to_serial_byte()]);
                 match kind {
                     AtomKind::Int(i) => { hasher.update([0x01]); let (sign, bytes) = i.to_bytes_be(); hasher.update(&[if sign == num_bigint::Sign::Minus { 1 } else { 0 }]); hasher.update(&bytes); }
                     AtomKind::Float(f) => { hasher.update([0x07]); hasher.update(f.to_bits().to_le_bytes()); }
@@ -1629,7 +1745,7 @@ impl Value {
             Value::Combo(c) => {
                 hasher.update([0x02]);
                 hasher.update([if c.closed { 1 } else { 0 }]);
-                hasher.update([c.effect as u8]);
+                hasher.update([c.effect.to_serial_byte()]);
                 let fields = c.fields();
                 let mut keys: Vec<_> = fields.keys().collect(); keys.sort();
                 for k in keys {
@@ -1684,7 +1800,7 @@ impl Value {
                         hasher.update(&ch.digest);
                     }
                 }
-                hasher.update(&[*effect as u8]);
+                hasher.update(&[effect.to_serial_byte()]);
             }
             Value::Code(expr) => { hasher.update([0x06]); hasher.update(format!("{:?}", expr).as_bytes()); }
             Value::Ref(path) => {

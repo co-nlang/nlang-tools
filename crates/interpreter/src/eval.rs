@@ -424,7 +424,7 @@ impl Ouroboros {
                 return BottomCause::Conflict.into();
             }
             if let Value::Blur(bd) = val {
-                c.effect = c.effect.max(bd.effect);
+                c.effect = c.effect.union(bd.effect);
                 blur_absorb = Some(match blur_absorb.take() {
                     None => bd,
                     Some(prev) => match self.unify_internal(
@@ -445,7 +445,7 @@ impl Ouroboros {
                 });
                 continue;
             }
-            c.effect = c.effect.max(val.effect());
+            c.effect = c.effect.union(val.effect());
             match val {
                 Value::Combo(ref cv) => {
                     for (k, v) in cv.fields() {
@@ -468,7 +468,7 @@ impl Ouroboros {
                         }
                     }
                     if !c.closed {
-                        c.effect = c.effect.max(cv.effect);
+                        c.effect = c.effect.union(cv.effect);
                     }
                 }
                 Value::Top | Value::TopCaused { .. } => {
@@ -629,8 +629,8 @@ impl Ouroboros {
                 }
                 cur.effect()
             }
-            ExprKind::Apply(f, arg) => self.predict_effect(f, ctx).max(self.predict_effect(arg, ctx)),
-            ExprKind::Pipe(l, r) => self.predict_effect(l, ctx).max(self.predict_effect(r, ctx)),
+            ExprKind::Apply(f, arg) => self.predict_effect(f, ctx).union(self.predict_effect(arg, ctx)),
+            ExprKind::Pipe(l, r) => self.predict_effect(l, ctx).union(self.predict_effect(r, ctx)),
             ExprKind::Combo { fields, closed, .. } => {
                 // §4.2.1 Shield: a cocoon literal predicts its OWN tag
                 // (#pure) — contagion stops at the wall. Joining through
@@ -638,17 +638,17 @@ impl Ouroboros {
                 // (literal/alias spelling divergence; acceptance repair).
                 if *closed { return EffectTag::Pure; }
                 let mut e = EffectTag::Pure;
-                for f in fields { e = e.max(self.predict_effect(&f.value, ctx)); }
+                for f in fields { e = e.union(self.predict_effect(&f.value, ctx)); }
                 e
             }
             ExprKind::Meet(a, b) | ExprKind::Join(a, b) | ExprKind::Add(a, b) | ExprKind::Sub(a, b) |
             ExprKind::Mul(a, b) | ExprKind::Div(a, b) | ExprKind::Eq(a, b) | ExprKind::Ne(a, b) => {
-                self.predict_effect(a, ctx).max(self.predict_effect(b, ctx))
+                self.predict_effect(a, ctx).union(self.predict_effect(b, ctx))
             }
             ExprKind::Lens(obj, _) => self.predict_effect(obj, ctx),
             ExprKind::List(items) => {
                 let mut e = EffectTag::Pure;
-                for i in items { e = e.max(self.predict_effect(i, ctx)); }
+                for i in items { e = e.union(self.predict_effect(i, ctx)); }
                 e
             }
             _ => EffectTag::Pure,
@@ -740,13 +740,13 @@ impl Ouroboros {
                 if matches!(sv, Value::Bottom(_)) || matches!(sv, Value::Atom(AtomKind::Bottom, _, _)) {
                     return Err(sv);
                 }
-                me = me.max(sv.effect());
+                me = me.union(sv.effect());
                 if let Value::Combo(cv) = sv {
                     let mut keys: Vec<usize> = cv.data.keys().filter_map(|k| k.parse::<usize>().ok()).collect();
                     keys.sort_unstable();
                     for k in keys {
                         if let Some(v) = cv.data.get(&k.to_string()) {
-                            me = me.max(v.effect());
+                            me = me.union(v.effect());
                             res.insert(idx.to_string(), v.clone());
                             idx += 1;
                         }
@@ -755,7 +755,7 @@ impl Ouroboros {
                 continue;
             }
             let val = self.eval(item, ctx);
-            me = me.max(val.effect());
+            me = me.union(val.effect());
             res.insert(idx.to_string(), val);
             idx += 1;
         }
@@ -791,7 +791,7 @@ impl Ouroboros {
                                 let item_res = self.apply_morphism(rv.clone(), item, ctx);
                                 if !matches!(item_res, Value::Bottom(_)) {
                                     let solidified = self.force_recursive(item_res, ctx);
-                                    max_e = max_e.max(solidified.effect());
+                                    max_e = max_e.union(solidified.effect());
                                     res_fields.insert(k.clone(), solidified);
                                     lifted = true;
                                 }
@@ -896,7 +896,7 @@ impl Ouroboros {
                                 effect: te,
                             });
                             if !*closed {
-                                me = me.max(te);
+                                me = me.union(te);
                             }
                         }
                         FieldKey::Named { name, prefix } => {
@@ -930,7 +930,7 @@ impl Ouroboros {
                                     vec![]
                                 ));
                             }
-                            if !*closed { me = me.max(te); }
+                            if !*closed { me = me.union(te); }
                             let key = match prefix {
                                 Some(Prefix::Logic) => format!("/{}", name),
                                 Some(Prefix::Type) => format!("@{}", name),
@@ -948,7 +948,7 @@ impl Ouroboros {
                         FieldKey::Quoted(name) => {
                             let te = self.predict_effect(&f.value, ctx);
                             let thunk = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
-                            if !*closed { me = me.max(te); }
+                            if !*closed { me = me.union(te); }
                             self.merge_field_into(&mut rf, name.trim().to_string(), thunk, ctx);
                         }
                         FieldKey::Pattern(pe) => {
@@ -1000,9 +1000,9 @@ impl Ouroboros {
                             };
                             // Effect: open tracks predicted; closed takes max after force.
                             if !*closed {
-                                me = me.max(te);
+                                me = me.union(te);
                             } else if sys_reserved {
-                                me = me.max(val.effect());
+                                me = me.union(val.effect());
                             }
                             let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
                             // SPEC_09 ownership (acceptance repair): a forbidden
@@ -1053,7 +1053,7 @@ impl Ouroboros {
                 // after seal so siblings see the holder frame (inner-first).
                 if *closed {
                     res = self.force_recursive(res, ctx);
-                    me = me.max(res.effect());
+                    me = me.union(res.effect());
                     if let Value::Combo(ref mut cv) = res {
                         cv.effect = me;
                     }
@@ -1079,12 +1079,12 @@ impl Ouroboros {
                 // (apply_morphism has no Blur arm → would mint ⊥ #conflict).
                 if let Value::Blur(bd) = &fv {
                     let mut bd = bd.clone();
-                    bd.effect = bd.effect.max(av.effect());
+                    bd.effect = bd.effect.union(av.effect());
                     return Value::Blur(bd);
                 }
                 if let Value::Blur(bd) = &av {
                     let mut bd = bd.clone();
-                    bd.effect = bd.effect.max(fv.effect());
+                    bd.effect = bd.effect.union(fv.effect());
                     return Value::Blur(bd);
                 }
                 self.apply_morphism(fv.clone(), av.clone(), ctx)
@@ -1270,7 +1270,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                         nlang_parser::ast::StringPart::Interpolated(expr) => {
                             let val = self.eval(expr, ctx);
                             let solidified = self.force_recursive(val, ctx);
-                            max_e = max_e.max(solidified.effect());
+                            max_e = max_e.union(solidified.effect());
                             res.push_str(&solidified.to_string_plain());
                         }
                     }
@@ -1400,7 +1400,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                     _ => None,
                 };
                 if let Some(eq) = eq_bottom {
-                    let res_e = va.effect().max(vb.effect());
+                    let res_e = va.effect().union(vb.effect());
                     return Value::Atom(
                         AtomKind::Tag(if eq {
                             "true".to_string()
@@ -1416,7 +1416,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                     (Value::Blur(ba), Value::Blur(bb))
                         if ba.blur_caid() == bb.blur_caid() =>
                     {
-                        let res_e = va.effect().max(vb.effect());
+                        let res_e = va.effect().union(vb.effect());
                         return Value::Atom(
                             AtomKind::Tag("true".to_string()),
                             res_e,
@@ -1425,17 +1425,17 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                     }
                     (Value::Blur(bd), _) => {
                         let mut bd = bd.clone();
-                        bd.effect = bd.effect.max(vb.effect());
+                        bd.effect = bd.effect.union(vb.effect());
                         return Value::Blur(bd);
                     }
                     (_, Value::Blur(bd)) => {
                         let mut bd = bd.clone();
-                        bd.effect = bd.effect.max(va.effect());
+                        bd.effect = bd.effect.union(va.effect());
                         return Value::Blur(bd);
                     }
                     _ => {}
                 }
-                let res_e = va.effect().max(vb.effect());
+                let res_e = va.effect().union(vb.effect());
                 let eq = va == vb;
                 Value::Atom(
                     AtomKind::Tag(if eq {
@@ -1457,15 +1457,15 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 // (measured same disease as math catch-all before this arm).
                 if let Value::Blur(bd) = &va {
                     let mut bd = bd.clone();
-                    bd.effect = bd.effect.max(vb.effect());
+                    bd.effect = bd.effect.union(vb.effect());
                     return Value::Blur(bd);
                 }
                 if let Value::Blur(bd) = &vb {
                     let mut bd = bd.clone();
-                    bd.effect = bd.effect.max(va.effect());
+                    bd.effect = bd.effect.union(va.effect());
                     return Value::Blur(bd);
                 }
-                let res_e = va.effect().max(vb.effect());
+                let res_e = va.effect().union(vb.effect());
                 let ca = va.collapse().clone();
                 let cb = vb.collapse().clone();
                 if ca.is_top() || cb.is_top() { return Value::Top; }
@@ -1525,12 +1525,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         // before value_context_operand — single-value `big + 1` absorbs.
         if let Value::Blur(bd) = &va {
             let mut bd = bd.clone();
-            bd.effect = bd.effect.max(vb.effect());
+            bd.effect = bd.effect.union(vb.effect());
             return Value::Blur(bd);
         }
         if let Value::Blur(bd) = &vb {
             let mut bd = bd.clone();
-            bd.effect = bd.effect.max(va.effect());
+            bd.effect = bd.effect.union(va.effect());
             return Value::Blur(bd);
         }
         // SPEC_07 §4: Union distribution after operand-level ⊥/Blur, before
@@ -1578,12 +1578,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         }
         if let Value::Blur(bd) = &va {
             let mut bd = bd.clone();
-            bd.effect = bd.effect.max(vb.effect());
+            bd.effect = bd.effect.union(vb.effect());
             return Value::Blur(bd);
         }
         if let Value::Blur(bd) = &vb {
             let mut bd = bd.clone();
-            bd.effect = bd.effect.max(va.effect());
+            bd.effect = bd.effect.union(va.effect());
             return Value::Blur(bd);
         }
 
@@ -1636,7 +1636,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             return self.eval_math_values(va, vb, ctx, op, op_i, op_f, op_s);
         }
 
-        let res_e = va.effect().max(vb.effect());
+        let res_e = va.effect().union(vb.effect());
         let ca = va.collapse();
         let cb = vb.collapse();
 
@@ -1828,15 +1828,15 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             // structural PartialEq fallthrough (same lie class as G1 combo==).
             if let Value::Blur(bd) = &va {
                 let mut bd = bd.clone();
-                bd.effect = bd.effect.max(vb.effect());
+                bd.effect = bd.effect.union(vb.effect());
                 return Value::Blur(bd);
             }
             if let Value::Blur(bd) = &vb {
                 let mut bd = bd.clone();
-                bd.effect = bd.effect.max(va.effect());
+                bd.effect = bd.effect.union(va.effect());
                 return Value::Blur(bd);
             }
-            let res_e = va.effect().max(vb.effect());
+            let res_e = va.effect().union(vb.effect());
             // G1 #12: peel hybrid %val into the atomic family; non-collapsible
             // combo (no %val) → ⊥ #conflict (never silent #false). Local to
             // this family — does not change collapse() used by Probe / set.
@@ -1925,7 +1925,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
 
         // ── Set family (`<` `<=` `>` `>=`): clean boolean, NON-absorbing ──
         // SYNTAX_06 §4.2: ⊥ = empty set (⊆ everything), ⊤ = universe (⊇ everything).
-        let res_e = va.effect().max(vb.effect());
+        let res_e = va.effect().union(vb.effect());
         let ca = va.collapse().clone();
         let cb = vb.collapse().clone();
 
@@ -2031,12 +2031,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             }
             (Value::Blur(bd), _) => {
                 let mut bd = bd.clone();
-                bd.effect = bd.effect.max(cb.effect());
+                bd.effect = bd.effect.union(cb.effect());
                 return Value::Blur(bd);
             }
             (_, Value::Blur(bd)) => {
                 let mut bd = bd.clone();
-                bd.effect = bd.effect.max(ca.effect());
+                bd.effect = bd.effect.union(ca.effect());
                 return Value::Blur(bd);
             }
             _ => {}

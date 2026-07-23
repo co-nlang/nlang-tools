@@ -137,12 +137,33 @@ impl EffectTag {
 
 ## 7. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] 新型 EffectTag(bitset/consts/union/Display 序/to_serial_byte)落點:
-- [ ] `.max→union` 轉換點數與 `>Pure→!=Pure` 兩點確認:
-- [ ] `effect_tag_atom` 多標籤 normalize_union 落點:
-- [ ] CAID 穩定驗證(Thunk to_serial_byte 舊序數;全套回歸綠):
-- [ ] 探針 15/15 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(移除 Ord 的非效應用點、序列化格式、範圍外接觸):
+- [x] 交付 commit(s): `f038bc2` effect_union arc 1: effect composition is set-union
+- [x] 新型 EffectTag(bitset/consts/union/Display 序/to_serial_byte)落點:
+  - `value.rs`: `struct EffectTag(u8)` bit0=IO bit1=NonDet bit2=State bit3=Cached;
+    `Pure/IO/NonDet/State/Cached` 常數保留;無 `PartialOrd`/`Ord`;
+    `union`/`contains`/`contains_all`/`is_pure`/`to_serial_byte`;
+    `Display` 字母序 (`#io | #nondet | #state`);`BitOr` 別名 union。
+- [x] `.max→union` 轉換點數與 `>Pure→!=Pure` 兩點確認:
+  - 效應組合全改 `.union(`(eval/lib/unify/value/builtins list·math·query·string);
+    殘留 `.max(` 僅非效應(usize/f64)。
+  - `> Pure` → `!is_pure()` 兩點(value.rs 顯示尾註 + content_hash_with_salt)。
+  - 額外 Ord 用法改寫:`>= NonDet`/` < NonDet` → `contains(NonDet)`;
+    force 升格 `old < effect` → `union` / `contains_all`。
+- [x] `effect_tag_atom` 多標籤 normalize_union 落點:
+  - `lib.rs` helper:空=`#pure`、單=裸原子、多=`normalize_union` 字母序 tag 原子。
+  - Combo `to_nlang` 亦印 `;; %effect:` 多標籤尾註(與讀取同序)。
+- [x] CAID 穩定驗證(Thunk to_serial_byte 舊序數;全套回歸綠):
+  - bn_serial Thunk + hash 路徑改 `to_serial_byte`(單標籤 0/1/2/3 舊序數);
+  - workspace/conformance 全綠(無既有 CAID 向量翻紅)。
+- [x] 探針 15/15 / workspace / conformance / 語料 四數:
+  - effect_union 探針 **15/15**(7 ignore 全撤,斷言未改)
+  - workspace **1336/0/3**(interpreter 1214 + parser/oo 122)
+  - conformance **138/138**
+  - 語料 unit+integration **75/0**(68+7;federation 需乾淨 store,非本弧語意回歸)
+- [x] 申報事項(移除 Ord 的非效應用點、序列化格式、範圍外接觸):
+  - 移除 Ord 後 force-memo / unify-memo 的 NonDet 門檻改 `contains(NonDet)`。
+  - force 效應升格改 union,不再「較高標籤覆蓋」(修復 io+state 被 max 吞掉)。
+  - Cached 位保留無生產者;#ext / 靜態守護 / runPure / CAID 全集參與義務未做(§5 掛帳)。
+  - 未 `#[derive(Ord)]` 復原。
 
 ## 8. 驗收紀錄(驗收方填)
