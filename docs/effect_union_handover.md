@@ -137,7 +137,7 @@ impl EffectTag {
 
 ## 7. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): `f038bc2` effect_union arc 1: effect composition is set-union
+- [x] 交付 commit(s): `e08b2c6` effect_union arc 1: effect composition is set-union
 - [x] 新型 EffectTag(bitset/consts/union/Display 序/to_serial_byte)落點:
   - `value.rs`: `struct EffectTag(u8)` bit0=IO bit1=NonDet bit2=State bit3=Cached;
     `Pure/IO/NonDet/State/Cached` 常數保留;無 `PartialOrd`/`Ord`;
