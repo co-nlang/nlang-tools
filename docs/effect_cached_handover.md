@@ -129,4 +129,31 @@ fn solidify_active(e: EffectTag) -> EffectTag {
   - 固化僅觀測投影,不寫回 store。
   - §4.3 靜態守護 / runPure / #ext / CAID 全集參與未做(掛帳)。
 
-## 8. 驗收紀錄(驗收方填)
+## 8. 驗收紀錄(2026-07-24,驗收方)
+
+**PASS——零代修**。交付 `c59809d`(+§7 紀錄 `21b2785`)。
+
+- **Diff 純度** ✓:探針**僅移除 5 個 `#[ignore]`**,斷言未改;觸及檔僅
+  value.rs(solidify_effects)/disc.rs(fetch·find 鉤)/main.rs(inspect 鉤);
+  **未觸** storage.rs(`get_value` 保持 raw)、universe.rs(commit root/refine)、
+  lib.rs(refine follow)、main.rs NDP serve——鉤範圍精準。
+- **四數** ✓:effect_cached 探針 **11/11**、workspace **1347/0/3**、
+  conformance **138/138**(不變)、語料 **75/0**;effect_union 15/15 +
+  effect_meta 13/13(前弧守)。
+- **CAID 紅線** ✓:**genesis_test 11/11**(commit-chain CAID 完整);
+  `get_value` 只讀未動,solidify 為取回副本投影;未觸 bn_serial/to_serial_byte/
+  content_hash。
+- **機制審核** ✓:`solidify_active_effect`(任一活動→單 Cached;pure/cached 不變)
+  + `solidify_effects` 遞迴全軸(Atom/Combo 六軸+pending_spreads/Union/Blur/
+  Range/Thunk;Bottom/Top/Code/Ref `other => other` 豁免)。
+- **對抗**(6/6 正):重激活 cached+nondet → `#cached | #nondet`、雙重 fetch
+  冪等 `#cached`、繭壁穿 fetch 仍 `#pure`、state→`#cached`、新鮮 io 對照
+  `#io`、**inspect CLI → `#cached`**(乾淨 store 確證;初測 #io 為 CAID 字串
+  截斷測試 artifact,非引擎)。
+- **重激活免費確認**:arc-1 集合聯集使 `{cached} ⊔ {io}` 自然 = `#cached | #io`,
+  交付無新組合碼。
+
+**破壞性判定**:僅 **store-fetched 值**的 `.%effect`/顯示尾註由活動標籤變
+`#cached`;新鮮值行為**完全不變**(常見情形)。為落實 §4.2.4 既有法(引擎原
+未實作)。歸 **增量**(fresh 不動;唯 fetched-effect 觀測 #io→#cached);如採
+保守可改破壞性——待使用者裁於切版。
