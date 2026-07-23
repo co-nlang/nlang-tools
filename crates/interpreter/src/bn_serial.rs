@@ -90,7 +90,7 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
                 None => { buf.push(0x00); }
                 Some(v) => { buf.push(0x01); serialize_value(v, buf); }
             }
-            buf.push(*effect as u8);
+            buf.push(effect.to_serial_byte());
         }
         Value::Blur(bd) => {
             buf.push(0xFD);

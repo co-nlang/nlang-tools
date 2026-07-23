@@ -29,9 +29,9 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let fsep = oo.force(vsep.clone(), ctx).collapse().clone();
                 let fs = oo.force(vs.clone(), ctx).collapse().clone();
                 if let (Value::Atom(AtomKind::Str(sep), e1, _), Value::Atom(AtomKind::Str(s), e2, _)) = (fsep, fs) {
-                    let mut res = IndexMap::new(); for (i, p) in s.split(&*sep).enumerate() { res.insert(i.to_string(), Value::Atom(AtomKind::Str(p.to_string()), e1.max(e2), None)); }
+                    let mut res = IndexMap::new(); for (i, p) in s.split(&*sep).enumerate() { res.insert(i.to_string(), Value::Atom(AtomKind::Str(p.to_string()), e1.union(e2), None)); }
                     res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), e1.max(e2), vec![]));
+                    return Value::Combo(ComboVal::new(res, false, IndexMap::new(), e1.union(e2), vec![]));
                 }
             }
         }
@@ -46,7 +46,7 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let lv = flist.collapse();
                 if let (Value::Atom(AtomKind::Str(sep), e1, _), Value::Combo(lc)) = (fsep, lv) {
                     let mut parts: Vec<String> = Vec::new(); let mut max_e = e1;
-                    for (k, v) in &lc.fields() { if k.parse::<usize>().is_ok() { if let Value::Atom(AtomKind::Str(s), e, _) = oo.force(v.clone(), ctx).collapse() { parts.push(s.clone()); max_e = max_e.max(*e); } } }
+                    for (k, v) in &lc.fields() { if k.parse::<usize>().is_ok() { if let Value::Atom(AtomKind::Str(s), e, _) = oo.force(v.clone(), ctx).collapse() { parts.push(s.clone()); max_e = max_e.union(*e); } } }
                     return Value::Atom(AtomKind::Str(parts.join(&sep)), max_e, None);
                 }
             }
@@ -61,7 +61,7 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let fr = oo.force(vrep.clone(), ctx).collapse().clone();
                 let fs = oo.force(vs.clone(), ctx).collapse().clone();
                 if let (Value::Atom(AtomKind::Str(p), e1, _), Value::Atom(AtomKind::Str(r), e2, _), Value::Atom(AtomKind::Str(s), e3, _)) = (fp, fr, fs) {
-                    return Value::Atom(AtomKind::Str(s.replace(&p, &r)), e1.max(e2).max(e3), None);
+                    return Value::Atom(AtomKind::Str(s.replace(&p, &r)), e1.union(e2).union(e3), None);
                 }
             }
         }
@@ -86,7 +86,7 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let fp = oo.force(vpre.clone(), ctx).collapse().clone();
                 let fs = oo.force(vs.clone(), ctx).collapse().clone();
                 if let (Value::Atom(AtomKind::Str(p), e1, _), Value::Atom(AtomKind::Str(s), e2, _)) = (fp, fs) {
-                    return Value::Atom(AtomKind::Tag(if s.starts_with(&p) { "true".to_string() } else { "false".to_string() }), e1.max(e2), None);
+                    return Value::Atom(AtomKind::Tag(if s.starts_with(&p) { "true".to_string() } else { "false".to_string() }), e1.union(e2), None);
                 }
             }
         }
@@ -99,7 +99,7 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let fsf = oo.force(vsuf.clone(), ctx).collapse().clone();
                 let fs = oo.force(vs.clone(), ctx).collapse().clone();
                 if let (Value::Atom(AtomKind::Str(sf), e1, _), Value::Atom(AtomKind::Str(s), e2, _)) = (fsf, fs) {
-                    return Value::Atom(AtomKind::Tag(if s.ends_with(&sf) { "true".to_string() } else { "false".to_string() }), e1.max(e2), None);
+                    return Value::Atom(AtomKind::Tag(if s.ends_with(&sf) { "true".to_string() } else { "false".to_string() }), e1.union(e2), None);
                 }
             }
         }
@@ -112,7 +112,7 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let fp = oo.force(vpat.clone(), ctx).collapse().clone();
                 let fs = oo.force(vs.clone(), ctx).collapse().clone();
                 if let (Value::Atom(AtomKind::Str(p), e1, _), Value::Atom(AtomKind::Str(s), e2, _)) = (fp, fs) {
-                    return Value::Atom(AtomKind::Tag(if s.contains(&p) { "true".to_string() } else { "false".to_string() }), e1.max(e2), None);
+                    return Value::Atom(AtomKind::Tag(if s.contains(&p) { "true".to_string() } else { "false".to_string() }), e1.union(e2), None);
                 }
             }
         }

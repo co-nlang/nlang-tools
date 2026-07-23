@@ -90,16 +90,16 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let fx = oo.force(vx.clone(), ctx); let fy = oo.force(vy.clone(), ctx);
                 let x = fx.collapse(); let y = fy.collapse();
                 return match (x, y) {
-                    (Value::Atom(AtomKind::Int(ix), e1, _), Value::Atom(AtomKind::Int(iy), e2, _)) => Value::Atom(AtomKind::Int(ix + iy), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Float(fx), e1, _), Value::Atom(AtomKind::Float(fy), e2, _)) => Value::Atom(AtomKind::Float(fx + fy), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Int(ix), e1, _), Value::Atom(AtomKind::Float(fy), e2, _)) => Value::Atom(AtomKind::Float(ix.to_f64().unwrap_or(0.0) + fy), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Float(fx), e1, _), Value::Atom(AtomKind::Int(iy), e2, _)) => Value::Atom(AtomKind::Float(fx + iy.to_f64().unwrap_or(0.0)), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Complex(r1, i1), e1, _), Value::Atom(AtomKind::Complex(r2, i2), e2, _)) => Value::Atom(AtomKind::Complex(r1 + r2, i1 + i2), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Complex(r, i), e1, _), Value::Atom(AtomKind::Int(y), e2, _)) => Value::Atom(AtomKind::Complex(r + y.to_f64().unwrap_or(0.0), *i), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Complex(r, i), e1, _), Value::Atom(AtomKind::Float(y), e2, _)) => Value::Atom(AtomKind::Complex(r + y, *i), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Int(x), e1, _), Value::Atom(AtomKind::Complex(r, i), e2, _)) => Value::Atom(AtomKind::Complex(x.to_f64().unwrap_or(0.0) + r, *i), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Float(x), e1, _), Value::Atom(AtomKind::Complex(r, i), e2, _)) => Value::Atom(AtomKind::Complex(x + r, *i), (*e1).max(*e2), None),
-                    (Value::Atom(AtomKind::Str(sx), e1, _), Value::Atom(AtomKind::Str(sy), e2, _)) => Value::Atom(AtomKind::Str(format!("{}{}", sx, sy)), (*e1).max(*e2), None),
+                    (Value::Atom(AtomKind::Int(ix), e1, _), Value::Atom(AtomKind::Int(iy), e2, _)) => Value::Atom(AtomKind::Int(ix + iy), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Float(fx), e1, _), Value::Atom(AtomKind::Float(fy), e2, _)) => Value::Atom(AtomKind::Float(fx + fy), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Int(ix), e1, _), Value::Atom(AtomKind::Float(fy), e2, _)) => Value::Atom(AtomKind::Float(ix.to_f64().unwrap_or(0.0) + fy), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Float(fx), e1, _), Value::Atom(AtomKind::Int(iy), e2, _)) => Value::Atom(AtomKind::Float(fx + iy.to_f64().unwrap_or(0.0)), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Complex(r1, i1), e1, _), Value::Atom(AtomKind::Complex(r2, i2), e2, _)) => Value::Atom(AtomKind::Complex(r1 + r2, i1 + i2), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Complex(r, i), e1, _), Value::Atom(AtomKind::Int(y), e2, _)) => Value::Atom(AtomKind::Complex(r + y.to_f64().unwrap_or(0.0), *i), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Complex(r, i), e1, _), Value::Atom(AtomKind::Float(y), e2, _)) => Value::Atom(AtomKind::Complex(r + y, *i), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Int(x), e1, _), Value::Atom(AtomKind::Complex(r, i), e2, _)) => Value::Atom(AtomKind::Complex(x.to_f64().unwrap_or(0.0) + r, *i), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Float(x), e1, _), Value::Atom(AtomKind::Complex(r, i), e2, _)) => Value::Atom(AtomKind::Complex(x + r, *i), (*e1).union(*e2), None),
+                    (Value::Atom(AtomKind::Str(sx), e1, _), Value::Atom(AtomKind::Str(sy), e2, _)) => Value::Atom(AtomKind::Str(format!("{}{}", sx, sy)), (*e1).union(*e2), None),
                     _ => BottomCause::Conflict.into()
                 };
             }
@@ -110,7 +110,7 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("math.sub".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg { if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
             let x = oo.force(vx.clone(), ctx).collapse().clone(); let y = oo.force(vy.clone(), ctx).collapse().clone();
-            let res_e = x.effect().max(y.effect());
+            let res_e = x.effect().union(y.effect());
             return match (x, y) {
                 (Value::Atom(AtomKind::Int(ix), _, _), Value::Atom(AtomKind::Int(iy), _, _)) => Value::Atom(AtomKind::Int(ix - iy), res_e, None),
                 (Value::Atom(AtomKind::Float(fx), _, _), Value::Atom(AtomKind::Float(fy), _, _)) => Value::Atom(AtomKind::Float(fx - fy), res_e, None),
@@ -130,7 +130,7 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("math.mul".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg { if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
             let x = oo.force(vx.clone(), ctx).collapse().clone(); let y = oo.force(vy.clone(), ctx).collapse().clone();
-            let res_e = x.effect().max(y.effect());
+            let res_e = x.effect().union(y.effect());
             return match (x, y) {
                 (Value::Atom(AtomKind::Int(ix), _, _), Value::Atom(AtomKind::Int(iy), _, _)) => Value::Atom(AtomKind::Int(ix * iy), res_e, None),
                 (Value::Atom(AtomKind::Float(fx), _, _), Value::Atom(AtomKind::Float(fy), _, _)) => Value::Atom(AtomKind::Float(fx * fy), res_e, None),
@@ -150,7 +150,7 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("math.div".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg { if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
             let x = oo.force(vx.clone(), ctx).collapse().clone(); let y = oo.force(vy.clone(), ctx).collapse().clone();
-            let res_e = x.effect().max(y.effect());
+            let res_e = x.effect().union(y.effect());
             return match (x, y) {
                 (Value::Atom(AtomKind::Int(ix), _, _), Value::Atom(AtomKind::Int(iy), _, _)) => if iy.is_zero() { BottomCause::Conflict.into() } else { Value::Atom(AtomKind::Int(ix / iy), res_e, None) },
                 (Value::Atom(AtomKind::Float(fx), _, _), Value::Atom(AtomKind::Float(fy), _, _)) => Value::Atom(AtomKind::Float(fx / fy), res_e, None),
@@ -190,7 +190,7 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("math.rem".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg { if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
             let x = oo.force(vx.clone(), ctx).collapse().clone(); let y = oo.force(vy.clone(), ctx).collapse().clone();
-            let res_e = x.effect().max(y.effect());
+            let res_e = x.effect().union(y.effect());
             return match (x, y) {
                 (Value::Atom(AtomKind::Int(ix), _, _), Value::Atom(AtomKind::Int(iy), _, _)) => if iy.is_zero() { BottomCause::Conflict.into() } else { Value::Atom(AtomKind::Int(ix % iy), res_e, None) },
                 (Value::Atom(AtomKind::Float(fx), _, _), Value::Atom(AtomKind::Float(fy), _, _)) => Value::Atom(AtomKind::Float(fx % fy), res_e, None),
@@ -203,7 +203,7 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("math.pow".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         if let Value::Combo(ref c) = arg { if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
             let x = oo.force(vx.clone(), ctx).collapse().clone(); let y = oo.force(vy.clone(), ctx).collapse().clone();
-            let res_e = x.effect().max(y.effect());
+            let res_e = x.effect().union(y.effect());
             return match (x, y) {
                 (Value::Atom(AtomKind::Int(ix), _, _), Value::Atom(AtomKind::Int(iy), _, _)) => {
                     if iy < BigInt::zero() { BottomCause::Conflict.into() }
@@ -414,7 +414,7 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let ln_y = compute_ln(&y);
                 return match (exp_x, ln_y) {
                     (Some(ex), Some(ly)) => {
-                        let eff = ex.effect().max(ly.effect());
+                        let eff = ex.effect().union(ly.effect());
                         let base = match (ex, ly) {
                             (Value::Atom(AtomKind::Complex(r1, i1), _, _), Value::Atom(AtomKind::Complex(r2, i2), _, _)) =>
                                 Value::Atom(AtomKind::Complex(r1 - r2, i1 - i2), eff, None),
@@ -490,7 +490,7 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
                 let a = oo.force(va.clone(), ctx).collapse().clone();
                 let b = oo.force(vb.clone(), ctx).collapse().clone();
-                let res_e = a.effect().max(b.effect());
+                let res_e = a.effect().union(b.effect());
                 return match (&a, &b) {
                     (Value::Atom(AtomKind::Int(ia), _, _), Value::Atom(AtomKind::Int(ib), _, _)) =>
                         Value::Atom(AtomKind::Int(if ia <= ib { ia.clone() } else { ib.clone() }), res_e, None),
@@ -512,7 +512,7 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             if let (Some(va), Some(vb)) = (c.get_field("0"), c.get_field("1")) {
                 let a = oo.force(va.clone(), ctx).collapse().clone();
                 let b = oo.force(vb.clone(), ctx).collapse().clone();
-                let res_e = a.effect().max(b.effect());
+                let res_e = a.effect().union(b.effect());
                 return match (&a, &b) {
                     (Value::Atom(AtomKind::Int(ia), _, _), Value::Atom(AtomKind::Int(ib), _, _)) =>
                         Value::Atom(AtomKind::Int(if ia >= ib { ia.clone() } else { ib.clone() }), res_e, None),
@@ -562,7 +562,7 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let lo = oo.force(vlo.clone(), ctx).collapse().clone();
                 let hi = oo.force(vhi.clone(), ctx).collapse().clone();
                 let x  = oo.force(vx.clone(),  ctx).collapse().clone();
-                let res_e = lo.effect().max(hi.effect()).max(x.effect());
+                let res_e = lo.effect().union(hi.effect()).union(x.effect());
                 let to_f = |v: &Value| -> Option<f64> {
                     match v {
                         Value::Atom(AtomKind::Float(f), _, _) => Some(*f),
@@ -885,7 +885,7 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     if let (Some(vx), Some(vy)) = (c.get_field("0"), c.get_field("1")) {
                         let x = oo.force(vx.clone(), ctx).collapse().clone();
                         let y = oo.force(vy.clone(), ctx).collapse().clone();
-                        let res_e = x.effect().max(y.effect());
+                        let res_e = x.effect().union(y.effect());
                         return match numeric_pair(&x, &y) {
                             Some((a, b)) => bool_tag(($op)(a, b), res_e),
                             None => BottomCause::Conflict.into(),

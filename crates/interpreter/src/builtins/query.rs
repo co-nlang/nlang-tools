@@ -128,12 +128,12 @@ pub fn register_query_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         let mut max_effect = EffectTag::Pure;
         for item in items {
             let result = oo.apply_morphism(pred.clone(), item.clone(), ctx);
-            max_effect = max_effect.max(result.effect());
+            max_effect = max_effect.union(result.effect());
             if is_truthy(&result) {
                 kept.push(item);
             }
         }
-        build_list(kept, max_effect.max(EffectTag::IO))
+        build_list(kept, max_effect.union(EffectTag::IO))
     }) as Arc<BuiltinFn>);
 
     // query.pluck: {0: combo, 1: key_list} → Combo with only specified keys
