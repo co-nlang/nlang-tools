@@ -107,12 +107,26 @@ fn solidify_active(e: EffectTag) -> EffectTag {
 
 ## 7. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] `solidify_effects()` 落點(遞迴含 combo 欄/union/blur/range):
-- [ ] 鉤點確認(disc.fetch 全分支 + disc.find + inspect;universe/refine/NDP raw):
-- [ ] 重激活免費驗證(cached ⊔ 活動 = 聯集,無新碼):
-- [ ] CAID 穩定(get_value raw、genesis_test 綠、refine content_hash 用 raw):
-- [ ] 探針 11/11 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、store 行為觀察、其他):
+- [x] 交付 commit(s): tools tip (subject: effect_cached arc 2)
+- [x] `solidify_effects()` 落點(遞迴含 combo 欄/union/blur/range):
+  - `value.rs`: `solidify_active_effect` (任一活動 → 單 `Cached`; pure/cached 不變);
+    `Value::solidify_effects` 遞迴 Atom/Combo(全軸欄位)/Union/Blur/Range/Thunk。
+- [x] 鉤點確認(disc.fetch 全分支 + disc.find + inspect;universe/refine/NDP raw):
+  - `disc.rs` fetch: local store / peer local / remote / multi-result merge 前 push 皆
+    `val.solidify_effects()`; find: local+peer+remote 回傳固化。
+  - `oo/main.rs` `run_inspect`: 顯示前固化。
+  - `get_value` / universe load / refine / NDP serve 未動(raw)。
+- [x] 重激活免費驗證(cached ⊔ 活動 = 聯集,無新碼):
+  - `red_reactivation_union` → `#cached | #io`(arc-1 union 自然成立)。
+- [x] CAID 穩定(get_value raw、genesis_test 綠、refine content_hash 用 raw):
+  - 未改 bn_serial / to_serial_byte / content_hash; workspace 含 genesis 全綠。
+- [x] 探針 11/11 / workspace / conformance / 語料 四數:
+  - effect_cached **11/11**(5 ignore 全撤,斷言未改)
+  - workspace **1347/0/3**
+  - conformance **138/138**(不變)
+  - 語料 **75/0**(68+7)
+- [x] 申報事項(範圍外接觸、store 行為觀察、其他):
+  - 固化僅觀測投影,不寫回 store。
+  - §4.3 靜態守護 / runPure / #ext / CAID 全集參與未做(掛帳)。
 
 ## 8. 驗收紀錄(驗收方填)

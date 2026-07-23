@@ -396,8 +396,13 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
     let hash = ContentHash::parse(&caid_str)
         .map_err(|_| anyhow::anyhow!("Invalid CAID format: {}", caid_str))?;
 
-    let val = engine.store.get_value(&hash)
+    let val = engine
+        .store
+        .get_value(&hash)
         .map_err(|_| anyhow::anyhow!("CAID not found in local store: {}", caid_str))?;
+    // SPEC_08 §4.2.4: inspect is user-facing observation — solidify active
+    // tags to #cached on the display projection (store object stays raw).
+    let val = val.solidify_effects();
 
     println!("CAID:   {}", caid_str);
     println!("MASA:   {}", hash.masa_ref);

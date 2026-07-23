@@ -92,7 +92,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_fetch_io_solidifies() {
     // A store round-trip fixes the io result's history → #cached.
     assert_obs(
@@ -104,7 +103,6 @@ fn red_fetch_io_solidifies() {
 }
 
 #[test]
-#[ignore]
 fn red_fetch_multi_active_collapses() {
     // Every active tag collapses to the single #cached (uncertainty fixed).
     assert_obs(
@@ -116,7 +114,6 @@ fn red_fetch_multi_active_collapses() {
 }
 
 #[test]
-#[ignore]
 fn red_fetch_nested_field_solidifies() {
     // Solidification is recursive — a nested field of a fetched combo
     // reads #cached too (whole retrieved subtree is fixed history).
@@ -129,7 +126,6 @@ fn red_fetch_nested_field_solidifies() {
 }
 
 #[test]
-#[ignore]
 fn red_reactivation_union() {
     // §4.2.4 re-activation / §4.1 matrix: a #cached value re-entering an
     // active-effect composition regains the active tag ALONGSIDE cached
@@ -144,7 +140,6 @@ fn red_reactivation_union() {
 }
 
 #[test]
-#[ignore]
 fn red_fetch_display_tail() {
     // SPEC_11 §3.4 tail: the fetched value's diagnostic tail shows the
     // solidified tag (baseline showed #io).
