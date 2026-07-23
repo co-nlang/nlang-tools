@@ -107,7 +107,7 @@ fn solidify_active(e: EffectTag) -> EffectTag {
 
 ## 7. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): tools tip (subject: effect_cached arc 2)
+- [x] 交付 commit(s): `c59809d` effect_cached arc 2
 - [x] `solidify_effects()` 落點(遞迴含 combo 欄/union/blur/range):
   - `value.rs`: `solidify_active_effect` (任一活動 → 單 `Cached`; pure/cached 不變);
     `Value::solidify_effects` 遞迴 Atom/Combo(全軸欄位)/Union/Blur/Range/Thunk。
