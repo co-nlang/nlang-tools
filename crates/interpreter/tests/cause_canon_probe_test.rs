@@ -26,7 +26,7 @@
 // NOT in scope: forward-ref × spread (frozen; note: bot defined AFTER
 // the spread observation gave #fuel_exhausted — that anomaly belongs to
 // the frozen case, recorded there); REAL_04 §2/§4 rewrite (spec-side,
-// acceptor's job); ~%repl/%state effects.
+// acceptor's job); ~%Repl/%state effects.
 
 use nlang_interpreter::{Ouroboros, Universe};
 use nlang_parser::parse_program;
