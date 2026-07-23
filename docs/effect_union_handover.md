@@ -166,4 +166,31 @@ impl EffectTag {
   - Cached 位保留無生產者;#ext / 靜態守護 / runPure / CAID 全集參與義務未做(§5 掛帳)。
   - 未 `#[derive(Ord)]` 復原。
 
-## 8. 驗收紀錄(驗收方填)
+## 8. 驗收紀錄(2026-07-23,驗收方)
+
+**PASS——零代修(第 N 例零代修交付)**。交付 `e08b2c6`(+§7 紀錄 `2912e5e`)。
+
+- **Diff 純度** ✓:探針**僅移除 7 個 `#[ignore]`**,斷言逐字未改、無 header 壓縮;
+  觸及檔全在範圍內(value/eval/lib/unify/bn_serial + builtins list·math·query·
+  string);`EffectTag` **未 `#[derive(Ord)]` 復原**(明文註 `No PartialOrd/Ord`)。
+- **四數** ✓:effect_union 探針 **15/15**、effect_meta **13/13**(前弧守)、
+  workspace **1336/0/3**、conformance **138/138**(L2-97/98/99 翻綠)、
+  語料 integration 綠(effect_taint `.%effect==#io` 單標籤未動)。
+- **CAID 紅線** ✓:per-node effect byte 走 **`to_serial_byte()` 無條件**
+  (Pure→0/State→1/IO→2/NonDet→3 舊序數,逐位元穩定);`is_pure()` 僅用於
+  **顯示尾註 + horizon salt 二元閘**(非 per-node);多標籤 combo 為新可能值,
+  無既有 CAID 位移;全套 + conformance 綠佐證。
+- **語義** ✓:71 處效應 `.max→union` 全遷(無殘留效應 max);移除 Ord 逼出的
+  NonDet 門檻改 **`contains(NonDet)`**(memo/salt 按「含非決定」閘,nondet 永不
+  memo——不變量守);force 效應升格改 union(修 io+state 被吞)。
+- **對抗**(8/8 正):union 值投影 `(5|io).%effect → #io|#pure`(與效應集合不混)、
+  繭壁多標籤屏蔽 `#pure`、巢繭穿透守 `#pure`、鏈式 `(set.%effect).%effect → #pure`、
+  三 io 冪等 `#io`、spoof `%effect` 欄勝(io 尾註=既有路徑累積,max→union 不變)、
+  ⊥ 欄不吞 io、多標籤尾註渲染。
+- **申報確認**:string.rs 亦有效應 max(編譯器點名,已遷,in-scope);Cached 位
+  保留無生產者;#ext:/靜態守護/runPure/CAID 全集參與 = §5 掛帳未做,符範圍。
+
+**破壞性判定**:`.%effect` / 顯示尾註對多效應值的觀測由 `#nondet`(純量 max)
+變為 `#io | #nondet`(集合)。`.%effect` 自 v0.2.26 起可讀,故對 v0.2.26–.33
+依賴單標籤結果的程式為**破壞性**(雖修向 §4.1 既有法)。CHANGELOG 記破壞性;
+版本切與否待使用者。
