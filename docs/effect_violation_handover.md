@@ -123,4 +123,28 @@ over actual io|nondet = 另一種謊,非「純度」矛盾)。
   - 未改 `.%effect` spoof 讀取臂(違規在終化早返,讀臂見 ⊥)。
   - runPure / 下宣告 / #ext / CAID 全集未做(掛帳)。
 
-## 8. 驗收紀錄(驗收方填)
+## 8. 驗收紀錄(2026-07-24,驗收方)
+
+**PASS——零代修**。交付 `f573426`(+§7 紀錄 `baf28fa`)。
+
+- **Diff 純度** ✓:探針**僅移除 5 個 `#[ignore]`**,斷言未改;觸及檔僅
+  eval.rs(守護鉤)/value.rs(`BottomCause::EffectViolation` + `has_active`);
+  **未觸** lib.rs `.%effect` spoof 讀取臂、EffectTag 型別、CAID/bn_serial。
+- **四數** ✓:effect_violation 探針 **11/11**、workspace **1358/0/3**、
+  conformance **141/141**(L2-100 翻綠、101/102 邊界綠)、語料 **75/0**;
+  effect_union 15 + meta 13 + cached 11(前弧全守)。
+- **機制審核** ✓:`declared_pure_meta`(讀 `%effect` force+collapse,tag=="pure")
+  + combo 終化單條 ⊥ 早返回(`declared_pure_meta ∧ cv.effect.has_active()`);
+  **繭自動豁免**(closed shield → effect pure → has_active false,無特判);
+  `has_active()` 抽為共用(arc-2 solidify 亦改用,良性 DRY,cached 探針仍 11/11)。
+  訊息有益:`;; declared #pure but observes #io`。
+- **對抗**(7/7 正):**內繭滿足外 #pure**(io 封 → 外純真 → #pure〔語義漂亮:
+  封印的 io 使外層宣告成真〕)、巢層雙宣告(子樹 io 亦矛盾外宣告 → ⊥)、
+  聯集含 io → ⊥、純聯集(5|7)→ #pure、空純宣告 → #pure、`.%cause` 讀 ⊥ →
+  `#effect_violation`(白名單守)。
+- **回歸掃描確認**:全樹無既有「宣告 pure 疊活動且期望非 ⊥」案例(§5)——
+  守護零回歸,只新增一條違規早返。
+
+**分類判定**:僅顯式 `%effect: #pure` 疊活動內容者由(靜默說謊之)值變 ⊥;
+未宣告/真純/誠實宣告/繭壁全不動;實測全樹無既有此形。落實 §4.3 既有法。
+歸 **增量**(opt-in、無既有用例、實務非破壞)。逃生門=繭壁(已實作)。
