@@ -97,7 +97,7 @@ SPEC_08 §4.3 `~%Effect./runPure` + §6 特權模式。**裁定 P1(可信通道�
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): tools tip (subject: effect_runpure arc 4)
+- [x] 交付 commit(s): `5b35303` effect_runpure arc 4
 - [x] 能力位(Ouroboros/EvalContext.privileged + eval_context 設定 + 繼承)落點:
   - `Ouroboros.privileged: bool` 預設 false;`set_privileged` 僅 pub 可信口。
   - `EvalContext.privileged`;`eval_context` / `universe.evolve` / `universe.observe`
