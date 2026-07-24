@@ -43,6 +43,13 @@ impl EffectTag {
     pub fn is_pure(self) -> bool {
         self.0 == 0
     }
+    /// Active contagion tags (SPEC_08 §4.2.4 / §4.3): io | nondet | state.
+    /// `#cached` and `#pure` are not active.
+    pub fn has_active(self) -> bool {
+        self.contains(EffectTag::IO)
+            || self.contains(EffectTag::NonDet)
+            || self.contains(EffectTag::State)
+    }
     /// Thunk CAID serial byte: single-tag legacy ordinals unchanged
     /// (Pure=0, State=1, IO=2, NonDet=3); multi-tag / Cached use high bit.
     pub fn to_serial_byte(self) -> u8 {
@@ -975,6 +982,7 @@ impl BottomDetail {
             BottomCause::OutOfHorizon => "#out_of_horizon",
             BottomCause::SystemReserved => "#system_reserved",
             BottomCause::InvalidConfig => "#invalid_config",
+            BottomCause::EffectViolation => "#effect_violation",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1082,6 +1090,9 @@ pub enum BottomCause {
     /// family; ERROR_CODES #invalid_config). Evolve-boundary named error —
     /// never a node-level ⊥. Append-only tail (fmt discipline).
     InvalidConfig,
+    /// Declared `%effect: #pure` contradicted by active contagion
+    /// (SPEC_08 §4.3; ERROR_CODES #effect_violation). Append-only tail.
+    EffectViolation,
 }
 
 impl BottomCause {
@@ -1103,6 +1114,7 @@ impl BottomCause {
             BottomCause::OutOfHorizon => "out_of_horizon",
             BottomCause::SystemReserved => "system_reserved",
             BottomCause::InvalidConfig => "invalid_config",
+            BottomCause::EffectViolation => "effect_violation",
         }
     }
 
@@ -1114,7 +1126,8 @@ impl BottomCause {
             BottomCause::Divergent => 0,
             BottomCause::PrivateAccessViolation
             | BottomCause::SystemReserved
-            | BottomCause::InvalidConfig => 1,
+            | BottomCause::InvalidConfig
+            | BottomCause::EffectViolation => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split
@@ -1477,10 +1490,7 @@ impl Value {
     /// (`#io`/`#nondet`/`#state`) collapses to a single `#cached`. Pure and
     /// already-cached are unchanged. Multi-active sets → single Cached.
     pub fn solidify_active_effect(e: EffectTag) -> EffectTag {
-        if e.contains(EffectTag::IO)
-            || e.contains(EffectTag::NonDet)
-            || e.contains(EffectTag::State)
-        {
+        if e.has_active() {
             EffectTag::Cached
         } else {
             e

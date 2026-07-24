@@ -113,6 +113,21 @@ fn atom_spread_shell(atom: Value) -> Value {
 /// display preserves the full node. Payload is `%node`, **not** `%val`:
 /// pure wrappers (`%val` + %-meta only) are peeled by `collapse()` during
 /// lattice unify, which would erase the structural signal before observe.
+/// SPEC_08 §4.3 Model A: true iff combo carries an explicit `%effect: #pure`
+/// meta declaration (SYNTAX_08 writable meta purity assertion).
+fn declared_pure_meta(cv: &ComboVal, oo: &Ouroboros, ctx: &mut EvalContext) -> bool {
+    let Some(raw) = cv.get_field("%effect").cloned() else {
+        return false;
+    };
+    let v = oo.force(raw, ctx);
+    match v.collapse() {
+        Value::Atom(AtomKind::Tag(t), _, _) => {
+            t.trim_start_matches('#') == "pure"
+        }
+        _ => false,
+    }
+}
+
 fn mark_structural_view(inner: Value) -> Value {
     let mut fields = IndexMap::new();
     fields.insert(
@@ -1064,6 +1079,26 @@ impl Ouroboros {
                         if m.to_string_plain().trim_start_matches('#') == "eager" {
                             res = self.force_recursive(res, ctx);
                         }
+                    }
+                }
+                // SPEC_08 §4.3 (Model A): declared `%effect: #pure` contradicted
+                // by actual active contagion → ⊥ #effect_violation. Cocoon
+                // auto-exempts: closed shield leaves cv.effect pure, so
+                // has_active is false (no special-case).
+                if let Value::Combo(ref cv) = res {
+                    if declared_pure_meta(cv, self, ctx) && cv.effect.has_active() {
+                        return Value::Bottom(Box::new(BottomDetail {
+                            cause: BottomCause::EffectViolation,
+                            path: None,
+                            message: Some(format!(
+                                "declared #pure but observes {}",
+                                cv.effect
+                            )),
+                            expected: None,
+                            found: None,
+                            involved: vec![],
+                            ..Default::default()
+                        }));
                     }
                 }
                 res
