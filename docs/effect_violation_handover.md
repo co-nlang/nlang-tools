@@ -102,7 +102,7 @@ over actual io|nondet = 另一種謊,非「純度」矛盾)。
 
 ## 7. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): tools tip (subject: effect_violation arc 3)
+- [x] 交付 commit(s): `f573426` effect_violation arc 3
 - [x] `BottomCause::EffectViolation`(as_tag/append-only)落點:
   - `value.rs` enum 尾加 `EffectViolation`;`as_tag`/`as_cause_combo`/`primary_rank`
     (rank 1 與 system_reserved/invalid_config 同檔)。
