@@ -105,3 +105,24 @@ fn cli_normal_run_io_flows() {
     // ambient program horizon, unchanged.
     assert_eq!(run_cli(PLAIN_IO, false), "#io");
 }
+
+#[test]
+fn cli_guard_runpure_seam_no_false_violation() {
+    // ACCEPTANCE REPAIR (arc 4): predict_effect must treat `~%Effect./runPure
+    // X` as discharging (Pure), or a container's predicted contagion would
+    // still show the arg's io — making arc-3's static guard spuriously ⊥ a
+    // LEGITIMATE `{ %effect: #pure, v: runPure(io) }` (v IS pure after
+    // discharge). Both the bare container and the #pure-declared one read
+    // #pure; neither collapses.
+    assert_eq!(
+        run_cli("out: { v: (~%Effect./runPure (~%Time.now _)) }.%effect", true),
+        "#pure",
+    );
+    assert_eq!(
+        run_cli(
+            "out: { %effect: #pure, v: (~%Effect./runPure (~%Time.now _)) }.%effect",
+            true,
+        ),
+        "#pure",
+    );
+}

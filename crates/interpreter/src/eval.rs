@@ -644,7 +644,24 @@ impl Ouroboros {
                 }
                 cur.effect()
             }
-            ExprKind::Apply(f, arg) => self.predict_effect(f, ctx).union(self.predict_effect(arg, ctx)),
+            ExprKind::Apply(f, arg) => {
+                // Acceptance repair (arc 4): `~%Effect./runPure X` DISCHARGES
+                // X's active effect — privileged → pure value, unprivileged →
+                // ⊥ (itself pure-effect). Either way the arg's io must NOT
+                // propagate into a container's predicted contagion, else
+                // arc-3's static guard spuriously ⊥s a legitimate
+                // `{ %effect: #pure, v: runPure(io) }`. Canonical `~%Effect`
+                // callee detected syntactically; an aliased-morphism callee
+                // stays conservative (ledgered — predict may over-report).
+                if let ExprKind::Path(p) = &f.kind {
+                    let last = p.segments.last().map(|s| s.trim_start_matches('/'));
+                    let via_effect = p.segments.iter().any(|s| s.trim_start_matches('/') == "~%Effect");
+                    if last == Some("runPure") && via_effect {
+                        return EffectTag::Pure;
+                    }
+                }
+                self.predict_effect(f, ctx).union(self.predict_effect(arg, ctx))
+            }
             ExprKind::Pipe(l, r) => self.predict_effect(l, ctx).union(self.predict_effect(r, ctx)),
             ExprKind::Combo { fields, closed, .. } => {
                 // §4.2.1 Shield: a cocoon literal predicts its OWN tag
