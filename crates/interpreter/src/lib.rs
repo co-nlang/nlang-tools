@@ -103,6 +103,9 @@ pub struct EvalContext {
     pub had_nondistrib_event: bool,
     pub disc_routing_visited: std::collections::HashSet<String>,
     pub disc_routing_hops: u32,
+    /// SPEC_08 §6 P1: privileged horizon capability (trusted channel only).
+    /// Cloned via sub_context — no special inheritance.
+    pub privileged: bool,
 }
 
 impl EvalContext {
@@ -123,6 +126,7 @@ impl EvalContext {
             had_nondistrib_event: false,
             disc_routing_visited: std::collections::HashSet::new(),
             disc_routing_hops: 0,
+            privileged: false,
         }
     }
     /// Root CAID for memo keys — computed once per root version, then cached
@@ -300,6 +304,10 @@ pub struct Ouroboros {
     pub refine_map: RwLock<HashMap<String, Vec<String>>>,
     pub gbb_registry: RwLock<HashMap<String, crate::ladd::GBB>>,
     pub architect_registry: RwLock<std::collections::HashSet<String>>,
+    /// SPEC_08 §6 P1: privileged capability. Default false; set only via
+    /// trusted channel (`set_privileged` / CLI `--privileged`). Never from
+    /// in-program n/ code.
+    pub privileged: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -347,7 +355,20 @@ impl Ouroboros {
         let local_pk_hex = hex::encode(&identity.public_key);
         let mut architects = std::collections::HashSet::new();
         architects.insert(local_pk_hex);
-        Self { store, base_dir: None, unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), force_memo_rev: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) }
+        Self {
+            store,
+            base_dir: None,
+            unify_memo: RwLock::new(HashMap::new()),
+            force_memo: RwLock::new(HashMap::new()),
+            force_memo_rev: RwLock::new(HashMap::new()),
+            builtin_registry: builtins,
+            peers: RwLock::new(HashMap::new()),
+            identity,
+            refine_map: RwLock::new(HashMap::new()),
+            gbb_registry: RwLock::new(HashMap::new()),
+            architect_registry: RwLock::new(architects),
+            privileged: false,
+        }
     }
 
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
@@ -360,8 +381,27 @@ impl Ouroboros {
         if let Ok(persisted) = store.load_architects(base_dir) {
             architects.extend(persisted);
         }
-        let mut oo = Self { store, base_dir: Some(base_dir.to_path_buf()), unify_memo: RwLock::new(HashMap::new()), force_memo: RwLock::new(HashMap::new()), force_memo_rev: RwLock::new(HashMap::new()), builtin_registry: builtins, peers: RwLock::new(HashMap::new()), identity, refine_map: RwLock::new(HashMap::new()), gbb_registry: RwLock::new(HashMap::new()), architect_registry: RwLock::new(architects) };
+        let oo = Self {
+            store,
+            base_dir: Some(base_dir.to_path_buf()),
+            unify_memo: RwLock::new(HashMap::new()),
+            force_memo: RwLock::new(HashMap::new()),
+            force_memo_rev: RwLock::new(HashMap::new()),
+            builtin_registry: builtins,
+            peers: RwLock::new(HashMap::new()),
+            identity,
+            refine_map: RwLock::new(HashMap::new()),
+            gbb_registry: RwLock::new(HashMap::new()),
+            architect_registry: RwLock::new(architects),
+            privileged: false,
+        };
         Ok(oo)
+    }
+
+    /// Trusted-channel only (CLI `--privileged` / test harness init).
+    /// No in-program n/ path may call this.
+    pub fn set_privileged(&mut self, privileged: bool) {
+        self.privileged = privileged;
     }
     
     fn is_list(&self, v: &Value, ctx: &mut EvalContext) -> bool {
@@ -764,8 +804,48 @@ impl Ouroboros {
         let disc_morphisms = vec![("/connect", "disc.connect"), ("/fetch", "disc.fetch"), ("/identify", "disc.identify"), ("/identify_and_store", "engine.save"), ("/advertise", "disc.advertise"), ("/find", "disc.find")];
         for (n, b) in disc_morphisms { disc_fields.insert(n.to_string(), Value::Combo(ComboVal::new(IndexMap::from_iter(vec![("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)), ("%builtin".to_string(), Value::Atom(AtomKind::Str(b.to_string()), EffectTag::Pure, None))]), true, IndexMap::new(), EffectTag::IO, vec![]))); }
         fields.insert("~%Discovery".to_string(), Value::Combo(ComboVal::new(disc_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
-        
-let mut refl_fields = IndexMap::new();
+
+        // ~%Effect./runPure — SPEC_08 §4.3 / §6 privileged discharge.
+        let mut effect_fields = IndexMap::new();
+        effect_fields.insert(
+            "/runPure".to_string(),
+            Value::Combo(ComboVal::new(
+                IndexMap::from_iter(vec![
+                    (
+                        "%morphism".to_string(),
+                        Value::Atom(
+                            AtomKind::Tag("true".to_string()),
+                            EffectTag::Pure,
+                            None,
+                        ),
+                    ),
+                    (
+                        "%builtin".to_string(),
+                        Value::Atom(
+                            AtomKind::Str("effect.run_pure".to_string()),
+                            EffectTag::Pure,
+                            None,
+                        ),
+                    ),
+                ]),
+                true,
+                IndexMap::new(),
+                EffectTag::Pure,
+                vec![],
+            )),
+        );
+        fields.insert(
+            "~%Effect".to_string(),
+            Value::Combo(ComboVal::new(
+                effect_fields,
+                true,
+                IndexMap::new(),
+                EffectTag::Pure,
+                vec![],
+            )),
+        );
+
+        let mut refl_fields = IndexMap::new();
         let refl_morphisms = vec![
             ("/keys",         "refl.keys"),
             ("/has",          "refl.has"),
@@ -966,6 +1046,7 @@ let mut refl_fields = IndexMap::new();
         let sys_root = self.root_with_system();
         let mut ctx = EvalContext::new(sys_root.clone());
         ctx.memo_enabled = false; // engine-internal: wrong root for memo (see field doc)
+        ctx.privileged = self.privileged;
         // Initial horizon from ~%Config (bare names). Runtime override of
         // strategy is /set_strategy (mutates live ctx, not the genesis node).
         if let Some(Value::Combo(ref cfg)) = sys_root.get_field("~%Config").cloned() {
