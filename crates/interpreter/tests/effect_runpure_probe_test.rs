@@ -85,7 +85,6 @@ fn assert_obs(src: &str, expect: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_runpure_blocked_unprivileged() {
     // An un-privileged program calling runPure is refused (no backdoor).
     let got = observe_nlang("out: ~%Effect./runPure (~%Time.now _)", "out");
@@ -96,7 +95,6 @@ fn red_runpure_blocked_unprivileged() {
 }
 
 #[test]
-#[ignore]
 fn red_runpure_read_propagates_bottom() {
     // Reading .%effect on the refused runPure passes the ⊥ through.
     let got = observe_nlang("out: (~%Effect./runPure (~%Time.now _)).%effect", "out");
@@ -107,7 +105,6 @@ fn red_runpure_read_propagates_bottom() {
 }
 
 #[test]
-#[ignore]
 fn red_runpure_pure_arg_blocked_unprivileged() {
     // Even a pure argument is refused without privilege — the GATE is the
     // capability, not the argument's effect. (Discharge is a privileged op.)

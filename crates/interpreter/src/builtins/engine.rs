@@ -60,7 +60,35 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
         BottomCause::Conflict.into()
     }) as Arc<BuiltinFn>);
-    
+
+    // SPEC_08 §4.3 / §6: privileged force + purify; else ⊥ #privileged_required.
+    m.insert(
+        "effect.run_pure".to_string(),
+        Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+            if !ctx.privileged {
+                return Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::PrivilegedRequired,
+                    path: None,
+                    message: Some(
+                        "runPure requires privileged horizon (CLI --privileged)"
+                            .to_string(),
+                    ),
+                    expected: None,
+                    found: None,
+                    involved: vec![],
+                    ..Default::default()
+                }));
+            }
+            let v = if let Value::Combo(ref c) = arg {
+                c.get_field("0").cloned().unwrap_or(arg.clone())
+            } else {
+                arg
+            };
+            let forced = oo.force_recursive(v, ctx);
+            forced.purify_effects()
+        }) as Arc<BuiltinFn>,
+    );
+
     m.insert("engine.save".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
         let fv = oo.force_recursive(v, ctx);

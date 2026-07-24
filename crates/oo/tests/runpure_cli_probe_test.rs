@@ -59,14 +59,12 @@ const PLAIN_IO: &str = "out: (~%Time.now _).%effect";
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn cli_runpure_privileged_discharges() {
     // Under the trusted flag, runPure solidifies the io result to #pure.
     assert_eq!(run_cli(RUNPURE_IO, true), "#pure");
 }
 
 #[test]
-#[ignore]
 fn cli_runpure_privileged_clean_value() {
     // The discharged value keeps its content and carries NO #io tail and is
     // not ⊥ — it is lawful pure data now. ~%Time.now discharges to a bare
@@ -80,7 +78,6 @@ fn cli_runpure_privileged_clean_value() {
 }
 
 #[test]
-#[ignore]
 fn cli_runpure_no_flag_blocked() {
     // Without the flag a program calling runPure is refused — it cannot
     // grant itself privilege (SPEC_08 §6.1.2, no backdoor).
@@ -92,7 +89,6 @@ fn cli_runpure_no_flag_blocked() {
 }
 
 #[test]
-#[ignore]
 fn cli_privileged_plain_io_is_opt_in() {
     // Privilege does NOT blanket-purify: plain io in a privileged run is
     // still #io. Only an explicit runPure discharges.

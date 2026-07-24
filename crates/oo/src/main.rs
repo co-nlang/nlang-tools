@@ -15,7 +15,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Run { #[arg(required = true)] files: Vec<PathBuf>, #[arg(short, long)] observe: Option<String>, #[arg(short, long)] format: bool },
+    Run {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        #[arg(short, long)]
+        observe: Option<String>,
+        #[arg(short, long)]
+        format: bool,
+        /// Trusted-channel privilege for §6 ops (e.g. ~%Effect./runPure).
+        /// Cannot be set from inside an n/ program (SPEC_08 §6.1.2).
+        #[arg(long)]
+        privileged: bool,
+    },
     Evolve { #[arg(required = true)] files: Vec<PathBuf> },
     Test { #[arg(long)] static_only: bool, #[arg(short, long)] pattern: Option<String>, files: Vec<PathBuf> },
     Repl, Status, Log,
@@ -36,6 +47,9 @@ enum Commands {
     Eval {
         /// nlang expression to evaluate (wrap in quotes for shell safety)
         expr: String,
+        /// Trusted-channel privilege (same as `run --privileged`).
+        #[arg(long)]
+        privileged: bool,
     },
     /// Inspect a value in the local store by CAID
     Inspect {
@@ -71,7 +85,12 @@ fn main() -> anyhow::Result<()> {
 fn main_on_large_stack() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Run { files, observe, format } => run_one_shot(files, observe, format),
+        Commands::Run {
+            files,
+            observe,
+            format,
+            privileged,
+        } => run_one_shot(files, observe, format, privileged),
         Commands::Evolve { files } => run_evolve(files),
         Commands::Fmt { file, write } => run_fmt(file, write),
         Commands::Serve { port } => run_serve(port),
@@ -81,7 +100,7 @@ fn main_on_large_stack() -> anyhow::Result<()> {
         Commands::Refine { source, target, sign, message } => run_refine(source, target, sign, message),
         Commands::Repl => run_repl(),
         Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
-        Commands::Eval { expr } => run_eval(expr),
+        Commands::Eval { expr, privileged } => run_eval(expr, privileged),
         Commands::Inspect { caid } => run_inspect(caid),
         Commands::Lint { path, json } => {
             let code = oo::nlint::run_cli(&path, json);
@@ -287,8 +306,16 @@ fn run_repl() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_one_shot(files: Vec<PathBuf>, observe: Option<String>, format: bool) -> anyhow::Result<()> {
-    let engine = Ouroboros::init(&std::env::current_dir()?)?;
+fn run_one_shot(
+    files: Vec<PathBuf>,
+    observe: Option<String>,
+    format: bool,
+    privileged: bool,
+) -> anyhow::Result<()> {
+    let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
+    if privileged {
+        engine.set_privileged(true);
+    }
     // One-shot: pure universe, no local staged load.
     // SPEC_03 simultaneity: all files/fields are one snapshot — evolve
     // everything first; only then store-put (CAID) and --observe.
@@ -349,10 +376,12 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_eval(expr: String) -> anyhow::Result<()> {
+fn run_eval(expr: String, privileged: bool) -> anyhow::Result<()> {
     let cur = std::env::current_dir()?;
-    let engine = Ouroboros::init(&cur)
-        .unwrap_or_else(|_| Ouroboros::new_in_memory());
+    let mut engine = Ouroboros::init(&cur).unwrap_or_else(|_| Ouroboros::new_in_memory());
+    if privileged {
+        engine.set_privileged(true);
+    }
 
     let mut universe = Universe::new(None, engine.root_with_system());
 

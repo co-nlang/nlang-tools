@@ -97,13 +97,30 @@ SPEC_08 §4.3 `~%Effect./runPure` + §6 特權模式。**裁定 P1(可信通道�
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] 能力位(Ouroboros/EvalContext.privileged + eval_context 設定 + 繼承)落點:
-- [ ] `~%Effect./runPure` 註冊 + builtin(force+purify / ⊥)落點:
-- [ ] `purify_effects()` + `BottomCause::PrivilegedRequired` 落點:
-- [ ] CLI `--privileged` 旗標接線(run_one_shot/run_eval → set_privileged):
-- [ ] **安全確認**:無程式內自授權路徑(§6.1.2):
-- [ ] 探針 A 6/6 · B 5/5 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、CAID、其他):
+- [x] 交付 commit(s): tools tip (subject: effect_runpure arc 4)
+- [x] 能力位(Ouroboros/EvalContext.privileged + eval_context 設定 + 繼承)落點:
+  - `Ouroboros.privileged: bool` 預設 false;`set_privileged` 僅 pub 可信口。
+  - `EvalContext.privileged`;`eval_context` / `universe.evolve` / `universe.observe`
+    從 engine 拷入;sub_context clone 自然繼承。
+- [x] `~%Effect./runPure` 註冊 + builtin(force+purify / ⊥)落點:
+  - `lib.rs` root_with_system 註冊 `~%Effect` closed + `/runPure` → `effect.run_pure`。
+  - `engine.rs` builtin: 特權 → force_recursive + purify_effects;否則
+    ⊥ #privileged_required。
+- [x] `purify_effects()` + `BottomCause::PrivilegedRequired` 落點:
+  - `value.rs` 鏡像 solidify(活動→Pure;cached 不動);enum 尾
+    PrivilegedRequired + as_tag/primary_rank。
+- [x] CLI `--privileged` 旗標接線(run_one_shot/run_eval → set_privileged):
+  - `oo run --privileged` / `oo eval --privileged`。
+- [x] **安全確認**:無程式內自授權路徑(§6.1.2):
+  - 全樹 `set_privileged` 僅 main.rs CLI 與引擎 API;無 n/ 欄位/`~%Config`
+    寫入特權。
+- [x] 探針 A 6/6 · B 5/5 / workspace / conformance / 語料 四數:
+  - A effect_runpure **6/6**;B runpure_cli **5/5**
+  - workspace **1369/0/3**
+  - conformance **142/142**(L2-103 翻綠)
+  - 語料 **75/0**(68+7)
+- [x] 申報事項(範圍外接觸、CAID、其他):
+  - CAID/bn_serial 未動;runPure 為觀測投影。
+  - #pin/commit 層審計/token 字串/線程隔離/#ext 未做(掛帳)。
 
 ## 7. 驗收紀錄(驗收方填)

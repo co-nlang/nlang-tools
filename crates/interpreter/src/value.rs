@@ -983,6 +983,7 @@ impl BottomDetail {
             BottomCause::SystemReserved => "#system_reserved",
             BottomCause::InvalidConfig => "#invalid_config",
             BottomCause::EffectViolation => "#effect_violation",
+            BottomCause::PrivilegedRequired => "#privileged_required",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1093,6 +1094,9 @@ pub enum BottomCause {
     /// Declared `%effect: #pure` contradicted by active contagion
     /// (SPEC_08 §4.3; ERROR_CODES #effect_violation). Append-only tail.
     EffectViolation,
+    /// Privileged op invoked without horizon privilege (SPEC_08 §6.1.2;
+    /// ERROR_CODES #privileged_required). Append-only tail.
+    PrivilegedRequired,
 }
 
 impl BottomCause {
@@ -1115,6 +1119,7 @@ impl BottomCause {
             BottomCause::SystemReserved => "system_reserved",
             BottomCause::InvalidConfig => "invalid_config",
             BottomCause::EffectViolation => "effect_violation",
+            BottomCause::PrivilegedRequired => "privileged_required",
         }
     }
 
@@ -1127,7 +1132,8 @@ impl BottomCause {
             BottomCause::PrivateAccessViolation
             | BottomCause::SystemReserved
             | BottomCause::InvalidConfig
-            | BottomCause::EffectViolation => 1,
+            | BottomCause::EffectViolation
+            | BottomCause::PrivilegedRequired => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split
@@ -1548,6 +1554,69 @@ impl Value {
                 effect: Self::solidify_active_effect(effect),
             },
             // Top / TopCaused / Bottom / Code / Ref: no active effect surface.
+            other => other,
+        }
+    }
+
+    /// SPEC_08 §4.3 runPure discharge: active tags → Pure (observation
+    /// projection). `#cached` is not active and is left unchanged.
+    pub fn purify_active_effect(e: EffectTag) -> EffectTag {
+        if e.has_active() {
+            EffectTag::Pure
+        } else {
+            e
+        }
+    }
+
+    /// Recursively strip active effects to Pure (privileged runPure result).
+    pub fn purify_effects(self) -> Self {
+        match self {
+            Value::Atom(k, e, r) => Value::Atom(k, Self::purify_active_effect(e), r),
+            Value::Combo(mut c) => {
+                c.effect = Self::purify_active_effect(c.effect);
+                for map in [
+                    &mut c.data,
+                    &mut c.types,
+                    &mut c.rules,
+                    &mut c.meta,
+                    &mut c.system,
+                    &mut c.local,
+                ] {
+                    for (_, v) in map.iter_mut() {
+                        *v = std::mem::replace(v, Value::Top).purify_effects();
+                    }
+                }
+                for v in c.pending_spreads.iter_mut() {
+                    *v = std::mem::replace(v, Value::Top).purify_effects();
+                }
+                Value::Combo(c)
+            }
+            Value::Union(branches) => {
+                Value::Union(branches.into_iter().map(|b| b.purify_effects()).collect())
+            }
+            Value::Blur(mut bd) => {
+                bd.effect = Self::purify_active_effect(bd.effect);
+                if let Some(p) = bd.partial.take() {
+                    bd.partial = Some(Box::new((*p).purify_effects()));
+                }
+                Value::Blur(bd)
+            }
+            Value::Range { start, end, step } => Value::Range {
+                start: Box::new((*start).purify_effects()),
+                end: Box::new((*end).purify_effects()),
+                step: step.map(|s| Box::new((*s).purify_effects())),
+            },
+            Value::Thunk {
+                expr,
+                closure,
+                context,
+                effect,
+            } => Value::Thunk {
+                expr,
+                closure,
+                context: context.map(|c| Box::new((*c).purify_effects())),
+                effect: Self::purify_active_effect(effect),
+            },
             other => other,
         }
     }
