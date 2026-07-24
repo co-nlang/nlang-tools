@@ -61,16 +61,18 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         BottomCause::Conflict.into()
     }) as Arc<BuiltinFn>);
 
-    // SPEC_08 §4.3 / §6: privileged force + purify; else ⊥ #privileged_required.
+    // SPEC_08 §4.3 / §6.2 selective discharge (two-axis gate).
     m.insert(
         "effect.run_pure".to_string(),
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-            if !ctx.privileged {
+            // Axis 1 — before force: no effect_override grant → refuse even
+            // pure args (capability is the gate, not the argument).
+            if ctx.privilege.effect_override.is_none() {
                 return Value::Bottom(Box::new(BottomDetail {
                     cause: BottomCause::PrivilegedRequired,
                     path: None,
                     message: Some(
-                        "runPure requires privileged horizon (CLI --privileged)"
+                        "runPure requires effect_override grant (CLI --privileged / --grant)"
                             .to_string(),
                     ),
                     expected: None,
@@ -85,6 +87,27 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 arg
             };
             let forced = oo.force_recursive(v, ctx);
+            let actual = forced.effect();
+            // Axis 2 — coverage on actual active effects (Q2 all-or-nothing).
+            if !ctx.privilege.may_discharge(actual) {
+                let may = ctx
+                    .privilege
+                    .effect_override
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "#none".to_string());
+                return Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::PrivilegedRequired,
+                    path: None,
+                    message: Some(format!(
+                        "runPure: horizon may discharge {} but the value observes {}",
+                        may, actual
+                    )),
+                    expected: None,
+                    found: None,
+                    involved: vec![],
+                    ..Default::default()
+                }));
+            }
             forced.purify_effects()
         }) as Arc<BuiltinFn>,
     );

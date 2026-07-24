@@ -167,15 +167,29 @@ CLI 為法定測具——P1 說能力在程式內無法建立,故可信通道即
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] `Privilege` 結構 + `union` + `may_discharge` + `EffectTag::active_part()` 落點:
-- [ ] 能力位接線(Ouroboros/EvalContext + eval_context/evolve/observe + 相容墊片)落點:
-- [ ] `effect.run_pure` 兩軸閘(**軸一在 force 前**、軸二用實際效應)落點:
-- [ ] CLI `--grant`(run+eval;union 累加;未知 SPEC/tag 大聲死)落點:
-- [ ] **安全確認**:全樹 `set_privilege`/`set_privileged` 呼叫點列舉,確認
+- [x] 交付 commit(s): tools tip (subject: selective_discharge)
+- [x] `Privilege` 結構 + `union` + `may_discharge` + `EffectTag::active_part()` 落點:
+  - `value.rs`: `Privilege { effect_override, pin, commit, rollback, squash }`;
+    `NONE`/`all()`/`union`/`may_discharge`;`EffectTag::active_part`/`all_active`。
+- [x] 能力位接線(Ouroboros/EvalContext + eval_context/evolve/observe + 相容墊片)落點:
+  - `Ouroboros.privilege` / `EvalContext.privilege`(取代 bool);
+    `set_privilege` / `grant_privilege` / `set_privileged` 墊片(true→all)。
+  - 拷入:eval_context、universe.evolve、universe.observe。
+- [x] `effect.run_pure` 兩軸閘(**軸一在 force 前**、軸二用實際效應)落點:
+  - 軸一:`effect_override.is_none()` → ⊥,不 force。
+  - 軸二:`!may_discharge(forced.effect())` → ⊥,訊息列 may vs observes。
+  - 否則 `purify_effects()`。
+- [x] CLI `--grant`(run+eval;union 累加;未知 SPEC/tag 大聲死)落點:
+  - `parse_grant_spec` + `apply_cli_privilege`;未知 SPEC/tag 含字串與 `grant`。
+- [x] **安全確認**:全樹 `set_privilege`/`set_privileged` 呼叫點列舉,確認
       **無程式內自授權路徑**(§6.1.2):
-- [ ] 四數:本探針 15/15 · workspace · conformance · 語料:
-- [ ] 申報事項(範圍外接觸、CAID、其他):
+  - 呼叫僅 `oo/main.rs` CLI 與 `lib.rs` API 定義;`grant_privilege` 同。
+  - 無 n/ 欄位/`~%Config`/態射可寫能力位。
+- [x] 四數:本探針 **15/15** · workspace **1385/0/3** · conformance **142/142** ·
+      語料 **75/0**(68+7)
+- [x] 申報事項(範圍外接觸、CAID、其他):
+  - CAID/bn_serial 未動;能力僅 horizon。
+  - pin/commit/rollback/squash 操作本體未實作(僅槽位)。
 
 ## 7. 驗收紀錄(驗收方填)
 

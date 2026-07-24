@@ -171,7 +171,7 @@ impl Universe {
         let mut ctx = EvalContext::new(self.root.clone());
         ctx.staged = Some(self.staged.clone());
         ctx.horizon_salt = engine.store.get_horizon_salt();
-        ctx.privileged = engine.privileged;
+        ctx.privilege = engine.privilege;
         // forward_spread acceptance repair: cocoon literals force_recursive
         // at construction (GUIDE_03 §11.5) — during evolve a forward source
         // is open-miss Top only because it is not defined YET; mark the
@@ -389,7 +389,7 @@ impl Universe {
             engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
         if let Value::Combo(r) = current {
             let mut ctx = EvalContext::new(r.clone());
-            ctx.privileged = engine.privileged;
+            ctx.privilege = engine.privilege;
             // Apply ~%Config horizon params from the observation root
             // (includes staged overrides — SPEC_08 §3.1).
             if let Some(Value::Combo(ref cfg)) = r.get_field("~%Config").cloned() {

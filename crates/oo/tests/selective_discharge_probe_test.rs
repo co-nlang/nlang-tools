@@ -93,14 +93,12 @@ fn is_refused(got: &str) -> bool {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_grant_io_discharges_io() {
     // C = {io} ⊇ E = {io} → discharged.
     assert_eq!(run_cli(IO, &["--grant", "effect_override:io"]), "#pure");
 }
 
 #[test]
-#[ignore]
 fn red_grant_io_refuses_nondet() {
     // C = {io} ⊉ E = {nondet} → refused. The grant is per-tag, not blanket.
     let got = run_cli(NONDET, &["--grant", "effect_override:io"]);
@@ -111,7 +109,6 @@ fn red_grant_io_refuses_nondet() {
 }
 
 #[test]
-#[ignore]
 fn red_grant_io_refuses_mixed_partial_coverage() {
     // RULING Q2, the load-bearing case: C = {io}, E = {io, nondet}.
     // Coverage is PARTIAL → all-or-nothing ⟹ ⊥. (Under a partial-discharge
@@ -125,7 +122,6 @@ fn red_grant_io_refuses_mixed_partial_coverage() {
 }
 
 #[test]
-#[ignore]
 fn red_grant_both_discharges_mixed() {
     // C = {io, nondet} ⊇ E = {io, nondet} → discharged. `+` joins tags.
     assert_eq!(
@@ -135,7 +131,6 @@ fn red_grant_both_discharges_mixed() {
 }
 
 #[test]
-#[ignore]
 fn red_grant_accumulates_by_repetition() {
     // Repetition accumulates by UNION — the lattice-natural reading of a
     // repeated capability flag.
@@ -154,7 +149,6 @@ fn red_grant_accumulates_by_repetition() {
 }
 
 #[test]
-#[ignore]
 fn red_grant_bare_effect_override_covers_all_active() {
     // Bare `effect_override` (no `:tags`) = all active tags.
     assert_eq!(run_cli(MIXED, &["--grant", "effect_override"]), "#pure");
@@ -165,7 +159,6 @@ fn red_grant_bare_effect_override_covers_all_active() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_pin_grant_does_not_authorize_effect_override() {
     // THE axis-1 test: `pin` is a DIFFERENT §6.2 operation. Granting it must
     // not authorize discharge — and per arc-4 the gate is the operation, not
@@ -178,7 +171,6 @@ fn red_pin_grant_does_not_authorize_effect_override() {
 }
 
 #[test]
-#[ignore]
 fn red_inert_slot_is_accepted_and_harmless() {
     // The four unimplemented slots are ACCEPTED and stored (forward
     // compatibility), and change nothing observable today.
@@ -186,7 +178,6 @@ fn red_inert_slot_is_accepted_and_harmless() {
 }
 
 #[test]
-#[ignore]
 fn red_unknown_grant_is_a_loud_error() {
     // An unknown grant spec must die loudly, never be silently ignored
     // (the ~%Config lesson: a closed knob-family rejects unknown names).
