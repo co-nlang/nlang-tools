@@ -123,4 +123,41 @@ SPEC_08 §4.3 `~%Effect./runPure` + §6 特權模式。**裁定 P1(可信通道�
   - CAID/bn_serial 未動;runPure 為觀測投影。
   - #pin/commit 層審計/token 字串/線程隔離/#ext 未做(掛帳)。
 
-## 7. 驗收紀錄(驗收方填)
+## 7. 驗收紀錄(2026-07-24,驗收方)
+
+**PASS——一件驗收代修(predict_effect × runPure 縫)**。交付 `5b35303`、
+代修 `b43eb52`。
+
+- **Diff 純度** ✓:探針**僅移除 7 個 `#[ignore]`**(A×3 + B×4),斷言未改;
+  觸及檔全在範圍(lib/engine/universe/value/main + 兩探針)。
+- **安全核心(P1)** ✓:`set_privileged(true)` **全樹僅 main.rs CLI 兩處**
+  (`run_one_shot`/`run_eval`,皆 `if privileged` 閘於 `--privileged`);
+  其餘 `.privileged` 皆讀取(閘)或 engine→ctx 繼承拷貝;**無程式內/`~%Config`
+  自授權路徑**(§6.1.2 無後門守)。
+- **四數** ✓:探針 A 6/6、B **6/6**(含代修釘)、workspace **1370/0/3**、
+  conformance **142/142**(L2-103 翻綠)、語料 75/0;prior effect arcs(union
+  15/meta 13/cached 11/violation 11)+ genesis 11 全守。
+- **機制審核** ✓:能力位 Ouroboros/EvalContext.privileged(eval_context 設定 +
+  sub_context clone 繼承)、`~%Effect./runPure`(特權 force+`purify_effects`
+  遞迴活動→Pure;否則 ⊥ #privileged_required〔訊息清楚〕)、CLI `--privileged`
+  (run+eval)。CAID/bn_serial 未動(觀測投影)。
+- **對抗**(核心正):purify 遞迴多活動→#pure、discharge 值下游可用
+  (`(runPure 100)&100`→#pure)、`eval --privileged` 亦通、非特權 ⊥。
+- **驗收代修(arc-3×arc-4 縫)**:對抗發現 `{ v: runPure(io) }.%effect`→#io、
+  且 `{ %effect:#pure, v: runPure(io) }`→**誤** ⊥ #effect_violation(arc-3
+  守護在 predict_effect 過度近似 io 上誤觸)。根因=`predict_effect(Apply)` 對
+  `~%Effect./runPure X` 取 arg 之 io,不知 runPure discharge。**修**=callee 為
+  `~%Effect./runPure` 時 predict 回 Pure(雙面皆真:特權→純值,非特權→⊥ 亦純
+  效應);正典 callee 語法偵測,別名 callee 掛帳(保守)。+ 釘
+  `cli_guard_runpure_seam_no_false_violation`。**共責**:工單未預見此縫,我的
+  探針未覆蓋 runPure×combo 傳染。**教訓**:新增效應-discharge 態射時,須測其
+  在 combo 欄的**predict_effect 傳染面**(不只直接觀測)。
+
+**分類判定**:新增 `~%Effect./runPure` 系統態射 + `--privileged` 旗標,皆**純增
+能力**;無既有行為改變(未宣告 io/一般值全不動)。歸 **增量**。掛帳:別名
+callee 的 predict 保守、#pin+其餘 §6 特權操作、commit 層審計、token 驗證(REAL_02)。
+
+## 8. 意見
+
+runPure 補上,§4.3 masking/handlers 兩半齊(守護擋謊 / runPure 授權 discharge),
+效應系統波四弧完整。P1 可信通道 = 特權層地基,#pin 等 §6 操作可複用。
