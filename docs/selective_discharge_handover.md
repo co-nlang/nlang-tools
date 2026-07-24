@@ -167,7 +167,7 @@ CLI 為法定測具——P1 說能力在程式內無法建立,故可信通道即
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): tools tip (subject: selective_discharge)
+- [x] 交付 commit(s): `cea0eda` selective_discharge
 - [x] `Privilege` 結構 + `union` + `may_discharge` + `EffectTag::active_part()` 落點:
   - `value.rs`: `Privilege { effect_override, pin, commit, rollback, squash }`;
     `NONE`/`all()`/`union`/`may_discharge`;`EffectTag::active_part`/`all_active`。
