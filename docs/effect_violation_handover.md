@@ -102,11 +102,25 @@ over actual io|nondet = 另一種謊,非「純度」矛盾)。
 
 ## 7. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] `BottomCause::EffectViolation`(as_tag/append-only)落點:
-- [ ] 守護鉤位置 + 條件(declared_pure ∧ has_active;繭經 shield 自動豁免):
-- [ ] §5 回歸掃描結果(既有 `%effect:#pure` over active 案例有無):
-- [ ] 探針 11/11 / workspace / conformance / 語料 四數:
-- [ ] 申報事項(範圍外接觸、繭/⊥ 邊界、其他):
+- [x] 交付 commit(s): tools tip (subject: effect_violation arc 3)
+- [x] `BottomCause::EffectViolation`(as_tag/append-only)落點:
+  - `value.rs` enum 尾加 `EffectViolation`;`as_tag`/`as_cause_combo`/`primary_rank`
+    (rank 1 與 system_reserved/invalid_config 同檔)。
+  - `EffectTag::has_active()` 抽出(io|nondet|state);solidify 複用。
+- [x] 守護鉤位置 + 條件(declared_pure ∧ has_active;繭經 shield 自動豁免):
+  - `eval.rs` Combo 終化、`res` 回傳前;`declared_pure_meta` 讀 `%effect`
+    force 後 tag == pure;`cv.effect.has_active()`。繭 closed shield 後
+    effect pure → 不觸(無特判)。
+- [x] §5 回歸掃描結果(既有 `%effect:#pure` over active 案例有無):
+  - 全樹:探針/工單/SPEC_09 EML 註解、L2-100/101/102(本弧合規)。
+  - **無**既有「宣告 pure 疊活動且期望非 ⊥」的測試/語料/合規向量曝光。
+- [x] 探針 11/11 / workspace / conformance / 語料 四數:
+  - effect_violation **11/11**(5 ignore 全撤,斷言未改)
+  - workspace **1358/0/3**
+  - conformance **141/141**(L2-100 翻綠;101/102 邊界綠)
+  - 語料 **75/0**(68+7)
+- [x] 申報事項(範圍外接觸、繭/⊥ 邊界、其他):
+  - 未改 `.%effect` spoof 讀取臂(違規在終化早返,讀臂見 ⊥)。
+  - runPure / 下宣告 / #ext / CAID 全集未做(掛帳)。
 
 ## 8. 驗收紀錄(驗收方填)

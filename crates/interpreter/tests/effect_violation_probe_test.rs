@@ -100,26 +100,22 @@ fn assert_violation(src: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_violation_io() {
     // Declaring #pure over an io field is a false promise → ⊥.
     assert_violation("out: { %effect: #pure, v: (~%Time.now _) }");
 }
 
 #[test]
-#[ignore]
 fn red_violation_nondet() {
     assert_violation("out: { %effect: #pure, v: (~%Math./random _) }");
 }
 
 #[test]
-#[ignore]
 fn red_violation_state() {
     assert_violation("out: { %effect: #pure, v: (~%Engine./equivalence_map _) }");
 }
 
 #[test]
-#[ignore]
 fn red_violation_nested() {
     // Grandchild contagion propagates up — a deep io still contradicts the
     // outer #pure declaration.
@@ -127,7 +123,6 @@ fn red_violation_nested() {
 }
 
 #[test]
-#[ignore]
 fn red_violation_propagates_through_effect_read() {
     // The whole value is ⊥, so reading .%effect on it passes the ⊥ through
     // (was: #pure — the silent lie).
