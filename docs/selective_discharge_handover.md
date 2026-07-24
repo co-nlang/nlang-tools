@@ -191,7 +191,46 @@ CLI 為法定測具——P1 說能力在程式內無法建立,故可信通道即
   - CAID/bn_serial 未動;能力僅 horizon。
   - pin/commit/rollback/squash 操作本體未實作(僅槽位)。
 
-## 7. 驗收紀錄(驗收方填)
+## 7. 驗收紀錄(2026-07-25,驗收方)
+
+**PASS —— 零代修(累計第 26 例)**。交付 `cea0eda`。
+
+- **Diff 純度** ✓:探針**僅移除 9 個 `#[ignore]`**,斷言與註解一字未動;
+  觸及檔全在範圍(value/lib/universe/engine/main + 探針 + 本工單)。
+- **安全核心(P1)** ✓:能力**寫入**僅 `apply_cli_privilege`(main.rs),由
+  `run_one_shot`/`run_eval` 兩處呼叫;`set_privilege`/`grant_privilege`/
+  `set_privileged` 於 lib.rs 僅為 API 定義;其餘 `.privilege` 皆為讀取
+  (builtin 兩處閘)或 engine→ctx 繼承拷貝(eval_context/evolve/observe)。
+  **無 n/ 欄位、`~%Config`、態射之自授權路徑**(§6.1.2 無後門守)。
+- **機制審核** ✓:`Privilege`(Copy)+ `union` 逐欄 join + `may_discharge`
+  走 `active_part()`(**`#cached` 正確排除於覆蓋判定外**);`run_pure`
+  軸一閘在 **force 之前**、軸二用 **force 後實際效應**,拒絕訊息分辨兩種
+  模式並列出 C 與 E。CLI `--grant` union 累加;`--privileged` 語義未動。
+- **四數** ✓:本探針 **15/15**、workspace **1385/0/3**(命中目標)、
+  conformance **142/142**(不變)、genesis **11/11**;前四弧效應探針全守
+  (union 15 / cached 11 / violation 11 / runpure 6 + CLI 6)。
+- **對抗 16 例全過**:
+  - **arc-3 × 本弧縫**(arc-4 栽過的地方):宣告純 combo 內含不足能力之
+    runPure——**惰性面**讀 `.%effect` 得 `#pure`(predict 回 Pure、`v` 未
+    force,合 CbO 與兩種 `_` 弧之固化/惰性裁定);**固化面**強制 `.v` 正確
+    得 ⊥ 並列「may discharge #io but the value observes #io | #nondet」。
+    兩面皆真,arc-3 守護**未誤觸**。
+  - **空活動集覆蓋**:純參在窄 `{state}` 授權下正常 discharge(與 `#cached`
+    同一 `active_part` 路徑,未誤拒)。
+  - **軸一保序**:僅授 `pin` 時,連純參數仍 ⊥(arc-4 不變量未回歸)。
+  - **CLI 邊界**:空標籤列 / 未知標籤 / 未知 SPEC 皆**大聲死**且訊息含原
+    字串;重複標籤冪等;`--grant` 與 `--privileged` 併用取 union;`eval`
+    子命令三態同通。
+  - **CAID 不受能力影響**:同程式跨不同授權,`--format` 輸出逐位元相同。
+  - 巢狀 runPure、discharge 值下游可用(⊥ #conflict 源於兩次 `~%Time.now`
+    取值不同,非能力問題——訊息中 `EffectTag(0)` 反證 discharge 已生效)。
+
+**分類判定**:`--privileged` 語義不變(全授),既有程式與腳本零影響;新增
+的是更**窄**的授予能力與 `--grant` 旗標。歸 **增量**。
+
+**掛帳**:`#pin` + 其餘 §6 操作**本體**(能力槽已備,日後填槽即可)、
+commit 層審計(§6.1.3)、token 驗證 + 線程隔離(REAL_02)、能力對程式的
+可觀測性(維持不可觀測)。
 
 ## 8. 意見
 
