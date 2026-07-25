@@ -139,7 +139,7 @@ oo squash   <BASE_CAID> --grant squash
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): 見 tip(本節寫畢後 commit;follow-up 補記 tip)
+- [x] 交付 commit(s): `229e58a` history_ops
 - [x] CLI(`rollback`/`squash` 子命令 + `--grant` 復用)落點:
   - `crates/oo/src/main.rs` `Commands::Rollback` / `Squash`;
     `run_rollback` / `run_squash` 皆走既有 `apply_cli_privilege`(不新寫解析)。
