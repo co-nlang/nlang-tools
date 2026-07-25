@@ -19,6 +19,13 @@ pub fn verify_oml(a: Value, b: Value, oo: &Ouroboros, ctx: &mut EvalContext) -> 
         return OMLResult::Vacuous;
     }
 
+    // Identity: when a and b are the same content and a ⊑ b already holds,
+    // modular law is trivial (A ∨ (A ∧ ¬A) = A). Avoid Approximate for
+    // atoms whose orthocomplement is undefined (e.g. Int) when A = B.
+    if a.content_hash().digest == b.content_hash().digest {
+        return OMLResult::Valid;
+    }
+
     let not_a = oo.orthocomplement(a.clone(), ctx);
     if let Value::Bottom(_) = not_a {
         return OMLResult::Approximate;

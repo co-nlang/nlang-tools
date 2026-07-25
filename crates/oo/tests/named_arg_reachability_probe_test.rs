@@ -91,7 +91,6 @@ fn is_bottom(s: &str) -> bool {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_check_oml_sees_its_arguments() {
     // THE load-bearing case. check_oml must actually inspect a and b. Today
     // both default to Top (never delivered), so verify_oml(Top, Top) answers
@@ -107,7 +106,6 @@ fn red_check_oml_sees_its_arguments() {
 }
 
 #[test]
-#[ignore]
 fn red_check_oml_discriminates() {
     // Both halves of the boundary in ONE assertion, because either half alone
     // passes vacuously at baseline (everything answers #oml_valid, so the
@@ -128,7 +126,6 @@ fn red_check_oml_discriminates() {
 }
 
 #[test]
-#[ignore]
 fn red_project_up_sees_sections() {
     // project_up reads `sections` → never delivered → defaults to Top → the
     // builtin returns Top → apply hands back a PARTIAL morphism combo (that
@@ -147,7 +144,6 @@ fn red_project_up_sees_sections() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_set_strategy_reachable() {
     // §3.2/§4.4 strategy override. Today ⊥ #conflict in every spelling.
     let got = run_cli("out: ~%Engine./set_strategy { strategy: #blur }");
@@ -158,7 +154,6 @@ fn red_set_strategy_reachable() {
 }
 
 #[test]
-#[ignore]
 fn red_set_strategy_discriminates_valid_from_bogus() {
     // Reachability must not become permissiveness. Paired for the same reason
     // as check_oml: at baseline BOTH spellings are ⊥ #conflict (for the wrong
@@ -178,7 +173,6 @@ fn red_set_strategy_discriminates_valid_from_bogus() {
 }
 
 #[test]
-#[ignore]
 fn red_project_down_receives_target() {
     // SPEC_08 §3.5 normative spelling. A bad MASA collapses either way (the
     // builtin's own ContentHash::parse guard), so ⊥-vs-not cannot separate

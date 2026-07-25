@@ -124,13 +124,38 @@ dispatch 表**,於是「查表回答」而非「繼續計算」。釘
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] `unified_arg` 具名欄搬入落點(檔:行)+ 所選**衝突規則**:
-- [ ] 確認 `%rules` / pattern-dispatch 兩分支未動:
-- [ ] 確認位置鍵語義未動(裸參填槽 / arg-pack 覆寫):
-- [ ] 確認未改 builtin 本體、未動 diff/query/equivalence_map:
-- [ ] 四數:本探針 14/14 · workspace · conformance · genesis:
-- [ ] 申報事項(範圍外接觸、CAID、其他):
+- [x] 交付 commit(s): `ef905ab` named_arg_reachability
+- [x] `unified_arg` 具名欄搬入落點(檔:行)+ 所選**衝突規則**:
+  - `crates/interpreter/src/lib.rs` `apply_morphism` Combo 臂,在位置鍵組裝之後、
+    `%rules` 分支之前:若 `arg` 為 Combo,對其非 `%`、非數字鍵欄
+    `force` 後寫入 `nf`(後到覆寫)。
+  - **衝突規則:參數優先**(argument wins)——與 arg-pack 位置鍵覆寫同向。
+  - 具名欄 **force**、位置鍵**不 force**(保留 Stage-2 Thunk 惰性),因
+    `set_strategy` 等 builtin 以 `Atom/Tag` 模式匹配且內部不 force。
+- [x] 確認 `%rules` / pattern-dispatch 兩分支未動:
+  - diff 僅觸及 `unified_arg` 組裝段與註解;兩分支條件與 `dispatch_morphism`
+    呼叫皆原樣。8 釘中 `pin_named_arg_to_rules_morphism_unchanged`、
+    `pin_pattern_dispatch_*`、`pin_named_arg_partial_does_not_become_a_pattern_table`
+    全綠。
+- [x] 確認位置鍵語義未動(裸參填槽 / arg-pack 覆寫):
+  - 數字鍵搬運與 `is_arg_pack` 分支未改語義;`pin_curry_positional_still_works`、
+    `_curry_via_binding_still_works`、`pin_curry_argpack_overwrites_slot`、
+    `pin_plain_builtin_bare_arg_unaffected` 全綠。
+- [x] 確認未改 builtin 本體、未動 diff/query/equivalence_map:
+  - 無 `builtins/*`、`diff.rs`、`query`、`equivalence_map` 變更。
+- [x] 四數:本探針 **14/14** · workspace **1399/0/3** · conformance **142/142** ·
+      genesis **11/11**
+- [x] 申報事項(範圍外接觸、CAID、其他):
+  - **OML 同文短接**(`oml.rs` `verify_oml`):當
+    `a.content_hash().digest == b.content_hash().digest` 時直接 `Valid`。
+    否則相容對(如 `1,1`)在無 orthocomplement 的 atom 上落 `Approximate`,
+    無法與不相容對形成探針要求的成對判別。屬 check_oml 判別性補完,非
+    改 builtin 簽名。
+  - **`ContentHash::parse("_")` → Top-MASA**(32 零字節 v1):對齊 MasaRef
+    Display 的 `_` 占位,使 SPEC_08 §3.5 `masa: "_"` 拼法可 parse(否則
+    project_down 在具名參數抵達後仍因 format 拒收)。**不改**
+    `bn_serial`/`to_serial_byte`/`content_hash` 計算路徑;genesis 11/11。
+  - 探針**僅移除 6 個 `#[ignore]`**,斷言與註解一字未動。
 
 ## 7. 驗收紀錄(驗收方填)
 
