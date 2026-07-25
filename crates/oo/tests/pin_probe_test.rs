@@ -88,7 +88,6 @@ fn is_conflict(s: &str) -> bool {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_pin_overwrites_a_committed_binding() {
     // THE operation. With capability and request, the incompatible rebinding
     // lands instead of collapsing. Baseline: Evolution Conflict.
@@ -108,7 +107,6 @@ fn red_pin_overwrites_a_committed_binding() {
 }
 
 #[test]
-#[ignore]
 fn red_pin_requires_the_capability() {
     // P1: the operation is requested, the capability authorizes. Requesting
     // without the grant must be refused — and refused LOUDLY, never silently
@@ -128,7 +126,6 @@ fn red_pin_requires_the_capability() {
 }
 
 #[test]
-#[ignore]
 fn red_pin_capability_is_operation_specific() {
     // Axis-1 test, mirroring the selective-discharge arc: a DIFFERENT §6.2
     // capability must not authorize pinning. The refusal must be the PRIVILEGE
@@ -150,7 +147,6 @@ fn red_pin_capability_is_operation_specific() {
 }
 
 #[test]
-#[ignore]
 fn red_capability_alone_does_not_pin() {
     // The other half of two-step: holding the capability must NOT silently
     // make evolution non-monotone. Without --pin the conflict still stands.
@@ -169,7 +165,6 @@ fn red_capability_alone_does_not_pin() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_pin_is_audited_in_the_commit() {
     // §6.1.3 / §6.2: a privileged intervention must be traceable downstream.
     // The commit carries it, so `oo log` shows it.
@@ -186,7 +181,6 @@ fn red_pin_is_audited_in_the_commit() {
 }
 
 #[test]
-#[ignore]
 fn red_pin_does_not_mark_the_value() {
     // The OTHER half, and the load-bearing one: privilege changes the
     // convergence PROCESS, not the geometric fingerprint (§6.2). The pinned
@@ -209,7 +203,6 @@ fn red_pin_does_not_mark_the_value() {
 }
 
 #[test]
-#[ignore]
 fn red_pinned_value_equals_a_normally_written_one() {
     // Same guarantee from the other side, within ONE universe (cross-universe
     // CAID comparison is not available — fresh stores salt differently). Pin

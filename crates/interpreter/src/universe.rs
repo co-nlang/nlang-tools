@@ -153,9 +153,44 @@ fn is_literal_top(expr: &Expr) -> bool {
     }
 }
 
-pub struct Universe { pub head: Option<ContentHash>, pub root: ComboVal, pub staged: ComboVal, pub is_dirty: bool }
+pub struct Universe {
+    pub head: Option<ContentHash>,
+    pub root: ComboVal,
+    pub staged: ComboVal,
+    pub is_dirty: bool,
+    /// Request flag for this evolve session (`oo evolve --pin`). Capability
+    /// alone must not set this — two-step like runPure.
+    pub pin_mode: bool,
+    /// Staged under pin; next commit is `CommitKind::Pin` with replace-merge.
+    /// Persisted beside staged so evolve/commit stay separate CLI processes.
+    pub pin_pending: bool,
+}
 impl Universe {
-    pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self { Self { head, root, staged: ComboVal::default(), is_dirty: false } }
+    pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
+        Self {
+            head,
+            root,
+            staged: ComboVal::default(),
+            is_dirty: false,
+            pin_mode: false,
+            pin_pending: false,
+        }
+    }
+
+    /// Overlay `incoming` fields onto `base` by replace (not lattice meet).
+    /// Used by `#pin` so incompatible rebinding lands rather than ⊥.
+    fn replace_merge(base: &ComboVal, incoming: &ComboVal) -> ComboVal {
+        let mut out = base.clone();
+        for (k, v) in incoming.all_fields_iter() {
+            out.insert_field(&k, v);
+        }
+        for (k, v) in &incoming.local {
+            out.local.insert(k.clone(), v.clone());
+        }
+        // Carry effect union conservatively (does not taint CAID of values).
+        out.effect = out.effect.union(incoming.effect);
+        out
+    }
     pub fn load(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<Self> {
         engine.clear_force_memo();
         let head = engine.store.get_head(base_dir)?; match head { Some(h) => { let commit = engine.store.get_commit(&h)?; let root_val = engine.store.get_value(&commit.root)?; if let Value::Combo(root) = root_val { Ok(Self::new(Some(h), root)) } else { Err(anyhow::anyhow!("Invalid root")) } } None => Ok(Self::new(None, engine.root_with_system())), } }
@@ -292,12 +327,17 @@ impl Universe {
         // fail at the evolve boundary (loud Evolution Conflict) instead of
         // poisoning the whole universe at observe-entry unify(root, staged).
         // Staged×staged conflicts stay on the existing unify path below.
-        for c in &evolved_coords {
-            if let Some(root_val) = self.root.get_field(c).cloned()
-                .or_else(|| self.root.get_local_field(c).cloned())
-            {
-                if let Value::Bottom(d) = engine.unify(root_val, val.clone()) {
-                    return Err(d.cause);
+        // `#pin` (SPEC_08 §6.2): privileged exception — skip the monotone check
+        // when both request (`pin_mode`) and capability are present. Capability
+        // alone never reaches here with pin_mode (CLI two-step gate).
+        if !(self.pin_mode && engine.privilege.pin) {
+            for c in &evolved_coords {
+                if let Some(root_val) = self.root.get_field(c).cloned()
+                    .or_else(|| self.root.get_local_field(c).cloned())
+                {
+                    if let Value::Bottom(d) = engine.unify(root_val, val.clone()) {
+                        return Err(d.cause);
+                    }
                 }
             }
         }
@@ -321,14 +361,23 @@ impl Universe {
             _ => unreachable!("coords already filtered non-writable keys"),
         };
 
-        let incoming = Value::Combo(ComboVal::new(rf, false, rl, val_effect, vec![]));
+        let incoming = ComboVal::new(rf, false, rl, val_effect, vec![]);
         // Stage 5 (§5b): invalidate memo entries that depend on the evolved
         // coordinates. Called before the merge succeeds so entries reading
         // staged values are cleared.
         if !evolved_coords.is_empty() {
             engine.invalidate_coords(&evolved_coords);
         }
-        let res = engine.unify(Value::Combo(self.staged.clone()), incoming);
+        // `#pin`: overwrite into staged (replace), not lattice meet — meet of
+        // staged-vs-incoming would re-⊥ an earlier incompatible pin, and
+        // staged-vs-root conflict is handled only at commit (also replace).
+        if self.pin_mode && engine.privilege.pin {
+            self.staged = Self::replace_merge(&self.staged, &incoming);
+            self.is_dirty = true;
+            self.pin_pending = true;
+            return Ok(());
+        }
+        let res = engine.unify(Value::Combo(self.staged.clone()), Value::Combo(incoming));
         match res {
             Value::Combo(m) => { self.staged = m; self.is_dirty = true; Ok(()) }
             Value::Bottom(d) => Err(d.cause),
@@ -340,7 +389,14 @@ impl Universe {
         let staged_path = base_dir.join(".oo").join("staged");
         if !staged_path.parent().unwrap().exists() { std::fs::create_dir_all(staged_path.parent().unwrap())?; }
         let json = serde_json::to_string(&self.staged)?;
-        std::fs::write(staged_path, json)?;
+        std::fs::write(&staged_path, json)?;
+        // Pin audit intent lives beside staged, never inside values (CAID).
+        let pin_path = base_dir.join(".oo").join("pin_pending");
+        if self.pin_pending {
+            std::fs::write(pin_path, b"1")?;
+        } else if pin_path.exists() {
+            let _ = std::fs::remove_file(pin_path);
+        }
         Ok(())
     }
 
@@ -351,25 +407,39 @@ impl Universe {
             self.staged = serde_json::from_str(&json)?;
             self.is_dirty = true;
         }
+        let pin_path = base_dir.join(".oo").join("pin_pending");
+        self.pin_pending = pin_path.exists();
         Ok(())
     }
 
     pub fn commit(&mut self, engine: &Ouroboros, base_dir: &std::path::Path, meta: crate::value::CommitMeta) -> Result<ContentHash> {
         engine.clear_force_memo();
-        let res = engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone()));
-        match res { Value::Combo(new_root) => { 
-            let root_hash = engine.store.put_value(&Value::Combo(new_root.clone()))?; 
-            let commit = crate::value::Commit::new(self.head.clone(), root_hash, meta); 
-            let commit_hash = engine.store.put_commit(&commit)?; 
-            engine.store.set_head(base_dir, &commit_hash)?; 
-            self.root = new_root; 
-            self.staged = ComboVal::default(); 
-            self.head = Some(commit_hash.clone()); 
-            self.is_dirty = false; 
-            let staged_path = base_dir.join(".oo").join("staged");
-            if staged_path.exists() { let _ = std::fs::remove_file(staged_path); }
-            Ok(commit_hash) 
-        } _ => Err(anyhow::anyhow!("Commit failed")), }
+        let (new_root, kind) = if self.pin_pending {
+            // Replace-merge staged over root — pin's overwrite is the commit body.
+            // Audit marker is CommitKind only (value structure unchanged vs a
+            // normal write of the same payload → same content hash of values).
+            (Self::replace_merge(&self.root, &self.staged), CommitKind::Pin)
+        } else {
+            match engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone())) {
+                Value::Combo(m) => (m, CommitKind::Standard),
+                _ => return Err(anyhow::anyhow!("Commit failed")),
+            }
+        };
+        let root_hash = engine.store.put_value(&Value::Combo(new_root.clone()))?;
+        let mut commit = crate::value::Commit::new(self.head.clone(), root_hash, meta);
+        commit.kind = kind;
+        let commit_hash = engine.store.put_commit(&commit)?;
+        engine.store.set_head(base_dir, &commit_hash)?;
+        self.root = new_root;
+        self.staged = ComboVal::default();
+        self.head = Some(commit_hash.clone());
+        self.is_dirty = false;
+        self.pin_pending = false;
+        let staged_path = base_dir.join(".oo").join("staged");
+        if staged_path.exists() { let _ = std::fs::remove_file(staged_path); }
+        let pin_path = base_dir.join(".oo").join("pin_pending");
+        if pin_path.exists() { let _ = std::fs::remove_file(pin_path); }
+        Ok(commit_hash)
     }
     pub fn observe(&self, engine: &Ouroboros, path: &Path) -> Value {
         // Overlay staged ~%Config field overrides onto root before unify so

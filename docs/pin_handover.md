@@ -113,14 +113,37 @@ SPEC_08 §6.2 語義保證明文「特權操作改變的是**收斂過程**,而�
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] CLI(`Evolve` 加 `--pin` + `--grant`,復用 `apply_cli_privilege`)落點:
-- [ ] 閘(有請求無能力 → 大聲拒;無請求 → 原路徑)落點:
-- [ ] 語義(跳過 G2-S 根檢查 + staged 取代而非 meet)落點:
-- [ ] 審計(Commit 層落點 + `oo log` 顯示;**值內無殘留**)落點:
-- [ ] **確認**:被 pin 之值的 CAID 與正常寫入者相同;舊 commit 反序列化不變:
-- [ ] 四數:本探針 12/12 · workspace · conformance · genesis:
-- [ ] 申報事項(範圍外接觸、CAID、其他):
+- [x] 交付 commit(s): 見 tip(本節寫畢後 commit;§6 補記 tip 於 follow-up)
+- [x] CLI(`Evolve` 加 `--pin` + `--grant`,復用 `apply_cli_privilege`)落點:
+  - `crates/oo/src/main.rs` `Commands::Evolve { pin, grants, files }`;
+    `run_evolve` 呼叫既有 `apply_cli_privilege(&mut engine, false, &grants)`
+    (與 run/eval 同解析器,不新寫一份)。
+- [x] 閘(有請求無能力 → 大聲拒;無請求 → 原路徑)落點:
+  - `run_evolve`:若 `pin && !engine.privilege.pin` →
+    `bail!("#privileged_required: …")`,不 load/evolve/stage。
+  - 無 `--pin`:`pin_mode=false`,G2-S 與 meet 路徑一字未動。
+- [x] 語義(跳過 G2-S 根檢查 + staged 取代而非 meet)落點:
+  - `universe.rs` `Universe::{pin_mode, pin_pending}` + `replace_merge`。
+  - evolve:僅當 `pin_mode && privilege.pin` 時跳過 G2-S;staged 以
+    `replace_merge` 覆寫寫入(非 `unify` meet);`pin_pending=true`。
+  - commit:若 `pin_pending`,對 root 做 `replace_merge(root, staged)` 並
+    標 `CommitKind::Pin`;否則原 meet。`.oo/pin_pending` 與 staged 並存
+    (跨 CLI 行程),清於 commit 成功後。
+- [x] 審計(Commit 層落點 + `oo log` 顯示;**值內無殘留**)落點:
+  - `CommitKind::Pin`(serde 具名變體;`Standard` 仍 `#[serde(other)]`)。
+  - `Ouroboros::log` 回 `(hash, meta, kind)`;`run_log` 對 Pin 印 `    pin`。
+  - 值路徑無 `%cause`/`privileged` 寫入(探針成對釘)。
+- [x] **確認**:被 pin 之值的 CAID 與正常寫入者相同;舊 commit 反序列化不變:
+  - 未觸 `bn_serial`/`to_serial_byte`/值 `content_hash`;審計僅 commit
+    kind 位元(Pin 標籤字節 **2**,Standard=0/Refine=1 不變)。
+  - 同 evolve 內 pin 的 x 與正常寫的 w 渲染全等(探針)。
+  - genesis **11/11**。
+- [x] 四數:本探針 **12/12** · workspace **1411/0/3** · conformance **143/143** ·
+      genesis **11/11**
+- [x] 申報事項(範圍外接觸、CAID、其他):
+  - 探針**僅移除 7 個 `#[ignore]`**。
+  - 能力槽 `Privilege.pin` 僅啟用,結構未改;effect_override 等軸未擴權。
+  - `#commit`/`#rollback`/`#squash` 本體未做(另弧)。
 
 ## 7. 驗收紀錄(驗收方填)
 
