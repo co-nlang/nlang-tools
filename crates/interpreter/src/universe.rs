@@ -497,6 +497,16 @@ impl Universe {
             }
         };
         let root_hash = engine.store.put_value(&Value::Combo(new_root.clone()))?;
+        // R1: next commit after a rollback records the abandoned head(s) in
+        // meta — never in values. Consumed from `.oo/abandoned` and cleared.
+        let mut meta = meta;
+        if meta.abandoned.is_none() {
+            if let Some(abs) = Self::load_abandoned_file(base_dir) {
+                if !abs.is_empty() {
+                    meta.abandoned = Some(abs);
+                }
+            }
+        }
         let mut commit = crate::value::Commit::new(self.head.clone(), root_hash, meta);
         commit.kind = kind;
         let commit_hash = engine.store.put_commit(&commit)?;
@@ -511,6 +521,176 @@ impl Universe {
         if staged_path.exists() { let _ = std::fs::remove_file(staged_path); }
         let pin_path = base_dir.join(".oo").join("pin_pending");
         if pin_path.exists() { let _ = std::fs::remove_file(pin_path); }
+        Self::clear_abandoned_file(base_dir);
+        Ok(commit_hash)
+    }
+
+    fn abandoned_path(base_dir: &std::path::Path) -> std::path::PathBuf {
+        base_dir.join(".oo").join("abandoned")
+    }
+
+    fn load_abandoned_file(base_dir: &std::path::Path) -> Option<Vec<String>> {
+        let p = Self::abandoned_path(base_dir);
+        if !p.exists() {
+            return None;
+        }
+        let s = std::fs::read_to_string(p).ok()?;
+        let lines: Vec<String> = s
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect();
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines)
+        }
+    }
+
+    fn clear_abandoned_file(base_dir: &std::path::Path) {
+        let p = Self::abandoned_path(base_dir);
+        if p.exists() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    fn append_abandoned_file(base_dir: &std::path::Path, caid: &ContentHash) -> Result<()> {
+        let oo = base_dir.join(".oo");
+        if !oo.exists() {
+            std::fs::create_dir_all(&oo)?;
+        }
+        let p = Self::abandoned_path(base_dir);
+        let mut existing = Self::load_abandoned_file(base_dir).unwrap_or_default();
+        let s = caid.to_string();
+        if !existing.contains(&s) {
+            existing.push(s);
+        }
+        std::fs::write(p, existing.join("\n") + "\n")?;
+        Ok(())
+    }
+
+    /// `#rollback` (SPEC_08 §6.2): move HEAD to `target`, reload root.
+    /// Does not create a commit. Records the abandoned former HEAD for the
+    /// next commit's meta (R1). Objects stay in the store.
+    pub fn rollback(
+        &mut self,
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        target: &ContentHash,
+    ) -> Result<()> {
+        if self.is_dirty {
+            return Err(anyhow::anyhow!(
+                "dirty worktree: commit or discard staged changes before rollback"
+            ));
+        }
+        // Target must exist as a commit object (any historical commit).
+        let target_commit = engine.store.get_commit(target)?;
+        let root_val = engine.store.get_value(&target_commit.root)?;
+        let Value::Combo(new_root) = root_val else {
+            return Err(anyhow::anyhow!("Invalid root at rollback target"));
+        };
+        // Record the head we leave behind (if any and different from target).
+        if let Some(ref old) = self.head {
+            if old != target {
+                Self::append_abandoned_file(base_dir, old)?;
+            }
+        }
+        engine.store.set_head(base_dir, target)?;
+        self.head = Some(target.clone());
+        self.root = new_root;
+        self.staged = ComboVal::default();
+        self.is_dirty = false;
+        self.pin_pending = false;
+        self.pin_coords.clear();
+        engine.clear_force_memo();
+        Ok(())
+    }
+
+    /// `#squash` (SPEC_08 §6.2): compress commits strictly after `base` up to
+    /// HEAD into one commit with `parent = base`, `root = HEAD.root`, kind
+    /// Squash. Drops parent-chain reachability of the range; abandoned edges
+    /// on intermediate commits leave with them (R2: the Squash marker carries
+    /// the fact of removal). Does not delete store objects.
+    /// How many commits sit between `base` (exclusive) and HEAD (inclusive).
+    /// ACCEPTANCE REPAIR: lets the squash audit message state what it removed,
+    /// so the machine-set kind marker stays distinguishable from the message.
+    pub fn commits_after(&self, engine: &Ouroboros, base: &ContentHash) -> Result<usize> {
+        let mut n = 0usize;
+        let mut curr = self.head.clone();
+        while let Some(h) = curr {
+            if &h == base {
+                return Ok(n);
+            }
+            n += 1;
+            curr = engine.store.get_commit(&h)?.parent;
+        }
+        Err(anyhow::anyhow!("squash base is not an ancestor of HEAD"))
+    }
+
+    pub fn squash(
+        &mut self,
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        base: &ContentHash,
+        meta: crate::value::CommitMeta,
+    ) -> Result<ContentHash> {
+        if self.is_dirty {
+            return Err(anyhow::anyhow!(
+                "dirty worktree: commit or discard staged changes before squash"
+            ));
+        }
+        let head = self
+            .head
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no HEAD to squash"))?;
+        if &head == base {
+            return Err(anyhow::anyhow!(
+                "squash range empty: HEAD is already the base"
+            ));
+        }
+        // Verify base is an ancestor of HEAD (walk parent chain).
+        let head_commit = engine.store.get_commit(&head)?;
+        let mut curr = head_commit.parent.clone();
+        let mut found = false;
+        while let Some(ref h) = curr {
+            if h == base {
+                found = true;
+                break;
+            }
+            curr = engine.store.get_commit(h)?.parent;
+        }
+        if !found {
+            // Also accept base existing when HEAD's full ancestry reaches it;
+            // if base is not on the chain, refuse.
+            return Err(anyhow::anyhow!(
+                "squash base is not an ancestor of HEAD"
+            ));
+        }
+        // Confirm base object exists.
+        let _ = engine.store.get_commit(base)?;
+        // New commit: parent=base, root unchanged from HEAD, kind Squash.
+        // Intentionally does NOT copy abandoned meta from intermediates —
+        // those edges leave with the range (R2: Squash marker is the fact).
+        let mut commit = crate::value::Commit::new(
+            Some(base.clone()),
+            head_commit.root.clone(),
+            meta,
+        );
+        commit.kind = CommitKind::Squash;
+        let commit_hash = engine.store.put_commit(&commit)?;
+        engine.store.set_head(base_dir, &commit_hash)?;
+        // Root value is the same as before; reload for consistency.
+        if let Value::Combo(r) = engine.store.get_value(&head_commit.root)? {
+            self.root = r;
+        }
+        self.head = Some(commit_hash.clone());
+        self.staged = ComboVal::default();
+        self.is_dirty = false;
+        // Pending abandonment file may point into the compressed range;
+        // drop it — squash made those edges unreachable and marks itself.
+        Self::clear_abandoned_file(base_dir);
+        engine.clear_force_memo();
         Ok(commit_hash)
     }
     pub fn observe(&self, engine: &Ouroboros, path: &Path) -> Value {

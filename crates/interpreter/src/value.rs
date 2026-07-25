@@ -1386,14 +1386,58 @@ impl ContentHash {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CommitMeta { pub author: Option<String>, pub timestamp: u64, pub message: Option<String> }
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommitMeta {
+    pub author: Option<String>,
+    pub timestamp: u64,
+    pub message: Option<String>,
+    /// Heads abandoned by `#rollback` and recorded on the *next* commit
+    /// (ruling R1, history_ops). Never stored in values. `None` for ordinary
+    /// commits — serde skip keeps old objects bit-compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abandoned: Option<Vec<String>>,
+}
+
+impl Default for CommitMeta {
+    fn default() -> Self {
+        Self {
+            author: None,
+            timestamp: 0,
+            message: None,
+            abandoned: None,
+        }
+    }
+}
+
+/// Custom Debug so `Commit::content_hash` (which formats meta via `Debug`)
+/// stays bit-stable for commits with no abandonment record. Adding a field
+/// under derive(Debug) would change every historical commit digest.
+impl fmt::Debug for CommitMeta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.abandoned.is_none() {
+            f.debug_struct("CommitMeta")
+                .field("author", &self.author)
+                .field("timestamp", &self.timestamp)
+                .field("message", &self.message)
+                .finish()
+        } else {
+            f.debug_struct("CommitMeta")
+                .field("author", &self.author)
+                .field("timestamp", &self.timestamp)
+                .field("message", &self.message)
+                .field("abandoned", &self.abandoned)
+                .finish()
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitKind {
     Refine,
     /// SPEC_08 §6.2 privileged overwrite — audit on the commit, never in the value.
     Pin,
+    /// SPEC_08 §6.2 privileged history compression — the fact of removal.
+    Squash,
     #[serde(other)]
     Standard,
 }
@@ -1434,7 +1478,7 @@ impl Default for Commit {
         Self {
             parent: None,
             root: ContentHash::v1(vec![0; 32]),
-            meta: CommitMeta { author: None, timestamp: 0, message: None },
+            meta: CommitMeta::default(),
             kind: CommitKind::Standard,
             refine_info: None,
             cache_id: default_cache_id(),
@@ -2070,12 +2114,13 @@ impl Commit {
             buf.extend_from_slice(&p.digest);
         }
         buf.extend_from_slice(&self.root.digest);
-        // Tag bytes: Standard=0, Refine=1, Pin=2. New kinds only append so
-        // existing commit digests (Standard/Refine) stay bit-stable.
+        // Tag bytes: Standard=0, Refine=1, Pin=2, Squash=3. New kinds only
+        // append so existing commit digests stay bit-stable.
         buf.push(match self.kind {
             CommitKind::Standard => 0,
             CommitKind::Refine => 1,
             CommitKind::Pin => 2,
+            CommitKind::Squash => 3,
         });
         if let Some(ref ri) = self.refine_info {
             for src in &ri.source_caids { buf.extend_from_slice(&src.digest); }

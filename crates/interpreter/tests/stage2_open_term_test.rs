@@ -94,6 +94,7 @@ fn commit_reload_preserves_thunk_behavior() {
         message: Some("stage2 test".to_string()),
         timestamp: 0,
         author: Some("test".to_string()),
+        abandoned: None,
     };
     let _hash = universe.commit(&engine, &dir, meta).unwrap();
 
