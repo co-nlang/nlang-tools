@@ -113,7 +113,7 @@ SPEC_08 §6.2 語義保證明文「特權操作改變的是**收斂過程**,而�
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): 見 tip(本節寫畢後 commit;§6 補記 tip 於 follow-up)
+- [x] 交付 commit(s): `5a1ea6b` #pin
 - [x] CLI(`Evolve` 加 `--pin` + `--grant`,復用 `apply_cli_privilege`)落點:
   - `crates/oo/src/main.rs` `Commands::Evolve { pin, grants, files }`;
     `run_evolve` 呼叫既有 `apply_cli_privilege(&mut engine, false, &grants)`
