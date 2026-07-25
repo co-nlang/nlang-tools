@@ -172,20 +172,40 @@ fn red_set_strategy_discriminates_valid_from_bogus() {
     );
 }
 
+/// A well-formed v2 CAID with `masa_ref = _` (REAL_03 §2.2 / §3.1: `_` is the
+/// encoding of the masa_ref COMPONENT — "no parent context / Top" — it is NOT
+/// a standalone CAID; `hash:sha256:v2:<masa_ref>:<sketch>:<digest>` is).
+///
+/// [PROBE AMENDMENT, acceptor, 2026-07-25] The first version of the probe
+/// below passed `masa: "_"` as a throwaway "syntactically parseable" string.
+/// That was MY miscalibration: bare `_` is not a CAID. The delivery reacted by
+/// widening `ContentHash::parse` to accept `"_"` — an engine change to fit a
+/// bad probe, landing in the identity layer. Reverted on acceptance; the probe
+/// now uses a properly shaped CAID, which needs no engine concession.
+const TOP_MASA_CAID: &str = "hash:sha256:v2:_:sketch:\
+                             0000000000000000000000000000000000000000000000000000000000000000";
+
 #[test]
 fn red_project_down_receives_target() {
     // SPEC_08 §3.5 normative spelling. A bad MASA collapses either way (the
     // builtin's own ContentHash::parse guard), so ⊥-vs-not cannot separate
     // "arg never arrived" from "arg arrived and was rejected". Discriminate
-    // instead on the TARGET: with the fix, omitting `target` and supplying it
-    // must not produce byte-identical output. Measured baseline: identical
-    // (both are the generic arg-shape ⊥).
-    let with_target =
-        run_cli(r#"out: ~%Engine./project_down { target: { x: 1 }, masa: "_" }"#);
-    let without_target = run_cli(r#"out: ~%Engine./project_down { masa: "_" }"#);
+    // instead on the TARGET: supplying it and omitting it must not produce
+    // identical output. Measured baseline: identical (both the generic
+    // arg-shape ⊥). Post-fix: a projection vs `_`.
+    let with_target = run_cli(&format!(
+        r#"out: ~%Engine./project_down {{ target: {{ x: 1 }}, masa: "{TOP_MASA_CAID}" }}"#
+    ));
+    let without_target = run_cli(&format!(
+        r#"out: ~%Engine./project_down {{ masa: "{TOP_MASA_CAID}" }}"#
+    ));
     assert_ne!(
         with_target, without_target,
         "project_down must actually receive `target`"
+    );
+    assert!(
+        with_target.contains("#blur"),
+        "project_down must produce a #blur local section (SPEC_08 §3.5): {with_target:?}"
     );
 }
 

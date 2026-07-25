@@ -1356,11 +1356,6 @@ impl ContentHash {
     }
 
     pub fn parse(s: &str) -> anyhow::Result<Self> {
-        // Bare `_` = Top-MASA placeholder (matches MasaRef Display). Used by
-        // n/ spellings like `masa: "_"` in SPEC_08 §3.5 project_down.
-        if s.trim() == "_" {
-            return Ok(ContentHash::v1(vec![0u8; 32]));
-        }
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() < 4 || parts[0] != "hash" || parts[1] != "sha256" {
             return Err(anyhow::anyhow!("Invalid CAID format"));

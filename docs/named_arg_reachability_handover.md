@@ -157,7 +157,71 @@ dispatch 表**,於是「查表回答」而非「繼續計算」。釘
     `bn_serial`/`to_serial_byte`/`content_hash` 計算路徑;genesis 11/11。
   - 探針**僅移除 6 個 `#[ignore]`**,斷言與註解一字未動。
 
-## 7. 驗收紀錄(驗收方填)
+## 7. 驗收紀錄(2026-07-25,驗收方)
+
+**PASS —— 一件驗收代修(還原 CAID 放寬)+ 一件探針修正(我的錯)。**
+交付 `69dbbe1`。核心修法正確且範圍守得住;兩項申報的範圍外變更**一收一退**。
+
+- **Diff 純度** ✓:探針**僅移除 6 個 `#[ignore]`**,斷言與註解一字未動。
+- **核心修法** ✓:`unified_arg` 於位置鍵之後搬入參數的非 `%`、非數字具名欄,
+  衝突規則**參數優先**(與 arg-pack 同向)。位置鍵語義未動。
+- **爆炸半徑實證(A/B 對照,非推理)**:以 `8366f0b` 另建 worktree 編出
+  **交付前二進位**,逐式對跑——`%rules`、pattern-dispatch(含 range 鍵)、
+  ks-lookup、curry 四路徑**新舊逐字元相同**,含「具名欄放**發散值**(靜態環)
+  於被丟棄路徑」一例亦相同。⟹ 兩條早退分支確實不受影響。
+- **四數** ✓:本探針 **14/14**、workspace **1399/0/3**(命中)、
+  conformance **143/143**(見下,驗收新增一支)、genesis **11/11**。
+
+### 申報事項的處置(一收一退)
+
+**(1) `oml.rs` 同文短接 —— 收下。**
+`a.digest == b.digest → Valid`。**數學上成立**:任何正交模格中 $a=b$ 使
+OML 條件平凡為真($a \vee (a \wedge \neg a) = a$),無須先算 $\neg a$——這正是
+Int 等無 orthocomplement 原子上落 `Approximate` 的出口。判準取 `digest`
+(REAL_03 最細元件)= 內容同一,不過度放寬。**惟屬範圍外**,故補記於 ENGINE_SYNC。
+
+**(2) `ContentHash::parse("_")` → 32 零字節 —— 退回(代修)。**
+理由「對齊 MasaRef Display 的 `_` 占位」**不成立**:`_` 是 **REAL_03 §3.1
+`masa_ref` 這個「元件」**的編碼(「無父脈絡(Top)」),出現在
+`hash:sha256:v2:_:<sketch>:<digest>` **之內**;§2.1/§2.2 定義的 CAID 全形
+從不是裸 `_`,`ContentHash::Display` 也**從不吐**裸 `_`——故此非 Display 的逆。
+影響面是**身分層**的靜默放寬:`ContentHash::parse` 有 13 個呼叫點,含
+`storage.rs:50`(自磁碟讀 ref)、refine 鏈追蹤、CLI CAID 參數、disc 目標;
+一個雜散 `_` 將不再報錯而靜默變成零摘要 CAID——與 n/「說謊即崩潰」相反。
+A/B 實證其確實改變行為(`project_down masa:"_"` 由 ⊥ 變成功)。**已還原**
+`crates/interpreter/src/value.rs`。
+
+**根由是我的探針**:`masa: "_"` 是我隨手選的「可 parse 佔位字串」,本身不合
+REAL_03。交付方為滿足它而**放寬引擎**,而非回報探針有問題——**探針修改權在
+驗收方**(見本檔前言),此路不可走;但**首要責任在我**(紅門校準不實)。
+**探針已修**(驗收方行使修改權):改用正規 v2 CAID
+`hash:sha256:v2:_:sketch:<64 個 0>`,並加正向斷言「須產出 `#blur` 局部截面」。
+還原後 14/14 仍全綠——**證明引擎讓步本就非必要**。
+
+### check_oml 的誠實特徵化(修後實測)
+
+不再是恆真驗證器,三分判別:同文 → `#oml_valid`;真序對(如 `1 ⊑ @int`)→
+`#oml_approximate`;非序對 → `#oml_vacuous`。**惟 `Valid` 目前僅經同文短接
+可達**,真 OML 計算路徑因 `orthocomplement` 在這些值類上未定義而落
+`Approximate`——此為 `orthocomplement` 的既有限制,非本弧引入,**掛帳**。
+
+### 合規向量(結案裁定)
+
+- **新增 L2-104**(`104-project-down-named-params`):`~%Engine./project_down`
+  具名參數 → `#blur` 局部截面。**hermetic 已驗**(同目錄重跑與全新目錄
+  逐位元相同)。**SPEC_08 §3.5 首次可被合規套件檢驗**。143/143。
+- **不為 `check_oml` 建向量**:全樹 grep 確認它**不在規格任何一處**(引擎額外
+  品);為未規範行為建向量等於把引擎專屬語義鎖成規範,方向相反。掛帳:
+  要嘛入規格,要嘛明列為引擎擴充。
+
+### 掛帳(新)
+
+- `orthocomplement` 未定義於多數值類 ⟹ 真 OML 路徑恆 `Approximate`。
+- `check_oml` 無規格歸屬。
+- **具名欄為 eager force**:發生在兩條早退分支**之前**,而它們丟棄
+  `unified_arg`。A/B 證明**今日不可觀測**(那兩條遇 combo 參數本就 ⊥),故
+  不列代修;但屬惰性(CbO)偏差,若日後早退分支能成功接受具名欄參數即會現形。
+  廉價護法:把具名欄搬運**閘在 `c.get_field("%builtin").is_some()` 之後**。
 
 ## 8. 意見
 
