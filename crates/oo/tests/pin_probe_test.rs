@@ -172,7 +172,11 @@ fn red_pin_is_audited_in_the_commit() {
     universe_with_committed_x(&d);
     write(&d, "b.n", "x: 42\n");
     oo(&d, &["evolve", "--grant", "pin", "--pin", "b.n"]);
-    oo(&d, &["commit", "-m", "pinned"]);
+    // [PROBE AMENDMENT, acceptor, 2026-07-26] The commit now re-presents the
+    // capability. That is the escalation repair, not a workflow nicety: the
+    // commit is where the overwrite is APPLIED, and `.oo/pin_pending` records
+    // intent, never authority (any n/ program can write that directory).
+    oo(&d, &["commit", "--grant", "pin", "-m", "pinned"]);
     let log = oo(&d, &["log"]);
     assert!(
         log.to_lowercase().contains("pin"),
@@ -272,6 +276,114 @@ fn pin_ordinary_commit_is_unmarked() {
     assert!(
         !log.to_lowercase().contains("pin"),
         "an ordinary commit must not be marked privileged: {log:?}"
+    );
+}
+
+#[test]
+fn pin_does_not_leak_replace_semantics_to_ordinary_fields() {
+    // ACCEPTANCE REPAIR REGRESSION (2026-07-26). The delivery replace-merged
+    // the WHOLE staged combo at commit whenever a pin was pending, so a pin on
+    // one coordinate silently gave overwrite semantics to every ordinary write
+    // sharing the commit — a privileged operation changing the meaning of
+    // unprivileged ones.
+    //
+    // Setup: root has y: 5. An ordinary `y: @int` is a lawful WIDENING write
+    // (G2-S allows it: meet(5, @int) = 5 ≠ ⊥) whose committed result must stay
+    // 5 — the meet keeps the narrower value. Under the leak it became @int.
+    //
+    // Discriminator: afterwards write `y: 7`. If y is still 5 the meet is ⊥ and
+    // evolution conflicts (correct). If y had been widened to @int, meet(@int,
+    // 7) = 7 and the write is accepted — the leak.
+    let d = fresh_dir();
+    write(&d, "a.n", "x: 0\ny: 5\n");
+    oo(&d, &["evolve", "a.n"]);
+    oo(&d, &["commit", "-m", "base"]);
+
+    write(&d, "b.n", "x: 42\n");
+    oo(&d, &["evolve", "--grant", "pin", "--pin", "b.n"]);
+    write(&d, "c.n", "y: @int\n");
+    oo(&d, &["evolve", "c.n"]);
+    oo(&d, &["commit", "--grant", "pin", "-m", "mixed"]);
+
+    write(&d, "d.n", "y: 7\n");
+    assert!(
+        is_conflict(&oo(&d, &["evolve", "d.n"])),
+        "an ordinary write sharing a pin's commit must still take the lattice \
+         meet — privilege covers only the pinned coordinates"
+    );
+}
+
+#[test]
+fn pin_still_overwrites_its_own_coordinate_alongside_ordinary_ones() {
+    // The other side of the repair: narrowing replace to the pinned coordinate
+    // set must not stop the pin itself from landing when the same commit also
+    // carries ordinary writes.
+    let d = fresh_dir();
+    write(&d, "a.n", "x: 0\ny: 5\n");
+    oo(&d, &["evolve", "a.n"]);
+    oo(&d, &["commit", "-m", "base"]);
+
+    write(&d, "b.n", "x: 42\n");
+    oo(&d, &["evolve", "--grant", "pin", "--pin", "b.n"]);
+    write(&d, "c.n", "y: @int\n");
+    oo(&d, &["evolve", "c.n"]);
+    oo(&d, &["commit", "--grant", "pin", "-m", "mixed"]);
+
+    // x is 42 now: an incompatible 99 must conflict, a compatible 42 must not.
+    write(&d, "e.n", "x: 99\n");
+    assert!(is_conflict(&oo(&d, &["evolve", "e.n"])));
+    write(&d, "f.n", "x: 42\n");
+    assert!(
+        !is_conflict(&oo(&d, &["evolve", "f.n"])),
+        "the pinned coordinate must have been overwritten to 42"
+    );
+}
+
+#[test]
+fn pin_intent_file_is_not_authority() {
+    // ACCEPTANCE REPAIR REGRESSION — the sharpest finding of this arc.
+    //
+    // The delivery persisted the pin decision as `.oo/pin_pending` and let the
+    // COMMIT act on it without re-checking the capability. But `.oo/` is
+    // writable by any n/ program (`~%Io./write_file`), so a wholly
+    // unprivileged program could forge the file and obtain #pin overwrite
+    // semantics — plus a commit falsely marked as privileged. That is exactly
+    // the implicit, tokenless backdoor SPEC_08 §6.1.2 forbids: the program
+    // self-authorizes. Demonstrated end to end before the repair.
+    //
+    // The file records INTENT across two CLI processes; authority must be
+    // re-presented through the trusted channel at the moment the privileged
+    // effect is applied.
+    let d = fresh_dir();
+    write(&d, "a.n", "x: 0\ny: 5\n");
+    oo(&d, &["evolve", "a.n"]);
+    oo(&d, &["commit", "-m", "base"]);
+
+    // The exploit, verbatim, in ordinary unprivileged n/.
+    write(
+        &d,
+        "exploit.n",
+        "lst: [\"y\"]\nout: ~%Io./write_file \".oo/pin_pending\" (~%Json./stringify lst)\n",
+    );
+    oo(&d, &["run", "exploit.n", "--observe", "out"]);
+    assert!(
+        d.join(".oo").join("pin_pending").exists(),
+        "precondition: an unprivileged program CAN write the intent file"
+    );
+
+    write(&d, "c.n", "y: @int\n");
+    oo(&d, &["evolve", "c.n"]);
+    let committed = oo(&d, &["commit", "-m", "innocent"]);
+    assert!(
+        committed.contains("privileged_required"),
+        "a pin-pending commit without the capability must be refused: {committed:?}"
+    );
+
+    // And the forged intent must not have moved the lattice.
+    write(&d, "d.n", "y: 7\n");
+    assert!(
+        is_conflict(&oo(&d, &["evolve", "d.n"])),
+        "a forged intent file must not grant overwrite semantics"
     );
 }
 

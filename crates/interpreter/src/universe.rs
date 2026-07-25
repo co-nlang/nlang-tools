@@ -164,6 +164,14 @@ pub struct Universe {
     /// Staged under pin; next commit is `CommitKind::Pin` with replace-merge.
     /// Persisted beside staged so evolve/commit stay separate CLI processes.
     pub pin_pending: bool,
+    /// ACCEPTANCE REPAIR: exactly which coordinates were written under `--pin`.
+    /// Replace-merge at commit applies to THESE ONLY; every other staged
+    /// coordinate still meets the root normally. Without this, a pin anywhere
+    /// in a staging session silently gave replace semantics to every ordinary
+    /// write in the same commit — a privileged operation changing the meaning
+    /// of unprivileged ones (work order §3 C.3: pin acts only on its own
+    /// fields).
+    pub pin_coords: std::collections::BTreeSet<String>,
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
@@ -174,7 +182,41 @@ impl Universe {
             is_dirty: false,
             pin_mode: false,
             pin_pending: false,
+            pin_coords: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// Commit body under `#pin`: pinned coordinates OVERWRITE the root; all
+    /// other staged coordinates take the ordinary lattice meet. Returns `None`
+    /// if the ordinary part conflicts (that path must still fail loudly —
+    /// privilege was granted for the pinned coordinates, not for the rest).
+    fn pin_commit_merge(
+        engine: &Ouroboros,
+        root: &ComboVal,
+        staged: &ComboVal,
+        pin_coords: &std::collections::BTreeSet<String>,
+    ) -> Option<ComboVal> {
+        // 1. ordinary part = staged minus the pinned coordinates
+        let mut ordinary = staged.clone();
+        for c in pin_coords {
+            ordinary.remove_field(c);
+            ordinary.local.shift_remove(c.as_str());
+        }
+        let met = match engine.unify(Value::Combo(root.clone()), Value::Combo(ordinary)) {
+            Value::Combo(m) => m,
+            _ => return None,
+        };
+        // 2. pinned coordinates overwrite on top
+        let mut out = met;
+        for c in pin_coords {
+            if let Some(v) = staged.get_field(c).cloned() {
+                out.insert_field(c, v);
+            } else if let Some(v) = staged.get_local_field(c).cloned() {
+                out.local.insert(c.clone(), v);
+            }
+        }
+        out.effect = out.effect.union(staged.effect);
+        Some(out)
     }
 
     /// Overlay `incoming` fields onto `base` by replace (not lattice meet).
@@ -375,6 +417,12 @@ impl Universe {
             self.staged = Self::replace_merge(&self.staged, &incoming);
             self.is_dirty = true;
             self.pin_pending = true;
+            // ACCEPTANCE REPAIR: remember WHICH coordinates were pinned, so the
+            // commit overwrites only these and every other staged coordinate
+            // still meets normally.
+            for c in &evolved_coords {
+                self.pin_coords.insert(c.clone());
+            }
             return Ok(());
         }
         let res = engine.unify(Value::Combo(self.staged.clone()), Value::Combo(incoming));
@@ -391,9 +439,13 @@ impl Universe {
         let json = serde_json::to_string(&self.staged)?;
         std::fs::write(&staged_path, json)?;
         // Pin audit intent lives beside staged, never inside values (CAID).
+        // ACCEPTANCE REPAIR: the file now carries the pinned COORDINATES, not
+        // a bare flag — the commit must know which coordinates the privilege
+        // covers, or it applies replace semantics to everything staged.
         let pin_path = base_dir.join(".oo").join("pin_pending");
         if self.pin_pending {
-            std::fs::write(pin_path, b"1")?;
+            let coords: Vec<&String> = self.pin_coords.iter().collect();
+            std::fs::write(pin_path, serde_json::to_string(&coords)?)?;
         } else if pin_path.exists() {
             let _ = std::fs::remove_file(pin_path);
         }
@@ -409,16 +461,35 @@ impl Universe {
         }
         let pin_path = base_dir.join(".oo").join("pin_pending");
         self.pin_pending = pin_path.exists();
+        if self.pin_pending {
+            // ACCEPTANCE REPAIR: restore the pinned coordinate set. An
+            // unreadable/legacy file means "pinned, coordinates unknown" — the
+            // safe reading is the EMPTY set (no coordinate gets replace
+            // semantics), never "all of them".
+            self.pin_coords = std::fs::read_to_string(&pin_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+                .map(|v| v.into_iter().collect())
+                .unwrap_or_default();
+        }
         Ok(())
     }
 
     pub fn commit(&mut self, engine: &Ouroboros, base_dir: &std::path::Path, meta: crate::value::CommitMeta) -> Result<ContentHash> {
         engine.clear_force_memo();
         let (new_root, kind) = if self.pin_pending {
-            // Replace-merge staged over root — pin's overwrite is the commit body.
-            // Audit marker is CommitKind only (value structure unchanged vs a
-            // normal write of the same payload → same content hash of values).
-            (Self::replace_merge(&self.root, &self.staged), CommitKind::Pin)
+            // ACCEPTANCE REPAIR: replace ONLY the pinned coordinates; everything
+            // else staged still meets the root. Replacing the whole staged combo
+            // let a pin on one coordinate silently give overwrite semantics to
+            // ordinary writes sharing the commit (measured: a committed `y: 5`
+            // was widened to `@int` by an unprivileged write, because `x` had
+            // been pinned in the same session). Audit marker is CommitKind only
+            // — the value structure is identical to a normal write of the same
+            // payload, so its content hash is unchanged (§6.2).
+            match Self::pin_commit_merge(engine, &self.root, &self.staged, &self.pin_coords) {
+                Some(m) => (m, CommitKind::Pin),
+                None => return Err(anyhow::anyhow!("Commit failed")),
+            }
         } else {
             match engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone())) {
                 Value::Combo(m) => (m, CommitKind::Standard),
@@ -435,6 +506,7 @@ impl Universe {
         self.head = Some(commit_hash.clone());
         self.is_dirty = false;
         self.pin_pending = false;
+        self.pin_coords.clear();
         let staged_path = base_dir.join(".oo").join("staged");
         if staged_path.exists() { let _ = std::fs::remove_file(staged_path); }
         let pin_path = base_dir.join(".oo").join("pin_pending");

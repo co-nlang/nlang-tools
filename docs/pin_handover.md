@@ -145,7 +145,68 @@ SPEC_08 §6.2 語義保證明文「特權操作改變的是**收斂過程**,而�
   - 能力槽 `Privilege.pin` 僅啟用,結構未改;effect_override 等軸未擴權。
   - `#commit`/`#rollback`/`#squash` 本體未做(另弧)。
 
-## 7. 驗收紀錄(驗收方填)
+## 7. 驗收紀錄(2026-07-26,驗收方)
+
+**PASS —— 兩件驗收代修,其一為特權升級(security)。** 交付 `5a1ea6b`。
+核心機制與審計落點都對,兩件缺陷**都出在 pin 的作用範圍沒有被界定**。
+
+- **Diff 純度** ✓:探針僅移除 7 個 `#[ignore]`。
+- **機制審核** ✓:兩步閘(`--pin` 請求 × `Privilege.pin` 能力)、G2-S 跳過只在
+  兩者齊備時、`CommitKind::Pin`(具名變體,`Standard` 仍 `#[serde(other)]`,
+  舊 commit 反序列化不變)、`oo log` 顯示、值內無殘留。
+- **四數**(兩次代修後)✓:本探針 **15/15**、workspace **1414/0/3**、
+  conformance **143/143**、genesis **11/11**。
+
+### 驗收代修 1:pin 的取代語義洩漏到未受特權的欄位
+
+`commit` 在 `pin_pending` 時對**整個 staged** 做 `replace_merge`。實測:根有
+`y: 5`,一個**普通**(未 pin)的放寬寫入 `y: @int`(G2-S 允許,因
+`meet(5,@int)=5≠⊥`)在正常情況下提交後 `y` 仍為 `5`(**對照組實測確認**);
+但只要同批次中有任一 pin,`y` 就被**取代**成 `@int`。
+⟹ **一個只碰 `x` 的特權操作,改變了同批次中未受特權的 `y` 的語義**——違反工單
+§3 C.3「pin 只作用於本次 evolve 的欄位」。
+**修**:新增 `Universe.pin_coords`(實際在 pin 模式下寫入的座標集,隨
+`.oo/pin_pending` 以 JSON 持久化);commit 改走 `pin_commit_merge`——**只有
+pin_coords 取代**,其餘 staged **照常 meet**(且 meet 失敗仍照常大聲失敗:特權
+是給那些座標的,不是給其餘的)。不可解析/舊格式的意圖檔案 → **空集合**
+(安全側:不得讀成「全部」)。+ 迴歸釘兩支。
+
+### 驗收代修 2:特權升級 —— 意圖檔案被當成授權(§6.1.2 後門)
+
+`.oo/pin_pending` 的**存在**即驅動 commit 端的取代語義與 `Pin` 標記,而 commit
+**完全不重驗能力**。而 `.oo/` 是**任何 n/ 程式都能寫**的目錄(`~%Io./write_file`
+對 n/ 開放,`~%Json./stringify` 可產出合法 JSON)。**端到端證實**:一支完全
+未授權的 n/ 程式(全程無 `--grant`、無 `--privileged`)
+
+```
+lst: ["y"]
+out: ~%Io./write_file ".oo/pin_pending" (~%Json./stringify lst)
+```
+
+即取得 **#pin 覆寫語義**,且其 commit **被假標記為 pin**(歷史說謊)。
+這正是 SPEC_08 §6.1.2 明禁的**隱式/無令牌後門**:程式自授權。
+**修**:`oo commit` 加 `--grant`/`--privileged`(復用 `apply_cli_privilege`);
+`pin_pending` 且無 `Privilege.pin` → **大聲拒** `#privileged_required`。
+**意圖檔案記錄的是意圖,不是授權**——授權必須在**施加特權效果的當下**經可信
+通道重新出示。修後重跑同一 exploit:commit 被拒、格未動。合法流程
+(`evolve --grant pin --pin` → `commit --grant pin`)完好。
+**探針修改權行使**:三處 `commit` 呼叫改為攜 `--grant pin`(工作流因代修**正當
+地**改變),並補**升權迴歸釘** `pin_intent_file_is_not_authority`(把 exploit
+原封不動寫進探針)。
+
+### 掛帳(新)
+
+- **殘留(REAL_02)**:偽造的意圖檔案若恰好搭上一次**合法**的 pin commit,其
+  座標仍會被套用。徹底解法需要意圖檔案**可認證**(如以每倉密鑰 HMAC),而
+  令牌的鑄造/生命週期依 §6.3 屬 **REAL_02**,非語言規格。已記,不在本弧。
+- `#commit`/`#rollback`/`#squash` 本體(另弧;`#commit` 依裁定改規格文字)。
+- `.oo/` 目錄對 n/ 程式可寫這件事本身值得單獨檢視(本弧只堵了 pin 這條路;
+  其他以 `.oo/` 狀態為據的機制應同樣審視「檔案≠授權」)。
+
+### 分類判定
+
+新增 `oo evolve --pin` 與 `oo commit --grant`,皆**純增能力**;未 pin 的演化與
+提交路徑逐字未動(釘覆蓋)。歸 **增量**。
 
 ## 8. 意見
 
