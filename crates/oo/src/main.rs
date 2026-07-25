@@ -1,4 +1,6 @@
-use nlang_interpreter::{Ouroboros, Universe, Value, ContentHash, CommitMeta};
+use nlang_interpreter::{
+    Ouroboros, Universe, Value, ContentHash, CommitMeta, EffectTag, Privilege,
+};
 use nlang_parser::ast::{AtomKind, FieldKey};
 use nlang_parser::parse_program;
 use clap::{Parser, Subcommand};
@@ -22,10 +24,14 @@ enum Commands {
         observe: Option<String>,
         #[arg(short, long)]
         format: bool,
-        /// Trusted-channel privilege for §6 ops (e.g. ~%Effect./runPure).
+        /// Full §6 grant (back-compat: all operations + all active tags).
         /// Cannot be set from inside an n/ program (SPEC_08 §6.1.2).
         #[arg(long)]
         privileged: bool,
+        /// Selective capability grant (repeatable; accumulates by union).
+        /// SPEC: effect_override[:tag[+tag]*] | pin | commit | rollback | squash
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
     },
     Evolve { #[arg(required = true)] files: Vec<PathBuf> },
     Test { #[arg(long)] static_only: bool, #[arg(short, long)] pattern: Option<String>, files: Vec<PathBuf> },
@@ -47,9 +53,12 @@ enum Commands {
     Eval {
         /// nlang expression to evaluate (wrap in quotes for shell safety)
         expr: String,
-        /// Trusted-channel privilege (same as `run --privileged`).
+        /// Full §6 grant (same as `run --privileged`).
         #[arg(long)]
         privileged: bool,
+        /// Selective capability grant (repeatable; accumulates by union).
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
     },
     /// Inspect a value in the local store by CAID
     Inspect {
@@ -90,7 +99,8 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             observe,
             format,
             privileged,
-        } => run_one_shot(files, observe, format, privileged),
+            grants,
+        } => run_one_shot(files, observe, format, privileged, grants),
         Commands::Evolve { files } => run_evolve(files),
         Commands::Fmt { file, write } => run_fmt(file, write),
         Commands::Serve { port } => run_serve(port),
@@ -100,7 +110,11 @@ fn main_on_large_stack() -> anyhow::Result<()> {
         Commands::Refine { source, target, sign, message } => run_refine(source, target, sign, message),
         Commands::Repl => run_repl(),
         Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
-        Commands::Eval { expr, privileged } => run_eval(expr, privileged),
+        Commands::Eval {
+            expr,
+            privileged,
+            grants,
+        } => run_eval(expr, privileged, grants),
         Commands::Inspect { caid } => run_inspect(caid),
         Commands::Lint { path, json } => {
             let code = oo::nlint::run_cli(&path, json);
@@ -306,16 +320,85 @@ fn run_repl() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Parse one `--grant SPEC` into a Privilege fragment. Loud fail on unknown.
+fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
+    let s = spec.trim();
+    match s {
+        "pin" => Ok(Privilege {
+            pin: true,
+            ..Privilege::NONE
+        }),
+        "commit" => Ok(Privilege {
+            commit: true,
+            ..Privilege::NONE
+        }),
+        "rollback" => Ok(Privilege {
+            rollback: true,
+            ..Privilege::NONE
+        }),
+        "squash" => Ok(Privilege {
+            squash: true,
+            ..Privilege::NONE
+        }),
+        "effect_override" => Ok(Privilege {
+            effect_override: Some(EffectTag::all_active()),
+            ..Privilege::NONE
+        }),
+        s if s.starts_with("effect_override:") => {
+            let tags_s = &s["effect_override:".len()..];
+            if tags_s.is_empty() {
+                anyhow::bail!("unknown grant SPEC `{spec}`: empty tag list after effect_override:");
+            }
+            let mut tags = EffectTag::Pure;
+            for part in tags_s.split('+') {
+                let t = part.trim();
+                let bit = match t {
+                    "io" => EffectTag::IO,
+                    "nondet" => EffectTag::NonDet,
+                    "state" => EffectTag::State,
+                    other => {
+                        anyhow::bail!(
+                            "unknown grant tag `{other}` in SPEC `{spec}` (allowed: io, nondet, state)"
+                        );
+                    }
+                };
+                tags = tags.union(bit);
+            }
+            Ok(Privilege {
+                effect_override: Some(tags),
+                ..Privilege::NONE
+            })
+        }
+        _ => anyhow::bail!(
+            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, commit, rollback, squash)"
+        ),
+    }
+}
+
+fn apply_cli_privilege(
+    engine: &mut Ouroboros,
+    privileged: bool,
+    grants: &[String],
+) -> anyhow::Result<()> {
+    if privileged {
+        engine.set_privileged(true);
+    }
+    for g in grants {
+        let frag = parse_grant_spec(g)?;
+        engine.grant_privilege(frag);
+    }
+    Ok(())
+}
+
 fn run_one_shot(
     files: Vec<PathBuf>,
     observe: Option<String>,
     format: bool,
     privileged: bool,
+    grants: Vec<String>,
 ) -> anyhow::Result<()> {
     let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
-    if privileged {
-        engine.set_privileged(true);
-    }
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
     // One-shot: pure universe, no local staged load.
     // SPEC_03 simultaneity: all files/fields are one snapshot — evolve
     // everything first; only then store-put (CAID) and --observe.
@@ -376,12 +459,10 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_eval(expr: String, privileged: bool) -> anyhow::Result<()> {
+fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Result<()> {
     let cur = std::env::current_dir()?;
     let mut engine = Ouroboros::init(&cur).unwrap_or_else(|_| Ouroboros::new_in_memory());
-    if privileged {
-        engine.set_privileged(true);
-    }
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
 
     let mut universe = Universe::new(None, engine.root_with_system());
 

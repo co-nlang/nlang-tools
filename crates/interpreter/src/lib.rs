@@ -22,7 +22,7 @@ pub mod genesis;
 pub mod ladd;
 pub mod oml;
 pub mod authority;
-pub use crate::value::{Value, ComboVal, EffectTag, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
+pub use crate::value::{Value, ComboVal, EffectTag, Privilege, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
 pub use crate::storage::ObjectStore;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, handle_resource_exhausted};
@@ -103,9 +103,9 @@ pub struct EvalContext {
     pub had_nondistrib_event: bool,
     pub disc_routing_visited: std::collections::HashSet<String>,
     pub disc_routing_hops: u32,
-    /// SPEC_08 §6 P1: privileged horizon capability (trusted channel only).
-    /// Cloned via sub_context — no special inheritance.
-    pub privileged: bool,
+    /// SPEC_08 §6 capability lattice (selective_discharge). Cloned via
+    /// sub_context — no special inheritance.
+    pub privilege: crate::value::Privilege,
 }
 
 impl EvalContext {
@@ -126,7 +126,7 @@ impl EvalContext {
             had_nondistrib_event: false,
             disc_routing_visited: std::collections::HashSet::new(),
             disc_routing_hops: 0,
-            privileged: false,
+            privilege: crate::value::Privilege::NONE,
         }
     }
     /// Root CAID for memo keys — computed once per root version, then cached
@@ -304,10 +304,10 @@ pub struct Ouroboros {
     pub refine_map: RwLock<HashMap<String, Vec<String>>>,
     pub gbb_registry: RwLock<HashMap<String, crate::ladd::GBB>>,
     pub architect_registry: RwLock<std::collections::HashSet<String>>,
-    /// SPEC_08 §6 P1: privileged capability. Default false; set only via
-    /// trusted channel (`set_privileged` / CLI `--privileged`). Never from
+    /// SPEC_08 §6 capability lattice. Default NONE; set only via trusted
+    /// channel (`set_privilege` / CLI `--privileged`/`--grant`). Never from
     /// in-program n/ code.
-    pub privileged: bool,
+    pub privilege: crate::value::Privilege,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,7 +367,7 @@ impl Ouroboros {
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(architects),
-            privileged: false,
+            privilege: crate::value::Privilege::NONE,
         }
     }
 
@@ -393,15 +393,28 @@ impl Ouroboros {
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(architects),
-            privileged: false,
+            privilege: crate::value::Privilege::NONE,
         };
         Ok(oo)
     }
 
-    /// Trusted-channel only (CLI `--privileged` / test harness init).
-    /// No in-program n/ path may call this.
+    /// Trusted-channel only. No in-program n/ path may call this.
+    pub fn set_privilege(&mut self, privilege: crate::value::Privilege) {
+        self.privilege = privilege;
+    }
+
+    /// Back-compat shim: `true` → full grant, `false` → NONE.
     pub fn set_privileged(&mut self, privileged: bool) {
-        self.privileged = privileged;
+        self.privilege = if privileged {
+            crate::value::Privilege::all()
+        } else {
+            crate::value::Privilege::NONE
+        };
+    }
+
+    /// Union a grant into the horizon capability (CLI `--grant` accumulation).
+    pub fn grant_privilege(&mut self, grant: crate::value::Privilege) {
+        self.privilege = self.privilege.union(grant);
     }
     
     fn is_list(&self, v: &Value, ctx: &mut EvalContext) -> bool {
@@ -1046,7 +1059,7 @@ impl Ouroboros {
         let sys_root = self.root_with_system();
         let mut ctx = EvalContext::new(sys_root.clone());
         ctx.memo_enabled = false; // engine-internal: wrong root for memo (see field doc)
-        ctx.privileged = self.privileged;
+        ctx.privilege = self.privilege;
         // Initial horizon from ~%Config (bare names). Runtime override of
         // strategy is /set_strategy (mutates live ctx, not the genesis node).
         if let Some(Value::Combo(ref cfg)) = sys_root.get_field("~%Config").cloned() {

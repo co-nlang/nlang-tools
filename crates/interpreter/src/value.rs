@@ -50,6 +50,15 @@ impl EffectTag {
             || self.contains(EffectTag::NonDet)
             || self.contains(EffectTag::State)
     }
+    /// Mask to active contagion bits only (`#cached` stripped). Used by
+    /// selective discharge coverage (SPEC_08 §6.2).
+    pub fn active_part(self) -> EffectTag {
+        EffectTag(self.0 & (Self::IO.0 | Self::NonDet.0 | Self::State.0))
+    }
+    /// All three active tags (for bare `effect_override` grant).
+    pub fn all_active() -> EffectTag {
+        Self::IO.union(Self::NonDet).union(Self::State)
+    }
     /// Thunk CAID serial byte: single-tag legacy ordinals unchanged
     /// (Pure=0, State=1, IO=2, NonDet=3); multi-tag / Cached use high bit.
     pub fn to_serial_byte(self) -> u8 {
@@ -103,6 +112,65 @@ impl fmt::Display for EffectTag {
             first = false;
         }
         Ok(())
+    }
+}
+
+/// SPEC_08 §6.2 privileged capability lattice (selective_discharge).
+/// Horizon-only, not stored in values / CAID. Trusted-channel set only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Privilege {
+    /// `#effect_override`: `None` = op not authorized (even pure args refused);
+    /// `Some(tags)` = may discharge exactly those active tags (all-or-nothing).
+    pub effect_override: Option<EffectTag>,
+    /// Declared but inert slots (no consumer yet).
+    pub pin: bool,
+    pub commit: bool,
+    pub rollback: bool,
+    pub squash: bool,
+}
+
+impl Privilege {
+    pub const NONE: Privilege = Privilege {
+        effect_override: None,
+        pin: false,
+        commit: false,
+        rollback: false,
+        squash: false,
+    };
+
+    /// Full grant (CLI `--privileged` back-compat).
+    pub fn all() -> Privilege {
+        Privilege {
+            effect_override: Some(EffectTag::all_active()),
+            pin: true,
+            commit: true,
+            rollback: true,
+            squash: true,
+        }
+    }
+
+    pub fn union(self, other: Privilege) -> Privilege {
+        let effect_override = match (self.effect_override, other.effect_override) {
+            (None, None) => None,
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (Some(a), Some(b)) => Some(a.union(b)),
+        };
+        Privilege {
+            effect_override,
+            pin: self.pin || other.pin,
+            commit: self.commit || other.commit,
+            rollback: self.rollback || other.rollback,
+            squash: self.squash || other.squash,
+        }
+    }
+
+    /// Q2: `C ⊇ E.active` — only active bits participate (`#cached` ignored).
+    pub fn may_discharge(self, e: EffectTag) -> bool {
+        match self.effect_override {
+            None => false,
+            Some(c) => c.contains_all(e.active_part()),
+        }
     }
 }
 
