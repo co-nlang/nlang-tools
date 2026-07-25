@@ -124,7 +124,7 @@ dispatch 表**,於是「查表回答」而非「繼續計算」。釘
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [x] 交付 commit(s): `ef905ab` named_arg_reachability
+- [x] 交付 commit(s): `69dbbe1` named_arg_reachability
 - [x] `unified_arg` 具名欄搬入落點(檔:行)+ 所選**衝突規則**:
   - `crates/interpreter/src/lib.rs` `apply_morphism` Combo 臂,在位置鍵組裝之後、
     `%rules` 分支之前:若 `arg` 為 Combo,對其非 `%`、非數字鍵欄
