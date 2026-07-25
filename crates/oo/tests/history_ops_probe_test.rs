@@ -124,7 +124,6 @@ fn head(dir: &Path) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_rollback_moves_head() {
     // The operation: HEAD lands on the named commit and the log tip follows.
     let d = fresh_dir();
@@ -139,7 +138,6 @@ fn red_rollback_moves_head() {
 }
 
 #[test]
-#[ignore]
 fn red_rollback_requires_the_capability() {
     let d = fresh_dir();
     let c = three_commit_history(&d);
@@ -153,7 +151,6 @@ fn red_rollback_requires_the_capability() {
 }
 
 #[test]
-#[ignore]
 fn red_rollback_capability_is_operation_specific() {
     // Axis-1: a different §6.2 capability must not authorize it.
     let d = fresh_dir();
@@ -168,7 +165,6 @@ fn red_rollback_capability_is_operation_specific() {
 }
 
 #[test]
-#[ignore]
 fn red_rollback_is_recorded_in_the_next_commit() {
     // THE ruling. Rollback creates no commit, but the divergence must enter
     // the chain when work resumes: the next commit names the abandoned head.
@@ -195,7 +191,6 @@ fn red_rollback_is_recorded_in_the_next_commit() {
 }
 
 #[test]
-#[ignore]
 fn red_abandoned_commits_are_not_deleted() {
     // Rollback drops REACHABILITY, never bytes. Only #squash may make
     // anything unreachable, and even then collection is a separate sweep.
@@ -220,7 +215,6 @@ fn red_abandoned_commits_are_not_deleted() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_squash_compresses_the_range() {
     // `oo squash <base>`: everything after <base> up to HEAD becomes ONE
     // commit whose parent is <base>. Three commits onto the first ⟹ two.
@@ -238,7 +232,6 @@ fn red_squash_compresses_the_range() {
 }
 
 #[test]
-#[ignore]
 fn red_squash_requires_the_capability() {
     let d = fresh_dir();
     let c = three_commit_history(&d);
@@ -252,7 +245,6 @@ fn red_squash_requires_the_capability() {
 }
 
 #[test]
-#[ignore]
 fn red_squash_result_is_marked() {
     // §6.2 audit tag #privileged_squash — the compression must be visible.
     let d = fresh_dir();
@@ -265,7 +257,6 @@ fn red_squash_result_is_marked() {
 }
 
 #[test]
-#[ignore]
 fn red_squash_preserves_the_universe() {
     // §6.2 fingerprint face: compressing HISTORY must not change what the
     // universe IS. f1 was bound to 1; after squashing, rebinding it to 2 must
@@ -288,7 +279,6 @@ fn red_squash_preserves_the_universe() {
 }
 
 #[test]
-#[ignore]
 fn red_squash_over_an_abandonment_keeps_the_fact() {
     // THE ruling's other half. A squash MAY compress away an abandonment
     // record — granularity is losable — but its own marker carries the fact

@@ -85,6 +85,28 @@ enum Commands {
         /// CAID string (hash:sha256:v2:...)
         caid: String,
     },
+    /// Move HEAD to a historical commit (SPEC_08 §6.2 `#rollback`).
+    /// Requires `--grant rollback`. Does not create a commit; the next
+    /// ordinary commit records the abandoned former HEAD in its meta.
+    Rollback {
+        /// Target commit CAID
+        caid: String,
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
+        #[arg(long)]
+        privileged: bool,
+    },
+    /// Compress commits after BASE up to HEAD into one (SPEC_08 §6.2 `#squash`).
+    /// Requires `--grant squash`. Parent of the result is BASE; root content
+    /// is HEAD's root (universe unchanged). Marked `CommitKind::Squash`.
+    Squash {
+        /// Base commit CAID (survives as parent of the squashed commit)
+        caid: String,
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
+        #[arg(long)]
+        privileged: bool,
+    },
     /// Tier 1 linter (pure syntax / pure graph theory) — see docs/linter_tier1_handover.md
     Lint {
         /// .n file or directory (recursive)
@@ -138,6 +160,16 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             grants,
         } => run_eval(expr, privileged, grants),
         Commands::Inspect { caid } => run_inspect(caid),
+        Commands::Rollback {
+            caid,
+            grants,
+            privileged,
+        } => run_rollback(caid, grants, privileged),
+        Commands::Squash {
+            caid,
+            grants,
+            privileged,
+        } => run_squash(caid, grants, privileged),
         Commands::Lint { path, json } => {
             let code = oo::nlint::run_cli(&path, json);
             std::process::exit(code);
@@ -226,15 +258,66 @@ fn run_log() -> anyhow::Result<()> {
     let history = engine.log()?;
     for (hash, meta, kind) in history {
         println!("commit {}", hash);
-        // SPEC_08 §6.2 audit: privileged pin is marked on the commit surface.
+        // SPEC_08 §6.2 audit markers on the commit surface (never in values).
         if kind == nlang_interpreter::CommitKind::Pin {
             println!("    pin");
+        }
+        if kind == nlang_interpreter::CommitKind::Squash {
+            println!("    squash");
+        }
+        if let Some(ref abs) = meta.abandoned {
+            for a in abs {
+                // "abandoned" substring is the probe-visible audit record (R1).
+                println!("    abandoned {}", a);
+            }
         }
         if let Some(msg) = meta.message { println!("    {}", msg); }
         let date = std::time::UNIX_EPOCH + std::time::Duration::from_millis(meta.timestamp);
         println!("    Date: {:?}", date);
         println!();
     }
+    Ok(())
+}
+
+fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let mut engine = Ouroboros::init(&cur)?;
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
+    if !engine.privilege.rollback {
+        anyhow::bail!(
+            "#privileged_required: rollback requires --grant rollback (privilege.rollback capability)"
+        );
+    }
+    let target = ContentHash::parse(&caid)
+        .map_err(|e| anyhow::anyhow!("Invalid rollback CAID '{}': {}", caid, e))?;
+    let mut universe = load_universe(&engine, &cur)?;
+    universe.rollback(&engine, &cur, &target)?;
+    println!("Rolled back to {}", target);
+    Ok(())
+}
+
+fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let mut engine = Ouroboros::init(&cur)?;
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
+    if !engine.privilege.squash {
+        anyhow::bail!(
+            "#privileged_required: squash requires --grant squash (privilege.squash capability)"
+        );
+    }
+    let base = ContentHash::parse(&caid)
+        .map_err(|e| anyhow::anyhow!("Invalid squash base CAID '{}': {}", caid, e))?;
+    let mut universe = load_universe(&engine, &cur)?;
+    let meta = CommitMeta {
+        message: Some("squash".to_string()),
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64,
+        author: Some("oo-cli".to_string()),
+        abandoned: None,
+    };
+    let hash = universe.squash(&engine, &cur, &base, meta)?;
+    println!("Squash commit: {}", hash);
     Ok(())
 }
 
@@ -265,6 +348,7 @@ fn run_commit(
         message,
         timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,
         author: Some("oo-cli".to_string()),
+        abandoned: None,
     };
     let hash = universe.commit(&engine, &std::env::current_dir()?, meta)?;
     println!("Commit successful: {}", hash);
@@ -311,6 +395,7 @@ fn run_refine(
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as u64,
         author: Some("oo-cli".to_string()),
+        abandoned: None,
     };
 
     let hash = universe.refine(&engine, &cur, source_caids, target_caids, authority, meta)?;

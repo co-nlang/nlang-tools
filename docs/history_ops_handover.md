@@ -139,16 +139,43 @@ oo squash   <BASE_CAID> --grant squash
 
 ## 6. 交付紀錄(交付方填;先寫再回報)
 
-- [ ] 交付 commit(s):
-- [ ] CLI(`rollback`/`squash` 子命令 + `--grant` 復用)落點:
-- [ ] `#rollback`(移 HEAD + 重載 root + 髒暫存拒 + 能力閘)落點:
-- [ ] 放棄紀錄(`.oo/abandoned` → 下一 commit 的 `CommitMeta`;serde 相容)落點:
-- [ ] `#squash`(區間壓縮 + parent=BASE + root 不變 + **斷 parent 與 abandoned
+- [x] 交付 commit(s): 見 tip(本節寫畢後 commit;follow-up 補記 tip)
+- [x] CLI(`rollback`/`squash` 子命令 + `--grant` 復用)落點:
+  - `crates/oo/src/main.rs` `Commands::Rollback` / `Squash`;
+    `run_rollback` / `run_squash` 皆走既有 `apply_cli_privilege`(不新寫解析)。
+- [x] `#rollback`(移 HEAD + 重載 root + 髒暫存拒 + 能力閘)落點:
+  - `universe.rs` `Universe::rollback`: `is_dirty` 拒;能力閘在 CLI
+    (`!privilege.rollback` → `#privileged_required`);`set_head` + 自
+    target commit 重載 root;不建 commit、不刪 store 物件。
+- [x] 放棄紀錄(`.oo/abandoned` → 下一 commit 的 `CommitMeta`;serde 相容)落點:
+  - rollback 將舊 HEAD 追加寫入 `.oo/abandoned`(審計意圖檔,非授權)。
+  - `Universe::commit` 消費該檔填入 `meta.abandoned` 後清除;commit 端
+    **不**再驗 rollback 能力(特權行為已在 rollback 完成)。
+  - `CommitMeta.abandoned: Option<Vec<String>>` 帶
+    `#[serde(default, skip_serializing_if = "Option::is_none")]`。
+  - **自訂 `Debug`**:`abandoned == None` 時輸出與舊三欄 derive 相同,
+    以保 `Commit::content_hash`(走 `format!("{:?}", meta)`)舊 commit
+    雜湊不變;有放棄紀錄時 Debug 含 abandoned。
+- [x] `#squash`(區間壓縮 + parent=BASE + root 不變 + **斷 parent 與 abandoned
       兩種邊** + `CommitKind::Squash`)落點:
-- [ ] `oo log` 顯示(squash 標記 + 放棄紀錄)落點:
-- [ ] **確認**:舊 commit 雜湊/反序列化不變;rollback 不刪物件;宇宙內容不變:
-- [ ] 四數:本探針 15/15 · workspace · conformance · genesis:
-- [ ] 申報事項(範圍外接觸、CAID、其他):
+  - `Universe::squash`:髒暫存拒;base 須為 HEAD 祖先;新 commit
+    `parent=base`、`root=HEAD.root`、`kind=Squash`;不複製區間內
+    abandoned 元資訊(邊隨中間 commit 離開 parent 鏈);清除 pending
+    `.oo/abandoned`。
+  - `CommitKind::Squash` 標籤字節 **3**(Standard=0/Refine=1/Pin=2 不變)。
+- [x] `oo log` 顯示(squash 標記 + 放棄紀錄)落點:
+  - `CommitKind::Squash` → `    squash`;`meta.abandoned` →
+    `    abandoned <CAID>`(每條一行)。
+- [x] **確認**:舊 commit 雜湊/反序列化不變;rollback 不刪物件;宇宙內容不變:
+  - 未觸 `bn_serial`/值 `content_hash`;genesis **11/11**。
+  - 探針:abandoned 物件仍存在;squash 後 `f1: 2` 仍 Evolution Conflict。
+- [x] 四數:本探針 **15/15** · workspace **1429/0/3** · conformance **143/143** ·
+      genesis **11/11**
+- [x] 申報事項(範圍外接觸、CAID、其他):
+  - 探針**僅移除 10 個 `#[ignore]`**。
+  - `#pin` / 效應四弧 / 普通 evolve-commit 路徑未改能力語義。
+  - 真正 GC 掃位元組**不在本弧**(store 仍 append-only);本弧只使不可達可能。
+  - 測試內 `CommitMeta {…}` 字面量補 `abandoned: None`(編譯所需)。
 
 ## 7. 驗收紀錄(驗收方填)
 
