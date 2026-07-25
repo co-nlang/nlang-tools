@@ -1126,16 +1126,52 @@ impl Ouroboros {
                     Value::Combo(ac) => ac.contains_key("%arg") || (ac.contains_key("0") && !ac.contains_key("%kind")), 
                     _ => false 
                 };
+                // Positional (numeric) keys from the morphism, then from the
+                // argument. Named non-`%` fields of the argument are also
+                // lifted to top-level so builtins that read SPEC_08 §3.5
+                // named parameters (check_oml a/b, set_strategy strategy, …)
+                // can see them. Conflict rule: argument wins (same as
+                // arg-pack positional overwrite).
                 let mut nf = IndexMap::new(); 
-                for (k, v) in c.fields() { if k.parse::<usize>().is_ok() { nf.insert(k.clone(), v.clone()); } }
+                for (k, v) in c.fields() {
+                    if k.parse::<usize>().is_ok() {
+                        nf.insert(k.clone(), v.clone());
+                    }
+                }
                 if is_arg_pack { 
                     if let Value::Combo(ref ac) = arg { 
-                        for (k, v) in &ac.fields() { if k.parse::<usize>().is_ok() { nf.insert(k.clone(), v.clone()); } } 
+                        for (k, v) in &ac.fields() {
+                            if k.parse::<usize>().is_ok() {
+                                nf.insert(k.clone(), v.clone());
+                            }
+                        } 
                     } 
                 } else { 
                     let mut max_idx = -1i32; 
-                    for k in nf.keys() { if let Ok(idx) = k.parse::<i32>() { if idx > max_idx { max_idx = idx; } } } 
+                    for k in nf.keys() {
+                        if let Ok(idx) = k.parse::<i32>() {
+                            if idx > max_idx {
+                                max_idx = idx;
+                            }
+                        }
+                    } 
                     nf.insert((max_idx + 1).to_string(), arg.clone()); 
+                }
+                // Named public fields from the argument (not %, not digit keys).
+                // Force each so builtins that pattern-match Atom/Tag without an
+                // internal force (e.g. set_strategy) see solid values. Positional
+                // keys keep Stage-2 Thunk laziness.
+                if let Value::Combo(ref ac) = arg {
+                    for (k, v) in &ac.fields() {
+                        if k.starts_with('%') {
+                            continue;
+                        }
+                        if k.parse::<usize>().is_ok() {
+                            continue;
+                        }
+                        let forced = self.force(v.clone(), ctx);
+                        nf.insert(k.clone(), forced);
+                    }
                 }
                 let unified_arg = Value::Combo(ComboVal::new(nf, true, IndexMap::new(), arg.effect(), vec![]));
                 

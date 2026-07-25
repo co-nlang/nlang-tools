@@ -39,9 +39,15 @@
 //   #nondet          (~%Math./random _)
 //   #io | #nondet    { a: (~%Time.now _), b: (~%Math./random _) }
 // (#state has no directly-forceable n/ spelling today — ~%Engine./set_strategy
-// expects an unwrapped combo while apply wraps bare args as {0: …}; that is a
-// pre-existing wart, ledgered, NOT this arc's business. io+nondet exercise the
-// capability lattice completely.)
+// is UNREACHABLE by any spelling: apply_morphism forwards only POSITIONAL keys
+// into the builtin argument, so the builtin's named `strategy` parameter never
+// arrives. Pre-existing, ledgered separately as the named-arg reachability arc
+// (docs/named_arg_reachability_handover.md), NOT this arc's business. io+nondet
+// exercise the capability lattice completely.)
+//
+// [CORRECTION 2026-07-25] An earlier version of this note said the combo-field
+// path "works normally". It does not — that observation was `predict_effect`
+// reporting #state for an UNFORCED field, not the morphism succeeding.
 
 use std::fs;
 use std::path::PathBuf;
