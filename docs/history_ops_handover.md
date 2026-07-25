@@ -177,7 +177,64 @@ oo squash   <BASE_CAID> --grant squash
   - 真正 GC 掃位元組**不在本弧**(store 仍 append-only);本弧只使不可達可能。
   - 測試內 `CommitMeta {…}` 字面量補 `abandoned: None`(編譯所需)。
 
-## 7. 驗收紀錄(驗收方填)
+## 7. 驗收紀錄(2026-07-26,驗收方)
+
+**PASS —— 一件驗收代修(審計面可查驗性)+ 兩支探針強化。** 交付 `229e58a`。
+本弧是三個特權弧裡**交付品質最高**的一次:機制、邊角、序列化相容全部一次到位。
+
+- **Diff 純度** ✓:探針**僅移除 10 個 `#[ignore]`**;`refine_test`/`authority_test`/
+  `stage2_open_term_test` 的改動經逐處查核,**全為 `abandoned: None` 字面量補全**,
+  無任何斷言變動(申報屬實)。
+- **四數** ✓:本探針 **15/15**、workspace **1429/0/3**(命中)、
+  conformance **143/143**、genesis **11/11**。
+
+### 序列化相容(重點審查,實測非推理)
+
+`CommitMeta` 加欄後以**自訂 `Debug`** 保 `Commit::content_hash`(其走
+`format!("{:?}", meta)`)位元穩定:`abandoned == None` 時輸出與舊三欄 derive
+**逐字相同**(`debug_struct` 的展開與 derive 一致,建構上成立)。
+**跨版實測**:以 `v0.2.40` 二進位另建 worktree 編譯,建倉三提交 →
+新版讀取:**commit CAID 逐字相同、鏈長一致**;新版於其上再提交 →
+**舊版仍能讀完整四提交**。**雙向相容成立**。`CommitKind::Squash` 標籤字節 3
+(0/1/2 不變)。
+
+### 對抗(全過)
+
+- **邊角**:髒暫存區兩操作皆大聲拒;squash 非祖先基底拒;squash 基底 = HEAD
+  拒(空區間);rollback 不存在物件拒。
+- **R1 多次回溯**:連續兩次 rollback 後提交 → **兩條放棄紀錄皆入帳**。
+- **R1 不外洩**:回溯後第一個 commit 消費紀錄,**第二個 commit 不再攜帶**。
+- **R2 事實承接**:squash 壓過放棄紀錄後 `abandoned` 消失(granularity 可失)、
+  **squash 標記仍在**(事實不可失);squash 一個 squash,標記依然在。
+- **GC 前提**:被壓掉的中間 commit 已離開可達鏈,物件仍在磁碟(位元組回收
+  另案,符合本弧範圍)。
+
+### 驗收代修:審計面無法憑檢視查驗
+
+squash 的自動訊息是**裸字 `"squash"`**,而 `oo log` 的 kind 標記行也印
+`    squash` ⟹ **兩行字串完全相同**。後果有二:(a)讀者無法分辨「機器設定的
+審計標記」與「恰好這樣寫的人類訊息」;(b)**我的紅門
+`red_squash_result_is_marked` 因此無法區分**——單靠訊息就會通過,測不到標記
+本身。**一個無法憑檢視查驗的審計面,不成其為審計面。**
+**修**:自動訊息改為 `compressed <n> commit(s) onto <base>`(新增
+`Universe::commits_after` 供計數)。**探針強化(驗收方權責)**:改為斷言
+**恰好一行** `squash` 標記 + 訊息須含 `compressed`;`red_squash_over_an_
+abandonment_keeps_the_fact` 亦補上「放棄紀錄確已消失」的前置斷言,使 R2 的
+**兩面**(granularity 可失／事實不可失)都被壓住。
+
+### 分類判定
+
+新增 `oo rollback` / `oo squash` 兩子命令與 `CommitMeta.abandoned`,皆**純增**;
+舊 commit 雜湊與反序列化實測不變,普通 evolve/commit/log 路徑未動。歸 **增量**。
+
+### 掛帳
+
+- **位元組回收(GC)**:本弧只使「不可達」成為可能;真正的可達性掃描與回收
+  另案(store 目前仍 append-only)。
+- `.oo/abandoned` 為**審計紀錄非授權**(與 `#pin` 的 `pin_pending` 不同性質),
+  偽造只會往歷史**加**假紀錄、不取得能力;store 完整性仍屬 **REAL_02**(同
+  `#pin` 弧殘留)。
+- **`.oo/` 對程式可寫**的通盤複查(跨弧殘留,仍待另案)。
 
 ## 8. 意見
 

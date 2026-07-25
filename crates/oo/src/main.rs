@@ -308,8 +308,19 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
     let base = ContentHash::parse(&caid)
         .map_err(|e| anyhow::anyhow!("Invalid squash base CAID '{}': {}", caid, e))?;
     let mut universe = load_universe(&engine, &cur)?;
+    // ACCEPTANCE REPAIR: the auto-message must not be the bare word "squash".
+    // `oo log` prints the machine-set kind marker on its own line as
+    // "    squash"; an identically-worded message renders a second, visually
+    // indistinguishable line, so a reader (or a test) cannot tell whether the
+    // AUDIT MARKER is present or only a human message that happens to say so.
+    // An audit surface that cannot be verified by inspection is not an audit
+    // surface. The message now states what was compressed.
+    let squashed = universe.commits_after(&engine, &base).unwrap_or(0);
     let meta = CommitMeta {
-        message: Some("squash".to_string()),
+        message: Some(format!(
+            "compressed {squashed} commit(s) onto {}",
+            &caid
+        )),
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as u64,

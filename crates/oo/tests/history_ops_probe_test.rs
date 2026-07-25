@@ -247,12 +247,26 @@ fn red_squash_requires_the_capability() {
 #[test]
 fn red_squash_result_is_marked() {
     // §6.2 audit tag #privileged_squash — the compression must be visible.
+    //
+    // [PROBE AMENDMENT, acceptor, 2026-07-26] This first asserted only that the
+    // log "contains squash" — which the auto-MESSAGE satisfied on its own, so
+    // the check could not tell whether the machine-set kind marker was present
+    // at all. The engine's audit message now states what was compressed
+    // (acceptance repair), and this asserts the MARKER line specifically: an
+    // audit surface a reader cannot verify by inspection is not an audit
+    // surface.
     let d = fresh_dir();
     let c = three_commit_history(&d);
     oo(&d, &["squash", &c[0], "--grant", "squash"]);
+    let log = oo(&d, &["log"]);
+    assert_eq!(
+        log.lines().filter(|l| l.trim() == "squash").count(),
+        1,
+        "exactly one commit must carry the squash marker: {log:?}"
+    );
     assert!(
-        oo(&d, &["log"]).to_lowercase().contains("squash"),
-        "the squashed commit must be marked in the history"
+        log.contains("compressed"),
+        "and the message must say what was compressed: {log:?}"
     );
 }
 
@@ -291,8 +305,15 @@ fn red_squash_over_an_abandonment_keeps_the_fact() {
     oo(&d, &["commit", "-m", "resumed"]); // carries the abandonment record
     oo(&d, &["squash", &c[0], "--grant", "squash"]);
     let log = oo(&d, &["log"]);
+    // Granularity is losable: the abandonment record is gone.
     assert!(
-        log.to_lowercase().contains("squash"),
+        !log.contains("abandoned"),
+        "precondition: the squash compressed over the abandonment record"
+    );
+    // The FACT is not: the chain still says a privileged removal happened.
+    assert_eq!(
+        log.lines().filter(|l| l.trim() == "squash").count(),
+        1,
         "the removal itself must remain visible: {log:?}"
     );
 }

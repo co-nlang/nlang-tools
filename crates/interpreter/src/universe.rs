@@ -612,6 +612,22 @@ impl Universe {
     /// Squash. Drops parent-chain reachability of the range; abandoned edges
     /// on intermediate commits leave with them (R2: the Squash marker carries
     /// the fact of removal). Does not delete store objects.
+    /// How many commits sit between `base` (exclusive) and HEAD (inclusive).
+    /// ACCEPTANCE REPAIR: lets the squash audit message state what it removed,
+    /// so the machine-set kind marker stays distinguishable from the message.
+    pub fn commits_after(&self, engine: &Ouroboros, base: &ContentHash) -> Result<usize> {
+        let mut n = 0usize;
+        let mut curr = self.head.clone();
+        while let Some(h) = curr {
+            if &h == base {
+                return Ok(n);
+            }
+            n += 1;
+            curr = engine.store.get_commit(&h)?.parent;
+        }
+        Err(anyhow::anyhow!("squash base is not an ancestor of HEAD"))
+    }
+
     pub fn squash(
         &mut self,
         engine: &Ouroboros,
