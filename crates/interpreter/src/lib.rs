@@ -2261,9 +2261,21 @@ impl Ouroboros {
         Ok(val)
     }
 
-    pub fn log(&self) -> Result<Vec<(ContentHash, CommitMeta)>> {
+    /// History newest-first: (hash, meta, kind). Kind is required so privileged
+    /// commits (`CommitKind::Pin`) are auditable from `oo log` without living
+    /// inside values (SPEC_08 §6.2).
+    pub fn log(&self) -> Result<Vec<(ContentHash, CommitMeta, CommitKind)>> {
         let current_dir = std::env::current_dir()?;
-        if let Some(head) = self.store.get_head(&current_dir)? { let mut history = Vec::new(); let mut curr = Some(head); while let Some(h) = curr { let commit = self.store.get_commit(&h)?; history.push((h, commit.meta.clone())); curr = commit.parent; } return Ok(history); }
+        if let Some(head) = self.store.get_head(&current_dir)? {
+            let mut history = Vec::new();
+            let mut curr = Some(head);
+            while let Some(h) = curr {
+                let commit = self.store.get_commit(&h)?;
+                history.push((h, commit.meta.clone(), commit.kind));
+                curr = commit.parent;
+            }
+            return Ok(history);
+        }
         Ok(Vec::new())
     }
     pub fn tropical_weight(&self, val: &Value) -> u64 {

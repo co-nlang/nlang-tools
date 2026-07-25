@@ -33,10 +33,30 @@ enum Commands {
         #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
         grants: Vec<String>,
     },
-    Evolve { #[arg(required = true)] files: Vec<PathBuf> },
+    Evolve {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Request privileged overwrite of committed coordinates (SPEC_08 §6.2).
+        /// Requires `--grant pin` (two-step: request + capability).
+        #[arg(long)]
+        pin: bool,
+        /// Selective capability grant (repeatable). Same SPEC as `run --grant`.
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
+    },
     Test { #[arg(long)] static_only: bool, #[arg(short, long)] pattern: Option<String>, files: Vec<PathBuf> },
     Repl, Status, Log,
-    Commit { #[arg(short, long)] message: Option<String> },
+    Commit {
+        #[arg(short, long)] message: Option<String>,
+        /// ACCEPTANCE REPAIR: a pin-pending commit APPLIES the privileged
+        /// overwrite, so the capability must be presented here too — the
+        /// staged intent file is not authority (SPEC_08 §6.1.2).
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
+        /// Full §6 grant (back-compat: all operations + all active tags).
+        #[arg(long)]
+        privileged: bool,
+    },
     Refine {
         #[arg(short, long, required = true, num_args = 1..)]
         source: Vec<String>,
@@ -101,12 +121,14 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             privileged,
             grants,
         } => run_one_shot(files, observe, format, privileged, grants),
-        Commands::Evolve { files } => run_evolve(files),
+        Commands::Evolve { files, pin, grants } => run_evolve(files, pin, grants),
         Commands::Fmt { file, write } => run_fmt(file, write),
         Commands::Serve { port } => run_serve(port),
         Commands::Status => run_status(),
         Commands::Log => run_log(),
-        Commands::Commit { message } => run_commit(message),
+        Commands::Commit { message, grants, privileged } => {
+            run_commit(message, grants, privileged)
+        }
         Commands::Refine { source, target, sign, message } => run_refine(source, target, sign, message),
         Commands::Repl => run_repl(),
         Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
@@ -123,11 +145,22 @@ fn main_on_large_stack() -> anyhow::Result<()> {
     }
 }
 
-fn run_evolve(files: Vec<PathBuf>) -> anyhow::Result<()> {
+fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Result<()> {
     let cur = std::env::current_dir()?;
-    let engine = Ouroboros::init(&cur)?;
+    let mut engine = Ouroboros::init(&cur)?;
+    // Reuse the same grant parser as run/eval — never a second code path.
+    apply_cli_privilege(&mut engine, false, &grants)?;
+    // Two-step gate (SPEC_08 §6.2 / P1): `--pin` is the request; `--grant pin`
+    // is the capability. Request without capability is a loud refuse — never
+    // silently downgraded to ordinary (conflicting) evolve.
+    if pin && !engine.privilege.pin {
+        anyhow::bail!(
+            "#privileged_required: --pin requires --grant pin (privilege.pin capability)"
+        );
+    }
     let mut universe = load_universe(&engine, &cur)?;
-    
+    universe.pin_mode = pin;
+
     for file in files {
         let input = fs::read_to_string(&file)?;
         let program = parse_program(&input).map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
@@ -191,8 +224,12 @@ fn run_log() -> anyhow::Result<()> {
     let engine = Ouroboros::init(&std::env::current_dir()?)?;
     let _universe = load_universe(&engine, &std::env::current_dir()?)?;
     let history = engine.log()?;
-    for (hash, meta) in history {
+    for (hash, meta, kind) in history {
         println!("commit {}", hash);
+        // SPEC_08 §6.2 audit: privileged pin is marked on the commit surface.
+        if kind == nlang_interpreter::CommitKind::Pin {
+            println!("    pin");
+        }
         if let Some(msg) = meta.message { println!("    {}", msg); }
         let date = std::time::UNIX_EPOCH + std::time::Duration::from_millis(meta.timestamp);
         println!("    Date: {:?}", date);
@@ -201,10 +238,29 @@ fn run_log() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_commit(message: Option<String>) -> anyhow::Result<()> {
-    let engine = Ouroboros::init(&std::env::current_dir()?)?;
+fn run_commit(
+    message: Option<String>,
+    grants: Vec<String>,
+    privileged: bool,
+) -> anyhow::Result<()> {
+    let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
     let mut universe = load_universe(&engine, &std::env::current_dir()?)?;
     if !universe.is_dirty { anyhow::bail!("Nothing to commit"); }
+    // ACCEPTANCE REPAIR (privilege escalation, 2026-07-26): the commit is where
+    // the privileged overwrite is APPLIED, so the capability must be presented
+    // HERE, through the trusted channel — not inferred from `.oo/pin_pending`.
+    // That file records intent across two CLI processes; it is not authority.
+    // It lives in a directory any n/ program can write (`~%Io./write_file`), so
+    // trusting it let an entirely unprivileged program obtain #pin semantics and
+    // falsely mark its commit — exactly the tokenless backdoor SPEC_08 §6.1.2
+    // forbids. Demonstrated end to end before this repair.
+    if universe.pin_pending && !engine.privilege.pin {
+        anyhow::bail!(
+            "#privileged_required: this commit applies a pinned overwrite; \
+             re-present the capability (oo commit --grant pin)"
+        );
+    }
     let meta = CommitMeta {
         message,
         timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,

@@ -1390,7 +1390,13 @@ impl ContentHash {
 pub struct CommitMeta { pub author: Option<String>, pub timestamp: u64, pub message: Option<String> }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CommitKind { Refine, #[serde(other)] Standard }
+pub enum CommitKind {
+    Refine,
+    /// SPEC_08 §6.2 privileged overwrite — audit on the commit, never in the value.
+    Pin,
+    #[serde(other)]
+    Standard,
+}
 impl Default for CommitKind { fn default() -> Self { Self::Standard } }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2064,7 +2070,13 @@ impl Commit {
             buf.extend_from_slice(&p.digest);
         }
         buf.extend_from_slice(&self.root.digest);
-        buf.push(match self.kind { CommitKind::Standard => 0, CommitKind::Refine => 1 });
+        // Tag bytes: Standard=0, Refine=1, Pin=2. New kinds only append so
+        // existing commit digests (Standard/Refine) stay bit-stable.
+        buf.push(match self.kind {
+            CommitKind::Standard => 0,
+            CommitKind::Refine => 1,
+            CommitKind::Pin => 2,
+        });
         if let Some(ref ri) = self.refine_info {
             for src in &ri.source_caids { buf.extend_from_slice(&src.digest); }
             for tgt in &ri.target_caids { buf.extend_from_slice(&tgt.digest); }
