@@ -853,9 +853,20 @@ impl Universe {
         // REAL_03 §6.6: do not silently truncate on corruption (v0.2.43 refine
         // precedent). NotFound/opaque → current behaviour; CaidMismatch /
         // ObjectUndecodable → record incident, stop scan, flag incomplete.
+        //
+        // ACCEPTANCE REPAIR (peer-fetch arc). The delivery recorded the failure
+        // with its true kind and then recorded a SECOND incident, for the same
+        // address, whose kind was hard-coded `Mismatch`. Measured:
+        //
+        //   integrity #undecodable: requested <X> source=shadow-scan
+        //   integrity #mismatch:    requested <X> source=shadow-scan-truncated
+        //
+        // One object, one address, two contradictory verdicts — and the second
+        // one false. §6.6 條款三 exists so the three outcomes stay separable;
+        // an audit line that asserts the wrong one is worse than a missing one.
+        // Now a single incident carries the true kind and says it truncated.
         const SHADOW_SCAN_DEPTH: usize = 16;
         let mut shadow_affected: Vec<ContentHash> = Vec::new();
-        let mut shadow_truncated_at: Option<ContentHash> = None;
         {
             let mut current = self.head.clone();
             let mut depth = 0;
@@ -876,8 +887,7 @@ impl Universe {
                                 }
                                 crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
                             };
-                            engine.record_integrity(ch, "shadow-scan", kind);
-                            shadow_truncated_at = Some(ch.clone());
+                            engine.record_integrity(ch, "shadow-scan-truncated", kind);
                             break;
                         }
                     },
@@ -899,8 +909,11 @@ impl Universe {
                                 }
                                 crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
                             };
-                            engine.record_integrity(&commit.root, "shadow-scan", kind);
-                            shadow_truncated_at = Some(ch.clone());
+                            engine.record_integrity(
+                                &commit.root,
+                                &format!("shadow-scan-truncated (root of commit {ch})"),
+                                kind,
+                            );
                             break;
                         }
                     },
@@ -918,16 +931,6 @@ impl Universe {
                 }
                 current = commit.parent;
             }
-        }
-        // Expose truncation for the CLI audit surface (refine continues).
-        if let Some(ref at) = shadow_truncated_at {
-            // Also record a human-readable note as an integrity incident source
-            // string so stderr carries "truncated"/"mismatch" for operators.
-            engine.record_integrity(
-                at,
-                "shadow-scan-truncated",
-                crate::IntegrityKind::Mismatch,
-            );
         }
 
         // Step 1d: cycle detection — reject if source→target would close a refine cycle

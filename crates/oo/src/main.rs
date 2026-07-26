@@ -510,6 +510,11 @@ fn run_repl() -> anyhow::Result<()> {
             }
             Err(e) => println!("Parse Error: {}", e),
         }
+        // ACCEPTANCE REPAIR (peer-fetch arc). The work order named `oo repl`
+        // among the commands that must drain the log; it was omitted. Drained
+        // per input line, not at exit — an incident that only appears when the
+        // session ends is not a report of the line that caused it.
+        print_integrity_incidents(&engine);
     }
     Ok(())
 }
@@ -667,6 +672,11 @@ fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Resu
     };
     let result = universe.observe(&engine, &path);
     println!("{}", result.to_nlang(0));
+    // ACCEPTANCE REPAIR (peer-fetch arc). §6.6 條款四 is not satisfied by the
+    // verdict reaching the VALUE: when one source lies and another answers
+    // correctly the value is right and the lie is the only trace. Every
+    // command that evaluates n/ must drain the log.
+    print_integrity_incidents(&engine);
     Ok(())
 }
 
@@ -848,11 +858,16 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
                 }
             }
         }
+        // ACCEPTANCE REPAIR (peer-fetch arc). Drained per file so an incident
+        // is attributed to the file that caused it, and BEFORE the summary —
+        // this function exits the process on failure, so anything left in the
+        // log at the end would never be printed at all.
+        print_integrity_incidents(&engine);
         if !has_test {
             skipped += 1;
         }
     }
-    
+
     println!("\nTest Summary: {} passed, {} failed, {} skipped files without tests", passed, failed, skipped);
     if failed > 0 {
         std::process::exit(1);
