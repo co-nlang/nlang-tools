@@ -796,9 +796,39 @@ impl Universe {
     ) -> Result<ContentHash> {
         engine.clear_force_memo();
         // Step 1: verify geometric monotonicity (new & old = new)
+        //
+        // ACCEPTANCE REPAIR (cas_integrity arc). This was `if let (Ok, Ok)`,
+        // so ANY failure to load either operand silently skipped the check.
+        // Skipping on ABSENCE is spec'd — REAL_03 §9.1 opaque mode covers a
+        // CAID the engine cannot compute. Skipping on CORRUPTION is not:
+        // §9.1 is about CAIDs we cannot evaluate, not about bytes that lie.
+        //
+        // Demonstrated before the repair, as a paired discriminator:
+        //   untampered, monotonicity-violating direction
+        //     → "new ⋢ old: refinement fails geometric monotonicity"
+        //   SAME direction after editing the target object's bytes in place
+        //     → passes step 1 entirely, stops only at authority
+        // Tampering bought a skip of the geometric check. Detection existed
+        // as of this arc; this call site was discarding it.
         for src in &source_caids {
             for tgt in &target_caids {
-                if let (Ok(src_val), Ok(tgt_val)) = (engine.store.get_value(src), engine.store.get_value(tgt)) {
+                let load = |h: &ContentHash| -> Result<Option<Value>> {
+                    match engine.store.get_value(h) {
+                        Ok(v) => Ok(Some(v)),
+                        Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                            // Not held locally — opaque, REAL_03 §9.1.
+                            Some(crate::storage::StoreReadError::NotFound { .. }) | None => Ok(None),
+                            // Present and lying, or present and undecodable:
+                            // the check cannot be performed, and pretending it
+                            // passed is the fail-open this arc exists to close.
+                            Some(other) => Err(anyhow::anyhow!(
+                                "refine operand cannot be verified: {}",
+                                other
+                            )),
+                        },
+                    }
+                };
+                if let (Some(src_val), Some(tgt_val)) = (load(src)?, load(tgt)?) {
                     let meet = engine.unify(tgt_val.clone(), src_val.clone());
                     if meet.content_hash() != tgt_val.content_hash() {
                         return Err(anyhow::anyhow!("new ⋢ old: refinement fails geometric monotonicity"));

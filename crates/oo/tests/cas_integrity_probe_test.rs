@@ -425,6 +425,17 @@ fn red_a_run_does_not_force_a_recursive_type() {
     // SPEC_12 says structural recursion is #recursive_lazy. Measured at
     // baseline: this two-line program leaves a 5,091,205-byte object.
     // Paired with the answer, so "the run stopped working" cannot pass it.
+    // ACCEPTOR REPAIR (reported by the delivery, verified independently).
+    // The first version asserted `largest object < 100_000`, which measures
+    // the wrong thing: `seeded()` alone leaves a 251,839-byte committed root
+    // carrying the genesis system modules — the R-1 ledgered type-layer
+    // weight, present long before this arc. The gate stayed red after the
+    // defect was fixed.
+    //
+    // The precise discriminator is the DELTA across the run, and it is also
+    // stronger than any threshold: a pure one-shot universe must add nothing
+    // to durable storage at all. Red at baseline (the run added the 5 MB
+    // object); green only when the loop is gone.
     let d = fresh_dir();
     seeded(&d);
     write(
@@ -432,18 +443,34 @@ fn red_a_run_does_not_force_a_recursive_type() {
         "t.n",
         "@Tree: { v: @int, next: @Tree | () }\nout: 1\n",
     );
-    let got = oo(&d, &["run", "t.n", "-o", "out"]);
-    assert!(got.contains('1'), "the program must still answer: {got:?}");
-
-    let biggest = objects(&d)
+    let before = objects(&d);
+    let before_max = before
         .iter()
         .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
         .max()
         .unwrap_or(0);
-    assert!(
-        biggest < 100_000,
-        "a two-line recursive type definition must not be forced into a \
-         multi-megabyte object (largest was {biggest} bytes)"
+
+    let got = oo(&d, &["run", "t.n", "-o", "out"]);
+    assert!(got.contains('1'), "the program must still answer: {got:?}");
+
+    let after = objects(&d);
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "`oo run` is a one-shot PURE universe — it must add nothing to durable \
+         storage (before {}, after {})",
+        before.len(),
+        after.len()
+    );
+    let after_max = after
+        .iter()
+        .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    assert_eq!(
+        after_max, before_max,
+        "no object may grow across a run — a two-line recursive type \
+         definition must never be forced into a multi-megabyte object"
     );
 }
 
@@ -484,6 +511,52 @@ fn red_every_object_a_run_leaves_can_be_read_back() {
              default limit, so the engine can write it but never read it back"
         );
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ACCEPTANCE GATE — added by the acceptor during acceptance, not in the
+// original pre-commit. Detection is worthless where the caller discards it.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn acceptance_corruption_does_not_buy_a_refine_monotonicity_skip() {
+    // Found by enumerating every get_value/get_commit caller, as the work
+    // order required. `refine`'s step 1 was `if let (Ok, Ok)`, so any load
+    // failure skipped the geometric check.
+    //
+    // Skipping on ABSENCE is spec'd (REAL_03 §9.1 opaque mode — a CAID the
+    // engine cannot compute). Skipping on CORRUPTION is not: §9.1 is about
+    // CAIDs we cannot evaluate, not about bytes that lie.
+    //
+    // Paired: the same refine direction, before and after tampering.
+    let d = fresh_dir();
+    seeded(&d);
+    let wide = save(&d, "@int");
+    let narrow = save(&d, "1");
+
+    // Control — `@int ⋢ 1`, so the monotonicity check must refuse.
+    let refused = oo(&d, &["refine", "-s", &narrow, "-t", &wide, "-m", "x"]);
+    assert!(
+        refused.contains("⋢") || refused.contains("monotonicity"),
+        "control: the honest direction must be refused at step 1: {refused:?}"
+    );
+
+    // Now make the target unloadable, leaving its filename alone.
+    tamper(&d, &wide, "\"int\"", "\"XXX\"");
+    let after = oo(&d, &["refine", "-s", &narrow, "-t", &wide, "-m", "x"]);
+    assert!(
+        !after.contains("authority"),
+        "tampering must not carry the refine PAST the geometric check into \
+         the authority step — that is a fail-open bought with a byte edit: \
+         {after:?}"
+    );
+    assert!(
+        after.contains("cannot be verified")
+            || after.contains("caid_mismatch")
+            || after.contains("undecodable")
+            || after.contains("monotonicity"),
+        "the refusal must name why the check could not be performed: {after:?}"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
