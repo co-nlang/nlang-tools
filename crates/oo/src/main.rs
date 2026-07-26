@@ -203,6 +203,7 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
         }
     }
     universe.save_staged(&engine, &std::env::current_dir()?)?;
+    print_integrity_incidents(&engine);
     Ok(())
 }
 
@@ -222,14 +223,42 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
                     let caid_str = request.trim();
                     println!("NDP Request for CAID: {}", caid_str);
                     if let Ok(caid) = ContentHash::parse(caid_str) {
-                        if let Ok(val) = engine.store.get_value(&caid) {
-                            if let Ok(json) = serde_json::to_string(&val) {
-                                let _ = stream.write_all(json.as_bytes());
-                                let _ = stream.flush();
-                                println!("NDP Served: {}", caid_str);
+                        match engine.store.get_value(&caid) {
+                            Ok(val) => {
+                                if let Ok(json) = serde_json::to_string(&val) {
+                                    let _ = stream.write_all(json.as_bytes());
+                                    let _ = stream.flush();
+                                    println!("NDP Served: {}", caid_str);
+                                }
                             }
-                        } else {
-                            println!("NDP Miss: {}", caid_str);
+                            Err(e) => {
+                                use nlang_interpreter::storage::StoreReadError;
+                                match e.downcast_ref::<StoreReadError>() {
+                                    Some(StoreReadError::NotFound { .. }) | None => {
+                                        println!("NDP Miss: {}", caid_str);
+                                    }
+                                    Some(StoreReadError::CaidMismatch {
+                                        requested,
+                                        recomputed,
+                                    }) => {
+                                        // Wire stays 0 bytes (REAL_02 §3.2 arc);
+                                        // console must name corruption (REAL_03 §6.6 條款三).
+                                        println!(
+                                            "NDP integrity #caid_mismatch: {} (recomputed {})",
+                                            requested, recomputed
+                                        );
+                                    }
+                                    Some(StoreReadError::ObjectUndecodable {
+                                        requested,
+                                        detail,
+                                    }) => {
+                                        println!(
+                                            "NDP integrity #object_undecodable: {} ({})",
+                                            requested, detail
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -413,17 +442,29 @@ fn run_refine(
     let hash = universe.refine(&engine, &cur, source_caids, target_caids, authority, meta)?;
     println!("Refine commit: {}", hash);
 
-    // Report shadow-affected commits
-    if let Ok(commit) = engine.store.get_commit(&hash) {
-        if let Some(ri) = commit.refine_info {
-            if !ri.shadow_affected.is_empty() {
-                println!("Shadow: {} historical commit(s) will be semantically updated:", ri.shadow_affected.len());
-                for ch in &ri.shadow_affected {
-                    println!("  {}", ch);
+    // Report shadow-affected commits (D5: do not swallow a failed read-back).
+    match engine.store.get_commit(&hash) {
+        Ok(commit) => {
+            if let Some(ri) = commit.refine_info {
+                if !ri.shadow_affected.is_empty() {
+                    println!(
+                        "Shadow: {} historical commit(s) will be semantically updated:",
+                        ri.shadow_affected.len()
+                    );
+                    for ch in &ri.shadow_affected {
+                        println!("  {}", ch);
+                    }
                 }
             }
         }
+        Err(e) => {
+            eprintln!(
+                "refine: failed to read back commit for shadow report: {}",
+                format_store_read_error(e, &hash.to_string())
+            );
+        }
     }
+    print_integrity_incidents(&engine);
     Ok(())
 }
 
@@ -469,6 +510,11 @@ fn run_repl() -> anyhow::Result<()> {
             }
             Err(e) => println!("Parse Error: {}", e),
         }
+        // ACCEPTANCE REPAIR (peer-fetch arc). The work order named `oo repl`
+        // among the commands that must drain the log; it was omitted. Drained
+        // per input line, not at exit — an incident that only appears when the
+        // session ends is not a report of the line that caused it.
+        print_integrity_incidents(&engine);
     }
     Ok(())
 }
@@ -577,6 +623,7 @@ fn run_one_shot(
     } else if format {
         println!("{}", Value::Combo(universe.staged).to_nlang(0));
     }
+    print_integrity_incidents(&engine);
     Ok(())
 }
 
@@ -625,6 +672,11 @@ fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Resu
     };
     let result = universe.observe(&engine, &path);
     println!("{}", result.to_nlang(0));
+    // ACCEPTANCE REPAIR (peer-fetch arc). §6.6 條款四 is not satisfied by the
+    // verdict reaching the VALUE: when one source lies and another answers
+    // correctly the value is right and the lie is the only trace. Every
+    // command that evaluates n/ must drain the log.
+    print_integrity_incidents(&engine);
     Ok(())
 }
 
@@ -636,6 +688,28 @@ fn format_store_read_error(err: anyhow::Error, caid_str: &str) -> anyhow::Error 
     }
     // Legacy / unexpected
     anyhow::anyhow!("store read failed for {}: {}", caid_str, err)
+}
+
+/// REAL_03 §6.6 條款四: surface integrity verdicts on stderr after evaluation,
+/// even when a later peer answered correctly.
+fn print_integrity_incidents(engine: &Ouroboros) {
+    use nlang_interpreter::IntegrityKind;
+    for inc in engine.take_integrity_incidents() {
+        let kind = match inc.kind {
+            IntegrityKind::Mismatch => "mismatch",
+            IntegrityKind::Undecodable => "undecodable",
+        };
+        eprintln!(
+            "integrity #{kind}: requested {} source={}{}",
+            inc.requested,
+            inc.source,
+            if inc.source.contains("truncat") {
+                " (shadow scan truncated)"
+            } else {
+                ""
+            }
+        );
+    }
 }
 
 fn run_inspect(caid_str: String) -> anyhow::Result<()> {
@@ -784,11 +858,16 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
                 }
             }
         }
+        // ACCEPTANCE REPAIR (peer-fetch arc). Drained per file so an incident
+        // is attributed to the file that caused it, and BEFORE the summary —
+        // this function exits the process on failure, so anything left in the
+        // log at the end would never be printed at all.
+        print_integrity_incidents(&engine);
         if !has_test {
             skipped += 1;
         }
     }
-    
+
     println!("\nTest Summary: {} passed, {} failed, {} skipped files without tests", passed, failed, skipped);
     if failed > 0 {
         std::process::exit(1);

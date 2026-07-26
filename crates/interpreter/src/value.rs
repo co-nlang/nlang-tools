@@ -1053,6 +1053,7 @@ impl BottomDetail {
             BottomCause::EffectViolation => "#effect_violation",
             BottomCause::PrivilegedRequired => "#privileged_required",
             BottomCause::StoreBoundary => "#store_boundary",
+            BottomCause::CaidMismatch => "#caid_mismatch",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1170,6 +1171,10 @@ pub enum BottomCause {
     /// store (`.oo`). Unconditional — no capability unlocks it.
     /// SPEC_08 §6.3; ERROR_CODES #store_boundary. Append-only tail.
     StoreBoundary,
+    /// Content address does not match requested CAID (REAL_03 §6.6 peer/store
+    /// read path). Append-only tail. Distinct from absence (`#conflict` /
+    /// `#missing_key` at the language surface for plain miss).
+    CaidMismatch,
 }
 
 impl BottomCause {
@@ -1194,6 +1199,7 @@ impl BottomCause {
             BottomCause::EffectViolation => "effect_violation",
             BottomCause::PrivilegedRequired => "privileged_required",
             BottomCause::StoreBoundary => "store_boundary",
+            BottomCause::CaidMismatch => "caid_mismatch",
         }
     }
 
@@ -1208,7 +1214,8 @@ impl BottomCause {
             | BottomCause::InvalidConfig
             | BottomCause::EffectViolation
             | BottomCause::PrivilegedRequired
-            | BottomCause::StoreBoundary => 1,
+            | BottomCause::StoreBoundary
+            | BottomCause::CaidMismatch => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split

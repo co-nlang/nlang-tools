@@ -125,50 +125,98 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             // SPEC_08 §4.2.4: user-facing fetch solidifies active → #cached
             // (observation projection). Store remains raw (get_value).
             let observe = |val: Value| val.solidify_effects();
+
+            /// Classify a store/peer read: verified value, mismatch (record), or absence.
+            fn try_local(
+                oo: &Ouroboros,
+                store: &ObjectStore,
+                hash: &ContentHash,
+                source: &str,
+            ) -> Result<Value, bool /* saw_mismatch */> {
+                match store.get_value(hash) {
+                    Ok(v) => Ok(v),
+                    Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                        Some(crate::storage::StoreReadError::CaidMismatch { .. }) => {
+                            oo.record_integrity(hash, source, crate::IntegrityKind::Mismatch);
+                            Err(true)
+                        }
+                        Some(crate::storage::StoreReadError::ObjectUndecodable { .. }) => {
+                            oo.record_integrity(hash, source, crate::IntegrityKind::Undecodable);
+                            Err(true)
+                        }
+                        Some(crate::storage::StoreReadError::NotFound { .. }) | None => Err(false),
+                    },
+                }
+            }
+
             if let Some(name) = node_name {
+                // Named peer: single source. Mismatch → immediate #caid_mismatch.
                 let peer_opt = if let Ok(peers) = oo.peers.read() { peers.get(&name).cloned() } else { None };
                 if let Some(peer) = peer_opt {
                     match peer {
                         Peer::Local(store) => {
-                            if let Ok(val) = store.get_value(&hash) {
-                                return observe(val);
+                            match try_local(oo, &store, &hash, &format!("peer:{name}")) {
+                                Ok(val) => return observe(val),
+                                Err(true) => return BottomCause::CaidMismatch.into(),
+                                Err(false) => {}
                             }
                         }
                         Peer::Remote(addr) => {
-                            if let Ok(val) = oo.remote_fetch(&addr, &hash) {
-                                return observe(val);
+                            match oo.remote_fetch(&addr, &hash) {
+                                Ok(val) => return observe(val),
+                                Err(BottomCause::CaidMismatch) => {
+                                    return BottomCause::CaidMismatch.into();
+                                }
+                                Err(_) => {}
                             }
                         }
                     }
                 }
             } else {
+                // Sweep: continue past lying sources (Q1); only verified bytes win.
                 let mut results = Vec::new();
-                if let Ok(val) = oo.store.get_value(&hash) {
-                    results.push(observe(val));
+                let mut saw_mismatch = false;
+
+                match try_local(oo, &oo.store, &hash, "local") {
+                    Ok(val) => results.push(observe(val)),
+                    Err(true) => saw_mismatch = true,
+                    Err(false) => {}
                 }
 
                 let peers_copy = if let Ok(peers) = oo.peers.read() {
-                    peers.values().cloned().collect::<Vec<_>>()
+                    peers.iter().map(|(n, p)| (n.clone(), p.clone())).collect::<Vec<_>>()
                 } else {
                     vec![]
                 };
-                for peer in peers_copy {
+                for (pname, peer) in peers_copy {
                     match peer {
                         Peer::Local(store) => {
-                            if let Ok(val) = store.get_value(&hash) {
-                                results.push(observe(val));
+                            match try_local(oo, &store, &hash, &format!("peer:{pname}")) {
+                                Ok(val) => results.push(observe(val)),
+                                Err(true) => saw_mismatch = true,
+                                Err(false) => {}
                             }
                         }
                         Peer::Remote(addr) => {
-                            if let Ok(val) = oo.remote_fetch(&addr, &hash) {
-                                return observe(val);
+                            match oo.remote_fetch(&addr, &hash) {
+                                Ok(val) => {
+                                    // First verified remote answer is definitive
+                                    // (unordered peer set; degree-0 identity is unique).
+                                    return observe(val);
+                                }
+                                Err(BottomCause::CaidMismatch) => saw_mismatch = true,
+                                Err(_) => {}
                             }
                         }
                     }
                 }
 
                 if results.is_empty() {
-                    return BottomCause::Conflict.into();
+                    return if saw_mismatch {
+                        BottomCause::CaidMismatch.into()
+                    } else {
+                        BottomCause::Conflict.into()
+                    };
                 }
 
                 let mut final_val = results.remove(0);
@@ -306,30 +354,68 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             // Determine which CAID to fetch at this hop
             let fetch_target = explicit_target.as_deref().unwrap_or(chosen.as_str());
 
-            // Try local store, then connected peers.
+            // Try local store, then connected peers (skip liars, continue sweep).
             // SPEC_08 §4.2.4: user-facing find solidifies active → #cached.
             if let Ok(hash) = crate::value::ContentHash::parse(fetch_target) {
-                if let Ok(val) = oo.store.get_value(&hash) {
-                    return val.solidify_effects();
+                let mut saw_mismatch = false;
+                match oo.store.get_value(&hash) {
+                    Ok(val) => return val.solidify_effects(),
+                    Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                        Some(crate::storage::StoreReadError::CaidMismatch { .. }) => {
+                            oo.record_integrity(&hash, "local", crate::IntegrityKind::Mismatch);
+                            saw_mismatch = true;
+                        }
+                        Some(crate::storage::StoreReadError::ObjectUndecodable { .. }) => {
+                            oo.record_integrity(&hash, "local", crate::IntegrityKind::Undecodable);
+                            saw_mismatch = true;
+                        }
+                        _ => {}
+                    },
                 }
                 let peers_copy: Vec<_> = oo
                     .peers
                     .read()
-                    .map(|p| p.values().cloned().collect())
+                    .map(|p| p.iter().map(|(n, pe)| (n.clone(), pe.clone())).collect())
                     .unwrap_or_default();
-                for peer in peers_copy {
+                for (pname, peer) in peers_copy {
                     match peer {
                         crate::Peer::Local(store) => {
-                            if let Ok(val) = store.get_value(&hash) {
-                                return val.solidify_effects();
+                            match store.get_value(&hash) {
+                                Ok(val) => return val.solidify_effects(),
+                                Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                                    Some(crate::storage::StoreReadError::CaidMismatch { .. }) => {
+                                        oo.record_integrity(
+                                            &hash,
+                                            &format!("peer:{pname}"),
+                                            crate::IntegrityKind::Mismatch,
+                                        );
+                                        saw_mismatch = true;
+                                    }
+                                    Some(crate::storage::StoreReadError::ObjectUndecodable { .. }) => {
+                                        oo.record_integrity(
+                                            &hash,
+                                            &format!("peer:{pname}"),
+                                            crate::IntegrityKind::Undecodable,
+                                        );
+                                        saw_mismatch = true;
+                                    }
+                                    _ => {}
+                                },
                             }
                         }
                         crate::Peer::Remote(addr) => {
-                            if let Ok(val) = oo.remote_fetch(&addr, &hash) {
-                                return val.solidify_effects();
+                            match oo.remote_fetch(&addr, &hash) {
+                                Ok(val) => return val.solidify_effects(),
+                                Err(BottomCause::CaidMismatch) => saw_mismatch = true,
+                                Err(_) => {}
                             }
                         }
                     }
+                }
+                // If every source lied and none verified, surface #caid_mismatch
+                // rather than advancing the hop as if the CAID were merely absent.
+                if saw_mismatch {
+                    return BottomCause::CaidMismatch.into();
                 }
             }
 

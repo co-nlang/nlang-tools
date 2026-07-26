@@ -850,6 +850,21 @@ impl Universe {
         }
 
         // Step 1c: Shadow scan — identify historical commits that directly reference source CAIDs
+        // REAL_03 §6.6: do not silently truncate on corruption (v0.2.43 refine
+        // precedent). NotFound/opaque → current behaviour; CaidMismatch /
+        // ObjectUndecodable → record incident, stop scan, flag incomplete.
+        //
+        // ACCEPTANCE REPAIR (peer-fetch arc). The delivery recorded the failure
+        // with its true kind and then recorded a SECOND incident, for the same
+        // address, whose kind was hard-coded `Mismatch`. Measured:
+        //
+        //   integrity #undecodable: requested <X> source=shadow-scan
+        //   integrity #mismatch:    requested <X> source=shadow-scan-truncated
+        //
+        // One object, one address, two contradictory verdicts — and the second
+        // one false. §6.6 條款三 exists so the three outcomes stay separable;
+        // an audit line that asserts the wrong one is worse than a missing one.
+        // Now a single incident carries the true kind and says it truncated.
         const SHADOW_SCAN_DEPTH: usize = 16;
         let mut shadow_affected: Vec<ContentHash> = Vec::new();
         {
@@ -860,11 +875,48 @@ impl Universe {
                 depth += 1;
                 let commit = match engine.store.get_commit(ch) {
                     Ok(c) => c,
-                    Err(_) => break,
+                    Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                        Some(crate::storage::StoreReadError::NotFound { .. }) | None => break,
+                        Some(other) => {
+                            let kind = match other {
+                                crate::storage::StoreReadError::CaidMismatch { .. } => {
+                                    crate::IntegrityKind::Mismatch
+                                }
+                                crate::storage::StoreReadError::ObjectUndecodable { .. } => {
+                                    crate::IntegrityKind::Undecodable
+                                }
+                                crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
+                            };
+                            engine.record_integrity(ch, "shadow-scan-truncated", kind);
+                            break;
+                        }
+                    },
                 };
                 let root_val = match engine.store.get_value(&commit.root) {
                     Ok(v) => v,
-                    Err(_) => { current = commit.parent; continue; }
+                    Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                        Some(crate::storage::StoreReadError::NotFound { .. }) | None => {
+                            current = commit.parent;
+                            continue;
+                        }
+                        Some(other) => {
+                            let kind = match other {
+                                crate::storage::StoreReadError::CaidMismatch { .. } => {
+                                    crate::IntegrityKind::Mismatch
+                                }
+                                crate::storage::StoreReadError::ObjectUndecodable { .. } => {
+                                    crate::IntegrityKind::Undecodable
+                                }
+                                crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
+                            };
+                            engine.record_integrity(
+                                &commit.root,
+                                &format!("shadow-scan-truncated (root of commit {ch})"),
+                                kind,
+                            );
+                            break;
+                        }
+                    },
                 };
                 if let Value::Combo(ref cv) = root_val {
                     'field_scan: for (_, fv) in cv.all_fields_iter() {

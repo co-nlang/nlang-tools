@@ -23,7 +23,7 @@ pub mod ladd;
 pub mod oml;
 pub mod authority;
 pub use crate::value::{Value, ComboVal, EffectTag, Privilege, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
-pub use crate::storage::{ObjectStore, StoreReadError};
+pub use crate::storage::{ObjectStore, StoreReadError, value_address_matches};
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, handle_resource_exhausted};
 use crate::builtins::create_default_builtins;
@@ -291,6 +291,22 @@ pub struct MemoEntry {
     pub deps: HashSet<String>,
 }
 
+/// REAL_03 §6.6 integrity incident (peer-fetch / store read). Minimal log —
+/// not a general diagnostics framework. Printed by the CLI after evaluation.
+#[derive(Debug, Clone)]
+pub enum IntegrityKind {
+    Mismatch,
+    Undecodable,
+}
+
+#[derive(Debug, Clone)]
+pub struct IntegrityIncident {
+    pub requested: String,
+    /// Peer name, `tcp://…`, `local`, `shadow-scan`, etc.
+    pub source: String,
+    pub kind: IntegrityKind,
+}
+
 pub struct Ouroboros {
     pub store: ObjectStore,
     pub base_dir: Option<PathBuf>,
@@ -308,6 +324,8 @@ pub struct Ouroboros {
     /// channel (`set_privilege` / CLI `--privileged`/`--grant`). Never from
     /// in-program n/ code.
     pub privilege: crate::value::Privilege,
+    /// Accumulated integrity incidents (條款四). Library is silent; CLI prints.
+    pub integrity_log: RwLock<Vec<IntegrityIncident>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,6 +386,7 @@ impl Ouroboros {
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(architects),
             privilege: crate::value::Privilege::NONE,
+            integrity_log: RwLock::new(Vec::new()),
         }
     }
 
@@ -394,8 +413,28 @@ impl Ouroboros {
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(architects),
             privilege: crate::value::Privilege::NONE,
+            integrity_log: RwLock::new(Vec::new()),
         };
         Ok(oo)
+    }
+
+    /// Record a REAL_03 §6.6 integrity incident (never silently drop a verdict).
+    pub fn record_integrity(&self, requested: &ContentHash, source: &str, kind: IntegrityKind) {
+        if let Ok(mut log) = self.integrity_log.write() {
+            log.push(IntegrityIncident {
+                requested: requested.to_string(),
+                source: source.to_string(),
+                kind,
+            });
+        }
+    }
+
+    /// Drain incidents for CLI display (stderr). Clears the log.
+    pub fn take_integrity_incidents(&self) -> Vec<IntegrityIncident> {
+        self.integrity_log
+            .write()
+            .map(|mut log| std::mem::take(&mut *log))
+            .unwrap_or_default()
     }
 
     /// Trusted-channel only. No in-program n/ path may call this.
@@ -2246,19 +2285,45 @@ impl Ouroboros {
         res
     }
 
+    /// Fetch a value from a remote peer and verify its address (REAL_03 §6.6).
+    ///
+    /// - `Ok(val)` — decoded and address matches the requested CAID
+    /// - `Err(CaidMismatch)` — peer returned bytes that do not authenticate
+    ///   (mismatch or undecodable); incident recorded
+    /// - `Err(Conflict)` — connection failure or empty response (absence)
     pub fn remote_fetch(&self, addr: &str, hash: &ContentHash) -> Result<Value, BottomCause> {
         use std::io::{Read, Write};
         use std::net::TcpStream;
         use std::time::Duration;
 
-        let mut stream = TcpStream::connect_timeout(&addr.parse().map_err(|_| BottomCause::Conflict)?, Duration::from_secs(5)).map_err(|_| BottomCause::Conflict)?;
+        let mut stream = TcpStream::connect_timeout(
+            &addr.parse().map_err(|_| BottomCause::Conflict)?,
+            Duration::from_secs(5),
+        )
+        .map_err(|_| BottomCause::Conflict)?;
         let _ = stream.write_all(hash.to_string().as_bytes());
         let _ = stream.write_all(b"\n");
         let _ = stream.flush();
 
         let mut buffer = Vec::new();
         let _ = stream.read_to_end(&mut buffer);
-        let val: Value = serde_json::from_slice(&buffer).map_err(|_| BottomCause::Conflict)?;
+        if buffer.is_empty() {
+            // Peer sent nothing — absence, not a lie.
+            return Err(BottomCause::Conflict);
+        }
+        let source = format!("tcp://{addr}");
+        let val: Value = match serde_json::from_slice(&buffer) {
+            Ok(v) => v,
+            Err(_) => {
+                self.record_integrity(hash, &source, IntegrityKind::Undecodable);
+                return Err(BottomCause::CaidMismatch);
+            }
+        };
+        let recomputed = val.content_hash();
+        if !crate::storage::value_address_matches(hash, &recomputed) {
+            self.record_integrity(hash, &source, IntegrityKind::Mismatch);
+            return Err(BottomCause::CaidMismatch);
+        }
         Ok(val)
     }
 
