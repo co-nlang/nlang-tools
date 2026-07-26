@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use crate::{Ouroboros, EvalContext, BuiltinFn};
 use crate::value::{Value, EffectTag};
+use crate::builtins::fs_guard::{crosses_store_boundary, store_boundary_refusal};
 use nlang_parser::ast::AtomKind;
 
 pub fn register_io_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
@@ -11,6 +12,9 @@ pub fn register_io_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     m.insert("io.read_file".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
         if let Value::Atom(AtomKind::Str(path), _, _) = oo.force(v, ctx).collapse() {
+            if crosses_store_boundary(path.as_str()) {
+                return store_boundary_refusal(path.as_str());
+            }
             return match std::fs::read_to_string(path.as_str()) {
                 Ok(content) => Value::Atom(AtomKind::Str(content), EffectTag::IO, None),
                 Err(_)      => Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::IO, None),
@@ -28,6 +32,9 @@ pub fn register_io_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Value::Atom(AtomKind::Str(path), _, _), Value::Atom(AtomKind::Str(content), _, _)) =
                     (fp.collapse(), fc.collapse())
                 {
+                    if crosses_store_boundary(path.as_str()) {
+                        return store_boundary_refusal(path.as_str());
+                    }
                     let tag = if std::fs::write(path.as_str(), content.as_bytes()).is_ok() { "true" } else { "none" };
                     return Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::IO, None);
                 }
@@ -37,9 +44,13 @@ pub fn register_io_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     }) as Arc<BuiltinFn>);
 
     // io.exists: {0: path_str} → #true | #false  (IO)
+    // Store paths refuse with #store_boundary (not #false — must be auditable).
     m.insert("io.exists".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
         let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
         if let Value::Atom(AtomKind::Str(path), _, _) = oo.force(v, ctx).collapse() {
+            if crosses_store_boundary(path.as_str()) {
+                return store_boundary_refusal(path.as_str());
+            }
             let tag = if std::path::Path::new(path.as_str()).exists() { "true" } else { "false" };
             return Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::IO, None);
         }
@@ -55,6 +66,9 @@ pub fn register_io_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Value::Atom(AtomKind::Str(path), _, _), Value::Atom(AtomKind::Str(content), _, _)) =
                     (fp.collapse(), fc.collapse())
                 {
+                    if crosses_store_boundary(path.as_str()) {
+                        return store_boundary_refusal(path.as_str());
+                    }
                     let result = std::fs::OpenOptions::new()
                         .append(true)
                         .create(true)

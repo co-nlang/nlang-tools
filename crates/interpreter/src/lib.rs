@@ -1033,7 +1033,8 @@ impl Ouroboros {
             ]), true, IndexMap::new(), effect, vec![]))
         }
         official_fields.insert("/sign_refine".to_string(), official_morph("engine.sign_refine", EffectTag::IO));
-        official_fields.insert("/add_architect".to_string(), official_morph("engine.add_architect", EffectTag::IO));
+        // /add_architect retired (store_boundary: language surface must not
+        // own the refine trust root; REAL_01 §7.2 out-of-band provisioning).
         fields.insert("~%Official".to_string(), Value::Combo(ComboVal::new(official_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
         // ~%Config: genesis defaults (SPEC_08 §3.1 / SPEC_09 §6).

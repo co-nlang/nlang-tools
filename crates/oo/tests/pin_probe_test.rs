@@ -354,21 +354,43 @@ fn pin_intent_file_is_not_authority() {
     // The file records INTENT across two CLI processes; authority must be
     // re-presented through the trusted channel at the moment the privileged
     // effect is applied.
+    //
+    // UPDATED by the store-boundary arc (2026-07-26). The language-level
+    // route this probe originally used is now refused outright, so the old
+    // precondition ("an unprivileged program CAN write the intent file") is
+    // false — which is the point. Both layers stay under test, because they
+    // are independent and cover different attackers:
+    //   layer 1 (this arc)   — n/ cannot reach the file at all;
+    //   layer 2 (v0.2.40)    — a file that exists ANYWAY is not authority.
+    // Layer 2 is what survives out-of-band tampering, which R-A explicitly
+    // places outside the sandbox's scope, so it is planted here from the
+    // harness rather than from n/.
     let d = fresh_dir();
     write(&d, "a.n", "x: 0\ny: 5\n");
     oo(&d, &["evolve", "a.n"]);
     oo(&d, &["commit", "-m", "base"]);
 
-    // The exploit, verbatim, in ordinary unprivileged n/.
+    // Layer 1: the original exploit, verbatim, now refused.
     write(
         &d,
         "exploit.n",
         "lst: [\"y\"]\nout: ~%Io./write_file \".oo/pin_pending\" (~%Json./stringify lst)\n",
     );
-    oo(&d, &["run", "exploit.n", "--observe", "out"]);
+    let blocked = oo(&d, &["run", "exploit.n", "--observe", "out"]);
+    assert!(
+        blocked.contains("store_boundary"),
+        "the language-level route must be refused at the boundary: {blocked:?}"
+    );
+    assert!(
+        !d.join(".oo").join("pin_pending").exists(),
+        "a refused write must not create the intent file"
+    );
+
+    // Layer 2: plant it out of band, where the boundary does not reach.
+    fs::write(d.join(".oo").join("pin_pending"), "[\"y\"]").unwrap();
     assert!(
         d.join(".oo").join("pin_pending").exists(),
-        "precondition: an unprivileged program CAN write the intent file"
+        "precondition: the intent file is present by some other route"
     );
 
     write(&d, "c.n", "y: @int\n");

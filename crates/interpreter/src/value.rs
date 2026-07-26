@@ -1052,6 +1052,7 @@ impl BottomDetail {
             BottomCause::InvalidConfig => "#invalid_config",
             BottomCause::EffectViolation => "#effect_violation",
             BottomCause::PrivilegedRequired => "#privileged_required",
+            BottomCause::StoreBoundary => "#store_boundary",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1165,6 +1166,10 @@ pub enum BottomCause {
     /// Privileged op invoked without horizon privilege (SPEC_08 §6.1.2;
     /// ERROR_CODES #privileged_required). Append-only tail.
     PrivilegedRequired,
+    /// Filesystem access from the language layer to a path inside the engine
+    /// store (`.oo`). Unconditional — no capability unlocks it.
+    /// SPEC_08 §6.3; ERROR_CODES #store_boundary. Append-only tail.
+    StoreBoundary,
 }
 
 impl BottomCause {
@@ -1188,6 +1193,7 @@ impl BottomCause {
             BottomCause::InvalidConfig => "invalid_config",
             BottomCause::EffectViolation => "effect_violation",
             BottomCause::PrivilegedRequired => "privileged_required",
+            BottomCause::StoreBoundary => "store_boundary",
         }
     }
 
@@ -1201,7 +1207,8 @@ impl BottomCause {
             | BottomCause::SystemReserved
             | BottomCause::InvalidConfig
             | BottomCause::EffectViolation
-            | BottomCause::PrivilegedRequired => 1,
+            | BottomCause::PrivilegedRequired
+            | BottomCause::StoreBoundary => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split
