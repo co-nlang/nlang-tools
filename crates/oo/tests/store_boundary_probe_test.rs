@@ -214,7 +214,6 @@ fn assert_refused(out: &str, control_ok: &str) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_write_into_store_is_refused() {
     let d = fresh_dir();
     history(&d, 1);
@@ -230,7 +229,6 @@ fn red_write_into_store_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_append_into_store_is_refused() {
     let d = fresh_dir();
     history(&d, 1);
@@ -248,7 +246,6 @@ fn red_append_into_store_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_read_from_store_is_refused() {
     let d = fresh_dir();
     history(&d, 1);
@@ -266,7 +263,6 @@ fn red_read_from_store_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_exists_on_store_is_refused_not_answered_false() {
     // Legibility (the v0.2.41 rule): a refusal that renders as `#false` is
     // indistinguishable from "the file is not there", so it is not an audit
@@ -283,7 +279,6 @@ fn red_exists_on_store_is_refused_not_answered_false() {
 }
 
 #[test]
-#[ignore]
 fn red_dotdot_escape_into_store_is_refused() {
     // MEASURED at baseline: `sub/../.oo/HEAD` overwrote HEAD. The rule must
     // resolve the path before judging it, never match on the literal string.
@@ -302,7 +297,6 @@ fn red_dotdot_escape_into_store_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_absolute_path_into_store_is_refused() {
     let d = fresh_dir();
     history(&d, 1);
@@ -327,7 +321,6 @@ fn red_absolute_path_into_store_is_refused() {
 
 #[cfg(unix)]
 #[test]
-#[ignore]
 fn red_symlink_escape_into_store_is_refused() {
     // A symlink whose name is innocent and whose target is the store. The
     // boundary must resolve links, not trust the spelling it was handed.
@@ -346,7 +339,6 @@ fn red_symlink_escape_into_store_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_privilege_does_not_unlock_the_boundary() {
     // R-D. The capability lattice governs §6.2 operations, not the store's
     // bytes. If `--privileged` opened this door, a privileged program could
@@ -376,7 +368,6 @@ fn red_privilege_does_not_unlock_the_boundary() {
 }
 
 #[test]
-#[ignore]
 fn red_csv_read_from_store_is_refused() {
     let d = fresh_dir();
     history(&d, 1);
@@ -391,7 +382,6 @@ fn red_csv_read_from_store_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_disc_connect_to_a_store_is_refused() {
     // `disc.connect` takes a peer BASE dir and calls `ObjectStore::init` on
     // it, which creates and then reads `<base>/.oo/objects`. Handing it a
@@ -418,7 +408,6 @@ fn red_disc_connect_to_a_store_is_refused() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_a4_head_rewrite_no_longer_rolls_back_history() {
     // The whole arc in one test, as a three-way discriminator. Closing the
     // back door is only half the claim; the other half is that the front door
@@ -461,7 +450,6 @@ fn red_a4_head_rewrite_no_longer_rolls_back_history() {
 }
 
 #[test]
-#[ignore]
 fn red_a5_abandonment_record_cannot_be_forged() {
     // Paired against the genuine mechanism: the test must be able to SEE an
     // abandonment record when one is real, or "no record appeared" proves
@@ -498,7 +486,6 @@ fn red_a5_abandonment_record_cannot_be_forged() {
 }
 
 #[test]
-#[ignore]
 fn red_a2_architect_trust_root_is_unwritable() {
     let d = fresh_dir();
     history(&d, 1);
@@ -516,7 +503,6 @@ fn red_a2_architect_trust_root_is_unwritable() {
 }
 
 #[test]
-#[ignore]
 fn red_pin_pending_is_unwritable() {
     // v0.2.40 sealed this at `oo commit` by re-demanding the capability. The
     // file itself stayed writable, which left the intent record forgeable on
@@ -538,7 +524,6 @@ fn red_pin_pending_is_unwritable() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_add_architect_is_off_the_language_surface() {
     // Paired discriminator. At baseline this answers `#conflict` (the apply
     // seam), and a genuinely absent key answers `#missing_key` — so the two

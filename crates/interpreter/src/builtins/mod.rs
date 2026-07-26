@@ -20,6 +20,8 @@ mod stat;
 mod csv;
 mod url;
 mod toml;
+/// Language → store trust boundary (SPEC_08 §6.3).
+pub mod fs_guard;
 
 use std::collections::HashMap;
 use std::sync::Arc;

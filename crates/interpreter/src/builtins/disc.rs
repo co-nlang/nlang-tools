@@ -78,12 +78,23 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             if let (Some(vname), Some(vpath)) = (c.get_field("0"), c.get_field("1")) {
                 let name = oo.force(vname.clone(), ctx).to_string_plain();
                 let path_str = oo.force(vpath.clone(), ctx).to_string_plain();
-                if path_str.starts_with("tcp://") {
+                // Non-filesystem peer addresses (leave alone).
+                if path_str.starts_with("tcp://") || path_str.starts_with("remote:") {
+                    let addr = if path_str.starts_with("tcp://") {
+                        path_str[6..].to_string()
+                    } else {
+                        path_str["remote:".len()..].to_string()
+                    };
                     if let Ok(mut peers) = oo.peers.write() {
-                        peers.insert(name, Peer::Remote(path_str[6..].to_string()));
+                        peers.insert(name, Peer::Remote(addr));
                         return Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None);
                     }
                 } else {
+                    // Judge the path as handed in (SPEC_08 §6.3). Connecting to
+                    // a store directory is the same boundary crossing.
+                    if crate::builtins::fs_guard::crosses_store_boundary(&path_str) {
+                        return crate::builtins::fs_guard::store_boundary_refusal(&path_str);
+                    }
                     let path = std::path::PathBuf::from(path_str);
                     if let Ok(store) = ObjectStore::init(&path) {
                         if let Ok(mut peers) = oo.peers.write() {

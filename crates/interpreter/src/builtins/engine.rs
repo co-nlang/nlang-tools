@@ -297,17 +297,9 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
     }) as Arc<BuiltinFn>);
 
-    m.insert("engine.add_architect".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        let pubkey_hex = oo.force(arg, ctx).to_string_plain();
-        if pubkey_hex.len() != 64 { return BottomCause::Conflict.into(); }
-        if let Ok(mut reg) = oo.architect_registry.write() {
-            reg.insert(pubkey_hex);
-            if let Some(ref base_dir) = oo.base_dir {
-                let _ = oo.store.save_architects(base_dir, &reg);
-            }
-            Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
-        } else { BottomCause::Conflict.into() }
-    }) as Arc<BuiltinFn>);
+    // `engine.add_architect` retired (store_boundary arc, SPEC_08 §6.3 / A1).
+    // REAL_01 §7.2: out-of-band provisioning only. save_architects retained
+    // for a future CLI path; load_architects still loads the whitelist.
 
     // ── Functor operations (Phase 15) ──────────────────────────────
 

@@ -258,3 +258,30 @@ concession made silently to satisfy a probe is the failure mode this protocol
 exists to catch (v0.2.39: a delivery widened the CAID parser to accept a bare
 `_` because an acceptor probe asked for it; the probe was wrong, and the
 widening reached 13 call sites including disk reads).
+
+---
+
+## 7. Delivery record (delivery side)
+
+- **Tip**: see commit (this section written before commit; tip follow-up if needed).
+- **Boundary**: `crates/interpreter/src/builtins/fs_guard.rs` —
+  `crosses_store_boundary` / `store_boundary_refusal`. Resolve nearest existing
+  ancestor via `canonicalize`, append remaining with `.`/`..` normalized;
+  refuse iff any `Component::Normal == ".oo"`.
+- **Cause**: `BottomCause::StoreBoundary` (enum tail) → tag `store_boundary`.
+- **Call sites**: `io.{read,write,exists,append}_file`, `csv.read_csv`,
+  `disc.connect` (filesystem peers only; `tcp://` / `remote:` skipped).
+- **A1**: removed `~%Official./add_architect` morphism + `engine.add_architect`
+  builtin. `load_architects` / `save_architects` kept.
+- **Probe**: only 15 `#[ignore]` removed.
+- **Gates**: store_boundary probe **20/20**; genesis **11/11**; conformance
+  **143/143**; release build clean of *new* warnings (pre-existing unused
+  import / mut warnings unchanged).
+- **Workspace**: **1449/1/3** — the single failure is exactly the predicted
+  out-of-scope probe:
+  `crates/oo/tests/pin_probe_test.rs::pin_intent_file_is_not_authority`
+  (precondition: "unprivileged program CAN write `.oo/pin_pending`"). Work
+  order §4: report, do **not** edit. Acceptor to update that probe's
+  mechanism.
+- **Not touched**: `storage.rs` read paths (A3 next arc); engine/Universe
+  `.oo` access; `io_p34_test`; identity persistence; GC.

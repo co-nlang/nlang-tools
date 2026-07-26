@@ -160,6 +160,9 @@ pub fn register_csv_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             Some(s) => s,
             None => return BottomCause::Conflict.into(),
         };
+        if crate::builtins::fs_guard::crosses_store_boundary(&path) {
+            return crate::builtins::fs_guard::store_boundary_refusal(&path);
+        }
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 let rows = parse_csv(&content);
