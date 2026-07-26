@@ -209,7 +209,7 @@ Classification and CHANGELOG are the acceptor's step. **Do not touch `nlang-spec
 
 ## 6. Delivery record (delivery side)
 
-- **Tip**: see commit (recorded after).
+- **Tip**: `db01d24`.
 - **A** `root_with_system`: no longer mints `architects` into `~%Official`
   (module keeps `/sign_refine` only).
 - **B** `Ouroboros::init` / `new_in_memory`: empty registry by default; load only
