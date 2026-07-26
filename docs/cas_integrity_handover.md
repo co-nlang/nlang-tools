@@ -237,7 +237,7 @@ back to me is always the correct move.**
 
 ## 8. Delivery record (delivery side)
 
-- **Tip**: see commit (recorded after).
+- **Tip**: `b55136e`.
 - **Verification** (`storage.rs`): `get_value` / `get_commit` deserialize →
   recompute address → compare to requested. Values: full v2 (digest +
   `lattice_sketch` + `masa_ref`). Commits: digest (v1).
