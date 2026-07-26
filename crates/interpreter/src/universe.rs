@@ -850,8 +850,12 @@ impl Universe {
         }
 
         // Step 1c: Shadow scan — identify historical commits that directly reference source CAIDs
+        // REAL_03 §6.6: do not silently truncate on corruption (v0.2.43 refine
+        // precedent). NotFound/opaque → current behaviour; CaidMismatch /
+        // ObjectUndecodable → record incident, stop scan, flag incomplete.
         const SHADOW_SCAN_DEPTH: usize = 16;
         let mut shadow_affected: Vec<ContentHash> = Vec::new();
+        let mut shadow_truncated_at: Option<ContentHash> = None;
         {
             let mut current = self.head.clone();
             let mut depth = 0;
@@ -860,11 +864,46 @@ impl Universe {
                 depth += 1;
                 let commit = match engine.store.get_commit(ch) {
                     Ok(c) => c,
-                    Err(_) => break,
+                    Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                        Some(crate::storage::StoreReadError::NotFound { .. }) | None => break,
+                        Some(other) => {
+                            let kind = match other {
+                                crate::storage::StoreReadError::CaidMismatch { .. } => {
+                                    crate::IntegrityKind::Mismatch
+                                }
+                                crate::storage::StoreReadError::ObjectUndecodable { .. } => {
+                                    crate::IntegrityKind::Undecodable
+                                }
+                                crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
+                            };
+                            engine.record_integrity(ch, "shadow-scan", kind);
+                            shadow_truncated_at = Some(ch.clone());
+                            break;
+                        }
+                    },
                 };
                 let root_val = match engine.store.get_value(&commit.root) {
                     Ok(v) => v,
-                    Err(_) => { current = commit.parent; continue; }
+                    Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
+                        Some(crate::storage::StoreReadError::NotFound { .. }) | None => {
+                            current = commit.parent;
+                            continue;
+                        }
+                        Some(other) => {
+                            let kind = match other {
+                                crate::storage::StoreReadError::CaidMismatch { .. } => {
+                                    crate::IntegrityKind::Mismatch
+                                }
+                                crate::storage::StoreReadError::ObjectUndecodable { .. } => {
+                                    crate::IntegrityKind::Undecodable
+                                }
+                                crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
+                            };
+                            engine.record_integrity(&commit.root, "shadow-scan", kind);
+                            shadow_truncated_at = Some(ch.clone());
+                            break;
+                        }
+                    },
                 };
                 if let Value::Combo(ref cv) = root_val {
                     'field_scan: for (_, fv) in cv.all_fields_iter() {
@@ -879,6 +918,16 @@ impl Universe {
                 }
                 current = commit.parent;
             }
+        }
+        // Expose truncation for the CLI audit surface (refine continues).
+        if let Some(ref at) = shadow_truncated_at {
+            // Also record a human-readable note as an integrity incident source
+            // string so stderr carries "truncated"/"mismatch" for operators.
+            engine.record_integrity(
+                at,
+                "shadow-scan-truncated",
+                crate::IntegrityKind::Mismatch,
+            );
         }
 
         // Step 1d: cycle detection — reject if source→target would close a refine cycle

@@ -406,7 +406,6 @@ fn shadow_count(output: &str) -> Option<usize> {
 /// A peer answers a never-existing address with fabricated bytes. The engine
 /// must not hand them to the program as the content of that address.
 #[test]
-#[ignore]
 fn red_fabricated_bytes_are_not_the_requested_identity() {
     let liar = spawn_liar(
         br#"{"Atom":[{"Str":"ATTACKER_CONTROLLED_NEVER_EXISTED"},0,null]}"#.to_vec(),
@@ -443,7 +442,6 @@ fn red_fabricated_bytes_are_not_the_requested_identity() {
 /// A peer answers with a GENUINE object — just not the one asked for. The
 /// bytes decode, they are a real n/ value, and they are not this identity.
 #[test]
-#[ignore]
 fn red_a_real_object_under_the_wrong_address_is_refused() {
     let vault = fresh_dir();
     let real = store_value(&vault, "{ marker: \"PEER_B_REAL_VALUE_R2\" }");
@@ -489,7 +487,6 @@ fn red_a_real_object_under_the_wrong_address_is_refused() {
 /// REAL_03 §6.6 條款三 at the language surface. Corruption and absence are
 /// currently the same value, character for character.
 #[test]
-#[ignore]
 fn red_corrupt_and_absent_are_distinguishable_to_a_program() {
     let vault = fresh_dir();
     let caid = store_value(&vault, "{ marker: \"R3_ORIGINAL\" }");
@@ -542,7 +539,6 @@ fn red_corrupt_and_absent_are_distinguishable_to_a_program() {
 /// `oo serve` says the object is not there — so the one person who could
 /// repair it never learns.
 #[test]
-#[ignore]
 fn red_ndp_serve_does_not_report_corruption_as_absence() {
     let vault = fresh_dir();
     let caid = store_value(&vault, "{ marker: \"R4_ORIGINAL\" }");
@@ -578,7 +574,6 @@ fn red_ndp_serve_does_not_report_corruption_as_absence() {
 /// commits become 1, in the same confident wording, with no error and no
 /// warning.
 #[test]
-#[ignore]
 fn red_tampering_does_not_silently_shorten_the_shadow_report() {
     let clean = fresh_dir();
     let (source, commits) = shadow_universe(&clean);
@@ -621,7 +616,6 @@ fn red_tampering_does_not_silently_shorten_the_shadow_report() {
 /// first. After verification only correctly-addressed bytes survive, and
 /// those are identical whoever sent them (REAL_02 §3.1).
 #[test]
-#[ignore]
 fn red_one_honest_peer_among_liars_is_found_every_time() {
     let vault = fresh_dir();
     let caid = store_value(&vault, "{ marker: \"HONEST_VALUE_R6\" }");

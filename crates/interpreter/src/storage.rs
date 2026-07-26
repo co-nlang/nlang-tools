@@ -51,7 +51,8 @@ impl std::error::Error for StoreReadError {}
 
 /// Full v2 CAID match for values (digest + lattice_sketch + masa_ref).
 /// v1 requests compare digest only (REAL_03 §9.2 digest-only door).
-fn value_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> bool {
+/// Shared by local store reads and peer-fetch (REAL_03 §6.6) — one comparator.
+pub fn value_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> bool {
     if requested.digest != recomputed.digest {
         return false;
     }

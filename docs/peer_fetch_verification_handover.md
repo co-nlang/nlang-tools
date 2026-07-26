@@ -384,3 +384,27 @@ Response carries `%status: #success | #not_found | #conflict`, `%result`, `%sour
 Note that the spec's response *already has* a status vocabulary that could carry a
 verification verdict on the wire — which is why §4.5 keeps the wire unchanged here
 rather than inventing a third thing.
+
+---
+
+## 8. Delivery record (delivery side)
+
+- **Tip**: see commit (recorded after).
+- **D1** `remote_fetch`: deserialize → `value_address_matches` (shared with store)
+  → `Ok` / `Err(CaidMismatch)` / empty→`Err(Conflict)`. Incidents on mismatch &
+  undecodable.
+- **`BottomCause::CaidMismatch`** enum tail; `as_tag` → `caid_mismatch`.
+- **D3 / Q1** `disc.fetch` / `disc.find`: continue past lying sources; named peer
+  mismatch → immediate `#caid_mismatch`; sweep with only mismatches → same;
+  plain absence unchanged (`#conflict`).
+- **§4.4** `Ouroboros::integrity_log` + `record_integrity` / `take_integrity_incidents`;
+  CLI prints to **stderr** after `run` / `evolve` / `refine`.
+- **D2** `oo serve`: `NDP Miss` only for `NotFound`; corruption prints
+  `#caid_mismatch` / `#object_undecodable` (wire still 0 bytes).
+- **D4** shadow scan: NotFound/opaque → prior behaviour; mismatch/undecodable →
+  record + truncate note (refine still succeeds).
+- **D5** refine shadow report: failed read-back of just-written commit reported.
+- **Probe**: only 6 `#[ignore]` removed.
+- **Gates**: peer_fetch probe **12/12**; workspace **1475/0/3**; conf **143/143**;
+  genesis **11/11**; release clean of new warnings; `seed_caids_are_stable` ok.
+- **Not touched**: nlang-spec, NDP packet format, peer ordering, config knobs.
