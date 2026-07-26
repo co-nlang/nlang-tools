@@ -232,3 +232,46 @@ acceptor error the delivery accommodated instead of reporting: v0.2.39 widened
 the CAID parser for a badly-shaped probe, and v0.2.42 added a peer-address
 scheme this work order's predecessor named by mistake. **Reporting my error
 back to me is always the correct move.**
+
+---
+
+## 8. Delivery record (delivery side)
+
+- **Tip**: see commit (recorded after).
+- **Verification** (`storage.rs`): `get_value` / `get_commit` deserialize →
+  recompute address → compare to requested. Values: full v2 (digest +
+  `lattice_sketch` + `masa_ref`). Commits: digest (v1).
+- **`StoreReadError`** (distinct, downcastable): `NotFound` / `CaidMismatch`
+  (`#caid_mismatch`) / `ObjectUndecodable` (`#object_undecodable`).
+- **Surfacing**: `run_inspect` and `run_log` use `format_store_read_error` —
+  no flattening to "not found".
+- **Store-put loop**: removed from `run_one_shot` (R-2). `~%Engine./save` kept.
+- **ERROR_CODES**: `#caid_mismatch` note updated; `#object_undecodable` added
+  (spec repo).
+- **Probe**: only 8 `#[ignore]` removed.
+- **Gates**: cas probe **11/12** (see below); genesis **11/11**; conf **143/143**;
+  release build clean of new warnings; workspace **1461/1/3**.
+
+### Acceptor error to report (not accommodated)
+
+**`red_a_run_does_not_force_a_recursive_type`** asserts `biggest < 100_000`.
+Measured after this delivery:
+
+1. Store-put is gone: bare `oo run` of the two-line `@Tree` program leaves
+   **zero** objects under `.oo/objects`.
+2. The probe's own `seeded()` (`evolve`+`commit` of `x: 1`) alone leaves a
+   root object of **251 839 bytes** (genesis system modules in the committed
+   root). That is the R-1 ledgered type-layer weight, not the 5 MB force loop.
+3. Therefore the gate stays red **even though the defect under test is fixed**.
+   Raising the threshold or dropping `seeded()` is the acceptor's edit — delivery
+   did not touch the probe body.
+
+All other reds (7/7) and all 4 pins are green. The multi-megabyte orphan is gone
+(`red_every_object_a_run_leaves_can_be_read_back` passes: all objects depth < 128).
+
+### Performance (§6)
+
+No silent cache added. Informal: 3-commit `oo log` / history ops still
+sub-second on a temp store; full workspace ~3 min (same order as pre-arc).
+If a production history shows material cost, acceptor decides on a non-defeating
+cache strategy.

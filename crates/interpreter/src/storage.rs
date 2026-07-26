@@ -1,8 +1,74 @@
-use crate::value::{Value, ContentHash, HashAlgorithm, Commit};
+use crate::value::{Value, ContentHash, HashAlgorithm, Commit, CaidVersion};
 use std::fs;
 use std::path::{Path, PathBuf};
 use anyhow::Result;
 use sha2::Digest;
+
+/// Distinct CAS read outcomes (SPEC_08 / REAL_03 §8; cas_integrity arc).
+/// Callers must not collapse these into one "not found" string.
+#[derive(Debug, Clone)]
+pub enum StoreReadError {
+    /// No object at the digest-keyed path.
+    NotFound { requested: ContentHash },
+    /// Object present and decoded, but recomputed address ≠ requested
+    /// (`#caid_mismatch` — the bytes are lying).
+    CaidMismatch {
+        requested: ContentHash,
+        recomputed: ContentHash,
+    },
+    /// Object present but cannot be deserialized; integrity unknown
+    /// (`#object_undecodable`).
+    ObjectUndecodable {
+        requested: ContentHash,
+        detail: String,
+    },
+}
+
+impl std::fmt::Display for StoreReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoreReadError::NotFound { requested } => {
+                write!(f, "CAID not found in local store: {requested}")
+            }
+            StoreReadError::CaidMismatch {
+                requested,
+                recomputed,
+            } => write!(
+                f,
+                "#caid_mismatch: object at digest path is corrupt (integrity failure); \
+                 requested {requested}, recomputed {recomputed}"
+            ),
+            StoreReadError::ObjectUndecodable { requested, detail } => write!(
+                f,
+                "#object_undecodable: object present for {requested} but cannot be decoded \
+                 (integrity unknown): {detail}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StoreReadError {}
+
+/// Full v2 CAID match for values (digest + lattice_sketch + masa_ref).
+/// v1 requests compare digest only (REAL_03 §9.2 digest-only door).
+fn value_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> bool {
+    if requested.digest != recomputed.digest {
+        return false;
+    }
+    match requested.version {
+        CaidVersion::V1 => true,
+        CaidVersion::V2 => {
+            recomputed.version == CaidVersion::V2
+                && requested.masa_ref == recomputed.masa_ref
+                && requested.lattice_sketch == recomputed.lattice_sketch
+        }
+    }
+}
+
+fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> bool {
+    // Commits are v1 by construction (`Commit::content_hash` → ContentHash::v1).
+    requested.digest == recomputed.digest
+}
 
 pub struct ObjectStore {
     root: PathBuf,
@@ -25,8 +91,21 @@ impl ObjectStore {
     }
 
     pub fn get_value(&self, hash: &ContentHash) -> Result<Value> {
-        let content = self.read_object(hash)?;
-        let value: Value = serde_json::from_str(&content)?;
+        let content = self.read_object_raw(hash)?;
+        let value: Value = serde_json::from_str(&content).map_err(|e| {
+            StoreReadError::ObjectUndecodable {
+                requested: hash.clone(),
+                detail: e.to_string(),
+            }
+        })?;
+        let recomputed = value.content_hash();
+        if !value_address_matches(hash, &recomputed) {
+            return Err(StoreReadError::CaidMismatch {
+                requested: hash.clone(),
+                recomputed,
+            }
+            .into());
+        }
         Ok(value)
     }
 
@@ -38,8 +117,21 @@ impl ObjectStore {
     }
 
     pub fn get_commit(&self, hash: &ContentHash) -> Result<Commit> {
-        let content = self.read_object(hash)?;
-        let commit: Commit = serde_json::from_str(&content)?;
+        let content = self.read_object_raw(hash)?;
+        let commit: Commit = serde_json::from_str(&content).map_err(|e| {
+            StoreReadError::ObjectUndecodable {
+                requested: hash.clone(),
+                detail: e.to_string(),
+            }
+        })?;
+        let recomputed = commit.content_hash();
+        if !commit_address_matches(hash, &recomputed) {
+            return Err(StoreReadError::CaidMismatch {
+                requested: hash.clone(),
+                recomputed,
+            }
+            .into());
+        }
         Ok(commit)
     }
 
@@ -74,10 +166,22 @@ impl ObjectStore {
         Ok(())
     }
 
-    fn read_object(&self, hash: &ContentHash) -> Result<String> {
+    /// Read raw bytes at the digest path. Absence → `NotFound` (not IO prose).
+    fn read_object_raw(&self, hash: &ContentHash) -> Result<String> {
         let path = self.hash_to_path(hash);
-        if !path.exists() { return Err(anyhow::anyhow!("Object not found: {}", hash.to_string())); }
-        Ok(fs::read_to_string(path)?)
+        if !path.exists() {
+            return Err(StoreReadError::NotFound {
+                requested: hash.clone(),
+            }
+            .into());
+        }
+        fs::read_to_string(path).map_err(|e| {
+            StoreReadError::ObjectUndecodable {
+                requested: hash.clone(),
+                detail: format!("read failed: {e}"),
+            }
+            .into()
+        })
     }
 
     pub fn save_architects(

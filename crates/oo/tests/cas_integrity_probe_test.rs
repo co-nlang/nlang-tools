@@ -225,7 +225,6 @@ fn objects(dir: &Path) -> Vec<PathBuf> {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_tampered_object_is_refused_not_returned() {
     // The headline. Paired in one test: the SAME command on the SAME CAID
     // must succeed before the edit and refuse after it, so the gate cannot
@@ -251,7 +250,6 @@ fn red_tampered_object_is_refused_not_returned() {
 }
 
 #[test]
-#[ignore]
 fn red_tampered_commit_object_is_refused() {
     // Commits are v1 (digest only) — `Commit::content_hash` returns
     // ContentHash::v1. Verification must cover them too: the commit chain is
@@ -285,7 +283,6 @@ fn red_tampered_commit_object_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_corruption_absence_and_validity_are_three_outcomes() {
     // R-4. Today `run_inspect` maps every get_value error to "CAID not found
     // in local store", so corruption reads as absence. Three distinct states
@@ -331,7 +328,6 @@ fn red_corruption_absence_and_validity_are_three_outcomes() {
 }
 
 #[test]
-#[ignore]
 fn red_forged_sketch_in_the_requested_caid_is_refused() {
     // R-3 / REAL_03 §9.2. `hash_to_path` keys on the digest alone, so a CAID
     // that carries a real digest and a fabricated spectral sketch resolves to
@@ -367,7 +363,6 @@ fn red_forged_sketch_in_the_requested_caid_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_forged_masa_ref_in_the_requested_caid_is_refused() {
     // Same hole, the other v2 component.
     let d = fresh_dir();
@@ -390,7 +385,6 @@ fn red_forged_masa_ref_in_the_requested_caid_is_refused() {
 }
 
 #[test]
-#[ignore]
 fn red_undecodable_object_is_its_own_outcome() {
     // R-4's third state, and the honest one. If an object cannot be
     // deserialized, verification never runs, so corruption CANNOT be ruled
@@ -426,7 +420,6 @@ fn red_undecodable_object_is_its_own_outcome() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn red_a_run_does_not_force_a_recursive_type() {
     // SPEC_04 §158 names `@Tree | ()` as the case that must not be forced;
     // SPEC_12 says structural recursion is #recursive_lazy. Measured at
@@ -455,7 +448,6 @@ fn red_a_run_does_not_force_a_recursive_type() {
 }
 
 #[test]
-#[ignore]
 fn red_every_object_a_run_leaves_can_be_read_back() {
     // The general invariant behind the specific case: the store must not
     // contain anything the engine cannot read. Write-only objects are
