@@ -23,7 +23,7 @@ pub mod ladd;
 pub mod oml;
 pub mod authority;
 pub use crate::value::{Value, ComboVal, EffectTag, Privilege, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
-pub use crate::storage::ObjectStore;
+pub use crate::storage::{ObjectStore, StoreReadError};
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{ObservationState, handle_resource_exhausted};
 use crate::builtins::create_default_builtins;

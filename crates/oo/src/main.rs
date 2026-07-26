@@ -255,7 +255,8 @@ fn run_status() -> anyhow::Result<()> {
 fn run_log() -> anyhow::Result<()> {
     let engine = Ouroboros::init(&std::env::current_dir()?)?;
     let _universe = load_universe(&engine, &std::env::current_dir()?)?;
-    let history = engine.log()?;
+    // Surface CAS integrity failures distinctly (tampered commit chain).
+    let history = engine.log().map_err(|e| format_store_read_error(e, "HEAD chain"))?;
     for (hash, meta, kind) in history {
         println!("commit {}", hash);
         // SPEC_08 §6.2 audit markers on the commit surface (never in values).
@@ -551,15 +552,13 @@ fn run_one_shot(
 ) -> anyhow::Result<()> {
     let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
-    // One-shot: pure universe, no local staged load.
+    // One-shot: pure universe, no local staged load, no durable store writes.
     // SPEC_03 simultaneity: all files/fields are one snapshot — evolve
-    // everything first; only then store-put (CAID) and --observe.
-    // Observing per-field mid-evolve solidifies reified thunks before later
-    // fields land (false `_` on forward refs).
+    // everything first, then --observe. Automatic store-put was removed
+    // (cas_integrity R-2): it forced recursive types into multi-MB orphans
+    // (SPEC_04 §158 / SPEC_12 #recursive_lazy) and contradicted "pure one-shot".
+    // Explicit persistence remains `~%Engine./save`.
     let mut universe = Universe::new(None, engine.root_with_system());
-
-    // Collect single-segment bare field paths for post-evolve store-put.
-    let mut store_paths: Vec<nlang_parser::ast::Path> = Vec::new();
 
     for file in files {
         let input = fs::read_to_string(&file)?;
@@ -568,28 +567,7 @@ fn run_one_shot(
             if let Err(e) = universe.evolve(&engine, &f) {
                 anyhow::bail!("Evolution Conflict in {:?}: {:?} at {:?}", file, e, f.key);
             }
-            match &f.key {
-                FieldKey::Named { name, .. } | FieldKey::Quoted(name) => {
-                    store_paths.push(nlang_parser::ast::Path {
-                        anchor: nlang_parser::ast::PathAnchor::Bare,
-                        segments: vec![name.clone()],
-                        span: nlang_parser::ast::Span::default(),
-                    });
-                }
-                FieldKey::Path(p)
-                    if p.anchor == nlang_parser::ast::PathAnchor::Bare && p.segments.len() == 1 =>
-                {
-                    store_paths.push(p.clone());
-                }
-                _ => {}
-            }
         }
-    }
-
-    // Store-put after full evolve (purpose preserved: values in Store for CAID).
-    for path in &store_paths {
-        let val = universe.observe(&engine, path);
-        let _ = engine.store.put_value(&val);
     }
 
     if let Some(path_str) = observe {
@@ -650,6 +628,16 @@ fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Resu
     Ok(())
 }
 
+fn format_store_read_error(err: anyhow::Error, caid_str: &str) -> anyhow::Error {
+    use nlang_interpreter::storage::StoreReadError;
+    if let Some(sre) = err.downcast_ref::<StoreReadError>() {
+        // Preserve the three distinct outcomes (R-4); do not flatten to "not found".
+        return anyhow::anyhow!("{}", sre);
+    }
+    // Legacy / unexpected
+    anyhow::anyhow!("store read failed for {}: {}", caid_str, err)
+}
+
 fn run_inspect(caid_str: String) -> anyhow::Result<()> {
     let cur = std::env::current_dir()?;
     let engine = Ouroboros::init(&cur)
@@ -661,7 +649,7 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
     let val = engine
         .store
         .get_value(&hash)
-        .map_err(|_| anyhow::anyhow!("CAID not found in local store: {}", caid_str))?;
+        .map_err(|e| format_store_read_error(e, &caid_str))?;
     // SPEC_08 §4.2.4: inspect is user-facing observation — solidify active
     // tags to #cached on the display projection (store object stays raw).
     let val = val.solidify_effects();
