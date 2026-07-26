@@ -263,7 +263,7 @@ widening reached 13 call sites including disk reads).
 
 ## 7. Delivery record (delivery side)
 
-- **Tip**: see commit (this section written before commit; tip follow-up if needed).
+- **Tip**: `ae205b4`.
 - **Boundary**: `crates/interpreter/src/builtins/fs_guard.rs` —
   `crosses_store_boundary` / `store_boundary_refusal`. Resolve nearest existing
   ancestor via `canonicalize`, append remaining with `.`/`..` normalized;
