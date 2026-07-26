@@ -389,7 +389,7 @@ rather than inventing a third thing.
 
 ## 8. Delivery record (delivery side)
 
-- **Tip**: see commit (recorded after).
+- **Tip**: `49a16ec`.
 - **D1** `remote_fetch`: deserialize → `value_address_matches` (shared with store)
   → `Ok` / `Err(CaidMismatch)` / empty→`Err(Conflict)`. Incidents on mismatch &
   undecodable.
