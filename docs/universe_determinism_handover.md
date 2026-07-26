@@ -129,9 +129,43 @@ repository with v0.2.44 (log verifies, further commits succeed). **Do not touch
   still contains `architects`; commits made on top of it carry it forward, so
   existing universes stay nondeterministic. In scope here: **newly initialized**
   universes. Migration is its own arc.
-* **Identity persistence.** A persisted identity would make the root stable
-  *per repository* and still different *between* repositories — it does **not**
-  satisfy SPEC_13 §4.1.2. Different problem, still ledgered.
+* **Identity persistence — a SEQUEL, not a rival.** Read this carefully; an
+  earlier draft of this order was misleading. Persistence *instead of* ruling A
+  would make the root stable per repository and still different between
+  repositories, so it does not satisfy SPEC_13 §4.1.2. But **once A lands the
+  identity is not in the root at all**, and persistence stops having any
+  bearing on addressing. A is persistence's prerequisite, not its competitor.
+
+* **Who fills the empty whitelist — the operator, and the spec already says
+  where.** REAL_01 §7.2 (`[Core Requirement]`) specifies that the engine loads
+  a public-key whitelist from **`~/.oo/authorized_keys`** — the *home*
+  directory, i.e. the operator — issued out of band by an ADMIN token or an
+  HSM, with a lifecycle and a revocation list. The engine reads none of that.
+  It reads the *workspace* file `.oo/architects.json` (project-level trust) and
+  otherwise invents a per-process self-appointment.
+
+  The missing party in this whole picture is the human, and the spec put them
+  in `~`. So an empty registry after ruling B does not mean "no architect
+  exists"; it means **nobody has declared one yet**, which is the honest state
+  of a cold start.
+
+  The shape is already settled precedent: **SPEC_08 §6.1.2 ruling P1** — a
+  privilege cannot be self-granted from inside a program; it arrives through a
+  trusted out-of-band channel. Architecthood is that ruling one layer down, and
+  the engine's self-appointment is exactly the self-grant P1 forbids. Whatever
+  the sequel arc builds, it must arrive through that channel and **must not**
+  reintroduce a language-surface writer (`~%Official./add_architect` was retired
+  for this reason in v0.2.42).
+
+  Ordering, so the sequel is not attempted piecemeal:
+  `A (identity out of the root)` → `persistence (a stable key in the assertion
+  layer)` → `operator declaration (~/.oo/authorized_keys or a CLI path)` → an
+  authority check that can actually fail.
+
+* **Cold start has two spec-level answers already, and the engine uses
+  neither**: constitutionally, ORDER_00's hardcoded genesis-refine list with
+  SPEC_10 §93's `Epoch < 0` exemption; locally, REAL_01 §7.2's operator
+  whitelist. The engine has no epoch model and no `~/.oo` reader. Ledgered.
 * Epoch model; `~%Official.blacklist`; turning `architects` into a real Voter
   set; the global `~%Official` as a discovered object.
 * Storage weight (indentation 3.3×, 77 KB genesis duplication, ~2 KB per
@@ -170,3 +204,25 @@ reported a perfect score. A comparison that cannot fail has not been made.
 4. Adversarial pass, including a re-run of the reds against a v0.2.44 worktree.
 
 Classification and CHANGELOG are the acceptor's step. **Do not touch `nlang-spec`.**
+
+---
+
+## 6. Delivery record (delivery side)
+
+- **Tip**: see commit (recorded after).
+- **A** `root_with_system`: no longer mints `architects` into `~%Official`
+  (module keeps `/sign_refine` only).
+- **B** `Ouroboros::init` / `new_in_memory`: empty registry by default; load only
+  from `.oo/architects.json`. No self-insert of the process key.
+- **C** `RefineInfo.authority_status`: `"verified"` | `"unverified"` (serde
+  optional; not hashed beyond source/target). Set from `Valid` / `Exempt`.
+  Displayed by `oo log` and the refine report.
+- **Authority**: empty-registry membership skip only under `bootstrap_exempt`
+  (crypto still checked); non-empty whitelist without the signer still refuses.
+- **Probe**: only 7 `#[ignore]` removed (R1–R6 + R5b).
+- **Gates**: universe_determinism probe **12/12**; workspace **1487/0/3**;
+  conf **143/143**; genesis **11/11**; release clean of new warnings.
+- **Address movement (expected)**: newly initialized root CAIDs change (破壊性).
+  Value CAIDs / genesis seeds / `CommitMeta` Debug omission (R7) unchanged.
+- **Not touched**: nlang-spec, identity persistence, epoch model, migration of
+  old repos that still carry `architects` in stored roots.

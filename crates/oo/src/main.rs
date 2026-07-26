@@ -301,6 +301,15 @@ fn run_log() -> anyhow::Result<()> {
                 println!("    abandoned {}", a);
             }
         }
+        // universe_determinism: refine authority status lives on RefineInfo
+        // (not CommitMeta — Debug of meta is hashed into the commit CAID).
+        if let Ok(commit) = engine.store.get_commit(&hash) {
+            if let Some(ri) = commit.refine_info {
+                if let Some(ref status) = ri.authority_status {
+                    println!("    refine authority: {}", status);
+                }
+            }
+        }
         if let Some(msg) = meta.message { println!("    {}", msg); }
         let date = std::time::UNIX_EPOCH + std::time::Duration::from_millis(meta.timestamp);
         println!("    Date: {:?}", date);
@@ -446,6 +455,9 @@ fn run_refine(
     match engine.store.get_commit(&hash) {
         Ok(commit) => {
             if let Some(ri) = commit.refine_info {
+                if let Some(ref status) = ri.authority_status {
+                    println!("Refine authority: {}", status);
+                }
                 if !ri.shadow_affected.is_empty() {
                     println!(
                         "Shadow: {} historical commit(s) will be semantically updated:",

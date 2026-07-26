@@ -370,9 +370,8 @@ impl Ouroboros {
         let store = ObjectStore::init(&dir).unwrap();
         let builtins = create_default_builtins();
         let identity = crate::value::Identity::new_random();
-        let local_pk_hex = hex::encode(&identity.public_key);
-        let mut architects = std::collections::HashSet::new();
-        architects.insert(local_pk_hex);
+        // No self-appointment into architect_registry (universe_determinism).
+        // Empty registry → bootstrap_exempt; provision via load_architects only.
         Self {
             store,
             base_dir: None,
@@ -384,7 +383,7 @@ impl Ouroboros {
             identity,
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
-            architect_registry: RwLock::new(architects),
+            architect_registry: RwLock::new(std::collections::HashSet::new()),
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
         }
@@ -394,12 +393,12 @@ impl Ouroboros {
         let store = ObjectStore::init(base_dir)?;
         let builtins = create_default_builtins();
         let identity = crate::value::Identity::new_random();
-        let local_pk_hex = hex::encode(&identity.public_key);
-        let mut architects = std::collections::HashSet::new();
-        architects.insert(local_pk_hex);
-        if let Ok(persisted) = store.load_architects(base_dir) {
-            architects.extend(persisted);
-        }
+        // Assertion layer only: load provisioned whitelist from .oo/architects.json.
+        // Never mint a random local key into the registry (that was a self-signed
+        // authority theatre — SPEC_13 §4.1.2 / ORDER_01 trust root).
+        let architects = store
+            .load_architects(base_dir)
+            .unwrap_or_else(|_| std::collections::HashSet::new());
         let oo = Self {
             store,
             base_dir: Some(base_dir.to_path_buf()),
@@ -1061,10 +1060,12 @@ impl Ouroboros {
         engine_fields.insert("state".to_string(), Value::Combo(ComboVal::new(state_inner, false, IndexMap::new(), EffectTag::Pure, vec![])));
         fields.insert("~%Engine".to_string(), Value::Combo(ComboVal::new(engine_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
-        // ~%Official：建築師白名單
-        let local_pk_hex = hex::encode(&self.identity.public_key);
+        // ~%Official: signing morphisms only. `architects` is NOT minted into
+        // the universe root (universe_determinism / ORDER_01: trust root is a
+        // governance object, not a per-process random self-appointment).
+        // Whitelist lives in the assertion layer (`.oo/architects.json`).
+        // Observing ~%Official.architects → #missing_key is the honest answer.
         let mut official_fields = IndexMap::new();
-        official_fields.insert("architects".to_string(), Value::Atom(AtomKind::Str(local_pk_hex), EffectTag::Pure, None));
         fn official_morph(builtin: &str, effect: EffectTag) -> Value {
             Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
                 ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),

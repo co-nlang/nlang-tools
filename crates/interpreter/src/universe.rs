@@ -842,12 +842,18 @@ impl Universe {
         let architect_reg = engine.architect_registry.read().map_err(|e| anyhow::anyhow!("{:?}", e))?;
         // Epoch judgment: exempt only in genesis state (no HEAD) or before any architect registered
         let bootstrap_exempt = self.head.is_none() || architect_reg.is_empty();
-        match crate::authority::verify_refine_authority(authority.as_ref(), &payload, &architect_reg, bootstrap_exempt) {
-            crate::authority::AuthVerifyResult::Valid | crate::authority::AuthVerifyResult::Exempt => {}
+        let authority_status = match crate::authority::verify_refine_authority(
+            authority.as_ref(),
+            &payload,
+            &architect_reg,
+            bootstrap_exempt,
+        ) {
+            crate::authority::AuthVerifyResult::Valid => Some("verified".to_string()),
+            crate::authority::AuthVerifyResult::Exempt => Some("unverified".to_string()),
             crate::authority::AuthVerifyResult::Invalid(reason) => {
                 return Err(anyhow::anyhow!("authority verification failed: {}", reason));
             }
-        }
+        };
 
         // Step 1c: Shadow scan — identify historical commits that directly reference source CAIDs
         // REAL_03 §6.6: do not silently truncate on corruption (v0.2.43 refine
@@ -974,6 +980,7 @@ impl Universe {
                 target_caids: target_caids.clone(),
                 authority,
                 shadow_affected,
+                authority_status,
             }),
             cache_id: crate::value::default_cache_id(),
         };

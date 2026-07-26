@@ -59,6 +59,27 @@
 // sharpest statement of what was wrong: today, a whitelist that does not
 // contain you does not stop you signing for yourself.
 //
+// That is not a dead end, it is the queue — and the party the engine is
+// missing is the operator. REAL_01 §7.2 `[Core Requirement]` already says the
+// engine loads a public-key whitelist from `~/.oo/authorized_keys`: the HOME
+// directory, issued out of band, with a lifecycle and a revocation list. The
+// engine reads none of it; it reads the workspace file `.oo/architects.json`
+// and otherwise appoints itself. So an empty registry does not mean "no
+// architect exists" — it means nobody has declared one yet, which is what a
+// cold start honestly looks like.
+//
+// The shape is settled precedent: SPEC_08 §6.1.2 ruling P1 — a privilege
+// cannot be self-granted from inside a program; it arrives through a trusted
+// out-of-band channel. Architecthood is P1 one layer down, and the engine's
+// self-appointment is precisely the self-grant P1 forbids.
+//
+// Order of the sequel, so it is not attempted piecemeal:
+//   A (identity out of the root)  →  persistence (stable key, assertion
+//   layer)  →  operator declaration  →  an authority check that can fail.
+// A is persistence's PREREQUISITE, not its rival: persistence instead of A
+// would leave the root differing between repositories, but after A the
+// identity is not in the root at all.
+//
 // ── Anti-vacuity is this file's theme ────────────────────────────────────
 // Every comparison gate first asserts both sides are well-formed and
 // non-empty — a 64-hex digest, a leaf count in the thousands — because this
@@ -236,7 +257,6 @@ fn stored(dir: &Path, expr: &str) -> String {
 
 /// One source, N processes, one universe. SPEC_13 §4.1.2 義務 #1.
 #[test]
-#[ignore]
 fn red_one_source_yields_one_universe_across_processes() {
     let digests: Vec<String> = (0..6).map(|_| root_digest(&repo())).collect();
 
@@ -259,7 +279,6 @@ fn red_one_source_yields_one_universe_across_processes() {
 
 /// Exhaustive: no leaf of the universe root may vary between processes.
 #[test]
-#[ignore]
 fn red_no_leaf_of_the_root_varies_between_processes() {
     let a = root_leaves(&repo());
     let b = root_leaves(&repo());
@@ -289,7 +308,6 @@ fn red_no_leaf_of_the_root_varies_between_processes() {
 
 /// The engine must not mint a local `~%Official.architects` into the universe.
 #[test]
-#[ignore]
 fn red_engine_does_not_mint_a_governance_root() {
     let d = fresh_dir();
 
@@ -318,7 +336,6 @@ fn red_engine_does_not_mint_a_governance_root() {
 
 /// A fresh repository has no architect, so a refine needs no signature.
 #[test]
-#[ignore]
 fn red_fresh_repository_has_no_self_appointed_architect() {
     let d = repo();
     let src = stored(&d, "{ old: 1 }");
@@ -368,7 +385,6 @@ fn repo_with(d: &Path) -> PathBuf {
 /// fails here on the marker assertion — but do not read its baseline failure
 /// as evidence about recording.
 #[test]
-#[ignore]
 fn red_an_unverified_refine_says_so() {
     let d = repo();
     let src = stored(&d, "{ old: 1 }");
@@ -394,7 +410,6 @@ fn red_an_unverified_refine_says_so() {
 /// The sharpest statement of what was wrong: a whitelist that does not
 /// contain you must not let you sign for yourself.
 #[test]
-#[ignore]
 fn red_a_whitelist_without_you_refuses_your_signature() {
     let d = repo();
     let src = stored(&d, "{ old: 1 }");
@@ -423,7 +438,6 @@ fn red_a_whitelist_without_you_refuses_your_signature() {
 /// Federation at the root: the CAID engine B computes for its own universe
 /// must resolve against engine A's store.
 #[test]
-#[ignore]
 fn red_two_engines_resolve_the_same_universe() {
     let a = repo();
     let b = repo();

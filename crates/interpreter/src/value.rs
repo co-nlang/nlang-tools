@@ -1472,6 +1472,13 @@ pub struct RefineInfo {
     pub authority: Option<AuthorityInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shadow_affected: Vec<ContentHash>,
+    /// Whether refine authority was cryptographically verified against a
+    /// non-empty architect registry (`"verified"`) or proceeded under
+    /// bootstrap exemption (`"unverified"`). Recorded so history is not a
+    /// silent lying audit surface (universe_determinism ruling C).
+    /// Not hashed into the commit CAID beyond source/target digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
