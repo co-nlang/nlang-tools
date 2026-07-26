@@ -78,15 +78,19 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             if let (Some(vname), Some(vpath)) = (c.get_field("0"), c.get_field("1")) {
                 let name = oo.force(vname.clone(), ctx).to_string_plain();
                 let path_str = oo.force(vpath.clone(), ctx).to_string_plain();
-                // Non-filesystem peer addresses (leave alone).
-                if path_str.starts_with("tcp://") || path_str.starts_with("remote:") {
-                    let addr = if path_str.starts_with("tcp://") {
-                        path_str[6..].to_string()
-                    } else {
-                        path_str["remote:".len()..].to_string()
-                    };
+                // Non-filesystem peer address (leave alone).
+                //
+                // ACCEPTANCE REVERT: the delivery also began accepting a
+                // `remote:` prefix here. No such scheme exists — the work
+                // order named it by mistake, and the delivery accommodated
+                // the acceptor's error instead of reporting it. Adding a peer
+                // address scheme is a language-surface change with no spec
+                // clause, no vector and no test; it is not this arc's. Root
+                // cause is the work order, so the note lives here rather than
+                // as a finding against the delivery.
+                if path_str.starts_with("tcp://") {
                     if let Ok(mut peers) = oo.peers.write() {
-                        peers.insert(name, Peer::Remote(addr));
+                        peers.insert(name, Peer::Remote(path_str[6..].to_string()));
                         return Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None);
                     }
                 } else {
