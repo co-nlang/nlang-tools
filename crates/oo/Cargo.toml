@@ -1,6 +1,6 @@
 [package]
 name = "oo"
-version = "0.2.49"
+version = "0.2.50"
 edition = "2021"
 
 [lib]
@@ -24,3 +24,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 indexmap = "=2.5.0"
 rustyline = "11.0"
+
+[dev-dependencies]
+# Probe-side only. The advertise_wire probes must be able to mint packets the
+# engine would never mint — a valid signature under the wrong identity, a
+# stale timestamp, a body altered after signing. An adversary that can only
+# use the engine's own client cannot express those.
+ring = "0.17"
+hex = "0.4"

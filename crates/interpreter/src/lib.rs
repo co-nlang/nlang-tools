@@ -274,6 +274,21 @@ pub enum Peer {
     Remote(String), // TCP address
 }
 
+/// An accepted OODP `#advertise` record (wire advertise_wire arc).
+/// Written on verify; **not** consulted by any fetch path in this version
+/// (routing is the discover arc).
+#[derive(Debug, Clone)]
+pub struct PeerAdvert {
+    pub node_id: String,
+    pub public_key_hex: String,
+    pub services: Vec<String>,
+    /// Observed host + claimed listen port (`host:port`).
+    pub addr: String,
+    pub capacity: i64,
+    pub ttl: i64,
+    pub received_at: std::time::SystemTime,
+}
+
 /// Force-memo key (Stage 5): (expr CAID, frame CAID, context CAID | #open).
 /// root_caid removed — invalidation is now per-coordinate (Route B, deps).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -317,6 +332,9 @@ pub struct Ouroboros {
     pub force_memo_rev: RwLock<HashMap<String, HashSet<ForceMemoKey>>>,
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
+    /// Wire peer directory (accepted `#advertise` records). Keyed by `node_id`.
+    /// Not read by fetch/sweep in this version (advertise_wire §3.6).
+    pub peer_adverts: RwLock<HashMap<String, PeerAdvert>>,
     /// Lazy operator identity. `None` until a signature is needed (or
     /// `oo identity`). In-memory engines pre-fill an ephemeral key and never
     /// touch the operator path.
@@ -400,6 +418,7 @@ impl Ouroboros {
             force_memo_rev: RwLock::new(HashMap::new()),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
+            peer_adverts: RwLock::new(HashMap::new()),
             identity_cell: RwLock::new(Some(identity)),
             node_identity_cell: RwLock::new(None),
             identity_persist: false,
@@ -429,6 +448,7 @@ impl Ouroboros {
             force_memo_rev: RwLock::new(HashMap::new()),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
+            peer_adverts: RwLock::new(HashMap::new()),
             identity_cell: RwLock::new(None),
             node_identity_cell: RwLock::new(None),
             identity_persist: true,
@@ -523,6 +543,13 @@ impl Ouroboros {
     /// Wire / DHT node id: CAID of the node public key (REAL_02 §4.1).
     pub fn node_id(&self) -> Result<ContentHash> {
         Ok(self.node_identity()?.node_id_caid())
+    }
+
+    /// Record an accepted OODP advertisement (engine-local; not the universe).
+    pub fn record_peer_advert(&self, advert: PeerAdvert) {
+        if let Ok(mut dir) = self.peer_adverts.write() {
+            dir.insert(advert.node_id.clone(), advert);
+        }
     }
 
     /// Record a REAL_03 §6.6 integrity incident (never silently drop a verdict).
