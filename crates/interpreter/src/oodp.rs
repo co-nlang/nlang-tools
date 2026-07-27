@@ -396,6 +396,58 @@ fn extract_ad_expr(line: &str) -> Result<Expr, String> {
     Err("missing %ad".into())
 }
 
+/// Nesting cap for an advertisement body. The body is a flat record whose only
+/// nested member is `services`, so 8 is generous. Bounded on purpose: an
+/// unbounded recursive walk over remote input is itself a way to fell the node.
+const MAX_AD_DEPTH: usize = 8;
+
+/// Is this expression literal **data**? Allow-list, not deny-list: everything
+/// unlisted is refused, so a future AST node is refused until someone decides
+/// it belongs on the wire.
+///
+/// ACCEPTOR REPAIR (advertise_wire) — see the call site in `serve_advertise`.
+fn ensure_literal_body(expr: &Expr, depth: usize) -> Result<(), String> {
+    if depth > MAX_AD_DEPTH {
+        return Err(format!("advertisement nested deeper than {MAX_AD_DEPTH}"));
+    }
+    match &expr.kind {
+        ExprKind::Atom(a) => match a {
+            AstAtom::Int(_)
+            | AstAtom::Float(_)
+            | AstAtom::Str(_)
+            | AstAtom::MultilineStr(_)
+            | AstAtom::Tag(_)
+            | AstAtom::Bytes(_)
+            | AstAtom::Top
+            | AstAtom::Bottom
+            | AstAtom::Unit => Ok(()),
+            // Interpolation, URIs, regexes, times and path literals all reach
+            // back into the engine or the host on evaluation.
+            other => Err(format!("advertisement holds a non-data atom: {other:?}")),
+        },
+        ExprKind::List(items) | ExprKind::Tuple(items) => items
+            .iter()
+            .try_for_each(|e| ensure_literal_body(e, depth + 1)),
+        ExprKind::Combo {
+            fields, relations, ..
+        } => {
+            if !relations.is_empty() {
+                return Err("advertisement carries order relations, not data".into());
+            }
+            for f in fields {
+                if field_key_name(&f.key).is_none() {
+                    return Err("advertisement has a computed field key".into());
+                }
+                ensure_literal_body(&f.value, depth + 1)?;
+            }
+            Ok(())
+        }
+        // Apply / Pipe / Morphism / Path / arithmetic / Ternary / Lens / Spread
+        // / Structural / Context / AnonSet / Interpolated / Range …
+        _ => Err("advertisement body must be literal data, not an expression".into()),
+    }
+}
+
 fn field_as_str(cv: &ComboVal, key: &str) -> Option<String> {
     cv.get_field(key).map(|v| v.to_string_plain())
 }
@@ -449,7 +501,28 @@ fn serve_advertise(
         Ok(e) => e,
         Err(e) => return rejected(source_id, "malformed", from, &e),
     };
-    // Scalar / non-combo: eval then check
+    // ACCEPTOR REPAIR (advertise_wire). An advertisement body is DATA, and the
+    // engine must not run the interpreter on it. As delivered, the next line
+    // was `eval_expr_value(engine, &ad_expr)` — the FIRST thing done with an
+    // unauthenticated packet, before any of §3.4's five checks. Measured on the
+    // delivered build:
+    //
+    //   {{ %op: #advertise, %from: "x",
+    //      %ad: ~%Io./write_file("/tmp/pwned.txt", "owned…") }}
+    //   → {"%status":"#rejected","%reason":"#malformed"}   and the file exists
+    //
+    // No signature, no key, no identity: an arbitrary effect on any node the
+    // attacker can reach. The verdict was right and the effect had already
+    // happened. That inverts the arc's own thesis — this arc exists so the wire
+    // authenticates its speaker, and it ran the speaker's payload first.
+    //
+    // The gate is structural and comes before evaluation: only literal atoms,
+    // lists/tuples and combos of literals are an advertisement. Evaluating a
+    // *validated literal* is inert, so the CAID keeps being computed exactly as
+    // both sides already sign it (§3.2) — this repair changes no wire bytes.
+    if let Err(why) = ensure_literal_body(&ad_expr, 0) {
+        return rejected(source_id, "malformed", from, &why);
+    }
     let ad_val = eval_expr_value(engine, &ad_expr);
     let Value::Combo(mut cv) = ad_val else {
         return rejected(source_id, "malformed", from, "%ad is not a combo");
