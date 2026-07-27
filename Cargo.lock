@@ -636,9 +636,11 @@ version = "0.2.49"
 dependencies = [
  "anyhow",
  "clap",
+ "hex",
  "indexmap",
  "nlang-interpreter",
  "nlang-parser",
+ "ring",
  "rustyline",
  "serde",
  "serde_json",
