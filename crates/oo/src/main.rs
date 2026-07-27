@@ -131,6 +131,8 @@ enum NodeCmd {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
     },
+    /// Print this workspace's node id (CAID of the node public key) and key path.
+    Id,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -163,6 +165,7 @@ fn main_on_large_stack() -> anyhow::Result<()> {
         Commands::Fmt { file, write } => run_fmt(file, write),
         Commands::Node { action } => match action {
             NodeCmd::Serve { port } => run_serve(port),
+            NodeCmd::Id => run_node_id(),
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
@@ -232,8 +235,10 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
     let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))?;
     let current_dir = std::env::current_dir()?;
     let engine = Ouroboros::init(&current_dir)?;
-    let source_id = format!("node:{}", port);
-    println!("n/ OODP node serving at port {}", port);
+    // %source = node id (CAID of the node public key), not the listen port.
+    // Two ports on one workspace share one id; two workspaces do not.
+    let source_id = engine.node_id()?.to_string();
+    println!("n/ OODP node serving at port {} (node {})", port, source_id);
 
     for stream in listener.incoming() {
         if let Ok(mut stream) = stream {
@@ -251,6 +256,19 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn run_node_id() -> anyhow::Result<()> {
+    // Same shape as `oo identity`: id line, then path. Mint/load on demand.
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    let id = engine.node_id()?;
+    let path = nlang_interpreter::Identity::node_key_path(&cur)?;
+    // Force the key onto disk so the path we print is the key that exists.
+    let _ = engine.node_identity()?;
+    println!("{}", id);
+    println!("path: {}", path.display());
     Ok(())
 }
 
@@ -780,6 +798,7 @@ fn print_integrity_incidents(engine: &Ouroboros) {
 
 fn run_identity() -> anyhow::Result<()> {
     // Mint/load the operator identity (lazy path). Prints public key + path.
+    // Distinct from `oo node id` (operator authorises; node answers on the wire).
     let path = nlang_interpreter::Identity::resolve_path()?;
     let id = nlang_interpreter::Identity::load_or_mint(&path)?;
     println!("{}", id.public_key_hex());

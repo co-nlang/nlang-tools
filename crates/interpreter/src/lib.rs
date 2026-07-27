@@ -321,6 +321,10 @@ pub struct Ouroboros {
     /// `oo identity`). In-memory engines pre-fill an ephemeral key and never
     /// touch the operator path.
     identity_cell: RwLock<Option<crate::value::Identity>>,
+    /// Lazy **node** identity (keypair for OODP `%from` / `%source`). Independent
+    /// of the operator key (who authorises vs which machine answered). Minted
+    /// only on first network use / `oo node id` — never on plain run/evolve/commit.
+    node_identity_cell: RwLock<Option<crate::value::Identity>>,
     /// When true, `identity()` loads/mints at `OO_IDENTITY` or `~/.oo/identity`.
     /// When false (`new_in_memory`), only the ephemeral key is used.
     identity_persist: bool,
@@ -397,6 +401,7 @@ impl Ouroboros {
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
             identity_cell: RwLock::new(Some(identity)),
+            node_identity_cell: RwLock::new(None),
             identity_persist: false,
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
@@ -425,6 +430,7 @@ impl Ouroboros {
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
             identity_cell: RwLock::new(None),
+            node_identity_cell: RwLock::new(None),
             identity_persist: true,
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
@@ -484,6 +490,39 @@ impl Ouroboros {
             *w = Some(id.clone());
         }
         Ok(id)
+    }
+
+    /// Node keypair for this workspace. Lazy: first network use / `oo node id`.
+    ///
+    /// Independent of [`Self::identity`] (operator key). Path:
+    /// `{OO_NODE_HOME|~/.oo}/nodes/<digest of workspace absolute path>`.
+    pub fn node_identity(&self) -> Result<crate::value::Identity> {
+        {
+            let guard = self
+                .node_identity_cell
+                .read()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if let Some(ref id) = *guard {
+                return Ok(id.clone());
+            }
+        }
+        let id = if !self.identity_persist || self.base_dir.is_none() {
+            // In-memory / non-persisting engines: ephemeral node key, never on disk.
+            crate::value::Identity::new_random()
+        } else {
+            let ws = self.base_dir.as_ref().unwrap();
+            let path = crate::value::Identity::node_key_path(ws)?;
+            crate::value::Identity::load_or_mint(&path)?
+        };
+        if let Ok(mut w) = self.node_identity_cell.write() {
+            *w = Some(id.clone());
+        }
+        Ok(id)
+    }
+
+    /// Wire / DHT node id: CAID of the node public key (REAL_02 §4.1).
+    pub fn node_id(&self) -> Result<ContentHash> {
+        Ok(self.node_identity()?.node_id_caid())
     }
 
     /// Record a REAL_03 §6.6 integrity incident (never silently drop a verdict).

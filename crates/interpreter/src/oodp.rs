@@ -6,6 +6,10 @@
 //!
 //! A peer's `%status` is a **claim**, not a verification. Clients must still
 //! re-address `%result` against the requested CAID (REAL_03 §6.6).
+//!
+//! `%from` on requests is likewise a **claim, not authentication** — unsigned,
+//! any peer can invent any value. Serving, verification and every outcome must
+//! be identical whatever `%from` says (node_identity arc D3 / P1).
 
 use crate::storage::{StoreReadError, value_address_matches};
 use crate::value::{ContentHash, Value, BottomCause};
@@ -43,6 +47,9 @@ impl OodpOp {
 pub struct OodpRequest {
     pub op: OodpOp,
     pub hash: Option<ContentHash>,
+    /// Claimed sender node id. **Never used for authorization** — parsed only
+    /// for observability; see module docs.
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,8 +95,10 @@ pub fn encode_response(
     serde_json::to_string(&JsonValue::Object(map)).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// Parse a request line: n/ cocoon `{{ %op, %hash }}`, JSON envelope, or
-/// legacy bare CAID (answered as conflict by the server — clean close).
+/// Parse a request line: n/ cocoon `{{ %op, %hash, %from? }}` or JSON envelope.
+///
+/// **D5 (node_identity):** the transition-period bare-CAID form is retired.
+/// A bare CAID is a malformed request → `#conflict`, not a served fetch.
 pub fn parse_request(line: &str) -> Result<OodpRequest, String> {
     let line = line.trim();
     if line.is_empty() {
@@ -114,12 +123,11 @@ pub fn parse_request(line: &str) -> Result<OodpRequest, String> {
         }
     }
 
-    // Legacy bare CAID
-    if let Ok(h) = ContentHash::parse(line) {
-        return Ok(OodpRequest {
-            op: OodpOp::Fetch,
-            hash: Some(h),
-        });
+    // Retired: bare CAID (v0.2.48 transition surface). Do not serve.
+    if ContentHash::parse(line).is_ok() {
+        return Err(
+            "legacy bare-CAID request retired; use {{ %op: #fetch, %hash: \"…\" }}".into(),
+        );
     }
 
     Err(format!("unrecognized OODP request: {line}"))
@@ -137,7 +145,14 @@ fn parse_json_request(obj: &Map<String, JsonValue>) -> Result<OodpRequest, Strin
         .or_else(|| obj.get("hash"))
         .and_then(|v| v.as_str())
         .and_then(|s| ContentHash::parse(s).ok());
-    Ok(OodpRequest { op, hash })
+    // %from is a claim — recorded, never consulted for outcomes.
+    let from = obj
+        .get("%from")
+        .or_else(|| obj.get("from"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let _ = from.as_ref(); // silence until logging wants it
+    Ok(OodpRequest { op, hash, from })
 }
 
 fn parse_op_tag(s: &str) -> OodpOp {
@@ -180,6 +195,7 @@ fn parse_nlang_request(expr: &nlang_parser::ast::Expr) -> Result<OodpRequest, St
     };
     let mut op = None;
     let mut hash = None;
+    let mut from = None;
     for f in fields {
         let Some(name) = field_key_name(&f.key) else {
             continue;
@@ -197,14 +213,24 @@ fn parse_nlang_request(expr: &nlang_parser::ast::Expr) -> Result<OodpRequest, St
                     hash = ContentHash::parse(s).ok();
                 }
             }
+            "%from" | "from" => {
+                // Claim only — never branch on this value.
+                if let ExprKind::Atom(AstAtom::Str(s)) = &f.value.kind {
+                    from = Some(s.clone());
+                }
+            }
             _ => {}
         }
     }
     let op = op.ok_or_else(|| "missing %op".to_string())?;
-    Ok(OodpRequest { op, hash })
+    let _ = from.as_ref();
+    Ok(OodpRequest { op, hash, from })
 }
 
 /// Serve one OODP request against a local store. Returns wire JSON body.
+///
+/// `source_id` must be this node's id (CAID of the node public key), not a port.
+/// Request `%from` is ignored for all outcomes (claim, not auth).
 pub fn serve_request(engine: &Ouroboros, line: &str, source_id: &str) -> (String, String /* log line */) {
     let req = match parse_request(line) {
         Ok(r) => r,
@@ -213,6 +239,8 @@ pub fn serve_request(engine: &Ouroboros, line: &str, source_id: &str) -> (String
             return (body, format!("OODP bad request: {e}"));
         }
     };
+    // Deliberately do not consult req.from for any branch below.
+    let _ = &req.from;
 
     match req.op {
         OodpOp::Fetch => {
@@ -294,9 +322,16 @@ pub fn remote_fetch_oodp(
         .set_write_timeout(Some(OODP_READ_TIMEOUT))
         .map_err(|_| BottomCause::Conflict)?;
 
+    // Mint/load node identity on first network use (Q2). `%from` is always
+    // present rather than sometimes empty. It is a claim on the wire — peers
+    // must not trust it (and we never trust theirs).
+    let from = match oo.node_id() {
+        Ok(nid) => nid.to_string(),
+        Err(_) => return Err(BottomCause::Conflict),
+    };
     let req = format!(
-        "{{{{ %op: #fetch, %hash: \"{}\" }}}}\n",
-        hash
+        "{{{{ %op: #fetch, %hash: \"{}\", %from: \"{}\" }}}}\n",
+        hash, from
     );
     stream
         .write_all(req.as_bytes())

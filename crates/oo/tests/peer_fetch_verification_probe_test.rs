@@ -118,7 +118,12 @@ fn oo_raw(dir: &Path, args: &[&str]) -> (String, String) {
     for a in args {
         cmd.arg(a);
     }
-    let out = cmd.current_dir(dir).output().unwrap();
+    let out = cmd
+        .current_dir(dir)
+        .env("OO_IDENTITY", dir.join("identity-for-tests"))
+        .env("OO_NODE_HOME", dir.join("node-home-for-tests"))
+        .output()
+        .unwrap();
     (
         String::from_utf8_lossy(&out.stdout).trim().to_string(),
         String::from_utf8_lossy(&out.stderr).trim().to_string(),
@@ -272,13 +277,17 @@ fn free_port() -> u16 {
     l.local_addr().unwrap().port()
 }
 
-/// Runs `oo node serve` against `dir`, sends one raw CAID line, returns
-/// (response body, the server's own console output).
+/// Runs `oo node serve` against `dir`, sends one OODP `#fetch` envelope,
+/// returns (response body, the server's own console output).
 fn ndp_ask(dir: &Path, caid: &str) -> (String, String) {
     let port = free_port();
+    // Isolate node-key mint from the developer's real ~/.oo.
+    let node_home = dir.join("node-home-for-tests");
     let mut child = Command::new(env!("CARGO_BIN_EXE_oo"))
         .args(["node", "serve", "--port", &port.to_string()])
         .current_dir(dir)
+        .env("OO_NODE_HOME", &node_home)
+        .env("OO_IDENTITY", dir.join("identity-for-tests"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -293,8 +302,9 @@ fn ndp_ask(dir: &Path, caid: &str) -> (String, String) {
         }
     }
     let mut stream = stream.expect("oo node serve never came up");
-    stream.write_all(caid.as_bytes()).unwrap();
-    stream.write_all(b"\n").unwrap();
+    // Bare CAID retired (node_identity D5); use the envelope form.
+    let req = format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n");
+    stream.write_all(req.as_bytes()).unwrap();
     stream.flush().unwrap();
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).ok();
