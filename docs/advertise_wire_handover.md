@@ -288,6 +288,28 @@ the standing rule exists because the root cause was mine both times.)
 
 ---
 
+## 7b. Delivery record (delivery side)
+
+- **D1** `#advertise` served: parse `%ad`, §3.4 ladder, `#success`.
+- **D2** `%status: #rejected` + `%reason` (`#malformed` / `#identity_mismatch` /
+  `#bad_signature` / `#stale`); reason only when rejected.
+- **D3** Sign: `payload = "oodp-advert:v1:" ++ identify(body)`; body CAID via
+  `~%Discovery./identify` (not bare `content_hash` — morph path differs).
+- **D4** `peer_adverts` directory (engine-local); log
+  `OODP Advert: … addr=<host>:<port> …` (host observed, port claimed).
+- **D5** `oo node advertise --to host:port [--service CAID]… [--listen-port N]`.
+- **D6** Probe: only nine `#[ignore]` removed → **19/19**.
+- **Spec / CHANGELOG**: not edited (acceptor).
+- **Root digest** (fresh workspace, `v: { hello: "world" }`, this binary):
+  `2e50005d5341bdf244c1ffc02681e98f0304f6bbd9c7c10e727d148c78dae301`
+  (two workspaces equal; no language surface added).
+- **Numbers**: advertise_wire **19/19** · oodp **13/13** · peer_fetch **12/12**
+  · node_identity **12/12** · workspace **1563/0/3** · conf **143/143** ·
+  genesis **11/11**.
+- **Not wired**: peer directory → fetch; `#discover`; GPP; language surface.
+
+---
+
 ## 8. Ledger items observed while measuring — not this arc
 
 * `~%Discovery./advertise` followed by `~%Discovery./find` on the same key

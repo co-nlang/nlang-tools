@@ -133,6 +133,18 @@ enum NodeCmd {
     },
     /// Print this workspace's node id (CAID of the node public key) and key path.
     Id,
+    /// Send a signed OODP `#advertise` to a peer and print `%status` / `%reason`.
+    Advertise {
+        /// Peer address `host:port`
+        #[arg(long = "to", value_name = "HOST:PORT")]
+        to: String,
+        /// Service CAID to list (repeatable; empty list is a liveness announcement)
+        #[arg(long = "service", value_name = "CAID", action = clap::ArgAction::Append)]
+        services: Vec<String>,
+        /// Claimed listening port (signed); default matches `oo node serve`
+        #[arg(long = "listen-port", default_value_t = 8080)]
+        listen_port: u16,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -166,6 +178,11 @@ fn main_on_large_stack() -> anyhow::Result<()> {
         Commands::Node { action } => match action {
             NodeCmd::Serve { port } => run_serve(port),
             NodeCmd::Id => run_node_id(),
+            NodeCmd::Advertise {
+                to,
+                services,
+                listen_port,
+            } => run_node_advertise(to, services, listen_port),
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
@@ -242,13 +259,19 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
 
     for stream in listener.incoming() {
         if let Ok(mut stream) = stream {
+            // Observed host for #advertise (Q1): connection peer, not the claim.
+            let peer_host = stream
+                .peer_addr()
+                .map(|a| a.ip().to_string())
+                .unwrap_or_else(|_| "0.0.0.0".into());
             if let Ok(stream_clone) = stream.try_clone() {
                 let mut reader = BufReader::new(stream_clone);
                 let mut request = String::new();
                 if reader.read_line(&mut request).is_ok() {
                     let line = request.trim();
                     println!("OODP Request: {}", line);
-                    let (body, log) = oodp::serve_request(&engine, line, &source_id);
+                    let (body, log) =
+                        oodp::serve_request(&engine, line, &source_id, &peer_host);
                     let _ = stream.write_all(body.as_bytes());
                     let _ = stream.flush();
                     println!("{}", log);
@@ -269,6 +292,55 @@ fn run_node_id() -> anyhow::Result<()> {
     let _ = engine.node_identity()?;
     println!("{}", id);
     println!("path: {}", path.display());
+    Ok(())
+}
+
+fn run_node_advertise(
+    to: String,
+    services: Vec<String>,
+    listen_port: u16,
+) -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+    use nlang_interpreter::oodp;
+
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    let identity = engine.node_identity()?;
+    let (_ad, _nid, req) = oodp::signed_advert_nlang(
+        &identity,
+        &services,
+        listen_port,
+        10,
+        15,
+        &engine,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let addr: std::net::SocketAddr = to
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--to must be host:port, got {to}"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
+    stream.set_read_timeout(Some(oodp::OODP_READ_TIMEOUT))?;
+    stream.set_write_timeout(Some(oodp::OODP_READ_TIMEOUT))?;
+    stream.write_all(req.as_bytes())?;
+    stream.flush()?;
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).ok();
+    let text = String::from_utf8_lossy(&buf);
+    // Print status (+ reason when rejected) for the operator.
+    if let Ok(j) = serde_json::from_str::<serde_json::Value>(text.trim()) {
+        if let Some(s) = j.get("%status").and_then(|v| v.as_str()) {
+            print!("{s}");
+            if let Some(r) = j.get("%reason").and_then(|v| v.as_str()) {
+                print!(" {r}");
+            }
+            println!();
+            return Ok(());
+        }
+    }
+    println!("{}", text.trim());
     Ok(())
 }
 

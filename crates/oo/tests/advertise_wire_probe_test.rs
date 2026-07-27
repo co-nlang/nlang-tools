@@ -450,7 +450,6 @@ fn pair(tag: &str) -> Pair {
 /// Baseline: `#advertise` answers `#not_implemented` (REAL_02 §3.2 requires an
 /// explicit status, and v0.2.48 gave it one, but never an implementation).
 #[test]
-#[ignore]
 fn r1_valid_advertisement_accepted() {
     let p = pair("r1");
     let node = serve(&p.a);
@@ -474,7 +473,6 @@ fn r1_valid_advertisement_accepted() {
 /// Pairwise: the SAME advertisement unaltered must be `#success`, so the gate
 /// measures the alteration and not some unrelated refusal.
 #[test]
-#[ignore]
 fn r2_tampered_body_is_bad_signature() {
     let p = pair("r2");
     let node = serve(&p.a);
@@ -506,7 +504,6 @@ fn r2_tampered_body_is_bad_signature() {
 /// engine that only checks "does the signature verify against the key in the
 /// packet" passes every forgery, because the forger supplies both.
 #[test]
-#[ignore]
 fn r3_wrong_identity_is_not_bad_signature() {
     let p = pair("r3");
     let node = serve(&p.a);
@@ -530,7 +527,6 @@ fn r3_wrong_identity_is_not_bad_signature() {
 
 /// R4 — a stale timestamp is `#stale`, and freshness is the only difference.
 #[test]
-#[ignore]
 fn r4_stale_timestamp_pairwise() {
     let p = pair("r4");
     let node = serve(&p.a);
@@ -562,7 +558,6 @@ fn r4_stale_timestamp_pairwise() {
 /// R5 — a malformed advertisement is `#malformed`, distinguishable from the
 /// three substantive refusals.
 #[test]
-#[ignore]
 fn r5_malformed_is_its_own_reason() {
     let p = pair("r5");
     let node = serve(&p.a);
@@ -605,7 +600,6 @@ fn r5_malformed_is_its_own_reason() {
 /// still refused. Remembering the key from earlier, deriving it, or fetching it
 /// would each turn `node_id` back into an unverifiable claim.
 #[test]
-#[ignore]
 fn r6_no_fallback_route_to_the_key() {
     let p = pair("r6");
     let node = serve(&p.a);
@@ -642,7 +636,6 @@ fn r6_no_fallback_route_to_the_key() {
 /// (b) is what makes (a) mean anything: an engine that recorded the peer's
 /// source address would also "contain the address" for most of a test run.
 #[test]
-#[ignore]
 fn r7_host_observed_port_claimed() {
     let p = pair("r7");
     let node = serve(&p.a);
@@ -692,7 +685,6 @@ fn r7_host_observed_port_claimed() {
 /// The claim costs the liar a wasted round trip later, when `#fetch` returns a
 /// self-authenticating object or does not.
 #[test]
-#[ignore]
 fn r8_services_is_a_claim_not_a_fact() {
     let p = pair("r8");
     let node = serve(&p.a);
@@ -722,7 +714,6 @@ fn r8_services_is_a_claim_not_a_fact() {
 /// says two different things about its sender must not be resolved by the
 /// receiver silently picking one.
 #[test]
-#[ignore]
 fn r9_envelope_and_payload_must_agree() {
     let p = pair("r9");
     let node = serve(&p.a);
