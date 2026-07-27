@@ -155,9 +155,30 @@ answers `#not_found` to everything passes a one-sided test.
 
 ## 5. Delivery record (delivery side)
 
-Files touched, the numbers, anything refused and why. If a probe looks wrong,
-**say so instead of accommodating it** — that has happened twice and both times
-the probe was the defect.
+- **D1** `crates/interpreter/src/oodp.rs`: request parse (n/ cocoon + JSON +
+  legacy bare CAID), `encode_response` with literal `%status`/`%result`/
+  `%source`/`%hops` keys, `serve_request`, `remote_fetch_oodp` (connect 5s,
+  read **10s** → `BottomCause::Timeout`).
+- **D2** Named-peer `disc.fetch` surfaces the four-way discriminator
+  (`MissingKey` / `CaidMismatch` / `Timeout` / value) instead of collapsing
+  transport/absence to `#conflict`. Peer `%status` is never trusted — address
+  re-verify always.
+- **D3** CLI: `oo node serve --port` (noun under REAL_01 §1.2); top-level
+  `oo serve` removed (R5 pair).
+- **D4** REAL_02 §3.2 rewritten: role not `serve-discovery` command; `%from`
+  deferred; silence forbidden; four-way table; claim≠verify.
+- **Probe**: only five `#[ignore]` removed on `oodp_packet_format_probe_test`.
+  `peer_fetch_verification` harness updated for OODP request lines +
+  `node serve` + non-zero absence/conflict envelopes (prior NDP 0-byte pins).
+- **Parse note**: combo keys `%op`/`%hash` parse as `FieldKey::Path`, not
+  Named/Meta — handled explicitly.
+- **Numbers**: oodp **12/12** · peer_fetch **12/12** · workspace
+  **1529/0/3** · conf **143/143** · genesis **11/11**.
+- **Classification**: **破壞性 #6** (Layer 1 協定). Value / root / commit
+  CAIDs unmoved (P3/P4). Same calendar day as #4/#5 → ORDER_00 window start
+  unchanged.
+- **Out of scope (as ordered)**: wire `#discover`/`#advertise`, node identity,
+  `%from`, REAL_01 control surface.
 
 ## 6. A note on the clock
 

@@ -300,7 +300,6 @@ fn corrupt_object(dir: &Path, caid: &str) {
 /// the four results are *pairwise* different, and that none of them is the
 /// harness having to kill the engine.
 #[test]
-#[ignore = "RED GATE — absence and corruption are both 0 bytes (client: ⊥ #conflict), and a silent peer hangs the engine"]
 fn red_four_peer_states_are_four_answers() {
     let holder = fresh_dir("r1-holder");
     let good = store(&holder, "{ pkg: \"hello\" }");
@@ -352,7 +351,6 @@ fn red_four_peer_states_are_four_answers() {
 
 /// R2 — the node accepts the specified request envelope.
 #[test]
-#[ignore = "RED GATE — the node reads a bare CAID line; an envelope is just a CAID it does not have"]
 fn red_node_accepts_the_request_envelope() {
     let holder = fresh_dir("r2");
     let caid = store(&holder, "{ pkg: \"enveloped\" }");
@@ -379,7 +377,6 @@ fn red_node_accepts_the_request_envelope() {
 /// must be able to tell "this node does not do discovery" from "this node
 /// ignored me"; those are the same 0 bytes today.
 #[test]
-#[ignore = "RED GATE — an unserved op is answered with silence, like everything else"]
 fn red_an_unserved_op_gets_an_answer() {
     let holder = fresh_dir("r3");
     let caid = store(&holder, "{ pkg: \"x\" }");
@@ -410,7 +407,6 @@ fn red_an_unserved_op_gets_an_answer() {
 /// in a design constraint (that old-protocol requests get an envelope back
 /// rather than a clean close) that the work order deliberately leaves open.
 #[test]
-#[ignore = "RED GATE — a successful fetch returns a bare value with no status, source or hops"]
 fn red_node_emits_the_response_envelope() {
     let holder = fresh_dir("r4");
     let caid = store(&holder, "{ pkg: \"enveloped\" }");
@@ -445,7 +441,6 @@ fn red_node_emits_the_response_envelope() {
 /// spelling. PAIRED: the old spelling must be gone, or the rename has not
 /// happened — it has only been aliased.
 #[test]
-#[ignore = "RED GATE — the command is `oo serve`; `oo node` does not exist"]
 fn red_the_node_command_is_oo_node_serve() {
     let d = fresh_dir("r5");
     let port = free_port();
