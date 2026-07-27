@@ -22,6 +22,7 @@ pub mod genesis;
 pub mod ladd;
 pub mod oml;
 pub mod authority;
+pub mod oodp;
 pub use crate::value::{Value, ComboVal, EffectTag, Privilege, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
 pub use crate::storage::{ObjectStore, StoreReadError, value_address_matches};
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
@@ -2353,46 +2354,16 @@ impl Ouroboros {
         res
     }
 
-    /// Fetch a value from a remote peer and verify its address (REAL_03 §6.6).
+    /// Fetch a value from a remote peer via OODP (REAL_02 §3.2) and re-verify
+    /// its address (REAL_03 §6.6). Peer `%status` is a claim, never trust.
     ///
-    /// - `Ok(val)` — decoded and address matches the requested CAID
-    /// - `Err(CaidMismatch)` — peer returned bytes that do not authenticate
-    ///   (mismatch or undecodable); incident recorded
-    /// - `Err(Conflict)` — connection failure or empty response (absence)
+    /// - `Ok(val)` — `#success` and address matches the requested CAID
+    /// - `Err(MissingKey)` — peer `#not_found` (absence, not conflict)
+    /// - `Err(CaidMismatch)` — peer `#conflict`, bad envelope, or address fail
+    /// - `Err(Timeout)` — read/connect deadline (distinct from all three)
+    /// - `Err(Conflict)` — connection refused / empty body / other transport
     pub fn remote_fetch(&self, addr: &str, hash: &ContentHash) -> Result<Value, BottomCause> {
-        use std::io::{Read, Write};
-        use std::net::TcpStream;
-        use std::time::Duration;
-
-        let mut stream = TcpStream::connect_timeout(
-            &addr.parse().map_err(|_| BottomCause::Conflict)?,
-            Duration::from_secs(5),
-        )
-        .map_err(|_| BottomCause::Conflict)?;
-        let _ = stream.write_all(hash.to_string().as_bytes());
-        let _ = stream.write_all(b"\n");
-        let _ = stream.flush();
-
-        let mut buffer = Vec::new();
-        let _ = stream.read_to_end(&mut buffer);
-        if buffer.is_empty() {
-            // Peer sent nothing — absence, not a lie.
-            return Err(BottomCause::Conflict);
-        }
-        let source = format!("tcp://{addr}");
-        let val: Value = match serde_json::from_slice(&buffer) {
-            Ok(v) => v,
-            Err(_) => {
-                self.record_integrity(hash, &source, IntegrityKind::Undecodable);
-                return Err(BottomCause::CaidMismatch);
-            }
-        };
-        let recomputed = val.content_hash();
-        if !crate::storage::value_address_matches(hash, &recomputed) {
-            self.record_integrity(hash, &source, IntegrityKind::Mismatch);
-            return Err(BottomCause::CaidMismatch);
-        }
-        Ok(val)
+        crate::oodp::remote_fetch_oodp(self, addr, hash)
     }
 
     /// History newest-first: (hash, meta, kind). Kind is required so privileged

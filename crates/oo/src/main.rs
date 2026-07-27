@@ -68,7 +68,11 @@ enum Commands {
         message: Option<String>,
     },
     Fmt { file: PathBuf, #[arg(short, long)] write: bool },
-    Serve { #[arg(short, long, default_value_t = 8080)] port: u16 },
+    /// Universe node (REAL_01 §1.2 宇宙節點) — serve / later id, discover.
+    Node {
+        #[command(subcommand)]
+        action: NodeCmd,
+    },
     /// Evaluate a nlang expression inline
     Eval {
         /// nlang expression to evaluate (wrap in quotes for shell safety)
@@ -120,6 +124,15 @@ enum Commands {
     },
 }
 
+#[derive(Subcommand)]
+enum NodeCmd {
+    /// Serve OODP on TCP (REAL_02 §3.2). Request/response carry `%status`.
+    Serve {
+        #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     // Eval recursion (morphism apply / left-deep math) can exceed the default
     // main-thread stack before the engine depth horizon engages. Interpreter
@@ -148,7 +161,9 @@ fn main_on_large_stack() -> anyhow::Result<()> {
         } => run_one_shot(files, observe, format, privileged, grants),
         Commands::Evolve { files, pin, grants } => run_evolve(files, pin, grants),
         Commands::Fmt { file, write } => run_fmt(file, write),
-        Commands::Serve { port } => run_serve(port),
+        Commands::Node { action } => match action {
+            NodeCmd::Serve { port } => run_serve(port),
+        },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
         Commands::Commit { message, grants, privileged } => {
@@ -213,10 +228,12 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
 
 fn run_serve(port: u16) -> anyhow::Result<()> {
     use std::io::{BufRead, BufReader};
+    use nlang_interpreter::oodp;
     let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))?;
     let current_dir = std::env::current_dir()?;
     let engine = Ouroboros::init(&current_dir)?;
-    println!("n/ Raw Mover serving truth at port {}", port);
+    let source_id = format!("node:{}", port);
+    println!("n/ OODP node serving at port {}", port);
 
     for stream in listener.incoming() {
         if let Ok(mut stream) = stream {
@@ -224,47 +241,12 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
                 let mut reader = BufReader::new(stream_clone);
                 let mut request = String::new();
                 if reader.read_line(&mut request).is_ok() {
-                    let caid_str = request.trim();
-                    println!("NDP Request for CAID: {}", caid_str);
-                    if let Ok(caid) = ContentHash::parse(caid_str) {
-                        match engine.store.get_value(&caid) {
-                            Ok(val) => {
-                                if let Ok(json) = serde_json::to_string(&val) {
-                                    let _ = stream.write_all(json.as_bytes());
-                                    let _ = stream.flush();
-                                    println!("NDP Served: {}", caid_str);
-                                }
-                            }
-                            Err(e) => {
-                                use nlang_interpreter::storage::StoreReadError;
-                                match e.downcast_ref::<StoreReadError>() {
-                                    Some(StoreReadError::NotFound { .. }) | None => {
-                                        println!("NDP Miss: {}", caid_str);
-                                    }
-                                    Some(StoreReadError::CaidMismatch {
-                                        requested,
-                                        recomputed,
-                                    }) => {
-                                        // Wire stays 0 bytes (REAL_02 §3.2 arc);
-                                        // console must name corruption (REAL_03 §6.6 條款三).
-                                        println!(
-                                            "NDP integrity #caid_mismatch: {} (recomputed {})",
-                                            requested, recomputed
-                                        );
-                                    }
-                                    Some(StoreReadError::ObjectUndecodable {
-                                        requested,
-                                        detail,
-                                    }) => {
-                                        println!(
-                                            "NDP integrity #object_undecodable: {} ({})",
-                                            requested, detail
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    let line = request.trim();
+                    println!("OODP Request: {}", line);
+                    let (body, log) = oodp::serve_request(&engine, line, &source_id);
+                    let _ = stream.write_all(body.as_bytes());
+                    let _ = stream.flush();
+                    println!("{}", log);
                 }
             }
         }

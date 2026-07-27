@@ -207,8 +207,25 @@ impl FakePeer {
     }
 }
 
+/// Pull a CAID out of a bare line or an OODP request envelope.
+fn caid_from_request(req: &str) -> String {
+    let t = req.trim();
+    if t.starts_with("hash:") {
+        return t.to_string();
+    }
+    if let Some(i) = t.find("hash:sha256:") {
+        let rest = &t[i..];
+        let end = rest
+            .find(|c: char| c == '"' || c.is_whitespace() || c == '}')
+            .unwrap_or(rest.len());
+        return rest[..end].to_string();
+    }
+    t.to_string()
+}
+
 /// Serves `answer(requested_caid)` — `None` means "nothing", the wire form of
 /// absence. Detached; dies with the test process.
+/// Accepts bare CAID or OODP `{{ %op: #fetch, %hash: "…" }}` request lines.
 fn spawn_peer<F>(answer: F) -> FakePeer
 where
     F: Fn(&str) -> Option<Vec<u8>> + Send + 'static,
@@ -226,8 +243,9 @@ where
                 continue;
             }
             let req = line.trim().to_string();
-            log.lock().unwrap().push(req.clone());
-            if let Some(bytes) = answer(&req) {
+            let caid = caid_from_request(&req);
+            log.lock().unwrap().push(caid.clone());
+            if let Some(bytes) = answer(&caid) {
                 let _ = stream.write_all(&bytes);
                 let _ = stream.flush();
             }
@@ -254,12 +272,12 @@ fn free_port() -> u16 {
     l.local_addr().unwrap().port()
 }
 
-/// Runs `oo serve` against `dir`, sends one raw CAID line, returns
-/// (bytes received, the server's own console output).
-fn ndp_ask(dir: &Path, caid: &str) -> (usize, String) {
+/// Runs `oo node serve` against `dir`, sends one raw CAID line, returns
+/// (response body, the server's own console output).
+fn ndp_ask(dir: &Path, caid: &str) -> (String, String) {
     let port = free_port();
     let mut child = Command::new(env!("CARGO_BIN_EXE_oo"))
-        .args(["serve", "--port", &port.to_string()])
+        .args(["node", "serve", "--port", &port.to_string()])
         .current_dir(dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -274,7 +292,7 @@ fn ndp_ask(dir: &Path, caid: &str) -> (usize, String) {
             break;
         }
     }
-    let mut stream = stream.expect("oo serve never came up");
+    let mut stream = stream.expect("oo node serve never came up");
     stream.write_all(caid.as_bytes()).unwrap();
     stream.write_all(b"\n").unwrap();
     stream.flush().unwrap();
@@ -286,7 +304,7 @@ fn ndp_ask(dir: &Path, caid: &str) -> (usize, String) {
     child.kill().ok();
     let out = child.wait_with_output().unwrap();
     (
-        buf.len(),
+        String::from_utf8_lossy(&buf).into_owned(),
         format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
@@ -535,9 +553,10 @@ fn red_corrupt_and_absent_are_distinguishable_to_a_program() {
 
 // ── R4 ──────────────────────────────────────────────────────────────────
 
-/// REAL_03 §6.6 條款三 on the operator's console. The store is corrupt and
-/// `oo serve` says the object is not there — so the one person who could
-/// repair it never learns.
+/// REAL_03 §6.6 條款三 on the operator's console. The store is corrupt;
+/// the node must name the integrity failure, not report absence, and must
+/// not put the lying object bytes on the wire (OODP: `%status: #conflict`,
+/// no `%result`).
 #[test]
 fn red_ndp_serve_does_not_report_corruption_as_absence() {
     let vault = fresh_dir();
@@ -548,14 +567,22 @@ fn red_ndp_serve_does_not_report_corruption_as_absence() {
 
     // LIVENESS: the request reached the server.
     assert!(
-        console.contains(&format!("NDP Request for CAID: {caid}")),
-        "oo serve never saw the request; console was:\n{console}"
+        console.contains("OODP Request:") && console.contains(caid.as_str()),
+        "oo node serve never saw the request; console was:\n{console}"
     );
-    // v0.2.43's local verification must still hold: no lying bytes on the wire.
-    assert_eq!(served, 0, "corrupt bytes were served to a peer");
+    // No lying object payload on the wire (envelope may still name the status).
+    assert!(
+        !served.contains("R4_TAMPERED"),
+        "corrupt bytes were served to a peer: {served}"
+    );
+    assert!(
+        served.contains("#conflict") || served.contains("conflict"),
+        "corrupt store must answer with conflict status: {served}"
+    );
 
     assert!(
-        !console.contains(&format!("NDP Miss: {caid}")),
+        !console.contains(&format!("OODP Miss: {caid}"))
+            && !console.contains(&format!("NDP Miss: {caid}")),
         "corruption reported as absence; console was:\n{console}"
     );
     assert!(
@@ -761,15 +788,23 @@ fn pin_untampered_shadow_report_is_complete() {
     );
 }
 
-/// NDP serve still reports genuine absence as absence.
+/// OODP node still reports genuine absence as absence (`#not_found` / Miss).
 #[test]
 fn pin_ndp_serve_still_reports_real_absence_as_miss() {
     let vault = fresh_dir();
     store_value(&vault, "{ marker: \"PIN6\" }");
     let (served, console) = ndp_ask(&vault, ZERO_CAID);
-    assert_eq!(served, 0);
     assert!(
-        console.contains(&format!("NDP Miss: {ZERO_CAID}")),
+        served.contains("not_found") || served.contains("#not_found"),
+        "absence must say not_found on the wire: {served}"
+    );
+    assert!(
+        !served.contains("PIN6"),
+        "absence must not carry an unrelated object: {served}"
+    );
+    assert!(
+        console.contains(&format!("OODP Miss: {ZERO_CAID}"))
+            || console.contains(&format!("Miss: {ZERO_CAID}")),
         "absence lost its report:\n{console}"
     );
 }

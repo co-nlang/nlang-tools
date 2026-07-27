@@ -162,12 +162,13 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             }
                         }
                         Peer::Remote(addr) => {
+                            // Named peer is a single source: surface OODP's
+                            // four-way discriminator (success / not_found /
+                            // conflict / timeout) rather than collapsing to
+                            // #conflict (REAL_02 §3.2 / REAL_03 §6.6 條款三).
                             match oo.remote_fetch(&addr, &hash) {
                                 Ok(val) => return observe(val),
-                                Err(BottomCause::CaidMismatch) => {
-                                    return BottomCause::CaidMismatch.into();
-                                }
-                                Err(_) => {}
+                                Err(e) => return e.into(),
                             }
                         }
                     }
