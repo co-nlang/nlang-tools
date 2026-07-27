@@ -59,6 +59,21 @@ impl EffectTag {
     pub fn all_active() -> EffectTag {
         Self::IO.union(Self::NonDet).union(Self::State)
     }
+    /// Raw bits, for persisting a tag SET across processes.
+    ///
+    /// ACCEPTOR REPAIR (privileged_effect_audit): `.oo/effect_pending` has to
+    /// carry *which* tags were discharged, not merely that something was, or
+    /// commit cannot check that the capability re-presented is the one the act
+    /// required. Measured on the delivered build: a discharge of `io` was
+    /// authorised at commit by `--grant effect_override:nondet`.
+    pub fn to_bits(self) -> u8 {
+        self.0
+    }
+    /// Inverse of [`to_bits`], masked to active tags — a persisted set is only
+    /// ever an `active_part()`, and unknown bits must not become capabilities.
+    pub fn from_bits(bits: u8) -> EffectTag {
+        EffectTag(bits & (Self::IO.0 | Self::NonDet.0 | Self::State.0))
+    }
     /// Thunk CAID serial byte: single-tag legacy ordinals unchanged
     /// (Pure=0, State=1, IO=2, NonDet=3); multi-tag / Cached use high bit.
     pub fn to_serial_byte(self) -> u8 {

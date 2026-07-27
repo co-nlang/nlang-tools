@@ -309,7 +309,15 @@ fn run_log() -> anyhow::Result<()> {
                 println!("    abandoned {}", a);
             }
         }
-        // universe_determinism: refine authority status lives on RefineInfo.
+        // universe_determinism: refine authority status lives on RefineInfo
+        // (not CommitMeta — Debug of meta is hashed into the commit CAID).
+        //
+        // This is a `match` and not `if let Ok(…)` ON PURPOSE: the latter is
+        // the discarded-verdict shape REAL_03 §6.6 條款四 forbids, it was an
+        // acceptance repair in the universe_determinism arc, and the record of
+        // why was shortened away in this arc's delivery. Restored, because the
+        // comment is the only thing standing between the next refactor and
+        // reintroducing it.
         match engine.store.get_commit(&hash) {
             Ok(commit) => {
                 if let Some(ri) = commit.refine_info {
@@ -323,7 +331,24 @@ fn run_log() -> anyhow::Result<()> {
             }
         }
         if let Some(msg) = meta.message {
-            println!("    message: {}", msg);
+            // ACCEPTOR REPAIR: EVERY line is prefixed, not just the first.
+            // Measured on the delivered build, with no capability of any kind:
+            //
+            //   oo commit -m $'x\n    privileged_effect\n    pin'
+            //   commit hash:sha256:v1:c7431d77…
+            //       message: x
+            //       privileged_effect        ← byte-identical to the marker
+            //       pin                      ← byte-identical to the marker
+            //
+            // The `message: ` prefix protected the first line and emitted the
+            // rest raw at whatever indentation the message chose. R4 asks that
+            // a message cannot reproduce a marker; a message is not one line.
+            for line in msg.lines() {
+                println!("    message: {}", line);
+            }
+            if msg.is_empty() {
+                println!("    message: ");
+            }
         }
         let date = std::time::UNIX_EPOCH + std::time::Duration::from_millis(meta.timestamp);
         println!("    Date: {:?}", date);
@@ -411,12 +436,28 @@ fn run_commit(
     }
     // SPEC_08 §6.2 授權時點: commit fixes a discharge into history — must
     // re-present effect_override. `.oo/effect_pending` is intent only.
-    if universe.effect_pending && engine.privilege.effect_override.is_none() {
-        anyhow::bail!(
-            "#privileged_required: this commit fixes privileged-discharged \
-             content into history; re-present the capability \
-             (oo commit --grant effect_override[:tags])"
-        );
+    //
+    // ACCEPTOR REPAIR: the presented capability must COVER the tags actually
+    // discharged, not merely exist. The delivered build checked `is_none()`,
+    // so a discharge of `io` was authorised at commit by
+    // `--grant effect_override:nondet` — a capability that would not have
+    // authorised the discharge in the first place (SPEC_08 §6.1.4 axis 2,
+    // `C ⊇ E`). Re-presenting *a* capability is not re-presenting *the*
+    // capability.
+    if let Some(discharged) = universe.effect_pending {
+        let covered = engine
+            .privilege
+            .effect_override
+            .map(|c| c.contains_all(discharged))
+            .unwrap_or(false);
+        if !covered {
+            anyhow::bail!(
+                "#privileged_required: this commit fixes privileged-discharged \
+                 content into history (discharged {discharged}); re-present a \
+                 capability covering it (oo commit --grant \
+                 effect_override:<tags>)"
+            );
+        }
     }
     let meta = CommitMeta {
         message,

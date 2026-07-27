@@ -363,6 +363,35 @@ fn red_audit_markers_are_not_forgeable_by_a_commit_message() {
         forged, real,
         "a commit message reproduced an engine audit marker exactly: {marker:?}"
     );
+
+    // ACCEPTOR STRENGTHENING, from the adversarial pass. The first fix
+    // prefixed the message — but only its FIRST line. Measured on that build,
+    // with no capability of any kind:
+    //
+    //   oo commit -m $'x\n    privileged_effect\n    pin'
+    //       message: x
+    //       privileged_effect      ← byte-identical to a real marker
+    //       pin                    ← byte-identical to a real marker
+    //
+    // A message is not one line, and the probe that only tried one line is why
+    // this reached the adversarial pass instead of the red gate.
+    let f = fresh_dir("r4c");
+    write(&f, "s.n", "a: 1\n");
+    assert!(oo(&f, &["evolve", "s.n"]).ok, "harness: evolve");
+    let multi = format!("harmless\n{marker}\n    privileged_effect");
+    assert!(
+        oo(&f, &["commit", "-m", &multi]).has("Commit successful"),
+        "harness: multi-line commit"
+    );
+    let lines = head_audit_lines(&f);
+    assert!(
+        !lines.iter().any(|l| l == &marker),
+        "a multi-line commit message injected a raw audit marker: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|l| l == "privileged_effect"),
+        "a multi-line commit message injected `privileged_effect`: {lines:?}"
+    );
 }
 
 /// R5 — `--grant commit` is retired.
@@ -543,6 +572,74 @@ fn pin_a_grant_without_a_discharge_marks_nothing() {
     assert!(
         !commit.to_string().contains("privileged_effect"),
         "a commit that discharged nothing was marked privileged: {commit}"
+    );
+}
+
+/// P8 — the capability re-presented at commit must COVER what was discharged.
+///
+/// ACCEPTOR REPAIR pin. Measured on the delivered build: a discharge of `io`
+/// was authorised at commit by `--grant effect_override:nondet`, because the
+/// gate asked `is_none()` — *a* capability, not *the* capability. SPEC_08
+/// §6.1.4 axis 2 is `C ⊇ E`, and a capability that would not have authorised
+/// the discharge cannot authorise fixing it into history either.
+#[test]
+fn pin_commit_capability_must_cover_the_discharged_tags() {
+    let d = repo_with_discharge("p8");
+
+    let wrong = oo(
+        &d,
+        &["commit", "-m", "wrong tag", "--grant", "effect_override:nondet"],
+    );
+    assert!(
+        !wrong.ok,
+        "a capability that does not cover the discharge authorised the commit: {}",
+        wrong.out
+    );
+    assert!(
+        wrong.has("privileged_required"),
+        "the refusal must name the missing capability: {}",
+        wrong.out
+    );
+
+    // PAIR: the covering capability works, so the gate is not simply stuck.
+    let right = oo(
+        &d,
+        &["commit", "-m", "right tag", "--grant", "effect_override:io"],
+    );
+    assert!(
+        right.has("Commit successful"),
+        "the covering capability was refused: {}",
+        right.out
+    );
+}
+
+/// P9 — `runPure` over an already-pure value overrides nothing, so it is not
+/// a privileged intervention and must not be recorded as one.
+///
+/// ACCEPTOR REPAIR pin. Measured on the delivered build, `v: (~%Effect./runPure
+/// 42)` demanded a capability at commit and stamped `#privileged_effect` on the
+/// result. `#effect_override` is 「強制將**含副作用**節點標記為 `#pure`」 —
+/// with no effect there is nothing to force, and an audit line asserting an
+/// intervention that never happened is the surface this project keeps retiring.
+#[test]
+fn pin_runpure_over_a_pure_value_is_not_an_intervention() {
+    let d = fresh_dir("p9");
+    write(&d, "s.n", "v: (~%Effect./runPure 42)\n");
+    assert!(
+        oo(&d, &["evolve", "s.n", "--grant", "effect_override:io"]).ok,
+        "harness: evolve"
+    );
+
+    let c = oo(&d, &["commit", "-m", "nothing was overridden"]);
+    assert!(
+        c.has("Commit successful"),
+        "a commit that overrode nothing demanded a capability: {}",
+        c.out
+    );
+    let commit = object_json(&d, &head_commit(&d));
+    assert!(
+        !commit.to_string().contains("privileged_effect"),
+        "a commit that overrode nothing was marked privileged: {commit}"
     );
 }
 

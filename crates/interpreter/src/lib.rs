@@ -332,10 +332,15 @@ pub struct Ouroboros {
     pub privilege: crate::value::Privilege,
     /// Accumulated integrity incidents (條款四). Library is silent; CLI prints.
     pub integrity_log: RwLock<Vec<IntegrityIncident>>,
-    /// Set when `runPure` successfully discharges during this process.
-    /// Read by `Universe::evolve` into `effect_pending` (SPEC_08 §6.2).
-    /// Not authorization — only "a discharge happened".
-    pub privileged_discharge_flag: std::sync::atomic::AtomicBool,
+    /// Union of the effect tags `runPure` has actually DISCHARGED in this
+    /// process. Read by `Universe::evolve` into `effect_pending` (SPEC_08
+    /// §6.2). Not authorization — only "these tags were overridden".
+    ///
+    /// ACCEPTOR REPAIR: was an `AtomicBool`. A bool cannot answer the question
+    /// commit has to ask — *is the capability now being re-presented the one
+    /// this act required?* Measured on the delivered build, a discharge of
+    /// `io` was authorised at commit by `--grant effect_override:nondet`.
+    pub privileged_discharge_tags: std::sync::atomic::AtomicU8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,7 +402,7 @@ impl Ouroboros {
             architect_registry: RwLock::new(std::collections::HashSet::new()),
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
-            privileged_discharge_flag: std::sync::atomic::AtomicBool::new(false),
+            privileged_discharge_tags: std::sync::atomic::AtomicU8::new(0),
         }
     }
 
@@ -425,21 +430,30 @@ impl Ouroboros {
             architect_registry: RwLock::new(architects),
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
-            privileged_discharge_flag: std::sync::atomic::AtomicBool::new(false),
+            privileged_discharge_tags: std::sync::atomic::AtomicU8::new(0),
         };
         Ok(oo)
     }
 
-    /// Note that a privileged discharge actually occurred (runPure success).
-    pub fn note_privileged_discharge(&self) {
-        self.privileged_discharge_flag
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+    /// Note that a privileged discharge actually occurred, and which active
+    /// tags it overrode. Callers must pass `active_part()`; a Pure argument is
+    /// ignored, because `runPure` over an already-pure value overrides nothing
+    /// and marking it would assert an intervention that never happened.
+    pub fn note_privileged_discharge(&self, tags: crate::value::EffectTag) {
+        let bits = tags.active_part().to_bits();
+        if bits == 0 {
+            return;
+        }
+        self.privileged_discharge_tags
+            .fetch_or(bits, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// Consume the discharge flag (true if any discharge since last take).
-    pub fn take_privileged_discharge(&self) -> bool {
-        self.privileged_discharge_flag
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    /// Consume the accumulated discharge tags (`Pure` if none since last take).
+    pub fn take_privileged_discharge(&self) -> crate::value::EffectTag {
+        crate::value::EffectTag::from_bits(
+            self.privileged_discharge_tags
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+        )
     }
 
     /// Operator identity for signing. Lazy-loads/mints at the operator path
