@@ -269,7 +269,7 @@ a control at all. Both suites re-run green after the rewrite (20/20 and 12/12).
 
 ## 6. Delivery record (delivery side)
 
-- **Tip**: see commit (recorded after).
+- **Tip**: `30f6264`.
 - **D1** `Identity::resolve_path` / `load` / `save` / `load_or_mint` (PKCS#8 only;
   parent 0700, file 0600; atomic tmp+rename). `Ouroboros::identity()` lazy;
   `init` does not mint; `new_in_memory` keeps ephemeral only.
