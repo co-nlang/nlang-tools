@@ -107,6 +107,9 @@ enum Commands {
         #[arg(long)]
         privileged: bool,
     },
+    /// Show the operator public key (64 hex) and the identity file path.
+    /// Mints at `OO_IDENTITY` or `~/.oo/identity` on first use.
+    Identity,
     /// Tier 1 linter (pure syntax / pure graph theory) — see docs/linter_tier1_handover.md
     Lint {
         /// .n file or directory (recursive)
@@ -160,6 +163,7 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             grants,
         } => run_eval(expr, privileged, grants),
         Commands::Inspect { caid } => run_inspect(caid),
+        Commands::Identity => run_identity(),
         Commands::Rollback {
             caid,
             grants,
@@ -445,7 +449,11 @@ fn run_refine(
             &source_caids,
             &target_caids,
         );
-        let auth = nlang_interpreter::authority::sign_refine(&payload, &engine.identity)
+        // Sole engine consumer of the private key (identity_persistence).
+        let identity = engine
+            .identity()
+            .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
+        let auth = nlang_interpreter::authority::sign_refine(&payload, &identity)
             .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
         Some(auth)
     } else {
@@ -735,6 +743,15 @@ fn print_integrity_incidents(engine: &Ouroboros) {
             }
         );
     }
+}
+
+fn run_identity() -> anyhow::Result<()> {
+    // Mint/load the operator identity (lazy path). Prints public key + path.
+    let path = nlang_interpreter::Identity::resolve_path()?;
+    let id = nlang_interpreter::Identity::load_or_mint(&path)?;
+    println!("{}", id.public_key_hex());
+    println!("path: {}", path.display());
+    Ok(())
 }
 
 fn run_inspect(caid_str: String) -> anyhow::Result<()> {

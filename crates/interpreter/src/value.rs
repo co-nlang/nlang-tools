@@ -1521,14 +1521,114 @@ impl Commit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Identity { pub public_key: Vec<u8>, pub private_key: Vec<u8> }
+pub struct Identity {
+    pub public_key: Vec<u8>,
+    /// PKCS#8 DER bytes of the private key (the only form written to disk).
+    pub private_key: Vec<u8>,
+}
 
 impl Identity {
+    /// Ephemeral key for in-memory engines and tests. Never written to disk.
     pub fn new_random() -> Self {
         let rng = rand::SystemRandom::new();
         let pkcs8_bytes = signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
         let key_pair = signature::Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref()).unwrap();
-        Self { public_key: key_pair.public_key().as_ref().to_vec(), private_key: pkcs8_bytes.as_ref().to_vec() }
+        Self {
+            public_key: key_pair.public_key().as_ref().to_vec(),
+            private_key: pkcs8_bytes.as_ref().to_vec(),
+        }
+    }
+
+    /// Resolve the operator identity path: `OO_IDENTITY` (must be absolute) or
+    /// `~/.oo/identity`. A secret must not live inside a shareable `.oo/` workspace.
+    pub fn resolve_path() -> anyhow::Result<std::path::PathBuf> {
+        if let Ok(p) = std::env::var("OO_IDENTITY") {
+            let path = std::path::PathBuf::from(p);
+            if !path.is_absolute() {
+                anyhow::bail!(
+                    "OO_IDENTITY must be an absolute path (got {})",
+                    path.display()
+                );
+            }
+            return Ok(path);
+        }
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve home directory for ~/.oo/identity"))?;
+        Ok(std::path::PathBuf::from(home).join(".oo").join("identity"))
+    }
+
+    /// Load PKCS#8 from `path`. On parse failure the file is left untouched.
+    pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
+        let bytes = std::fs::read(path).map_err(|e| {
+            anyhow::anyhow!("identity file {}: read failed: {}", path.display(), e)
+        })?;
+        Self::from_pkcs8(&bytes).map_err(|e| {
+            anyhow::anyhow!(
+                "identity file {}: not a valid PKCS#8 Ed25519 key ({}); file left unchanged",
+                path.display(),
+                e
+            )
+        })
+    }
+
+    pub fn from_pkcs8(bytes: &[u8]) -> anyhow::Result<Self> {
+        let key_pair = signature::Ed25519KeyPair::from_pkcs8(bytes)
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        Ok(Self {
+            public_key: key_pair.public_key().as_ref().to_vec(),
+            private_key: bytes.to_vec(),
+        })
+    }
+
+    /// Persist PKCS#8 only. Parent dir 0700, file 0600. Atomic replace via tmp+rename.
+    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+        let tmp = path.with_extension("identity.tmp");
+        std::fs::write(&tmp, &self.private_key)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        std::fs::rename(&tmp, path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+
+    /// Load existing operator identity or mint and persist on first need.
+    /// Concurrent mints: loser's write loses the race; reload the winner's file.
+    pub fn load_or_mint(path: &std::path::Path) -> anyhow::Result<Self> {
+        if path.exists() {
+            return Self::load(path);
+        }
+        let id = Self::new_random();
+        match id.save(path) {
+            Ok(()) => Ok(id),
+            Err(e) => {
+                // Another process may have created it first.
+                if path.exists() {
+                    Self::load(path)
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    pub fn public_key_hex(&self) -> String {
+        hex::encode(&self.public_key)
     }
 }
 
@@ -1890,7 +1990,21 @@ impl Value {
                 }
 
                 let mut s = if c.closed { "{{".to_string() } else { "{".to_string() };
-                if c.data.is_empty() && c.types.is_empty() && c.rules.is_empty() && c.meta.is_empty() && c.system.is_empty() && c.local.is_empty() { return format!("{} }}", s); }
+                // Empty closed combo must re-parse (identity_persistence R8).
+                // Was `{{ }` (one brace short) — invalid n/ source.
+                if c.data.is_empty()
+                    && c.types.is_empty()
+                    && c.rules.is_empty()
+                    && c.meta.is_empty()
+                    && c.system.is_empty()
+                    && c.local.is_empty()
+                {
+                    return if c.closed {
+                        "{{ }}".to_string()
+                    } else {
+                        "{}".to_string()
+                    };
+                }
                 s.push('\n');
                 let fields = c.fields();
                 let mut keys: Vec<_> = fields.keys().collect(); keys.sort();

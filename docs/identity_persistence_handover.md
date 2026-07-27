@@ -269,6 +269,22 @@ a control at all. Both suites re-run green after the rewrite (20/20 and 12/12).
 
 ## 6. Delivery record (delivery side)
 
-Fill in below: files touched, the four numbers, anything refused and why.
-If a probe looks wrong, **say so instead of accommodating it** — that has
-happened twice and both times the probe was the defect.
+- **Tip**: see commit (recorded after).
+- **D1** `Identity::resolve_path` / `load` / `save` / `load_or_mint` (PKCS#8 only;
+  parent 0700, file 0600; atomic tmp+rename). `Ouroboros::identity()` lazy;
+  `init` does not mint; `new_in_memory` keeps ephemeral only.
+- **D2** corrupt PKCS#8 → error naming the path; file bytes left unchanged.
+- **D3** `fs_guard` refuses the resolved operator identity path (path-exact).
+- **D4** `oo identity` prints 64-hex pubkey + `path: …` (mints if absent).
+- **D5** removed `engine.sign_refine` builtin and `~%Official./sign_refine`
+  mount; `~%Official` is empty closed combo. **Only** `oo refine --sign` →
+  `authority::sign_refine` consumes the private key.
+- **D6** empty closed combo renders `{{ }}` (re-parseable).
+- **Also**: `implementation-status.md`; tests use `identity()` accessor.
+- **Probe**: only 8 `#[ignore]` removed.
+- **Numbers**: identity_persistence **14/14** · universe_determinism **12/12** ·
+  store_boundary **20/20** · workspace **1501/0/3** · conf **143/143** ·
+  genesis **11/11** · release clean of new warnings.
+- **grep `sign_refine`**: Rust `authority::sign_refine` + probe comments only;
+  no language-surface mount, no conformance/corpus hits.
+- **Not touched**: nlang-spec, worknotes, privilege tokens (step C), rotation.

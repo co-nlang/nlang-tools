@@ -93,7 +93,7 @@ fn test_universe_refine_with_authority() {
     let tgt = oo.store.put_value(&tgt_val).unwrap();
 
     let payload = compute_refine_payload(&[src.clone()], &[tgt.clone()]);
-    let authority = sign_refine(&payload, &oo.identity).unwrap();
+    let authority = sign_refine(&payload, &oo.identity().unwrap()).unwrap();
     let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
 
     let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta);

@@ -248,7 +248,6 @@ fn provision(dir: &Path, keys: &[&str]) {
 /// commit objects, which exist at baseline too, so this gate measures
 /// persistence and not the existence of `oo identity`.
 #[test]
-#[ignore = "RED GATE — identity is minted per process; two processes sign as two different parties"]
 fn red_identity_is_stable_across_processes() {
     let ident = ident_path("r1");
     let d = repo("r1", &ident);
@@ -272,7 +271,6 @@ fn red_identity_is_stable_across_processes() {
 
 /// R2 — the key is persisted, at the operator path, and nowhere in `.oo/`.
 #[test]
-#[ignore = "RED GATE — nothing is persisted; `.oo/` holds only HEAD and objects"]
 fn red_identity_persists_at_the_operator_path_and_not_in_the_workspace() {
     let ident = ident_path("r2");
     let d = repo("r2", &ident);
@@ -327,7 +325,6 @@ fn walk(dir: &Path, f: &mut dyn FnMut(&Path)) {
 /// mask. So the same test also requires that a whitelist NOT containing the
 /// signer still refuses. Membership has to decide, in both directions.
 #[test]
-#[ignore = "RED GATE — no key survives long enough to be whitelisted, so `verified` is unreachable"]
 fn red_a_provisioned_whitelist_can_finally_verify() {
     let ident = ident_path("r3");
     let d = repo("r3", &ident);
@@ -371,7 +368,6 @@ fn red_a_provisioned_whitelist_can_finally_verify() {
 /// PAIRED with two controls, because "retired" must be distinguishable from
 /// "the whole module vanished" and from "the system root broke".
 #[test]
-#[ignore = "RED GATE — any n/ program can obtain an operator signature with no grant"]
 fn red_sign_refine_is_off_the_language_surface() {
     let ident = ident_path("r4");
     let d = repo("r4", &ident);
@@ -423,7 +419,6 @@ fn red_sign_refine_is_off_the_language_surface() {
 /// boundary does not cover it for free. The probe writes the file itself, so
 /// baseline redness is "the language read it", never "it was not there".
 #[test]
-#[ignore = "RED GATE — an OO_IDENTITY outside .oo/ is an ordinary readable file"]
 fn red_identity_file_is_unreadable_from_the_language_layer() {
     let ident = ident_path("r5");
     fs::create_dir_all(ident.parent().unwrap()).unwrap();
@@ -469,7 +464,6 @@ fn red_identity_file_is_unreadable_from_the_language_layer() {
 /// key that signing actually uses, so the printed value is checked against
 /// the signer recorded in a commit object.
 #[test]
-#[ignore = "RED GATE — there is no way to learn your own public key in order to declare it"]
 fn red_oo_identity_prints_the_key_that_signing_uses() {
     let ident = ident_path("r6");
     let d = repo("r6", &ident);
@@ -499,7 +493,6 @@ fn red_oo_identity_prints_the_key_that_signing_uses() {
 /// baseline red is exact: `OO_IDENTITY` is ignored, so the corrupt file is
 /// stepped over and a fresh key is used without a word.
 #[test]
-#[ignore = "RED GATE — a corrupt identity file is ignored and a new key silently used"]
 fn red_a_corrupt_identity_file_is_refused_not_overwritten() {
     let ident = ident_path("r7");
     fs::create_dir_all(ident.parent().unwrap()).unwrap();
@@ -541,7 +534,6 @@ fn red_a_corrupt_identity_file_is_refused_not_overwritten() {
 /// The gate does not prescribe a spelling, only that the rendered form
 /// parses back and is idempotent. Choosing `{{ }}` or `{{}}` is delivery's.
 #[test]
-#[ignore = "RED GATE — an empty closed combo renders `{{ }`, which is not valid n/ source"]
 fn red_empty_closed_combo_renders_as_reparseable_source() {
     let ident = ident_path("r8");
     let d = fresh_dir("r8w");

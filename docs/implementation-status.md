@@ -174,8 +174,9 @@
 #### ~%Engine（10 態射）
 `/observe` `/save` `/%differential.{1,2,3}` `/project_down` `/project_up` `/set_strategy` `/check_oml` `/equivalence_map` `/resolve`
 
-#### ~%Official（2 態射，IO EffectTag）
-`/sign_refine` `/add_architect`
+#### ~%Official（empty closed combo — cold-start）
+Language-surface morphisms retired: `/sign_refine` (identity_persistence),
+`/add_architect` (store_boundary). Signing is CLI-only (`oo refine --sign`).
 
 #### @option（1 %fmap + 7 態射）
 `%fmap(option.map)` + `/and_then` `/or` `/unwrap_or` `/filter` `/expect` `/zip` `/flatten`

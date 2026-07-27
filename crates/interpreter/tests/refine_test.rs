@@ -215,7 +215,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
     let _ = std::fs::create_dir_all(&base_dir);
 
     // Register local key as architect
-    let local_pk = hex::encode(&oo.identity.public_key);
+    let local_pk = hex::encode(&oo.identity().unwrap().public_key);
     { oo.architect_registry.write().unwrap().insert(local_pk); }
 
     let mut u = Universe::new(None, oo.root_with_system());
@@ -248,7 +248,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
     let _ = std::fs::create_dir_all(&base_dir);
 
     // Register local key as architect
-    let local_pk = hex::encode(&oo.identity.public_key);
+    let local_pk = hex::encode(&oo.identity().unwrap().public_key);
     { oo.architect_registry.write().unwrap().insert(local_pk); }
 
     let mut u = Universe::new(None, oo.root_with_system());
@@ -269,7 +269,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
     let cd = oo.store.put_value(&val_d).unwrap();
 
     let payload = nlang_interpreter::authority::compute_refine_payload(&[cc.clone()], &[cd.clone()]);
-    let auth = nlang_interpreter::authority::sign_refine(&payload, &oo.identity).unwrap();
+    let auth = nlang_interpreter::authority::sign_refine(&payload, &oo.identity().unwrap()).unwrap();
 
     let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None };
     let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], Some(auth), meta2);
