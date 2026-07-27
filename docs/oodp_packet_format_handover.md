@@ -120,8 +120,11 @@ This also gives the next arcs a home that already reads correctly: `oo node id`
 (node identity), and later `oo node discover` / `oo node advertise` as the other
 two ops land.
 
-**This is the item most likely to want the author's override** — it is proposed
-with reasoning, not settled. Everything else here is measured.
+**Settled 2026-07-27 by the author**, who supplied the grounding the proposal was
+missing: `node` is not a coinage. **REAL_01 §1.2 already calls it 宇宙節點
+(Universe Node)** — 「承載特定視角內的子空間狀態,並透過標準協議暴露『投影與
+演化』能力」. The noun has been in the spec all along; it just never had a CLI
+spelling. `oo node serve` is that spelling arriving, not a new concept.
 
 ### D5 — spec
 
