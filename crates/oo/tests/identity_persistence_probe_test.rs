@@ -667,6 +667,94 @@ fn pin_ordinary_work_does_not_mint_an_identity() {
     );
 }
 
+/// P7 — a concurrent first mint produces ONE key, and every process reports
+/// the key that is actually on disk.
+///
+/// ACCEPTOR REPAIR pin. Measured on the delivered build, three rounds of
+/// eight: **3 distinct keys minted, and 2 of the 8 printed a public key that
+/// was not the one left in the file.** The operator is shown X, declares X
+/// out of band, and the engine signs with Y forever after — R6's defect (a
+/// printed key that is not the signing key) wearing a race condition, and it
+/// surfaces much later as "signer not in architect_registry" pointing at the
+/// wrong thing.
+///
+/// Cause: `tmp + rename` replaces unconditionally, so every racer's rename
+/// succeeded, the last one won, and each returned its own key. Repaired to
+/// `create_new` — one syscall claims the path; losers load the winner's file.
+#[test]
+fn pin_concurrent_first_mint_yields_one_key() {
+    let ident = ident_path("p7");
+    let d = repo("p7", &ident);
+
+    let printed: Vec<String> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let (d, ident) = (d.clone(), ident.clone());
+                s.spawn(move || oo(&d, &ident, &["identity"]).out)
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+
+    fn key(out: &str) -> String {
+        out.split(|c: char| !c.is_ascii_hexdigit())
+            .find(|w| w.len() == 64)
+            .unwrap_or_else(|| panic!("no 64-hex key in output: {out}"))
+            .to_string()
+    }
+
+    // Anti-vacuity: all eight must have produced a well-formed key, or the
+    // set below could be small because most of them simply failed.
+    let keys: Vec<String> = printed.iter().map(|o| key(o)).collect();
+    assert_eq!(keys.len(), 8);
+
+    let on_disk = key(&oo(&d, &ident, &["identity"]).out);
+    let distinct: std::collections::BTreeSet<&String> = keys.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        1,
+        "a concurrent first mint minted {} different keys: {distinct:#?}",
+        distinct.len()
+    );
+    assert!(
+        keys.iter().all(|k| *k == on_disk),
+        "a process reported a key that is not the one on disk"
+    );
+}
+
+/// P8 — an already-existing parent directory keeps the mode the operator
+/// gave it.
+///
+/// ACCEPTOR REPAIR pin. Measured on the delivered build, `save()` chmod-ed
+/// the parent to 0700 on every mint: a 0750 `~/.oo` became 0700, and a
+/// deliberately read-only 0500 parent became writable. The work order said
+/// the parent is *created* 0700, which is not a licence to re-mode a
+/// directory the operator already owns — and `~/.oo` is where REAL_01 §7.2
+/// will later put `authorized_keys` and `revoked_tokens`.
+#[cfg(unix)]
+#[test]
+fn pin_existing_identity_parent_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let ident = ident_path("p8");
+    let parent = ident.parent().unwrap().to_path_buf();
+    fs::create_dir_all(&parent).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o750)).unwrap();
+
+    let d = repo("p8", &ident);
+    let r = oo(&d, &ident, &["identity"]);
+    assert!(r.ok, "harness: `oo identity` failed: {}", r.out);
+    assert!(ident.exists(), "harness: no key was minted");
+
+    let mode = fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o750,
+        "the engine re-moded a directory the operator already owned"
+    );
+    let fmode = fs::metadata(&ident).unwrap().permissions().mode() & 0o777;
+    assert_eq!(fmode, 0o600, "the key file is not 0600: {fmode:o}");
+}
+
 /// P6 — the module retirement in R4 must not take the rest of `~%Engine`
 /// with it. Distinct from R4's control: that one proves `~%Official` is
 /// mounted, this one proves the neighbouring module still resolves calls.
