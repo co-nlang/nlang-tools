@@ -558,6 +558,57 @@ fn pin_operator_and_node_keys_are_not_the_same_file() {
     assert_eq!(op_key.len(), 64);
 }
 
+/// P8 — the node key is behind the language-layer boundary, and not by luck.
+///
+/// ACCEPTOR REPAIR pin. REAL_01 §7.5.3 already requires a private key to be
+/// inside SPEC_08 §6.3's boundary and that **the protection must not depend on
+/// the path happening to contain a store-directory component**. Measured on the
+/// delivered build: `~%Io./read_file` on a node key answered `#none` —
+/// *permitted*, and unreadable only because PKCS#8 DER is not valid UTF-8.
+/// Protection by coincidence, one byte-reading builtin away from none at all.
+///
+/// The CONTROL is the point: a file outside the directory stays readable, so
+/// this pins a boundary rather than a blanket refusal.
+#[test]
+fn pin_the_node_key_is_refused_to_the_language_layer() {
+    let home = fresh_home("p8");
+    let d = fresh_dir("p8");
+    write(&d, "s.n", "v: 1\n");
+    let id = node_id(&d, &home);
+    assert_eq!(id.len(), 64.max(id.len()), "harness: no node id");
+
+    let nodes = home.join("nodes");
+    let key = fs::read_dir(&nodes)
+        .unwrap_or_else(|e| panic!("harness: no nodes dir ({e})"))
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.is_file())
+        .expect("harness: no node key was minted");
+
+    let refused = oo(
+        &d,
+        &home,
+        &["eval", &format!("~%Io./read_file(\"{}\")", key.display())],
+    );
+    assert!(
+        refused.contains("store_boundary"),
+        "the language layer can reach a node key: {refused}"
+    );
+
+    // CONTROL: outside the directory is still ordinary ground.
+    let outside = home.join("outside.txt");
+    fs::write(&outside, b"readable").unwrap();
+    let ok = oo(
+        &d,
+        &home,
+        &["eval", &format!("~%Io./read_file(\"{}\")", outside.display())],
+    );
+    assert!(
+        !ok.contains("store_boundary"),
+        "control: the guard became a blanket refusal: {ok}"
+    );
+}
+
 /// P3 — the four-way discriminator survives (v0.2.48's headline).
 #[test]
 fn pin_four_peer_states_stay_distinguishable() {

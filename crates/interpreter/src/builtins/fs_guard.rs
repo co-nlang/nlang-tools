@@ -19,7 +19,31 @@ pub fn crosses_store_boundary(raw: &str) -> bool {
     if path_has_dot_oo_component(&resolved) {
         return true;
     }
-    is_operator_identity_path(&resolved)
+    is_operator_identity_path(&resolved) || is_node_key_dir(&resolved)
+}
+
+/// Whether `resolved` is inside the node-key directory (`{node_home}/nodes/`).
+///
+/// ACCEPTOR REPAIR (node_identity). REAL_01 §7.5.3 already requires that a
+/// private key be inside this boundary and that **the protection must not
+/// depend on its path happening to contain a store-directory component**. The
+/// node key is a private key and was outside it: measured, `~%Io./read_file`
+/// on a node key returned `#none` — *permitted*, and unreadable only because
+/// PKCS#8 DER is not valid UTF-8. That is protection by coincidence, and one
+/// byte-reading builtin away from none at all.
+///
+/// Directory-wide, unlike the operator key's path-exact rule, and the
+/// difference is deliberate: `~/.oo/` holds other things (REAL_01 §7.2's
+/// `authorized_keys` will live there), whereas `nodes/` holds node keys and
+/// nothing else, so no file in it has a language-layer use.
+fn is_node_key_dir(resolved: &Path) -> bool {
+    let Ok(home) = crate::value::Identity::resolve_node_home() else {
+        return false;
+    };
+    let dir = resolve_path_for_boundary(&home.join("nodes").to_string_lossy());
+    let dc: Vec<_> = dir.components().collect();
+    let rc: Vec<_> = resolved.components().collect();
+    rc.len() > dc.len() && rc[..dc.len()] == dc[..]
 }
 
 /// Whether `resolved` is the operator private-key file (identity_persistence D3).
