@@ -301,6 +301,28 @@ fn run_log() -> anyhow::Result<()> {
                 println!("    abandoned {}", a);
             }
         }
+        // universe_determinism: refine authority status lives on RefineInfo
+        // (not CommitMeta — Debug of meta is hashed into the commit CAID).
+        //
+        // ACCEPTANCE REPAIR. The delivery wrote `if let Ok(commit) = …`, which
+        // is the discarded-verdict shape REAL_03 §6.6 條款四 forbids and that
+        // v0.2.44 spent an arc removing from every read path. It is LATENT
+        // rather than live — `engine.log()` above already read this same hash
+        // with `?`, so the second read cannot fail where the first did not —
+        // but the pattern is what the next refactor inherits, and a lazier
+        // `log()` would make it live immediately. Report, do not swallow.
+        match engine.store.get_commit(&hash) {
+            Ok(commit) => {
+                if let Some(ri) = commit.refine_info {
+                    if let Some(ref status) = ri.authority_status {
+                        println!("    refine authority: {}", status);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("    {}", format_store_read_error(e, &hash.to_string()));
+            }
+        }
         if let Some(msg) = meta.message { println!("    {}", msg); }
         let date = std::time::UNIX_EPOCH + std::time::Duration::from_millis(meta.timestamp);
         println!("    Date: {:?}", date);
@@ -446,6 +468,9 @@ fn run_refine(
     match engine.store.get_commit(&hash) {
         Ok(commit) => {
             if let Some(ri) = commit.refine_info {
+                if let Some(ref status) = ri.authority_status {
+                    println!("Refine authority: {}", status);
+                }
                 if !ri.shadow_affected.is_empty() {
                     println!(
                         "Shadow: {} historical commit(s) will be semantically updated:",

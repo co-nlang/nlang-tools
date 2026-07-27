@@ -51,13 +51,31 @@ pub fn verify_refine_authority(
         Ok(b) => b, Err(e) => return AuthVerifyResult::Invalid(format!("bad signature hex: {}", e)),
     };
 
-    if !architect_registry.contains(&auth.signer_pubkey_hex) {
-        return AuthVerifyResult::Invalid(format!("signer {} not in architect_registry", &auth.signer_pubkey_hex));
+    // Membership: a non-empty whitelist that does not contain the signer is
+    // always a refusal. Under bootstrap exemption with an *empty* registry
+    // (universe_determinism — no self-appointment), there is no set to be a
+    // member of; skip membership and crypto-check only. Production never has
+    // empty registry without bootstrap_exempt (`empty ⇒ exempt` in refine).
+    let skip_membership = bootstrap_exempt && architect_registry.is_empty();
+    if !skip_membership && !architect_registry.contains(&auth.signer_pubkey_hex) {
+        return AuthVerifyResult::Invalid(format!(
+            "signer {} not in architect_registry",
+            &auth.signer_pubkey_hex
+        ));
     }
 
     let vk = UnparsedPublicKey::new(&signature::ED25519, &pk_bytes);
     match vk.verify(payload, &sig_bytes) {
-        Ok(()) => AuthVerifyResult::Valid,
+        Ok(()) => {
+            // Crypto ok. Record "verified" only when a whitelist constrained
+            // membership; bootstrap-with-empty-registry remains "unverified"
+            // (no authority existed to verify against).
+            if skip_membership {
+                AuthVerifyResult::Exempt
+            } else {
+                AuthVerifyResult::Valid
+            }
+        }
         Err(_) => AuthVerifyResult::Invalid("Ed25519 signature verification failed".to_string()),
     }
 }
