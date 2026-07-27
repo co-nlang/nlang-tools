@@ -108,6 +108,9 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     ..Default::default()
                 }));
             }
+            // SPEC_08 §6.2: record that a discharge *fact* occurred (not the
+            // mere presence of a grant). Intent for commit re-presentation.
+            oo.note_privileged_discharge();
             forced.purify_effects()
         }) as Arc<BuiltinFn>,
     );

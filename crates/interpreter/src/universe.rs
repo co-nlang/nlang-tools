@@ -172,6 +172,11 @@ pub struct Universe {
     /// of unprivileged ones (work order §3 C.3: pin acts only on its own
     /// fields).
     pub pin_coords: std::collections::BTreeSet<String>,
+    /// Intent: staged content includes a privileged discharge (`runPure`).
+    /// Persisted as `.oo/effect_pending` (assertion layer, same home as
+    /// `pin_pending`). **Not authorization** — commit must re-present
+    /// `--grant effect_override` (SPEC_08 §6.2 授權時點 / 意圖≠授權).
+    pub effect_pending: bool,
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
@@ -183,6 +188,7 @@ impl Universe {
             pin_mode: false,
             pin_pending: false,
             pin_coords: std::collections::BTreeSet::new(),
+            effect_pending: false,
         }
     }
 
@@ -413,6 +419,10 @@ impl Universe {
         // `#pin`: overwrite into staged (replace), not lattice meet — meet of
         // staged-vs-incoming would re-⊥ an earlier incompatible pin, and
         // staged-vs-root conflict is handled only at commit (also replace).
+        // Capture discharge intent from this field's evaluation (runPure success).
+        if engine.take_privileged_discharge() {
+            self.effect_pending = true;
+        }
         if self.pin_mode && engine.privilege.pin {
             self.staged = Self::replace_merge(&self.staged, &incoming);
             self.is_dirty = true;
@@ -449,6 +459,15 @@ impl Universe {
         } else if pin_path.exists() {
             let _ = std::fs::remove_file(pin_path);
         }
+        // Effect-discharge intent (SPEC_08 §6.2). Same strength as pin_pending:
+        // intent only — commit must re-present the capability. Not writable
+        // from the language layer (store boundary).
+        let effect_path = base_dir.join(".oo").join("effect_pending");
+        if self.effect_pending {
+            std::fs::write(effect_path, b"1")?;
+        } else if effect_path.exists() {
+            let _ = std::fs::remove_file(effect_path);
+        }
         Ok(())
     }
 
@@ -472,6 +491,7 @@ impl Universe {
                 .map(|v| v.into_iter().collect())
                 .unwrap_or_default();
         }
+        self.effect_pending = base_dir.join(".oo").join("effect_pending").exists();
         Ok(())
     }
 
@@ -507,6 +527,11 @@ impl Universe {
                 }
             }
         }
+        // SPEC_08 §6.2 `#privileged_effect`: mark only when a discharge fact
+        // was staged (effect_pending), never merely because a grant was present.
+        if self.effect_pending {
+            meta.privileged_effect = Some(true);
+        }
         let mut commit = crate::value::Commit::new(self.head.clone(), root_hash, meta);
         commit.kind = kind;
         let commit_hash = engine.store.put_commit(&commit)?;
@@ -517,10 +542,13 @@ impl Universe {
         self.is_dirty = false;
         self.pin_pending = false;
         self.pin_coords.clear();
+        self.effect_pending = false;
         let staged_path = base_dir.join(".oo").join("staged");
         if staged_path.exists() { let _ = std::fs::remove_file(staged_path); }
         let pin_path = base_dir.join(".oo").join("pin_pending");
         if pin_path.exists() { let _ = std::fs::remove_file(pin_path); }
+        let effect_path = base_dir.join(".oo").join("effect_pending");
+        if effect_path.exists() { let _ = std::fs::remove_file(effect_path); }
         Self::clear_abandoned_file(base_dir);
         Ok(commit_hash)
     }

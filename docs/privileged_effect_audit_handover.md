@@ -188,6 +188,23 @@ pair is measured together.
 
 ## 7. Delivery record (delivery side)
 
-Files touched, the numbers, anything refused and why. If a probe looks wrong,
-**say so instead of accommodating it** — that has happened twice and both times
-the probe was the defect.
+- **Tip**: see commit (recorded after).
+- **D1** `runPure` success → `Ouroboros::note_privileged_discharge`; evolve →
+  `effect_pending` + `.oo/effect_pending` (intent only). Commit requires
+  `effect_override` grant when pending; refuses with `#privileged_required`.
+- **D2** `CommitMeta.privileged_effect: Option<bool>` (serde skip if None);
+  custom `Debug` omits absent optionals (ordinary commit digests stable).
+  Set only from `effect_pending`, never from grant alone.
+- **D3** `oo log`: markers `pin` / `squash` / `privileged_effect` /
+  `abandoned …`; messages always `message: …` (unforgeable by R4).
+- **D4** `--grant commit` rejected with retirement error; `Privilege::all()`
+  no longer sets `commit`; comment updated.
+- **Probe**: only 5 `#[ignore]` removed.
+- **Numbers**: privileged_effect_audit **12/12** · pin **15/15** · history_ops
+  **15/15** · runpure_cli **6/6** · selective_discharge **15/15** ·
+  workspace **1515/0/3** · conf **143/143** · genesis **11/11**.
+- **Classification measurement**: ordinary commit meta still exactly
+  `author`/`message`/`timestamp` (P1); root digests deterministic (P6);
+  value CAIDs unmoved (P2). **Recommend 增量** — optional fields omitted from
+  Debug/serde when None.
+- **Not touched**: nlang-spec, tokens/CRL, rollback-without-commit.

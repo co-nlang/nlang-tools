@@ -122,10 +122,14 @@ pub struct Privilege {
     /// `#effect_override`: `None` = op not authorized (even pure args refused);
     /// `Some(tags)` = may discharge exactly those active tags (all-or-nothing).
     pub effect_override: Option<EffectTag>,
-    /// Declared but inert slots (no consumer yet).
+    /// `#pin` — re-present at commit when `.oo/pin_pending` is set.
     pub pin: bool,
+    /// Retired as a CLI grant (SPEC_08 §6.2 2026-07-26); field kept absent
+    /// from live grants. Do not re-enable without a consumer.
     pub commit: bool,
+    /// `#rollback` history op.
     pub rollback: bool,
+    /// `#squash` history op.
     pub squash: bool,
 }
 
@@ -138,12 +142,13 @@ impl Privilege {
         squash: false,
     };
 
-    /// Full grant (CLI `--privileged` back-compat).
+    /// Full grant (CLI `--privileged` back-compat). Does **not** set `commit`
+    /// (retired spelling).
     pub fn all() -> Privilege {
         Privilege {
             effect_override: Some(EffectTag::all_active()),
             pin: true,
-            commit: true,
+            commit: false,
             rollback: true,
             squash: true,
         }
@@ -1410,6 +1415,12 @@ pub struct CommitMeta {
     /// commits — serde skip keeps old objects bit-compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub abandoned: Option<Vec<String>>,
+    /// SPEC_08 §6.2 `#privileged_effect`: this commit fixed privileged-
+    /// discharged content into history. Statement about the *commit*, not
+    /// every coordinate. `None` omitted from serde/Debug so ordinary commit
+    /// digests stay bit-stable (`Commit::content_hash` formats meta via Debug).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privileged_effect: Option<bool>,
 }
 
 impl Default for CommitMeta {
@@ -1419,29 +1430,27 @@ impl Default for CommitMeta {
             timestamp: 0,
             message: None,
             abandoned: None,
+            privileged_effect: None,
         }
     }
 }
 
 /// Custom Debug so `Commit::content_hash` (which formats meta via `Debug`)
-/// stays bit-stable for commits with no abandonment record. Adding a field
+/// stays bit-stable when optional audit fields are absent. Adding a field
 /// under derive(Debug) would change every historical commit digest.
 impl fmt::Debug for CommitMeta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.abandoned.is_none() {
-            f.debug_struct("CommitMeta")
-                .field("author", &self.author)
-                .field("timestamp", &self.timestamp)
-                .field("message", &self.message)
-                .finish()
-        } else {
-            f.debug_struct("CommitMeta")
-                .field("author", &self.author)
-                .field("timestamp", &self.timestamp)
-                .field("message", &self.message)
-                .field("abandoned", &self.abandoned)
-                .finish()
+        let mut ds = f.debug_struct("CommitMeta");
+        ds.field("author", &self.author)
+            .field("timestamp", &self.timestamp)
+            .field("message", &self.message);
+        if self.abandoned.is_some() {
+            ds.field("abandoned", &self.abandoned);
         }
+        if self.privileged_effect.is_some() {
+            ds.field("privileged_effect", &self.privileged_effect);
+        }
+        ds.finish()
     }
 }
 

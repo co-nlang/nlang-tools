@@ -220,7 +220,6 @@ fn head_audit_lines(dir: &Path) -> Vec<String> {
 /// PAIRED: with the capability the same commit must succeed, so a pass cannot
 /// come from an engine that simply refuses every commit.
 #[test]
-#[ignore = "RED GATE — the capability is presented at evolve and never again; commit fixes the discharge into history with nothing presented"]
 fn red_commit_of_discharged_content_requires_the_capability() {
     let d = repo_with_discharge("r1");
 
@@ -262,7 +261,6 @@ fn red_commit_of_discharged_content_requires_the_capability() {
 /// PAIRED with an ordinary commit, which must NOT be marked: an engine that
 /// marks everything has not made the distinction the audit surface exists for.
 #[test]
-#[ignore = "RED GATE — the commit is kind=Standard with meta {author,timestamp,message} and no marker"]
 fn red_privileged_commit_is_marked_and_ordinary_commits_are_not() {
     let d = repo_with_discharge("r2");
     let granted = oo(
@@ -295,7 +293,6 @@ fn red_privileged_commit_is_marked_and_ordinary_commits_are_not() {
 /// v0.2.44 spent an arc on exactly this (a verdict reaching the value is not
 /// clause 4 being satisfied), and v0.2.41's `oo log` was another discarded one.
 #[test]
-#[ignore = "RED GATE — nothing is recorded, so nothing is displayed"]
 fn red_oo_log_shows_the_privileged_effect_marker() {
     let d = repo_with_discharge("r3");
     let granted = oo(
@@ -328,7 +325,6 @@ fn red_oo_log_shows_the_privileged_effect_marker() {
 /// requires the two to be distinguishable. Whichever side the delivery
 /// changes (marker prefix, message quoting) is its choice.
 #[test]
-#[ignore = "RED GATE — a commit message renders identically to an engine audit marker"]
 fn red_audit_markers_are_not_forgeable_by_a_commit_message() {
     // A genuine pin commit, with NO message, so its body is the marker alone.
     let d = fresh_dir("r4a");
@@ -378,7 +374,6 @@ fn red_audit_markers_are_not_forgeable_by_a_commit_message() {
 ///
 /// PAIRED: the surviving grants must keep working.
 #[test]
-#[ignore = "RED GATE — `--grant commit` is accepted and gates nothing (0 consumers)"]
 fn red_grant_commit_spelling_is_retired() {
     let d = fresh_dir("r5");
     write(&d, "s.n", "a: 1\n");

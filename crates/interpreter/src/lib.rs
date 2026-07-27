@@ -332,6 +332,10 @@ pub struct Ouroboros {
     pub privilege: crate::value::Privilege,
     /// Accumulated integrity incidents (條款四). Library is silent; CLI prints.
     pub integrity_log: RwLock<Vec<IntegrityIncident>>,
+    /// Set when `runPure` successfully discharges during this process.
+    /// Read by `Universe::evolve` into `effect_pending` (SPEC_08 §6.2).
+    /// Not authorization — only "a discharge happened".
+    pub privileged_discharge_flag: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,6 +397,7 @@ impl Ouroboros {
             architect_registry: RwLock::new(std::collections::HashSet::new()),
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
+            privileged_discharge_flag: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -420,8 +425,21 @@ impl Ouroboros {
             architect_registry: RwLock::new(architects),
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
+            privileged_discharge_flag: std::sync::atomic::AtomicBool::new(false),
         };
         Ok(oo)
+    }
+
+    /// Note that a privileged discharge actually occurred (runPure success).
+    pub fn note_privileged_discharge(&self) {
+        self.privileged_discharge_flag
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Consume the discharge flag (true if any discharge since last take).
+    pub fn take_privileged_discharge(&self) -> bool {
+        self.privileged_discharge_flag
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Operator identity for signing. Lazy-loads/mints at the operator path

@@ -26,7 +26,7 @@ fn refine_simple_source_to_target() {
 
     assert_ne!(caid_a, caid_b, "A and B must have different CAIDs for refine test");
 
-    let meta = CommitMeta { author: Some("test".into()), timestamp: 0, message: Some("refine test".into()), abandoned: None };
+    let meta = CommitMeta { author: Some("test".into()), timestamp: 0, message: Some("refine test".into()), abandoned: None, privileged_effect: None };
     let result = u.refine(&oo, &base_dir, vec![caid_a.clone()], vec![caid_b.clone()], None, meta);
     assert!(result.is_ok(), "refine should succeed when new ⊑ old");
 
@@ -48,7 +48,7 @@ fn refine_fails_monotonicity() {
     let caid_b = oo.store.put_value(&val_b).unwrap();
 
     // refine(A → B) should fail: 1 & 2 = ⊥ ≠ 1
-    let meta = CommitMeta { author: Some("test".into()), timestamp: 0, message: Some("should fail".into()), abandoned: None };
+    let meta = CommitMeta { author: Some("test".into()), timestamp: 0, message: Some("should fail".into()), abandoned: None, privileged_effect: None };
     let result = u.refine(&oo, &base_dir, vec![caid_a], vec![caid_b], None, meta);
     assert!(result.is_err(), "refine should fail when new & old ≠ new");
 }
@@ -65,7 +65,7 @@ fn refine_cycle_detection() {
     let caid2 = oo.store.put_value(&v2).unwrap();
 
     // Refine A → B
-    let meta1 = CommitMeta { author: Some("test".into()), timestamp: 0, message: None, abandoned: None };
+    let meta1 = CommitMeta { author: Some("test".into()), timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     u.refine(&oo, &base_dir, vec![caid1.clone()], vec![caid2.clone()], None, meta1).unwrap();
 
     // Manually inject reverse B → A into refine_map to create cycle
@@ -124,7 +124,7 @@ fn refine_no_redirect_in_history_commits() {
     let caid_b = oo.store.put_value(&val_b).unwrap();
 
     // Refine A → B
-    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     u.refine(&oo, &base_dir, vec![caid_a.clone()], vec![caid_b.clone()], None, meta).unwrap();
 
     // History get_value should STILL return A's value (not redirected to B)
@@ -143,7 +143,7 @@ fn refine_info_stored_in_commit() {
     let caid_src = oo.store.put_value(&src).unwrap();
     let caid_tgt = oo.store.put_value(&tgt).unwrap();
 
-    let meta = CommitMeta { author: Some("alice".into()), timestamp: 1000, message: Some("test refine".into()), abandoned: None };
+    let meta = CommitMeta { author: Some("alice".into()), timestamp: 1000, message: Some("test refine".into()), abandoned: None, privileged_effect: None };
     let ch = u.refine(&oo, &base_dir, vec![caid_src.clone()], vec![caid_tgt.clone()], None, meta).unwrap();
 
     // Load the commit and verify refine_info
@@ -166,7 +166,7 @@ fn get_live_value_follows_refine() {
     let caid1 = oo.store.put_value(&v1).unwrap();
     let caid2 = oo.store.put_value(&v2).unwrap();
 
-    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     u.refine(&oo, &base_dir, vec![caid1.clone()], vec![caid2.clone()], None, meta).unwrap();
 
     // get_live_value should follow refine and return v2, not v1
@@ -193,7 +193,7 @@ fn bootstrap_exempt_when_no_architects() {
     let cb = oo.store.put_value(&val_b).unwrap();
 
     // First refine: head=None → exempt (regardless of architect_reg)
-    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     u.refine(&oo, &base_dir, vec![ca.clone()], vec![cb.clone()], None, meta1).unwrap();
     assert!(u.head.is_some());
 
@@ -202,7 +202,7 @@ fn bootstrap_exempt_when_no_architects() {
     let cb2 = oo.store.put_value(&val_c).unwrap();
     let ca2 = Value::Top;
     let ca2_hash = oo.store.put_value(&ca2).unwrap();
-    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None };
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None, privileged_effect: None };
     // Top & 99 = 99 → monotonicity holds
     let result = u.refine(&oo, &base_dir, vec![ca2_hash], vec![cb2], None, meta2);
     assert!(result.is_ok(), "should be exempt when architect_reg empty: {:?}", result);
@@ -226,7 +226,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
     let cb = oo.store.put_value(&val_b).unwrap();
 
     // First refine: head=None → exempt (bootstrap)
-    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1).unwrap();
     assert!(u.head.is_some(), "head should be set after first refine");
 
@@ -236,7 +236,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
     let val_d = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
     let cc = oo.store.put_value(&val_c).unwrap();
     let cd = oo.store.put_value(&val_d).unwrap();
-    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None };
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None, privileged_effect: None };
     let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2);
     assert!(result.is_err(), "refine without signature should fail when architect is registered and head is set");
 }
@@ -259,7 +259,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
     let cb = oo.store.put_value(&val_b).unwrap();
 
     // First refine: exempt (head=None)
-    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1).unwrap();
 
     // Second refine: with valid signature → should succeed
@@ -271,7 +271,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
     let payload = nlang_interpreter::authority::compute_refine_payload(&[cc.clone()], &[cd.clone()]);
     let auth = nlang_interpreter::authority::sign_refine(&payload, &oo.identity().unwrap()).unwrap();
 
-    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None };
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None, privileged_effect: None };
     let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], Some(auth), meta2);
     assert!(result.is_ok(), "refine with valid signature should succeed: {:?}", result);
 }
@@ -288,7 +288,7 @@ fn shadow_affected_empty_on_fresh_universe() {
     let ca = oo.store.put_value(&val_a).unwrap();
     let cb = oo.store.put_value(&val_b).unwrap();
 
-    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     let ch = u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta).unwrap();
 
     let commit = oo.store.get_commit(&ch).unwrap();
@@ -308,14 +308,14 @@ fn shadow_affected_detects_historical_usage() {
     let val_b_precise = Value::Atom(AtomKind::Int(99.into()), EffectTag::Pure, None);
     let cb = oo.store.put_value(&val_b_precise).unwrap();
 
-    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta1 = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     u.refine(&oo, &base_dir, vec![ca.clone()], vec![cb.clone()], None, meta1).unwrap();
 
     let val_c = Value::Top;
     let val_d = Value::Atom(AtomKind::Int(1000.into()), EffectTag::Pure, None);
     let cc = oo.store.put_value(&val_c).unwrap();
     let cd = oo.store.put_value(&val_d).unwrap();
-    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None };
+    let meta2 = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None, privileged_effect: None };
     let ch2 = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2).unwrap();
 
     let commit2 = oo.store.get_commit(&ch2).unwrap();
@@ -342,7 +342,7 @@ fn shadow_scan_finds_field_in_committed_root() {
     let commit0 = Commit {
         parent: None,
         root: root_hash,
-        meta: CommitMeta { author: None, timestamp: 0, message: None, abandoned: None },
+        meta: CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None },
         kind: CommitKind::Refine,
         refine_info: None,
         cache_id: default_cache_id(),
@@ -353,7 +353,7 @@ fn shadow_scan_finds_field_in_committed_root() {
     oo.store.set_head(&base_dir, &ch0).unwrap();
     u.head = Some(ch0);
 
-    let meta = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None };
+    let meta = CommitMeta { author: None, timestamp: 1, message: None, abandoned: None, privileged_effect: None };
     let ch_refine = u.refine(&oo, &base_dir, vec![caid_77.clone()], vec![caid_77], None, meta).unwrap();
 
     let commit = oo.store.get_commit(&ch_refine).unwrap();
@@ -387,7 +387,7 @@ fn refine_cycle_ab_ba_rejected() {
     }
     // Now try to commit a refine A→B again: src=ca, tgt=cb
     // Geometric: Top & 5 = 5 = cb ✓. BFS from cb: cb→ca→cb... ca matches src → cycle!
-    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
     let result = u.refine(&oo, &base_dir, vec![ca.clone()], vec![cb.clone()], None, meta);
     assert!(result.is_err(), "A→B with A→B→A cycle should be rejected: {:?}", result);
     let err_str = result.unwrap_err().to_string();

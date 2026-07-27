@@ -494,6 +494,7 @@ fn pin_commit_meta_debug_omits_absent_fields() {
         timestamp: 7,
         message: Some("m".into()),
         abandoned: None,
+        privileged_effect: None,
     };
     let s = format!("{bare:?}");
     assert!(

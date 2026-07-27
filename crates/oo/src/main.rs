@@ -292,29 +292,24 @@ fn run_log() -> anyhow::Result<()> {
     let history = engine.log().map_err(|e| format_store_read_error(e, "HEAD chain"))?;
     for (hash, meta, kind) in history {
         println!("commit {}", hash);
-        // SPEC_08 §6.2 audit markers on the commit surface (never in values).
+        // SPEC_08 §6.2 audit markers as bare machine lines. Messages always
+        // print as `message: …` so a human message cannot reproduce a marker
+        // (privileged_effect_audit R4). history_ops pins `trim() == "squash"`.
         if kind == nlang_interpreter::CommitKind::Pin {
             println!("    pin");
         }
         if kind == nlang_interpreter::CommitKind::Squash {
             println!("    squash");
         }
+        if meta.privileged_effect == Some(true) {
+            println!("    privileged_effect");
+        }
         if let Some(ref abs) = meta.abandoned {
             for a in abs {
-                // "abandoned" substring is the probe-visible audit record (R1).
                 println!("    abandoned {}", a);
             }
         }
-        // universe_determinism: refine authority status lives on RefineInfo
-        // (not CommitMeta — Debug of meta is hashed into the commit CAID).
-        //
-        // ACCEPTANCE REPAIR. The delivery wrote `if let Ok(commit) = …`, which
-        // is the discarded-verdict shape REAL_03 §6.6 條款四 forbids and that
-        // v0.2.44 spent an arc removing from every read path. It is LATENT
-        // rather than live — `engine.log()` above already read this same hash
-        // with `?`, so the second read cannot fail where the first did not —
-        // but the pattern is what the next refactor inherits, and a lazier
-        // `log()` would make it live immediately. Report, do not swallow.
+        // universe_determinism: refine authority status lives on RefineInfo.
         match engine.store.get_commit(&hash) {
             Ok(commit) => {
                 if let Some(ri) = commit.refine_info {
@@ -327,7 +322,9 @@ fn run_log() -> anyhow::Result<()> {
                 eprintln!("    {}", format_store_read_error(e, &hash.to_string()));
             }
         }
-        if let Some(msg) = meta.message { println!("    {}", msg); }
+        if let Some(msg) = meta.message {
+            println!("    message: {}", msg);
+        }
         let date = std::time::UNIX_EPOCH + std::time::Duration::from_millis(meta.timestamp);
         println!("    Date: {:?}", date);
         println!();
@@ -382,6 +379,7 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
             .as_millis() as u64,
         author: Some("oo-cli".to_string()),
         abandoned: None,
+        privileged_effect: None,
     };
     let hash = universe.squash(&engine, &cur, &base, meta)?;
     println!("Squash commit: {}", hash);
@@ -411,11 +409,21 @@ fn run_commit(
              re-present the capability (oo commit --grant pin)"
         );
     }
+    // SPEC_08 §6.2 授權時點: commit fixes a discharge into history — must
+    // re-present effect_override. `.oo/effect_pending` is intent only.
+    if universe.effect_pending && engine.privilege.effect_override.is_none() {
+        anyhow::bail!(
+            "#privileged_required: this commit fixes privileged-discharged \
+             content into history; re-present the capability \
+             (oo commit --grant effect_override[:tags])"
+        );
+    }
     let meta = CommitMeta {
         message,
         timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,
         author: Some("oo-cli".to_string()),
         abandoned: None,
+        privileged_effect: None, // set by Universe::commit from effect_pending
     };
     let hash = universe.commit(&engine, &std::env::current_dir()?, meta)?;
     println!("Commit successful: {}", hash);
@@ -467,6 +475,7 @@ fn run_refine(
             .as_millis() as u64,
         author: Some("oo-cli".to_string()),
         abandoned: None,
+        privileged_effect: None,
     };
 
     let hash = universe.refine(&engine, &cur, source_caids, target_caids, authority, meta)?;
@@ -560,10 +569,11 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             pin: true,
             ..Privilege::NONE
         }),
-        "commit" => Ok(Privilege {
-            commit: true,
-            ..Privilege::NONE
-        }),
+        "commit" => anyhow::bail!(
+            "`--grant commit` is retired (SPEC_08 §6.2 2026-07-26): the \
+             `#commit` operation had no gate; use pin/rollback/squash/\
+             effect_override as needed"
+        ),
         "rollback" => Ok(Privilege {
             rollback: true,
             ..Privilege::NONE
@@ -602,7 +612,7 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             })
         }
         _ => anyhow::bail!(
-            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, commit, rollback, squash)"
+            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash)"
         ),
     }
 }
