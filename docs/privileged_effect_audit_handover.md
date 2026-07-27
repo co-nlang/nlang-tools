@@ -188,7 +188,7 @@ pair is measured together.
 
 ## 7. Delivery record (delivery side)
 
-- **Tip**: see commit (recorded after).
+- **Tip**: `c16079a`.
 - **D1** `runPure` success → `Ouroboros::note_privileged_discharge`; evolve →
   `effect_pending` + `.oo/effect_pending` (intent only). Commit requires
   `effect_override` grant when pending; refuses with `#privileged_required`.
