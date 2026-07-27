@@ -316,7 +316,13 @@ pub struct Ouroboros {
     pub force_memo_rev: RwLock<HashMap<String, HashSet<ForceMemoKey>>>,
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
-    pub identity: crate::value::Identity,
+    /// Lazy operator identity. `None` until a signature is needed (or
+    /// `oo identity`). In-memory engines pre-fill an ephemeral key and never
+    /// touch the operator path.
+    identity_cell: RwLock<Option<crate::value::Identity>>,
+    /// When true, `identity()` loads/mints at `OO_IDENTITY` or `~/.oo/identity`.
+    /// When false (`new_in_memory`), only the ephemeral key is used.
+    identity_persist: bool,
     pub refine_map: RwLock<HashMap<String, Vec<String>>>,
     pub gbb_registry: RwLock<HashMap<String, crate::ladd::GBB>>,
     pub architect_registry: RwLock<std::collections::HashSet<String>>,
@@ -369,9 +375,9 @@ impl Ouroboros {
         let dir = std::env::temp_dir().join(format!("nlang-test-{}", hex::encode(bytes)));
         let store = ObjectStore::init(&dir).unwrap();
         let builtins = create_default_builtins();
+        // Ephemeral identity only — never read/write the operator path.
         let identity = crate::value::Identity::new_random();
         // No self-appointment into architect_registry (universe_determinism).
-        // Empty registry → bootstrap_exempt; provision via load_architects only.
         Self {
             store,
             base_dir: None,
@@ -380,7 +386,8 @@ impl Ouroboros {
             force_memo_rev: RwLock::new(HashMap::new()),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
-            identity,
+            identity_cell: RwLock::new(Some(identity)),
+            identity_persist: false,
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(std::collections::HashSet::new()),
@@ -392,10 +399,9 @@ impl Ouroboros {
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
         let store = ObjectStore::init(base_dir)?;
         let builtins = create_default_builtins();
-        let identity = crate::value::Identity::new_random();
-        // Assertion layer only: load provisioned whitelist from .oo/architects.json.
-        // Never mint a random local key into the registry (that was a self-signed
-        // authority theatre — SPEC_13 §4.1.2 / ORDER_01 trust root).
+        // Lazy identity: do not mint on init (P5 — ordinary work must not
+        // create ~/.oo/identity). Loaded on first signature / `oo identity`.
+        // Assertion layer: load provisioned whitelist from .oo/architects.json.
         let architects = store
             .load_architects(base_dir)
             .unwrap_or_else(|_| std::collections::HashSet::new());
@@ -407,7 +413,8 @@ impl Ouroboros {
             force_memo_rev: RwLock::new(HashMap::new()),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
-            identity,
+            identity_cell: RwLock::new(None),
+            identity_persist: true,
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(architects),
@@ -415,6 +422,35 @@ impl Ouroboros {
             integrity_log: RwLock::new(Vec::new()),
         };
         Ok(oo)
+    }
+
+    /// Operator identity for signing. Lazy-loads/mints at the operator path
+    /// when `identity_persist`; otherwise returns the ephemeral in-memory key.
+    ///
+    /// **Only consumer of the private key in the engine after identity_persistence
+    /// is `oo refine --sign` (via `authority::sign_refine`).** Language surface
+    /// must not obtain it.
+    pub fn identity(&self) -> Result<crate::value::Identity> {
+        {
+            let guard = self.identity_cell.read().map_err(|e| anyhow::anyhow!("{e}"))?;
+            if let Some(ref id) = *guard {
+                return Ok(id.clone());
+            }
+        }
+        if !self.identity_persist {
+            // Should have been pre-filled; fall back to ephemeral.
+            let id = crate::value::Identity::new_random();
+            if let Ok(mut w) = self.identity_cell.write() {
+                *w = Some(id.clone());
+            }
+            return Ok(id);
+        }
+        let path = crate::value::Identity::resolve_path()?;
+        let id = crate::value::Identity::load_or_mint(&path)?;
+        if let Ok(mut w) = self.identity_cell.write() {
+            *w = Some(id.clone());
+        }
+        Ok(id)
     }
 
     /// Record a REAL_03 §6.6 integrity incident (never silently drop a verdict).
@@ -1060,22 +1096,21 @@ impl Ouroboros {
         engine_fields.insert("state".to_string(), Value::Combo(ComboVal::new(state_inner, false, IndexMap::new(), EffectTag::Pure, vec![])));
         fields.insert("~%Engine".to_string(), Value::Combo(ComboVal::new(engine_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
 
-        // ~%Official: signing morphisms only. `architects` is NOT minted into
-        // the universe root (universe_determinism / ORDER_01: trust root is a
-        // governance object, not a per-process random self-appointment).
-        // Whitelist lives in the assertion layer (`.oo/architects.json`).
-        // Observing ~%Official.architects → #missing_key is the honest answer.
-        let mut official_fields = IndexMap::new();
-        fn official_morph(builtin: &str, effect: EffectTag) -> Value {
-            Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
-                ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
-                ("%builtin".to_string(), Value::Atom(AtomKind::Str(builtin.to_string()), EffectTag::Pure, None)),
-            ]), true, IndexMap::new(), effect, vec![]))
-        }
-        official_fields.insert("/sign_refine".to_string(), official_morph("engine.sign_refine", EffectTag::IO));
-        // /add_architect retired (store_boundary: language surface must not
-        // own the refine trust root; REAL_01 §7.2 out-of-band provisioning).
-        fields.insert("~%Official".to_string(), Value::Combo(ComboVal::new(official_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+        // ~%Official: empty closed combo (honest cold-start). No architects
+        // field (universe_determinism), no /sign_refine (identity_persistence —
+        // language must not own the private key; only `oo refine --sign` signs).
+        // /add_architect already retired (store_boundary). Observing
+        // ~%Official.architects → #missing_key.
+        fields.insert(
+            "~%Official".to_string(),
+            Value::Combo(ComboVal::new(
+                IndexMap::new(),
+                true,
+                IndexMap::new(),
+                EffectTag::Pure,
+                vec![],
+            )),
+        );
 
         // ~%Config: genesis defaults (SPEC_08 §3.1 / SPEC_09 §6).
         // Bare field names on the data axis — path-observable as ~%Config.fuel.

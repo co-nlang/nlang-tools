@@ -528,15 +528,20 @@ fn red_add_architect_is_off_the_language_surface() {
     // Paired discriminator. At baseline this answers `#conflict` (the apply
     // seam), and a genuinely absent key answers `#missing_key` — so the two
     // are distinguishable and "retired" is a checkable claim rather than an
-    // indistinguishable shade of bottom. `/sign_refine` is the control: it
-    // proves `~%Official` itself is still mounted and still resolving, so a
-    // pass cannot come from the whole object having vanished.
+    // indistinguishable shade of bottom. `~%Official` itself is the control:
+    // it proves the module is still mounted, so a pass cannot come from the
+    // whole object having vanished.
+    //
+    // The control used to be `/sign_refine`. The identity_persistence arc
+    // retires that morphism, so the ACCEPTOR moved this control to the module
+    // rather than leave a false red for that delivery. `{{` and not "not
+    // bottom": a module removed from the (open) system root evaluates to `_`.
     let d = fresh_dir();
     history(&d, 1);
-    let sign = oo(&d, &["eval", r#"~%Official./sign_refine("x")"#]);
+    let sign = oo(&d, &["eval", "~%Official"]);
     assert!(
-        sign.contains("signature_hex"),
-        "control: ~%Official must still be mounted and resolving: {sign:?}"
+        sign.contains("{{"),
+        "control: ~%Official must still be mounted: {sign:?}"
     );
     let got = oo(&d, &["eval", r#"~%Official./add_architect("x")"#]);
     assert!(

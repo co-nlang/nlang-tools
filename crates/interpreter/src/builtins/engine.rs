@@ -262,44 +262,10 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }
     }) as Arc<BuiltinFn>);
 
-    // ── Phase 8: authority signing ─────────────────────────────
-
-    m.insert("engine.sign_refine".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        let (src_strs, tgt_strs) = if let Value::Combo(ref c) = arg {
-            let extract_list = |key: &str, c: &crate::value::ComboVal, oo: &Ouroboros, ctx: &mut EvalContext| -> Vec<String> {
-                let mut result = Vec::new();
-                for i in 0u32.. {
-                    if let Some(Value::Combo(lc)) = c.get_field(key) {
-                        if let Some(v) = lc.get_field(&i.to_string()) {
-                            result.push(oo.force(v.clone(), ctx).to_string_plain());
-                        } else { break; }
-                    } else { break; }
-                }
-                result
-            };
-            (extract_list("source_caids", c, oo, ctx), extract_list("target_caids", c, oo, ctx))
-        } else { return BottomCause::Conflict.into(); };
-
-        let src_hashes: Vec<_> = src_strs.iter().filter_map(|s| ContentHash::parse(s).ok()).collect();
-        let tgt_hashes: Vec<_> = tgt_strs.iter().filter_map(|s| ContentHash::parse(s).ok()).collect();
-        let payload = crate::authority::compute_refine_payload(&src_hashes, &tgt_hashes);
-        match crate::authority::sign_refine(&payload, &oo.identity) {
-            Ok(auth) => {
-                let mut fields = indexmap::IndexMap::new();
-                fields.insert("signer_pubkey_hex".to_string(), Value::Atom(AtomKind::Str(auth.signer_pubkey_hex), EffectTag::Pure, None));
-                fields.insert("signature_hex".to_string(), Value::Atom(AtomKind::Str(auth.signature_hex), EffectTag::Pure, None));
-                if let Some(ts) = auth.timestamp {
-                    fields.insert("timestamp".to_string(), Value::Atom(AtomKind::Str(ts), EffectTag::Pure, None));
-                }
-                Value::Combo(crate::value::ComboVal::new(fields, true, indexmap::IndexMap::new(), EffectTag::IO, vec![]))
-            }
-            Err(e) => Value::Bottom(Box::new(BottomDetail { cause: BottomCause::Conflict, message: Some(format!("sign_refine: {}", e)), ..Default::default() }))
-        }
-    }) as Arc<BuiltinFn>);
-
-    // `engine.add_architect` retired (store_boundary arc, SPEC_08 §6.3 / A1).
-    // REAL_01 §7.2: out-of-band provisioning only. save_architects retained
-    // for a future CLI path; load_architects still loads the whitelist.
+    // `engine.sign_refine` retired (identity_persistence): language surface
+    // must not obtain the operator private key. The ONLY engine consumer of
+    // the private key is `oo refine --sign` → `authority::sign_refine`.
+    // `engine.add_architect` already retired (store_boundary / REAL_01 §7.2).
 
     // ── Functor operations (Phase 15) ──────────────────────────────
 

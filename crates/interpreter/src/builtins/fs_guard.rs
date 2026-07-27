@@ -10,11 +10,51 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::value::{BottomCause, BottomDetail, Value};
 
-/// True when `raw`, resolved for boundary purposes, contains a path component
-/// equal to `.oo`. Component-exact: `.oo_peer_a`, `.oomisc`, `foo.oo` pass.
+/// True when `raw`, resolved for boundary purposes, is refused to the language
+/// layer: any path component equal to `.oo`, **or** the resolved operator
+/// identity path (`OO_IDENTITY` / `~/.oo/identity`). Component-exact for `.oo`
+/// (`.oo_peer_a` etc. pass). Identity refusal is path-exact, not directory-wide.
 pub fn crosses_store_boundary(raw: &str) -> bool {
     let resolved = resolve_path_for_boundary(raw);
-    path_has_dot_oo_component(&resolved)
+    if path_has_dot_oo_component(&resolved) {
+        return true;
+    }
+    is_operator_identity_path(&resolved)
+}
+
+/// Whether `resolved` is the operator private-key file (identity_persistence D3).
+fn is_operator_identity_path(resolved: &Path) -> bool {
+    let Ok(id_path) = crate::value::Identity::resolve_path() else {
+        return false;
+    };
+    // Compare after the same resolution used for language paths.
+    let id_resolved = resolve_path_for_boundary(&id_path.to_string_lossy());
+    // Lexical equality after resolution; also compare as absolute if identity
+    // file does not yet exist (resolve may leave relative tails).
+    if paths_eq(&resolved, &id_resolved) {
+        return true;
+    }
+    // Fallback: absolute-form comparison when neither path exists yet.
+    let raw_abs = if resolved.is_absolute() {
+        resolved.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|c| c.join(resolved))
+            .unwrap_or_else(|_| resolved.to_path_buf())
+    };
+    let id_abs = if id_path.is_absolute() {
+        id_path.clone()
+    } else {
+        id_path
+    };
+    paths_eq(&raw_abs, &id_abs)
+}
+
+fn paths_eq(a: &Path, b: &Path) -> bool {
+    // Normalize by component (ignore trailing slash differences).
+    let ca: Vec<_> = a.components().collect();
+    let cb: Vec<_> = b.components().collect();
+    ca == cb
 }
 
 /// Resolve so that `sub/../.oo/…`, absolute paths, and symlink escapes
@@ -109,7 +149,7 @@ pub fn store_boundary_refusal(raw: &str) -> Value {
     Value::Bottom(Box::new(BottomDetail {
         cause: BottomCause::StoreBoundary,
         message: Some(format!(
-            "store boundary: language cannot touch path containing .oo component: {raw}"
+            "store boundary: language cannot touch engine/operator path: {raw}"
         )),
         path: Some(raw.to_string()),
         ..Default::default()

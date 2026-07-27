@@ -1521,14 +1521,174 @@ impl Commit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Identity { pub public_key: Vec<u8>, pub private_key: Vec<u8> }
+pub struct Identity {
+    pub public_key: Vec<u8>,
+    /// PKCS#8 DER bytes of the private key (the only form written to disk).
+    pub private_key: Vec<u8>,
+}
 
 impl Identity {
+    /// Ephemeral key for in-memory engines and tests. Never written to disk.
     pub fn new_random() -> Self {
         let rng = rand::SystemRandom::new();
         let pkcs8_bytes = signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
         let key_pair = signature::Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref()).unwrap();
-        Self { public_key: key_pair.public_key().as_ref().to_vec(), private_key: pkcs8_bytes.as_ref().to_vec() }
+        Self {
+            public_key: key_pair.public_key().as_ref().to_vec(),
+            private_key: pkcs8_bytes.as_ref().to_vec(),
+        }
+    }
+
+    /// Resolve the operator identity path: `OO_IDENTITY` (must be absolute) or
+    /// `~/.oo/identity`. A secret must not live inside a shareable `.oo/` workspace.
+    pub fn resolve_path() -> anyhow::Result<std::path::PathBuf> {
+        if let Ok(p) = std::env::var("OO_IDENTITY") {
+            let path = std::path::PathBuf::from(p);
+            if !path.is_absolute() {
+                anyhow::bail!(
+                    "OO_IDENTITY must be an absolute path (got {})",
+                    path.display()
+                );
+            }
+            return Ok(path);
+        }
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve home directory for ~/.oo/identity"))?;
+        Ok(std::path::PathBuf::from(home).join(".oo").join("identity"))
+    }
+
+    /// Load PKCS#8 from `path`. On parse failure the file is left untouched.
+    pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
+        let bytes = std::fs::read(path).map_err(|e| {
+            anyhow::anyhow!("identity file {}: read failed: {}", path.display(), e)
+        })?;
+        Self::from_pkcs8(&bytes).map_err(|e| {
+            anyhow::anyhow!(
+                "identity file {}: not a valid PKCS#8 Ed25519 key ({}); file left unchanged",
+                path.display(),
+                e
+            )
+        })
+    }
+
+    pub fn from_pkcs8(bytes: &[u8]) -> anyhow::Result<Self> {
+        let key_pair = signature::Ed25519KeyPair::from_pkcs8(bytes)
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        Ok(Self {
+            public_key: key_pair.public_key().as_ref().to_vec(),
+            private_key: bytes.to_vec(),
+        })
+    }
+
+    /// Write PKCS#8 to `path`, **claiming it atomically**. Never replaces an
+    /// existing file: `AlreadyExists` is the signal that somebody else won.
+    ///
+    /// ACCEPTOR REPAIR (identity_persistence). Measured on the delivered
+    /// build, three rounds of eight concurrent first-mints:
+    ///
+    ///   8 processes → 3 distinct keys minted, and 2 of the 8 printed a
+    ///   public key that is NOT the one left in the file.
+    ///
+    /// The operator is shown key X, declares X out of band, and the engine
+    /// signs with Y forever after — the declaration silently never takes
+    /// effect and surfaces much later as "signer not in architect_registry",
+    /// pointing at the wrong thing. That is R6's defect (a printed key that
+    /// is not the signing key) wearing a race condition.
+    ///
+    /// Two causes, both removed here:
+    ///   * `tmp + rename` replaces unconditionally, so every racer's rename
+    ///     succeeded and the last one won while each returned its own key;
+    ///   * the tmp path was a fixed, predictable name that no racer owned,
+    ///     and — being neither `.oo` nor the identity path — the language
+    ///     layer could read the private key out of it (measured: `#none`,
+    ///     i.e. permitted, merely absent).
+    ///
+    /// `create_new` + `mode(0o600)` claims the path in one syscall and the
+    /// file is 0600 from creation, with no window at the umask default.
+    /// Replacement is not needed by anything: D2 forbids overwriting a key.
+    fn create_new_at(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            // Mode is set only when WE create the directory. Chmod-ing a
+            // directory the operator already made is outside this arc's
+            // mandate — measured on the delivered build: an existing 0750
+            // `~/.oo` became 0700, and a deliberately read-only 0500 parent
+            // became writable, on every mint.
+            let pre_existing = parent.exists();
+            std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            if !pre_existing {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(path)?;
+        use std::io::Write;
+        f.write_all(&self.private_key)?;
+        f.sync_all()?;
+        Ok(())
+    }
+
+    /// Load the existing operator identity, or mint one and claim the path.
+    ///
+    /// Under a concurrent first mint exactly one process wins the
+    /// `create_new`; every loser loads the winner's file, so the key a
+    /// process reports is always the key on disk.
+    pub fn load_or_mint(path: &std::path::Path) -> anyhow::Result<Self> {
+        if path.exists() {
+            return Self::load(path);
+        }
+        let id = Self::new_random();
+        match id.create_new_at(path) {
+            Ok(()) => Ok(id),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Self::load_after_race(path),
+            Err(e) => Err(anyhow::anyhow!(
+                "identity file {}: could not be created: {}",
+                path.display(),
+                e
+            )),
+        }
+    }
+
+    /// Load a file the winner of a `create_new` race has claimed.
+    ///
+    /// `create_new` claims the path before the bytes are written, so a loser
+    /// arriving inside that window would read an empty file and report it as
+    /// a corrupt key. Not observed in 5 rounds of 8 — a loser generates an
+    /// Ed25519 keypair between the two, which is far longer than the winner's
+    /// write — but "not observed" is not "cannot happen", and this arc exists
+    /// because a check that cannot fail is not a check.
+    ///
+    /// Bounded, and only on the cold-start path. Failure stays D2-honest: the
+    /// file is never overwritten, so the worst case is a loud transient error
+    /// and a re-run, never a wrong key.
+    fn load_after_race(path: &std::path::Path) -> anyhow::Result<Self> {
+        let mut last = None;
+        for attempt in 0..100 {
+            match Self::load(path) {
+                Ok(id) => return Ok(id),
+                Err(e) => {
+                    last = Some(e);
+                    if attempt < 99 {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            anyhow::anyhow!("identity file {}: unreadable after race", path.display())
+        }))
+    }
+
+    pub fn public_key_hex(&self) -> String {
+        hex::encode(&self.public_key)
     }
 }
 
@@ -1890,7 +2050,21 @@ impl Value {
                 }
 
                 let mut s = if c.closed { "{{".to_string() } else { "{".to_string() };
-                if c.data.is_empty() && c.types.is_empty() && c.rules.is_empty() && c.meta.is_empty() && c.system.is_empty() && c.local.is_empty() { return format!("{} }}", s); }
+                // Empty closed combo must re-parse (identity_persistence R8).
+                // Was `{{ }` (one brace short) — invalid n/ source.
+                if c.data.is_empty()
+                    && c.types.is_empty()
+                    && c.rules.is_empty()
+                    && c.meta.is_empty()
+                    && c.system.is_empty()
+                    && c.local.is_empty()
+                {
+                    return if c.closed {
+                        "{{ }}".to_string()
+                    } else {
+                        "{}".to_string()
+                    };
+                }
                 s.push('\n');
                 let fields = c.fields();
                 let mut keys: Vec<_> = fields.keys().collect(); keys.sort();
