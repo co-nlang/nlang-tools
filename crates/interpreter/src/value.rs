@@ -1728,6 +1728,58 @@ impl Identity {
     pub fn public_key_hex(&self) -> String {
         hex::encode(&self.public_key)
     }
+
+    /// Home for node keys: `OO_NODE_HOME` (absolute, replaces `~/.oo`) or
+    /// `~/.oo`. Relative `OO_NODE_HOME` is refused (same rule as `OO_IDENTITY`).
+    pub fn resolve_node_home() -> anyhow::Result<std::path::PathBuf> {
+        if let Ok(p) = std::env::var("OO_NODE_HOME") {
+            let path = std::path::PathBuf::from(p);
+            if !path.is_absolute() {
+                anyhow::bail!(
+                    "OO_NODE_HOME must be an absolute path (got {})",
+                    path.display()
+                );
+            }
+            return Ok(path);
+        }
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve home directory for ~/.oo/nodes"))?;
+        Ok(std::path::PathBuf::from(home).join(".oo"))
+    }
+
+    /// Key path for this workspace: `{node_home}/nodes/<sha256 hex of abs path>`.
+    ///
+    /// The workspace path is part of the node identity (node_identity arc Q1):
+    /// the engine cannot distinguish a moved workspace from a copied one, so a
+    /// path change *is* a new node — no detection, no heuristic. Secrets still
+    /// live outside `.oo/` (REAL_01 §7.5 / v0.2.46).
+    pub fn node_key_path(workspace: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+        let abs = if workspace.is_absolute() {
+            workspace.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(workspace)
+        };
+        // canonicalize when possible so symlinks/relative segments collapse;
+        // fall back to the absolute join if the path does not exist yet.
+        let abs = abs.canonicalize().unwrap_or(abs);
+        let mut hasher = Sha256::new();
+        hasher.update(abs.to_string_lossy().as_bytes());
+        let digest = hex::encode(hasher.finalize());
+        Ok(Self::resolve_node_home()?.join("nodes").join(digest))
+    }
+
+    /// `node_id` = CAID of the node's **public key** (closes REAL_02 §4.1 gap:
+    /// 「節點 ID = CAID 的內容指紋前 160 bit」— the CAID addresses this key).
+    /// DHT address is the leading 160 bits of this digest; unused until L2.
+    pub fn node_id_caid(&self) -> ContentHash {
+        Value::Atom(
+            AtomKind::Bytes(self.public_key.clone()),
+            EffectTag::Pure,
+            None,
+        )
+        .content_hash()
+    }
 }
 
 pub const TROPICAL_INFINITY: u64 = u64::MAX;

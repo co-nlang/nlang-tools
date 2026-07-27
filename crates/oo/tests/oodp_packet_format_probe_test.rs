@@ -89,7 +89,9 @@ fn fresh_dir(tag: &str) -> PathBuf {
 fn oo_cmd(dir: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_oo"));
     c.current_dir(dir)
-        .env("OO_IDENTITY", dir.join("identity-for-tests"));
+        .env("OO_IDENTITY", dir.join("identity-for-tests"))
+        // Node keys live under OO_NODE_HOME (default ~/.oo); isolate tests.
+        .env("OO_NODE_HOME", dir.join("node-home-for-tests"));
     c
 }
 

@@ -145,3 +145,26 @@ would pass the first half; one that hard-coded a constant would pass the second.
 3. Adversarial, at minimum: a copied workspace served alongside its original; a forged `%from`; a corrupt node key file; concurrent first mint; `OO_NODE_HOME` relative; a workspace whose path contains spaces or non-ASCII; the operator key and node key must not be confusable (one must not be usable as the other).
 4. A/B against v0.2.48.
 5. Classification by measurement — value CAIDs, universe root and commit CAIDs must be untouched; the protocol question is D5.
+
+## 7. Delivery record (delivery side)
+
+- **D1** Node key at `{OO_NODE_HOME|~/.oo}/nodes/<sha256 hex of workspace abs
+  path>`. PKCS#8, `create_new` + `0o600`, refuse corrupt (never overwrite),
+  parent mode only when created. Relative `OO_NODE_HOME` refused. Lazy: first
+  network use / `oo node id` only (P4).
+- **D2** `node_id` = CAID of `AtomKind::Bytes(pubkey)` (comment closes REAL_02
+  §4.1 gap). Independent of operator identity cell.
+- **D3** Client OODP request always carries `%from: <node_id>`; responses use
+  `%source: <node_id>` (not `node:<port>`). `%from` parsed and **never**
+  consulted for outcomes (P1).
+- **D4** `oo node id` prints full node CAID + `path: …` (same shape as
+  `oo identity`).
+- **D5** Bare-CAID request → parse error → envelope `#conflict` (not served).
+- **Probe**: only five `#[ignore]` removed. Harness updates on oodp/peer_fetch
+  for `OO_NODE_HOME` isolation and peer_fetch envelope (bare form retired).
+- **Spec**: not edited (work order §0 / §4 — acceptor writes).
+- **Numbers**: node_identity **12/12** · oodp **13/13** · peer_fetch **12/12**
+  · workspace **1542/0/3** · conf **143/143** · genesis **11/11**.
+- **Classification measurement**: value CAID golden unmoved (P5); root digests
+  deterministic (P6). Protocol break is D5 only (`%from` additive). Recommend
+  acceptor classify (D5 → expected Layer 1 if bare-CAID peers still exist).

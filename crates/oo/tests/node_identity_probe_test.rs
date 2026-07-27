@@ -276,7 +276,6 @@ fn copy_workspace(src: &Path, tag: &str) -> PathBuf {
 /// would pass the first half; one that returned a constant would pass the
 /// second. Only both together say anything.
 #[test]
-#[ignore = "RED GATE — `oo node id` does not exist; a node has no identity beyond its port"]
 fn red_a_copied_workspace_is_a_different_node() {
     let home = fresh_home("r1");
     let a = fresh_dir("r1-a");
@@ -309,7 +308,6 @@ fn red_a_copied_workspace_is_a_different_node() {
 /// v0.2.46's rule, applied to the other key: `.oo/objects` is built to be
 /// served and copied, so nothing secret may sit in that tree.
 #[test]
-#[ignore = "RED GATE — there is no node key anywhere to place correctly"]
 fn red_the_node_key_lives_outside_the_workspace() {
     let home = fresh_home("r2");
     let d = fresh_dir("r2");
@@ -372,7 +370,6 @@ fn red_the_node_key_lives_outside_the_workspace() {
 /// workspaces must give different ones. Today it is `node:<port>`, which gets
 /// both halves exactly backwards.
 #[test]
-#[ignore = "RED GATE — `%source` is `node:<port>`: same workspace, two ports, two identities"]
 fn red_source_identifies_the_node_not_the_port() {
     let home = fresh_home("r3");
     let a = fresh_dir("r3-a");
@@ -414,7 +411,6 @@ fn red_source_identifies_the_node_not_the_port() {
 
 /// R4 — the request carries `%from`.
 #[test]
-#[ignore = "RED GATE — requests carry no notion of who is asking"]
 fn red_requests_carry_from() {
     let home = fresh_home("r4");
     let client = fresh_dir("r4");
@@ -449,7 +445,6 @@ fn red_requests_carry_from() {
 /// spec put its removal in this arc. PAIRED: the envelope form still works, so
 /// a pass cannot come from the node having stopped answering altogether.
 #[test]
-#[ignore = "RED GATE — a bare CAID is still served"]
 fn red_the_legacy_bare_caid_request_is_retired() {
     let home = fresh_home("r5");
     let d = fresh_dir("r5");
