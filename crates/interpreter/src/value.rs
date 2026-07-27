@@ -59,6 +59,21 @@ impl EffectTag {
     pub fn all_active() -> EffectTag {
         Self::IO.union(Self::NonDet).union(Self::State)
     }
+    /// Raw bits, for persisting a tag SET across processes.
+    ///
+    /// ACCEPTOR REPAIR (privileged_effect_audit): `.oo/effect_pending` has to
+    /// carry *which* tags were discharged, not merely that something was, or
+    /// commit cannot check that the capability re-presented is the one the act
+    /// required. Measured on the delivered build: a discharge of `io` was
+    /// authorised at commit by `--grant effect_override:nondet`.
+    pub fn to_bits(self) -> u8 {
+        self.0
+    }
+    /// Inverse of [`to_bits`], masked to active tags — a persisted set is only
+    /// ever an `active_part()`, and unknown bits must not become capabilities.
+    pub fn from_bits(bits: u8) -> EffectTag {
+        EffectTag(bits & (Self::IO.0 | Self::NonDet.0 | Self::State.0))
+    }
     /// Thunk CAID serial byte: single-tag legacy ordinals unchanged
     /// (Pure=0, State=1, IO=2, NonDet=3); multi-tag / Cached use high bit.
     pub fn to_serial_byte(self) -> u8 {
@@ -122,10 +137,14 @@ pub struct Privilege {
     /// `#effect_override`: `None` = op not authorized (even pure args refused);
     /// `Some(tags)` = may discharge exactly those active tags (all-or-nothing).
     pub effect_override: Option<EffectTag>,
-    /// Declared but inert slots (no consumer yet).
+    /// `#pin` — re-present at commit when `.oo/pin_pending` is set.
     pub pin: bool,
+    /// Retired as a CLI grant (SPEC_08 §6.2 2026-07-26); field kept absent
+    /// from live grants. Do not re-enable without a consumer.
     pub commit: bool,
+    /// `#rollback` history op.
     pub rollback: bool,
+    /// `#squash` history op.
     pub squash: bool,
 }
 
@@ -138,12 +157,13 @@ impl Privilege {
         squash: false,
     };
 
-    /// Full grant (CLI `--privileged` back-compat).
+    /// Full grant (CLI `--privileged` back-compat). Does **not** set `commit`
+    /// (retired spelling).
     pub fn all() -> Privilege {
         Privilege {
             effect_override: Some(EffectTag::all_active()),
             pin: true,
-            commit: true,
+            commit: false,
             rollback: true,
             squash: true,
         }
@@ -1410,6 +1430,12 @@ pub struct CommitMeta {
     /// commits — serde skip keeps old objects bit-compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub abandoned: Option<Vec<String>>,
+    /// SPEC_08 §6.2 `#privileged_effect`: this commit fixed privileged-
+    /// discharged content into history. Statement about the *commit*, not
+    /// every coordinate. `None` omitted from serde/Debug so ordinary commit
+    /// digests stay bit-stable (`Commit::content_hash` formats meta via Debug).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privileged_effect: Option<bool>,
 }
 
 impl Default for CommitMeta {
@@ -1419,29 +1445,27 @@ impl Default for CommitMeta {
             timestamp: 0,
             message: None,
             abandoned: None,
+            privileged_effect: None,
         }
     }
 }
 
 /// Custom Debug so `Commit::content_hash` (which formats meta via `Debug`)
-/// stays bit-stable for commits with no abandonment record. Adding a field
+/// stays bit-stable when optional audit fields are absent. Adding a field
 /// under derive(Debug) would change every historical commit digest.
 impl fmt::Debug for CommitMeta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.abandoned.is_none() {
-            f.debug_struct("CommitMeta")
-                .field("author", &self.author)
-                .field("timestamp", &self.timestamp)
-                .field("message", &self.message)
-                .finish()
-        } else {
-            f.debug_struct("CommitMeta")
-                .field("author", &self.author)
-                .field("timestamp", &self.timestamp)
-                .field("message", &self.message)
-                .field("abandoned", &self.abandoned)
-                .finish()
+        let mut ds = f.debug_struct("CommitMeta");
+        ds.field("author", &self.author)
+            .field("timestamp", &self.timestamp)
+            .field("message", &self.message);
+        if self.abandoned.is_some() {
+            ds.field("abandoned", &self.abandoned);
         }
+        if self.privileged_effect.is_some() {
+            ds.field("privileged_effect", &self.privileged_effect);
+        }
+        ds.finish()
     }
 }
 

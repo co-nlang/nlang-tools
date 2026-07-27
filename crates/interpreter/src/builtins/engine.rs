@@ -108,6 +108,18 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     ..Default::default()
                 }));
             }
+            // SPEC_08 §6.2: record the discharge *fact* — which active tags
+            // were actually overridden, not the mere presence of a grant.
+            // Intent for commit re-presentation.
+            //
+            // ACCEPTOR REPAIR: passes `actual` rather than calling a bare
+            // flag-setter. `runPure` over an already-pure value overrides
+            // nothing, and the delivered build still demanded a capability at
+            // commit and stamped `#privileged_effect` on it — an audit line
+            // asserting an intervention that never happened. `#effect_override`
+            // is defined as 「強制將**含副作用**節點標記為 `#pure`」; with no
+            // effect there is nothing to force. `note_` ignores a Pure set.
+            oo.note_privileged_discharge(actual);
             forced.purify_effects()
         }) as Arc<BuiltinFn>,
     );

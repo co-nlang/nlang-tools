@@ -494,12 +494,21 @@ fn pin_commit_meta_debug_omits_absent_fields() {
         timestamp: 7,
         message: Some("m".into()),
         abandoned: None,
+        privileged_effect: None,
     };
     let s = format!("{bare:?}");
-    assert!(
-        !s.contains("abandoned"),
-        "CommitMeta's Debug must omit absent optional fields — it is hashed \
-         into every commit digest: {s}"
+    // ACCEPTOR STRENGTHENING (privileged_effect_audit). Naming the fields one
+    // by one is a pin that has to be extended every time a field is added, and
+    // the arc that added `privileged_effect` showed exactly that: the literal
+    // above had to gain the field to compile, while the assertion below still
+    // only knew about `abandoned`. Pin the WHOLE rendering instead, so any new
+    // optional field that leaks into Debug fails here whether or not anyone
+    // remembered to name it.
+    assert_eq!(
+        s,
+        "CommitMeta { author: Some(\"a\"), timestamp: 7, message: Some(\"m\") }",
+        "CommitMeta's Debug must render exactly the three ordinary fields when \
+         every optional one is absent — it is hashed into every commit digest"
     );
 
     let with = CommitMeta {

@@ -95,6 +95,7 @@ fn commit_reload_preserves_thunk_behavior() {
         timestamp: 0,
         author: Some("test".to_string()),
         abandoned: None,
+        privileged_effect: None,
     };
     let _hash = universe.commit(&engine, &dir, meta).unwrap();
 

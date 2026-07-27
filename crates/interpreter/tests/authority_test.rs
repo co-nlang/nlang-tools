@@ -94,7 +94,7 @@ fn test_universe_refine_with_authority() {
 
     let payload = compute_refine_payload(&[src.clone()], &[tgt.clone()]);
     let authority = sign_refine(&payload, &oo.identity().unwrap()).unwrap();
-    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None };
+    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
 
     let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta);
     assert!(result.is_ok(), "refine with valid authority should succeed");

@@ -172,6 +172,15 @@ pub struct Universe {
     /// of unprivileged ones (work order §3 C.3: pin acts only on its own
     /// fields).
     pub pin_coords: std::collections::BTreeSet<String>,
+    /// Intent: the active effect tags a `runPure` in the staged content
+    /// actually DISCHARGED. Persisted as `.oo/effect_pending` (assertion
+    /// layer, same home as `pin_pending`). `None` = no discharge.
+    /// **Not authorization** — commit must re-present a capability that
+    /// COVERS these tags (SPEC_08 §6.2 授權時點 / 意圖≠授權).
+    ///
+    /// ACCEPTOR REPAIR: was a `bool`, which cannot express what the commit
+    /// gate has to check.
+    pub effect_pending: Option<crate::value::EffectTag>,
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
@@ -183,6 +192,7 @@ impl Universe {
             pin_mode: false,
             pin_pending: false,
             pin_coords: std::collections::BTreeSet::new(),
+            effect_pending: None,
         }
     }
 
@@ -413,6 +423,16 @@ impl Universe {
         // `#pin`: overwrite into staged (replace), not lattice meet — meet of
         // staged-vs-incoming would re-⊥ an earlier incompatible pin, and
         // staged-vs-root conflict is handled only at commit (also replace).
+        // Capture discharge intent from this field's evaluation: the tags a
+        // runPure actually overrode (Pure = nothing happened).
+        let discharged = engine.take_privileged_discharge();
+        if !discharged.is_pure() {
+            self.effect_pending = Some(
+                self.effect_pending
+                    .unwrap_or(crate::value::EffectTag::Pure)
+                    .union(discharged),
+            );
+        }
         if self.pin_mode && engine.privilege.pin {
             self.staged = Self::replace_merge(&self.staged, &incoming);
             self.is_dirty = true;
@@ -449,6 +469,17 @@ impl Universe {
         } else if pin_path.exists() {
             let _ = std::fs::remove_file(pin_path);
         }
+        // Effect-discharge intent (SPEC_08 §6.2). Same strength as pin_pending:
+        // intent only — commit must re-present the capability. Not writable
+        // from the language layer (store boundary).
+        let effect_path = base_dir.join(".oo").join("effect_pending");
+        if let Some(tags) = self.effect_pending {
+            // The TAG SET, not a bare marker: commit must be able to check
+            // that the capability re-presented covers what was discharged.
+            std::fs::write(effect_path, tags.to_bits().to_string().as_bytes())?;
+        } else if effect_path.exists() {
+            let _ = std::fs::remove_file(effect_path);
+        }
         Ok(())
     }
 
@@ -472,6 +503,13 @@ impl Universe {
                 .map(|v| v.into_iter().collect())
                 .unwrap_or_default();
         }
+        self.effect_pending = std::fs::read_to_string(
+            base_dir.join(".oo").join("effect_pending"),
+        )
+        .ok()
+        .and_then(|s| s.trim().parse::<u8>().ok())
+        .map(crate::value::EffectTag::from_bits)
+        .filter(|t| !t.is_pure());
         Ok(())
     }
 
@@ -507,6 +545,11 @@ impl Universe {
                 }
             }
         }
+        // SPEC_08 §6.2 `#privileged_effect`: mark only when a discharge fact
+        // was staged (effect_pending), never merely because a grant was present.
+        if self.effect_pending.is_some() {
+            meta.privileged_effect = Some(true);
+        }
         let mut commit = crate::value::Commit::new(self.head.clone(), root_hash, meta);
         commit.kind = kind;
         let commit_hash = engine.store.put_commit(&commit)?;
@@ -517,10 +560,13 @@ impl Universe {
         self.is_dirty = false;
         self.pin_pending = false;
         self.pin_coords.clear();
+        self.effect_pending = None;
         let staged_path = base_dir.join(".oo").join("staged");
         if staged_path.exists() { let _ = std::fs::remove_file(staged_path); }
         let pin_path = base_dir.join(".oo").join("pin_pending");
         if pin_path.exists() { let _ = std::fs::remove_file(pin_path); }
+        let effect_path = base_dir.join(".oo").join("effect_pending");
+        if effect_path.exists() { let _ = std::fs::remove_file(effect_path); }
         Self::clear_abandoned_file(base_dir);
         Ok(commit_hash)
     }
