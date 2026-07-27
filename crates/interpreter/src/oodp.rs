@@ -281,7 +281,7 @@ pub fn remote_fetch_oodp(
     let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(
         |e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
-                BottomCause::Timeout
+                BottomCause::PeerTimeout
             } else {
                 BottomCause::Conflict
             }
@@ -314,7 +314,7 @@ pub fn remote_fetch_oodp(
             let timed = e.kind() == std::io::ErrorKind::TimedOut
                 || e.kind() == std::io::ErrorKind::WouldBlock;
             return Err(if timed {
-                BottomCause::Timeout
+                BottomCause::PeerTimeout
             } else {
                 BottomCause::Conflict
             });

@@ -1058,6 +1058,7 @@ impl BottomDetail {
             BottomCause::MissingKey => "#missing_key",
             BottomCause::FuelExhausted => "#fuel_exhausted",
             BottomCause::Timeout => "#timeout",
+            BottomCause::PeerTimeout => "#peer_timeout",
             BottomCause::Divergent => "#divergent",
             BottomCause::InvalidPath => "#invalid_path",
             BottomCause::PrivateAccessViolation => "#private_access_violation",
@@ -1195,6 +1196,17 @@ pub enum BottomCause {
     /// read path). Append-only tail. Distinct from absence (`#conflict` /
     /// `#missing_key` at the language surface for plain miss).
     CaidMismatch,
+    /// A peer accepted the connection and did not answer within the read
+    /// deadline (REAL_02 §3.2). Append-only tail.
+    ///
+    /// ACCEPTOR REPAIR (oodp_packet_format): the delivery reused `Timeout`,
+    /// which pre-exists for `ResourceExhausted::Timeout` — a COMPUTATION that
+    /// outran `%timeout` (`observation.rs:63`). ERROR_CODES gives `#timeout`
+    /// the remedy 「請優化性能、減少嵌套,或放寬時間限制」, which is not merely
+    /// unhelpful for a silent peer, it points the reader at their own code.
+    /// An arc whose entire thesis is that four situations must be separable
+    /// cannot ship a fifth that is not.
+    PeerTimeout,
 }
 
 impl BottomCause {
@@ -1204,6 +1216,7 @@ impl BottomCause {
             BottomCause::MissingKey => "missing_key",
             BottomCause::FuelExhausted => "fuel_exhausted",
             BottomCause::Timeout => "timeout",
+            BottomCause::PeerTimeout => "peer_timeout",
             BottomCause::Divergent => "divergent",
             BottomCause::InvalidPath => "invalid_path",
             BottomCause::PrivateAccessViolation => "private_access_violation",
@@ -1245,6 +1258,7 @@ impl BottomCause {
             | BottomCause::NoContext => 2,
             BottomCause::FuelExhausted
             | BottomCause::Timeout
+            | BottomCause::PeerTimeout
             | BottomCause::OutOfHorizon => 3,
             BottomCause::MissingKey | BottomCause::InvalidPath => 4,
         }

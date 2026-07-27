@@ -531,6 +531,30 @@ fn pin_a_lying_peer_is_still_refused() {
     );
 }
 
+/// P8 — a silent peer names a PEER timeout, not the computation one.
+///
+/// ACCEPTOR REPAIR pin. The delivery reused `BottomCause::Timeout`, which
+/// pre-exists for a computation that outran `%timeout` (`observation.rs:63`).
+/// ERROR_CODES gives `#timeout` the remedy 「請優化性能、減少嵌套,或放寬時間
+/// 限制」 — advice that, for a peer holding a socket open and saying nothing,
+/// points the reader at their own code. An arc whose thesis is that four
+/// situations must be separable cannot ship a fifth that is not.
+#[test]
+fn pin_a_silent_peer_names_a_peer_timeout() {
+    let client = fresh_dir("p8");
+    let got = fetch_from(
+        &client,
+        &format!("tcp://127.0.0.1:{}", spawn_silent_peer()),
+        &format!("hash:sha256:v1:{}", "a".repeat(64)),
+        30,
+    );
+    assert_ne!(HUNG, got, "a silent peer hung the engine");
+    assert!(
+        got.contains("peer_timeout"),
+        "a silent peer must name a peer timeout: {got:?}"
+    );
+}
+
 /// P3 — an ordinary value's address does not move. Nothing on this path
 /// touches how values are addressed.
 #[test]
