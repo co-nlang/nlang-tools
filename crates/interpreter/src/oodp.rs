@@ -435,11 +435,6 @@ fn extract_ad_expr_and_source(line: &str) -> Result<(Expr, String), String> {
     Err("missing %ad".into())
 }
 
-#[allow(dead_code)]
-fn extract_ad_expr(line: &str) -> Result<Expr, String> {
-    extract_ad_expr_and_source(line).map(|(e, _)| e)
-}
-
 /// Nesting cap for an advertisement body. The body is a flat record whose only
 /// nested member is `services`, so 8 is generous. Bounded on purpose: an
 /// unbounded recursive walk over remote input is itself a way to fell the node.
@@ -828,7 +823,6 @@ fn serve_discover(
     }
 
     // Cap after exclusions.
-    let capped_pool = candidates.len();
     let mut peers: Vec<(String, String)> = Vec::new();
     for adv in candidates.into_iter().take(MAX_DISCOVER_PEERS) {
         peers.push((adv.ad_source.clone(), adv.observed_host.clone()));
@@ -846,7 +840,6 @@ fn serve_discover(
         "OODP Discover: target={target} matched={matched} capped={} excluded={excl_no_relay} no_relay,{excl_stale} stale from={from_s}",
         peers.len()
     );
-    let _ = capped_pool;
     (body, log)
 }
 
@@ -1059,9 +1052,37 @@ pub fn remote_discover_oodp(
         .map_err(|_| BottomCause::Conflict)?;
     stream.flush().map_err(|_| BottomCause::Conflict)?;
 
+    // ACCEPTOR REPAIR (discover_index). §3.6's budget was delivered on the
+    // responder — correctly, 8 peers and 64 KiB — but a budget only the honest
+    // side keeps is not a budget. Measured on the delivered build: a relayer
+    // that streams without ever pausing sent 67.1 MB, the client buffered all
+    // of it and peaked at 143 MB RSS, parsing 8156 entries. `read_to_end`
+    // has no bound, and `set_read_timeout` fires on a STALL, not on volume —
+    // a sender that keeps the bytes coming never trips it.
+    //
+    // The verification ladder held throughout (all 8156 dropped as
+    // `#malformed`), so this is resource, not bypass. The bound here is not a
+    // new policy: it is the same 64 KiB §3.6 already puts on the responder,
+    // now enforced symmetrically by the side that can actually be hurt.
+    // `#fetch` shares the unbounded read (ledger item 1) and is deliberately
+    // NOT changed — an object has no specified maximum size, so capping it
+    // would need a spec ruling; a discover reply already has one.
     let mut buffer = Vec::new();
-    match stream.read_to_end(&mut buffer) {
+    match (&mut stream)
+        .take(MAX_DISCOVER_RESPONSE_BYTES as u64 + 1)
+        .read_to_end(&mut buffer)
+    {
         Ok(0) => return Err(BottomCause::Conflict),
+        Ok(n) if n > MAX_DISCOVER_RESPONSE_BYTES => {
+            let mut r = DiscoverProcessResult {
+                status: "oversize".into(),
+                ..Default::default()
+            };
+            // Named, not silent: a truncated prefix must never be processed as
+            // if it were a short answer.
+            bump(&mut r.drop_reasons, "oversize");
+            return Ok(r);
+        }
         Ok(_) => {}
         Err(e) => {
             let timed = e.kind() == std::io::ErrorKind::TimedOut
@@ -1330,5 +1351,3 @@ mod advert_debug {
         println!("reply={reply}\nlog={log}");
     }
 }
-
-
