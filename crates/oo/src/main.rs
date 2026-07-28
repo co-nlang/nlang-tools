@@ -145,6 +145,15 @@ enum NodeCmd {
         #[arg(long = "listen-port", default_value_t = 8080)]
         listen_port: u16,
     },
+    /// Query a peer's service index for who advertises `--target`.
+    Discover {
+        /// Peer address `host:port`
+        #[arg(long = "to", value_name = "HOST:PORT")]
+        to: String,
+        /// Service CAID to look up
+        #[arg(long = "target", value_name = "CAID")]
+        target: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -183,6 +192,7 @@ fn main_on_large_stack() -> anyhow::Result<()> {
                 services,
                 listen_port,
             } => run_node_advertise(to, services, listen_port),
+            NodeCmd::Discover { to, target } => run_node_discover(to, target),
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
@@ -341,6 +351,51 @@ fn run_node_advertise(
         }
     }
     println!("{}", text.trim());
+    Ok(())
+}
+
+fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
+    use nlang_interpreter::oodp;
+
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    let result = oodp::remote_discover_oodp(&engine, &to, &target)
+        .map_err(|e| anyhow::anyhow!("discover transport: {e:?}"))?;
+
+    // Operator log (§3.9).
+    let reasons: String = result
+        .drop_reasons
+        .iter()
+        .map(|(k, n)| format!("{k}={n}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let reasons = if reasons.is_empty() {
+        "none".into()
+    } else {
+        reasons
+    };
+    eprintln!(
+        "OODP Discover reply: peers={} accepted={} dropped={} ({}) stale_bound={}",
+        result.peers_in,
+        result.accepted.len(),
+        result.dropped,
+        reasons,
+        oodp::DISCOVER_STALE_SECS
+    );
+
+    if result.status == "not_implemented" {
+        println!("#not_implemented");
+        return Ok(());
+    }
+    println!("#{}", result.status);
+    let hops = result.envelope_hops;
+    for p in &result.accepted {
+        // Parenthesis is required output (R-a at the human surface).
+        println!(
+            "{} {}:{} (host unverified, hops={hops} claimed)",
+            p.node_id, p.observed_host, p.listen_port
+        );
+    }
     Ok(())
 }
 
