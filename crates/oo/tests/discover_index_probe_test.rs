@@ -639,7 +639,6 @@ fn advertise(from: &Path, port: u16, caid: &str, listen_port: u16) {
 /// Baseline: `#discover` answers `#not_implemented` (`oodp.rs:328`), so
 /// `%peers` is absent and the list is empty.
 #[test]
-#[ignore]
 fn r1_index_answers_with_the_advertiser() {
     let t = trio("r1");
     let b = serve(&t.b);
@@ -672,7 +671,6 @@ fn r1_index_answers_with_the_advertiser() {
 ///
 /// Baseline: nothing to verify — `#not_implemented`.
 #[test]
-#[ignore]
 fn r2_relayed_record_verifies_from_the_packet_alone() {
     let t = trio("r2");
     let b = serve(&t.b);
@@ -717,7 +715,6 @@ fn r2_relayed_record_verifies_from_the_packet_alone() {
 ///
 /// Baseline: `oo node discover` does not exist.
 #[test]
-#[ignore]
 fn r3_tampered_signature_drops_only_itself() {
     let t = trio("r3");
     let caid = store(&t.a, "{ treasure: \"R3\" }");
@@ -763,7 +760,6 @@ fn r3_tampered_signature_drops_only_itself() {
 ///
 /// Baseline: `oo node discover` does not exist.
 #[test]
-#[ignore]
 fn r4_identity_mismatch_drops_only_itself() {
     let t = trio("r4");
     let caid = store(&t.a, "{ treasure: \"R4\" }");
@@ -818,7 +814,6 @@ fn r4_identity_mismatch_drops_only_itself() {
 /// Baseline: `oo node discover` does not exist, so the good record is not
 /// accepted either — red on the liveness half.
 #[test]
-#[ignore]
 fn r5_a_relayed_body_that_computes_is_refused_before_it_runs() {
     let t = trio("r5");
     let caid = store(&t.a, "{ treasure: \"R5\" }");
@@ -873,7 +868,6 @@ fn r5_a_relayed_body_that_computes_is_refused_before_it_runs() {
 ///
 /// Baseline: `#not_implemented` — neither is relayed, so the second half fails.
 #[test]
-#[ignore]
 fn r6_ttl_zero_is_not_relayed_and_ttl_one_is() {
     let t = trio("r6");
     let b = serve(&t.b);
@@ -930,7 +924,6 @@ fn r6_ttl_zero_is_not_relayed_and_ttl_one_is() {
 ///
 /// Baseline: neither half runs — `#not_implemented`, and no `oo node discover`.
 #[test]
-#[ignore]
 fn r7_the_relay_bound_binds_the_honest_index_only() {
     let t = trio("r7");
     let caid = store(&t.a, "{ treasure: \"R7\" }");
@@ -974,7 +967,6 @@ fn r7_the_relay_bound_binds_the_honest_index_only() {
 ///
 /// Baseline: accepted — `#success` for every value.
 #[test]
-#[ignore]
 fn r8_ttl_range_is_enforced() {
     let t = trio("r8");
     let b = serve(&t.b);
@@ -1014,7 +1006,6 @@ fn r8_ttl_range_is_enforced() {
 /// Baseline: `#not_implemented`, so nothing is emitted and the lower bound
 /// fails.
 #[test]
-#[ignore]
 fn r9_the_response_is_capped() {
     let t = trio("r9");
     let b = serve(&t.b);
@@ -1069,7 +1060,6 @@ fn r9_the_response_is_capped() {
 ///
 /// Baseline: `oo node discover` does not exist.
 #[test]
-#[ignore]
 fn r10_observed_host_is_outside_the_signature_and_says_so() {
     let t = trio("r10");
     let caid = store(&t.a, "{ treasure: \"R10\" }");
@@ -1110,7 +1100,6 @@ fn r10_observed_host_is_outside_the_signature_and_says_so() {
 /// Baseline: all three replies are `#not_implemented`, hence identical — and
 /// the liveness assertion is what makes this red rather than vacuously green.
 #[test]
-#[ignore]
 fn r11_the_answer_does_not_depend_on_who_asks() {
     let t = trio("r11");
     let b = serve(&t.b);
@@ -1150,7 +1139,6 @@ fn r11_the_answer_does_not_depend_on_who_asks() {
 ///
 /// Baseline: `#not_implemented` for every target.
 #[test]
-#[ignore]
 fn r12_no_match_is_success_with_an_empty_list() {
     let t = trio("r12");
     let b = serve(&t.b);

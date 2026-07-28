@@ -802,17 +802,29 @@ fn p2_from_is_still_a_claim_on_fetch() {
     );
 }
 
-/// P3 — `#discover` is still explicitly unimplemented (this arc is not it).
+/// P3 — `#discover` is the service index (discover_index arc). Missing
+/// `%target` is `#conflict`; a well-formed query is `#success` (possibly empty
+/// `%peers`), never `#not_implemented`.
 #[test]
-fn p3_discover_still_not_implemented() {
+fn p3_discover_is_served() {
     let p = pair("p3");
     let node = serve(&p.a);
     let caid = caid_of(&p.b, "{{ q: 1 }}");
+    // Wrong field: `%hash` is for `#fetch`; discover requires `%target`.
     let r = ask_raw(
         node.port,
         &format!("{{{{ %op: #discover, %hash: \"{caid}\" }}}}\n"),
     );
-    assert_eq!(status_of(&r), "not_implemented", "{r}");
+    assert_eq!(status_of(&r), "conflict", "missing %target: {r}");
+    let r = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #discover, %from: \"x\", %target: \"{caid}\" }}}}\n"),
+    );
+    assert_eq!(
+        status_of(&r),
+        "success",
+        "a well-formed #discover must be answered: {r}"
+    );
 }
 
 /// P4 — unknown ops and the retired bare-CAID form are still `#conflict`, and

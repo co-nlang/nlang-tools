@@ -28,8 +28,18 @@ pub const OODP_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Domain separation for advertisement signatures (must match probe / CLI).
 pub const ADVERT_DOMAIN: &str = "oodp-advert:v1:";
 
-/// `|now − ts| ≤ STALE_SKEW_SECS` or `#stale`.
+/// `|now − ts| ≤ STALE_SKEW_SECS` or `#stale` at **#advertise** accept.
 pub const STALE_SKEW_SECS: i64 = 60;
+
+/// Local availability bound for **index search / relay receive** (R-f):
+/// 15 minutes. Not a wire field — engine policy, visible in the discover log.
+pub const DISCOVER_STALE_SECS: i64 = 15 * 60;
+
+/// Max `%peers` entries per `#discover` response (R-b / §3.6).
+pub const MAX_DISCOVER_PEERS: usize = 8;
+
+/// Max `#discover` response body size (bytes).
+pub const MAX_DISCOVER_RESPONSE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OodpOp {
@@ -54,9 +64,12 @@ impl OodpOp {
 pub struct OodpRequest {
     pub op: OodpOp,
     pub hash: Option<ContentHash>,
-    /// Claimed sender node id. **Never used for authorization** — parsed only
-    /// for observability; see module docs.
+    /// Claimed sender node id. **Never used for authorization** on fetch/discover
+    /// (R-c) — parsed only for observability. On `#advertise` it is checked
+    /// against `%ad.node_id`.
     pub from: Option<String>,
+    /// `#discover` target CAID (required for that op).
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,8 +200,17 @@ fn parse_json_request(obj: &Map<String, JsonValue>) -> Result<OodpRequest, Strin
         .or_else(|| obj.get("from"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let _ = from.as_ref(); // silence until logging wants it
-    Ok(OodpRequest { op, hash, from })
+    let target = obj
+        .get("%target")
+        .or_else(|| obj.get("target"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Ok(OodpRequest {
+        op,
+        hash,
+        from,
+        target,
+    })
 }
 
 fn parse_op_tag(s: &str) -> OodpOp {
@@ -232,6 +254,7 @@ fn parse_nlang_request(expr: &nlang_parser::ast::Expr) -> Result<OodpRequest, St
     let mut op = None;
     let mut hash = None;
     let mut from = None;
+    let mut target = None;
     for f in fields {
         let Some(name) = field_key_name(&f.key) else {
             continue;
@@ -250,17 +273,25 @@ fn parse_nlang_request(expr: &nlang_parser::ast::Expr) -> Result<OodpRequest, St
                 }
             }
             "%from" | "from" => {
-                // Claim only — never branch on this value.
                 if let ExprKind::Atom(AstAtom::Str(s)) = &f.value.kind {
                     from = Some(s.clone());
+                }
+            }
+            "%target" | "target" => {
+                if let ExprKind::Atom(AstAtom::Str(s)) = &f.value.kind {
+                    target = Some(s.clone());
                 }
             }
             _ => {}
         }
     }
     let op = op.ok_or_else(|| "missing %op".to_string())?;
-    let _ = from.as_ref();
-    Ok(OodpRequest { op, hash, from })
+    Ok(OodpRequest {
+        op,
+        hash,
+        from,
+        target,
+    })
 }
 
 /// Serve one OODP request against a local store. Returns wire JSON body.
@@ -322,10 +353,12 @@ pub fn serve_request(
         }
         OodpOp::Advertise => serve_advertise(engine, line, req.from.as_deref(), source_id, peer_host),
         OodpOp::Discover => {
-            let body = encode_response(OodpStatus::NotImplemented, None, source_id, 0);
-            (
-                body,
-                "OODP op #discover not implemented on this node".into(),
+            // %from is a claim on #discover (R-c) — never branch on it.
+            serve_discover(
+                engine,
+                req.target.as_deref(),
+                req.from.as_deref(),
+                source_id,
             )
         }
         OodpOp::Unknown(ref name) => {
@@ -361,19 +394,17 @@ pub fn identify_caid_src(engine: &Ouroboros, body_src: &str) -> Result<String, S
     Ok(id.to_string_plain())
 }
 
-fn extract_ad_expr(line: &str) -> Result<Expr, String> {
+/// Extract `%ad` as AST plus **verbatim** source substring (for relay).
+fn extract_ad_expr_and_source(line: &str) -> Result<(Expr, String), String> {
     let line = line.trim();
-    // JSON path
+    // JSON path: carry the JSON text of %ad as "source" (rare on this arc).
     if let Ok(j) = serde_json::from_str::<JsonValue>(line) {
         if let Some(obj) = j.as_object() {
             if let Some(ad) = obj.get("%ad").or_else(|| obj.get("ad")) {
-                // Re-embed as n/ is hard; convert via serde to Value instead.
-                // For probe we only use n/ cocoon; JSON ad is optional.
                 let s = serde_json::to_string(ad).map_err(|e| e.to_string())?;
-                // Prefer parse if it looks like n/; else treat as value JSON later.
                 if s.starts_with('{') {
                     if let Ok(e) = parse_expr_only(&s) {
-                        return Ok(e);
+                        return Ok((e, s));
                     }
                 }
                 return Err("json %ad not expressible as n/ combo".into());
@@ -390,10 +421,23 @@ fn extract_ad_expr(line: &str) -> Result<Expr, String> {
             continue;
         };
         if name == "%ad" || name == "ad" {
-            return Ok(f.value.clone());
+            let start = f.value.span.start;
+            let end = f.value.span.end;
+            let src = if end <= line.len() && start < end {
+                line[start..end].to_string()
+            } else {
+                // Fallback: re-serialise (last resort; relay prefers span bytes).
+                f.value.to_nlang(0)
+            };
+            return Ok((f.value.clone(), src));
         }
     }
     Err("missing %ad".into())
+}
+
+#[allow(dead_code)]
+fn extract_ad_expr(line: &str) -> Result<Expr, String> {
+    extract_ad_expr_and_source(line).map(|(e, _)| e)
 }
 
 /// Nesting cap for an advertisement body. The body is a flat record whose only
@@ -497,8 +541,8 @@ fn serve_advertise(
     peer_host: &str,
 ) -> (String, String) {
     // 1 — %ad present, combo, required fields
-    let ad_expr = match extract_ad_expr(line) {
-        Ok(e) => e,
+    let (ad_expr, ad_source) = match extract_ad_expr_and_source(line) {
+        Ok(pair) => pair,
         Err(e) => return rejected(source_id, "malformed", from, &e),
     };
     // ACCEPTOR REPAIR (advertise_wire). An advertisement body is DATA, and the
@@ -570,7 +614,18 @@ fn serve_advertise(
         Some(t) => t,
         None => return rejected(source_id, "malformed", from, "bad ts"),
     };
-    let ttl = field_as_i64(&cv, "ttl").unwrap_or(0);
+    let ttl = match field_as_i64(&cv, "ttl") {
+        Some(t) if (0..=15).contains(&t) => t,
+        Some(_) => {
+            return rejected(
+                source_id,
+                "malformed",
+                from,
+                "ttl outside 0..=15 (REAL_02 §4.2)",
+            );
+        }
+        None => return rejected(source_id, "malformed", from, "bad ttl"),
+    };
     let services = field_as_str_list(&cv, "services").unwrap_or_default();
 
     // 2 — CAID(public_key bytes) == node_id
@@ -664,6 +719,7 @@ fn serve_advertise(
     }
 
     // Success — store in peer directory (host observed, port claimed).
+    // Direct advertise → arrival hops = 0 (REAL_02 §3.2).
     let addr = format!("{peer_host}:{listen_port}");
     let n_services = services.len();
     engine.record_peer_advert(PeerAdvert {
@@ -671,8 +727,13 @@ fn serve_advertise(
         public_key_hex,
         services,
         addr: addr.clone(),
+        observed_host: peer_host.to_string(),
+        listen_port,
         capacity,
         ttl,
+        ts,
+        hops: 0,
+        ad_source,
         received_at: SystemTime::now(),
     });
 
@@ -681,6 +742,339 @@ fn serve_advertise(
         "OODP Advert: {node_id} addr={addr} services={n_services} ttl={ttl}"
     );
     (body, log)
+}
+
+// ── #discover (service index) ───────────────────────────────────────────
+
+fn encode_discover_response(
+    source: &str,
+    hops: i64,
+    peers: &[(String /* ad_source */, String /* observed_host */)],
+) -> String {
+    let mut map = Map::new();
+    map.insert(
+        "%status".to_string(),
+        JsonValue::String("#success".into()),
+    );
+    map.insert("%source".to_string(), JsonValue::String(source.to_string()));
+    map.insert("%hops".to_string(), json!(hops));
+    let peers_j: Vec<JsonValue> = peers
+        .iter()
+        .map(|(ad, host)| {
+            let mut e = Map::new();
+            e.insert("%ad".to_string(), JsonValue::String(ad.clone()));
+            e.insert(
+                "%observed_host".to_string(),
+                JsonValue::String(host.clone()),
+            );
+            JsonValue::Object(e)
+        })
+        .collect();
+    map.insert("%peers".to_string(), JsonValue::Array(peers_j));
+    serde_json::to_string(&JsonValue::Object(map)).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Search the advert directory for exact `services` matches; emit relayed
+/// `%peers`. Does **not** consult the object store (discover_index §3.2).
+fn serve_discover(
+    engine: &Ouroboros,
+    target: Option<&str>,
+    from: Option<&str>,
+    source_id: &str,
+) -> (String, String) {
+    let Some(target) = target.filter(|t| !t.is_empty()) else {
+        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        return (body, "OODP #discover missing %target".into());
+    };
+    // Target must be a well-formed CAID string (or at least non-garbage).
+    if ContentHash::parse(target).is_err() && !target.starts_with("hash:") {
+        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        return (
+            body,
+            format!("OODP #discover unparseable %target: {target}"),
+        );
+    }
+
+    let now = now_secs();
+    let dir = match engine.peer_adverts.read() {
+        Ok(d) => d,
+        Err(_) => {
+            let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+            return (body, "OODP #discover directory lock poisoned".into());
+        }
+    };
+
+    let mut matched = 0usize;
+    let mut excl_no_relay = 0usize;
+    let mut excl_stale = 0usize;
+    let mut candidates: Vec<&PeerAdvert> = Vec::new();
+
+    for adv in dir.values() {
+        // Exact string match on services — no sort/dedupe of the list (M5).
+        if !adv.services.iter().any(|s| s == target) {
+            continue;
+        }
+        matched += 1;
+        // Exclusion BEFORE the cap (§3.2).
+        if adv.ttl == 0 {
+            excl_no_relay += 1;
+            continue;
+        }
+        if (now - adv.ts).abs() > DISCOVER_STALE_SECS {
+            excl_stale += 1;
+            continue;
+        }
+        candidates.push(adv);
+    }
+
+    // Cap after exclusions.
+    let capped_pool = candidates.len();
+    let mut peers: Vec<(String, String)> = Vec::new();
+    for adv in candidates.into_iter().take(MAX_DISCOVER_PEERS) {
+        peers.push((adv.ad_source.clone(), adv.observed_host.clone()));
+        // 64 KiB body budget — emit fewer if over.
+        let trial = encode_discover_response(source_id, 1, &peers);
+        if trial.len() > MAX_DISCOVER_RESPONSE_BYTES {
+            peers.pop();
+            break;
+        }
+    }
+
+    let body = encode_discover_response(source_id, 1, &peers);
+    let from_s = from.unwrap_or("");
+    let log = format!(
+        "OODP Discover: target={target} matched={matched} capped={} excluded={excl_no_relay} no_relay,{excl_stale} stale from={from_s}",
+        peers.len()
+    );
+    let _ = capped_pool;
+    (body, log)
+}
+
+/// One accepted peer from a `#discover` reply (after §3.4 verification).
+#[derive(Debug, Clone)]
+pub struct DiscoveredPeer {
+    pub node_id: String,
+    pub observed_host: String,
+    pub listen_port: u16,
+    pub public_key_hex: String,
+    pub ad_source: String,
+}
+
+#[derive(Debug, Default)]
+pub struct DiscoverProcessResult {
+    pub peers_in: usize,
+    pub accepted: Vec<DiscoveredPeer>,
+    pub dropped: usize,
+    pub drop_reasons: std::collections::BTreeMap<String, usize>,
+    pub envelope_hops: i64,
+    pub status: String,
+}
+
+fn bump(map: &mut std::collections::BTreeMap<String, usize>, key: &str) {
+    *map.entry(key.to_string()).or_insert(0) += 1;
+}
+
+/// Verify each `%peers` entry independently (R-e). Body is data: `ensure_literal_body`
+/// before any evaluation (§3.5).
+pub fn process_discover_reply(
+    engine: &Ouroboros,
+    reply_body: &str,
+) -> DiscoverProcessResult {
+    let mut result = DiscoverProcessResult::default();
+
+    let Ok(envelope) = serde_json::from_str::<JsonValue>(reply_body.trim()) else {
+        result.status = "undecodable".into();
+        return result;
+    };
+    let status = envelope
+        .get("%status")
+        .or_else(|| envelope.get("status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("#conflict");
+    result.status = status.trim().trim_start_matches('#').to_string();
+    result.envelope_hops = envelope
+        .get("%hops")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    if result.status == "not_implemented" {
+        return result;
+    }
+    if result.status != "success" {
+        return result;
+    }
+
+    let Some(arr) = envelope
+        .get("%peers")
+        .or_else(|| envelope.get("peers"))
+        .and_then(|v| v.as_array())
+    else {
+        return result;
+    };
+    result.peers_in = arr.len();
+    let now = now_secs();
+
+    for entry in arr {
+        let Some(ad_src) = entry
+            .get("%ad")
+            .or_else(|| entry.get("ad"))
+            .and_then(|v| v.as_str())
+        else {
+            bump(&mut result.drop_reasons, "malformed");
+            result.dropped += 1;
+            continue;
+        };
+        let observed_host = entry
+            .get("%observed_host")
+            .or_else(|| entry.get("observed_host"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        match verify_relayed_entry(engine, ad_src, now) {
+            Ok(peer) => {
+                result.accepted.push(DiscoveredPeer {
+                    observed_host,
+                    ..peer
+                });
+            }
+            Err(reason) => {
+                bump(&mut result.drop_reasons, &reason);
+                result.dropped += 1;
+            }
+        }
+    }
+    result
+}
+
+/// §3.4 ladder for one relayed `%ad` source. No `%from` check (speaker is the
+/// relayer). Returns node_id / listen_port / pk on success.
+fn verify_relayed_entry(
+    engine: &Ouroboros,
+    ad_src: &str,
+    now: i64,
+) -> Result<DiscoveredPeer, String> {
+    // 1 — parse + literal-body gate BEFORE any eval
+    let ad_expr = parse_expr_only(ad_src.trim()).map_err(|e| format!("malformed:{e}"))?;
+    ensure_literal_body(&ad_expr, 0).map_err(|e| format!("malformed:{e}"))?;
+
+    let ad_val = eval_expr_value(engine, &ad_expr);
+    let Value::Combo(mut cv) = ad_val else {
+        return Err("malformed".into());
+    };
+    for k in [
+        "node_id",
+        "public_key",
+        "signature",
+        "services",
+        "listen_port",
+        "capacity",
+        "ts",
+        "ttl",
+    ] {
+        if cv.get_field(k).is_none() {
+            return Err("malformed".into());
+        }
+    }
+
+    let node_id = field_as_str(&cv, "node_id").ok_or_else(|| "malformed".to_string())?;
+    let public_key_hex = field_as_str(&cv, "public_key").ok_or_else(|| "malformed".to_string())?;
+    let signature_hex = field_as_str(&cv, "signature").ok_or_else(|| "malformed".to_string())?;
+    let listen_port = field_as_i64(&cv, "listen_port").ok_or_else(|| "malformed".to_string())? as u16;
+    let ts = field_as_i64(&cv, "ts").ok_or_else(|| "malformed".to_string())?;
+    let ttl = field_as_i64(&cv, "ttl").ok_or_else(|| "malformed".to_string())?;
+
+    // 4 — ttl range (receiver); 0 is valid and may be accepted on the wire
+    // even though an honest index would not *emit* it (R7).
+    if !(0..=15).contains(&ttl) {
+        return Err("malformed".into());
+    }
+
+    // 2 — CAID(pk) == node_id  (before signature — forger supplies both)
+    let pk_bytes = hex::decode(public_key_hex.trim()).map_err(|_| "malformed".to_string())?;
+    let id_from_key = Identity {
+        public_key: pk_bytes.clone(),
+        private_key: Vec::new(),
+    }
+    .node_id_caid()
+    .to_string();
+    if id_from_key != node_id {
+        return Err("identity_mismatch".into());
+    }
+
+    // 3 — signature
+    cv.remove_field("signature");
+    let body_val = Value::Combo(cv);
+    let body_caid = identify_caid(engine, &body_val).map_err(|_| "malformed".to_string())?;
+    let payload = format!("{ADVERT_DOMAIN}{body_caid}");
+    let sig_bytes = hex::decode(signature_hex.trim()).map_err(|_| "malformed".to_string())?;
+    let vk = UnparsedPublicKey::new(&signature::ED25519, &pk_bytes);
+    if vk.verify(payload.as_bytes(), &sig_bytes).is_err() {
+        return Err("bad_signature".into());
+    }
+
+    // 5 — local staleness (R-f)
+    if (now - ts).abs() > DISCOVER_STALE_SECS {
+        return Err("stale".into());
+    }
+
+    Ok(DiscoveredPeer {
+        node_id,
+        observed_host: String::new(), // filled by caller
+        listen_port,
+        public_key_hex,
+        ad_source: ad_src.to_string(),
+    })
+}
+
+/// Client: send `#discover` and process the reply.
+pub fn remote_discover_oodp(
+    oo: &Ouroboros,
+    addr: &str,
+    target: &str,
+) -> Result<DiscoverProcessResult, BottomCause> {
+    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
+    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(
+        |e| {
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                BottomCause::PeerTimeout
+            } else {
+                BottomCause::Conflict
+            }
+        },
+    )?;
+    stream
+        .set_read_timeout(Some(OODP_READ_TIMEOUT))
+        .map_err(|_| BottomCause::Conflict)?;
+    stream
+        .set_write_timeout(Some(OODP_READ_TIMEOUT))
+        .map_err(|_| BottomCause::Conflict)?;
+
+    let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
+    let req = format!(
+        "{{{{ %op: #discover, %from: \"{from}\", %target: \"{target}\" }}}}\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|_| BottomCause::Conflict)?;
+    stream.flush().map_err(|_| BottomCause::Conflict)?;
+
+    let mut buffer = Vec::new();
+    match stream.read_to_end(&mut buffer) {
+        Ok(0) => return Err(BottomCause::Conflict),
+        Ok(_) => {}
+        Err(e) => {
+            let timed = e.kind() == std::io::ErrorKind::TimedOut
+                || e.kind() == std::io::ErrorKind::WouldBlock;
+            return Err(if timed {
+                BottomCause::PeerTimeout
+            } else {
+                BottomCause::Conflict
+            });
+        }
+    }
+    let text = String::from_utf8_lossy(&buffer);
+    Ok(process_discover_reply(oo, &text))
 }
 
 /// Format an OODP `#advertise` request line for the wire.
@@ -936,3 +1330,5 @@ mod advert_debug {
         println!("reply={reply}\nlog={log}");
     }
 }
+
+

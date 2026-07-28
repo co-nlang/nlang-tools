@@ -496,3 +496,32 @@ Point 6 is not optional. The previous arc's cut record measured cross-version
 8. Stray `oo node serve` processes from earlier arcs' probe runs are still
    listening on ports 19551–19992 on this machine. A probe that connects to a
    "free" port can hit one. Bind and connect above 21000 for this arc.
+
+
+---
+
+## 9. Delivery record (delivery side)
+
+- **PeerAdvert**: `ad_source` (verbatim), `ts`, `ttl`, `hops` (0 on direct
+  advertise), `observed_host`, `listen_port` retained for relay.
+- **#advertise**: `ttl` must be in `0..=15` else `#rejected #malformed` (0 is
+  valid — "do not relay me").
+- **#discover**: search `peer_adverts.services` exact match; exclude `ttl==0`
+  and `|now−ts|>15min` before cap; `MAX_DISCOVER_PEERS=8`, body ≤64KiB;
+  response `%hops:1`, `%peers: [{%ad: <verbatim string>, %observed_host}]`.
+  Empty → `#success` + `%peers: []` (not `#not_found`). Store not consulted.
+- **Client**: `process_discover_reply` / `oo node discover` — §3.4 ladder per
+  entry (literal-body first); drop entry not response; CLI prints
+  `(host unverified, hops=N claimed)`.
+- **Probe**: only 12 `#[ignore]` removed on discover_index. advertise_wire P3
+  updated (discover is now served; missing `%target` → `#conflict`).
+- **Spec**: not edited.
+- **Amplification at cap** (synthetic 8 peers, r9-shaped): response **4139** B /
+  request **125** B → **ratio 33.11×** (< 64). r9 gate green.
+- **Root digests** (P3 source `world: { greet, n }`):
+  `9ecb95b0c6088b348d582c8f0ed03fa499ff7b6d4cb0b71f3eba70bf9f339ae3`
+  (quiet == busy shape; directory does not enter the root).
+- **M3** (still red by design): holding a verified advert does **not** make
+  `disc.fetch` dial that peer — out of scope.
+- **Numbers**: discover_index **17/17** · advertise **19/19** · oodp **13/13** ·
+  workspace **1580/0/3** · conf **143/143** · genesis **11/11**.

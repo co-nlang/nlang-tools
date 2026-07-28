@@ -274,9 +274,9 @@ pub enum Peer {
     Remote(String), // TCP address
 }
 
-/// An accepted OODP `#advertise` record (wire advertise_wire arc).
-/// Written on verify; **not** consulted by any fetch path in this version
-/// (routing is the discover arc).
+/// An accepted OODP `#advertise` record (wire advertise / discover index).
+/// Written on verify; searched by `#discover`. Still **not** a fetch source
+/// (discover_index §5 — consent arc later).
 #[derive(Debug, Clone)]
 pub struct PeerAdvert {
     pub node_id: String,
@@ -284,8 +284,19 @@ pub struct PeerAdvert {
     pub services: Vec<String>,
     /// Observed host + claimed listen port (`host:port`).
     pub addr: String,
+    /// Host observed on the connection that carried `#advertise` (unsigned).
+    pub observed_host: String,
+    pub listen_port: u16,
     pub capacity: i64,
+    /// Signed lattice/relay bound (`0..=15`). Never modified after accept.
     pub ttl: i64,
+    /// Signed origin timestamp (unix seconds).
+    pub ts: i64,
+    /// Hops at which this record arrived (`0` for a direct `#advertise`).
+    pub hops: i64,
+    /// Verbatim n/ source of `%ad` as received (signature included). Relay emits
+    /// this byte-for-byte — not a re-serialisation (discover_index §3.3).
+    pub ad_source: String,
     pub received_at: std::time::SystemTime,
 }
 
