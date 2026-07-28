@@ -258,7 +258,23 @@ Control + pins **8 passed / 0 failed**. Reds **0 passed / 9 failed**.
 | R3 | the abandoned head's object survived (nothing collects it) |
 | R6 | granted GC removed nothing |
 | R7 | `.oo/format` was never written |
-| R12 | *(passes trivially today; see below)* |
+| R12 | `oo inspect` reports the engine's own **commit** objects as `#object_undecodable` |
+
+**Correction (acceptance, after delivery).** The row for R12 above first read
+"passes trivially today". That was false — R12 failed at v0.2.52, and for a
+reason that has nothing to do with GC: the CAS holds values *and* commits, and
+`oo inspect` assumed everything in it was a value, so it reported the engine's
+own commits as `#object_undecodable: … (integrity unknown)`. A false integrity
+verdict on healthy data, pre-existing, surfaced by a probe aimed at something
+else. The delivery fixed it (try value, fall back to commit) and the fix was
+checked not to mask real corruption: a mangled object still reports
+`#object_undecodable`, a tampered one still reports `#caid_mismatch`.
+
+**Correction (acceptance).** §6's "Pins scheduled to change: none" was also
+false. This arc declares `.oo/format`, and `kademlia_table` P4 is an allow-list
+of durable files — so that pin had to change, and did. That is the exact error
+the v0.2.51 order made and the v0.2.52 order was written to avoid; writing the
+warning down did not stop it being repeated one arc later.
 
 The control — `reachable_before_any_squash_is_everything` — is the one that
 makes every number above readable. It asserts that in a store where nothing
