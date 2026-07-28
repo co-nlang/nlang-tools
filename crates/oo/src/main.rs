@@ -163,8 +163,6 @@ enum NodeCmd {
         #[arg(long = "target", value_name = "HEX40")]
         target: String,
     },
-    /// Dump non-empty Kademlia bucket occupancy.
-    Routing,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -205,7 +203,6 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             } => run_node_advertise(to, services, listen_port),
             NodeCmd::Discover { to, target } => run_node_discover(to, target),
             NodeCmd::FindNode { to, target } => run_node_find_node(to, target),
-            NodeCmd::Routing => run_node_routing(),
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
@@ -433,13 +430,6 @@ fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
             p.node_id, p.observed_host, p.listen_port
         );
     }
-    Ok(())
-}
-
-fn run_node_routing() -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
-    let engine = Ouroboros::init(&cur)?;
-    println!("{}", engine.routing_cli_dump());
     Ok(())
 }
 

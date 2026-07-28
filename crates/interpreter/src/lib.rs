@@ -455,17 +455,11 @@ impl Ouroboros {
         let architects = store
             .load_architects(base_dir)
             .unwrap_or_else(|_| std::collections::HashSet::new());
-        // Process-shared OODP index (serve + `oo node routing` / find_node CLI).
-        // Not REAL_02 §5.1 `.oo/routing/` — that blueprint is never created.
-        let (peer_adverts, routing) = if let Some(file) = crate::routing::load_index(base_dir) {
-            let mut map = HashMap::new();
-            for (k, v) in file.adverts {
-                map.insert(k, PeerAdvert::from(v));
-            }
-            (map, file.routing)
-        } else {
-            (HashMap::new(), crate::routing::RoutingIndex::new([0u8; 20]))
-        };
+        // The peer directory and its bucket index are PROCESS MEMORY.
+        // ACCEPTOR REVERT (kademlia_table): the delivery persisted both to
+        // `.oo/oodp_index.json`. See the arc note in `routing.rs`.
+        let (peer_adverts, routing) =
+            (HashMap::new(), crate::routing::RoutingIndex::new([0u8; 20]));
         let oo = Self {
             store,
             base_dir: Some(base_dir.to_path_buf()),
@@ -595,47 +589,7 @@ impl Ouroboros {
                 }
             }
         }
-        self.persist_oodp_index();
         logs
-    }
-
-    /// Persist peer_adverts + routing to workspace (for multi-process CLI view).
-    fn persist_oodp_index(&self) {
-        let Some(base) = self.base_dir.as_ref() else {
-            return;
-        };
-        let adverts = match self.peer_adverts.read() {
-            Ok(d) => d
-                .iter()
-                .map(|(k, v)| (k.clone(), crate::routing::PeerAdvertSer::from(v)))
-                .collect(),
-            Err(_) => return,
-        };
-        let routing = match self.routing.read() {
-            Ok(r) => r.clone(),
-            Err(_) => return,
-        };
-        let file = crate::routing::OodpIndexFile { routing, adverts };
-        let _ = crate::routing::save_index(base, &file);
-    }
-
-    /// Operator dump of non-empty buckets (kademlia_table §3.6).
-    pub fn routing_cli_dump(&self) -> String {
-        // Prefer live memory; fall back to disk (CLI without a long-lived serve).
-        if let Ok(rt) = self.routing.read() {
-            if rt.total() > 0 || rt.dropped_full > 0 {
-                return rt.format_cli();
-            }
-        }
-        if let Some(base) = self.base_dir.as_ref() {
-            if let Some(file) = crate::routing::load_index(base) {
-                return file.routing.format_cli();
-            }
-        }
-        if let Ok(rt) = self.routing.read() {
-            return rt.format_cli();
-        }
-        "total: 0\ndropped_full: 0".into()
     }
 
     /// Record a REAL_03 §6.6 integrity incident (never silently drop a verdict).

@@ -8,9 +8,7 @@
 
 use crate::value::{ContentHash, Identity};
 use crate::PeerAdvert;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 pub const ID_BYTES: usize = 20;
 pub const K: usize = 20;
@@ -88,7 +86,7 @@ pub fn parse_find_node_target(s: &str) -> Option<[u8; ID_BYTES]> {
     Some(out)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RoutingIndex {
     /// First 20 bytes of this node's node_id digest (hex for serde).
     pub self_id_hex: String,
@@ -189,98 +187,4 @@ impl RoutingIndex {
         lines.push(format!("dropped_full: {}", self.dropped_full));
         lines.join("\n")
     }
-}
-
-/// Workspace-local path for the process-shared index (not REAL_02 §5.1
-/// `.oo/routing/` — that blueprint is deliberately not created).
-pub fn index_path(base: &Path) -> PathBuf {
-    base.join(".oo").join("oodp_index.json")
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OodpIndexFile {
-    pub routing: RoutingIndex,
-    /// Minimal advert fields needed for find_node relay + discover.
-    pub adverts: HashMap<String, PeerAdvertSer>,
-}
-
-/// Serializable peer advert (SystemTime as unix secs).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerAdvertSer {
-    pub node_id: String,
-    pub public_key_hex: String,
-    pub services: Vec<String>,
-    pub addr: String,
-    pub observed_host: String,
-    pub listen_port: u16,
-    pub capacity: i64,
-    pub ttl: i64,
-    pub ts: i64,
-    pub hops: i64,
-    pub ad_source: String,
-    pub received_at_secs: u64,
-}
-
-impl From<&PeerAdvert> for PeerAdvertSer {
-    fn from(a: &PeerAdvert) -> Self {
-        let received_at_secs = a
-            .received_at
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        Self {
-            node_id: a.node_id.clone(),
-            public_key_hex: a.public_key_hex.clone(),
-            services: a.services.clone(),
-            addr: a.addr.clone(),
-            observed_host: a.observed_host.clone(),
-            listen_port: a.listen_port,
-            capacity: a.capacity,
-            ttl: a.ttl,
-            ts: a.ts,
-            hops: a.hops,
-            ad_source: a.ad_source.clone(),
-            received_at_secs,
-        }
-    }
-}
-
-impl From<PeerAdvertSer> for PeerAdvert {
-    fn from(a: PeerAdvertSer) -> Self {
-        Self {
-            node_id: a.node_id,
-            public_key_hex: a.public_key_hex,
-            services: a.services,
-            addr: a.addr,
-            observed_host: a.observed_host,
-            listen_port: a.listen_port,
-            capacity: a.capacity,
-            ttl: a.ttl,
-            ts: a.ts,
-            hops: a.hops,
-            ad_source: a.ad_source,
-            received_at: std::time::UNIX_EPOCH
-                + std::time::Duration::from_secs(a.received_at_secs),
-        }
-    }
-}
-
-pub fn load_index(base: &Path) -> Option<OodpIndexFile> {
-    let p = index_path(base);
-    let bytes = std::fs::read(&p).ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-pub fn save_index(base: &Path, file: &OodpIndexFile) -> std::io::Result<()> {
-    let p = index_path(base);
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = p.with_extension("json.tmp");
-    let data = serde_json::to_vec_pretty(file).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, e)
-    })?;
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, &p)?;
-    Ok(())
 }

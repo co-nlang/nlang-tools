@@ -348,29 +348,88 @@ fn answer_ids(reply: &str) -> Vec<[u8; ID_BYTES]> {
 }
 
 /// `oo node routing` → (bucket occupancies, total, dropped_full).
-fn routing_dump(dir: &Path) -> (std::collections::BTreeMap<usize, usize>, usize, usize) {
-    let out = oo(dir, &["node", "routing"]);
-    let mut buckets = std::collections::BTreeMap::new();
-    let (mut total, mut dropped) = (usize::MAX, usize::MAX);
-    for line in out.lines() {
-        let l = line.trim();
-        if let Some(rest) = l.strip_prefix("bucket ") {
-            if let Some((i, n)) = rest.split_once(':') {
-                if let (Ok(i), Ok(n)) = (i.trim().parse(), n.trim().parse()) {
-                    buckets.insert(i, n);
-                }
-            }
-        } else if let Some(v) = l.strip_prefix("total:") {
-            total = v.trim().parse().unwrap_or(usize::MAX);
-        } else if let Some(v) = l.strip_prefix("dropped_full:") {
-            dropped = v.trim().parse().unwrap_or(usize::MAX);
+/// Bucket occupancy, read out of the **serving process's own log**.
+///
+/// The first version of this helper shelled out to `oo node routing`. That was
+/// a specification error by the acceptor and it is worth recording where it can
+/// be seen: the table lives in the serving process's memory, `oo node routing`
+/// is a *different* process, and the work order forbade persistence in the same
+/// breath as it demanded a cross-process view. Those cannot both hold — the
+/// same unsatisfiable-check shape this project has caught three times, written
+/// this time by the person writing the gate.
+///
+/// The delivery resolved it by persisting the index to `.oo/oodp_index.json`,
+/// which is out of scope and was reverted. The observability the work order
+/// *also* specified — §3.6's log lines — needs no second process, so it is what
+/// the probes read.
+///
+/// `OODP Routing: +<node_id> bucket=<i> occupancy=<n>/<k>`
+/// `OODP Routing: bucket <i> full, incumbent kept, dropped <node_id>`
+///
+/// `expect_lines` is how many `OODP Routing:` lines must have appeared before
+/// the log is read. This is not belt-and-braces: `run_serve` writes the
+/// response, flushes it, and prints the log line **afterwards**, so `ask_raw`
+/// returning does not mean the line exists yet. Reading immediately raced
+/// about one run in ten. An accepted new peer and a full-bucket drop each
+/// produce exactly one line; a refresh and self produce none.
+fn routing_dump(
+    node: &Node,
+    expect_lines: usize,
+) -> (std::collections::BTreeMap<usize, usize>, usize, usize) {
+    let count = |s: &str| s.lines().filter(|l| l.contains("OODP Routing: ")).count();
+    let mut log = node.log();
+    for _ in 0..80 {
+        if count(&log) >= expect_lines {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        log = node.log();
+    }
+    assert!(
+        count(&log) >= expect_lines,
+        "the serving process logged {} routing lines, expected at least \
+         {expect_lines} — either the table did not see every advertisement, or \
+         it stopped saying so",
+        count(&log)
+    );
+    let mut buckets: std::collections::BTreeMap<usize, usize> = Default::default();
+    let mut dropped = 0usize;
+    let mut saw_any = false;
+
+    for line in log.lines() {
+        let Some(rest) = line.trim().strip_prefix("OODP Routing: ") else { continue };
+        saw_any = true;
+        if let Some(b) = rest.strip_prefix("bucket ") {
+            // `<i> full, incumbent kept, dropped <node_id>`
+            let idx: usize = b.split_whitespace().next().unwrap().parse().unwrap();
+            assert!(idx < 160, "drop reported for bucket {idx}");
+            dropped += 1;
+        } else if rest.starts_with('+') {
+            // `+<node_id> bucket=<i> occupancy=<n>/<k>`
+            let b = rest.split("bucket=").nth(1)
+                .unwrap_or_else(|| panic!("no bucket= in {rest:?}"));
+            let idx: usize = b.split_whitespace().next().unwrap().parse().unwrap();
+            let occ: usize = rest.split("occupancy=").nth(1)
+                .unwrap_or_else(|| panic!("no occupancy= in {rest:?}"))
+                .split('/').next().unwrap().parse().unwrap();
+            // The engine reports occupancy AFTER the insert, so it is also a
+            // running check that the log and the table agree.
+            let e = buckets.entry(idx).or_default();
+            *e += 1;
+            assert_eq!(
+                *e, occ,
+                "the engine reported occupancy {occ} for bucket {idx} on the \
+                 {e}th accepted peer in that bucket — the log and the table \
+                 disagree, and the log is the only view there is"
+            );
         }
     }
     assert!(
-        total != usize::MAX && dropped != usize::MAX,
-        "`oo node routing` did not print `total:` and `dropped_full:` — probes \
-         cannot assert about a structure they cannot see: {out:?}"
+        saw_any,
+        "the serving process logged no `OODP Routing:` line — probes cannot \
+         assert about a structure they cannot see:\n{log}"
     );
+    let total = buckets.values().sum();
     (buckets, total, dropped)
 }
 
@@ -421,7 +480,6 @@ fn brute_force_closest(
 // ── fixtures ────────────────────────────────────────────────────────────
 
 struct Fixture {
-    dir: PathBuf,
     caid_dir: PathBuf,
     node: Node,
     self_id: [u8; ID_BYTES],
@@ -477,7 +535,8 @@ fn fixture(tag: &str, n: usize) -> Fixture {
              below measures a routing table: {r}"
         );
     }
-    Fixture { dir, caid_dir, node, self_id: sid, peers }
+    let _ = dir; // the server's workspace; probes observe it through its log
+    Fixture { caid_dir, node, self_id: sid, peers }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -490,7 +549,7 @@ fn fixture(tag: &str, n: usize) -> Fixture {
 #[test]
 fn r1_bucket_index_is_the_leading_zero_count() {
     let f = fixture("r1", 220);
-    let (buckets, total, _) = routing_dump(&f.dir);
+    let (buckets, total, _) = routing_dump(&f.node, f.peers.len());
 
     let mut expected: std::collections::BTreeMap<usize, usize> = Default::default();
     for p in &f.peers {
@@ -522,7 +581,7 @@ fn r2_a_bucket_holds_exactly_k() {
         offered_b0 > K + 30,
         "HARNESS: only {offered_b0} candidates for bucket 0, need well over {K}"
     );
-    let (buckets, _, dropped) = routing_dump(&f.dir);
+    let (buckets, _, dropped) = routing_dump(&f.node, f.peers.len());
     assert_eq!(buckets.get(&0), Some(&K), "bucket 0 does not hold exactly {K}");
     assert_eq!(
         dropped,
@@ -569,14 +628,14 @@ fn r3_incumbent_first_keeps_the_early_ones() {
 #[test]
 fn r4_readvertising_refreshes_rather_than_competes() {
     let f = fixture("r4", 60);
-    let (before, total_before, dropped_before) = routing_dump(&f.dir);
+    let (before, total_before, dropped_before) = routing_dump(&f.node, f.peers.len());
 
     for p in f.peers.iter().take(10) {
         let r = ask_raw(f.node.port, &p.advertise_request(&f.caid_dir));
         assert_eq!(status_of(&r), "success", "re-advertisement refused: {r}");
     }
 
-    let (after, total_after, dropped_after) = routing_dump(&f.dir);
+    let (after, total_after, dropped_after) = routing_dump(&f.node, f.peers.len());
     assert_eq!(before, after, "re-advertising changed bucket occupancy");
     assert_eq!(total_before, total_after, "re-advertising changed the total");
     assert_eq!(
@@ -650,7 +709,7 @@ fn r6_self_is_never_in_the_table() {
         !answer_ids(&r).iter().any(|id| *id == f.self_id),
         "the node returned itself as one of the nodes closest to itself: {r}"
     );
-    let (buckets, _, _) = routing_dump(&f.dir);
+    let (buckets, _, _) = routing_dump(&f.node, f.peers.len());
     assert!(
         !buckets.contains_key(&160),
         "a bucket at index 160 exists — that index means `equal to self`"
@@ -736,7 +795,7 @@ fn r8_target_is_an_id_not_a_caid() {
 #[test]
 fn r9_the_table_learns_only_from_signed_advertisements() {
     let f = fixture("r9", 40);
-    let (before, total_before, _) = routing_dump(&f.dir);
+    let (before, total_before, _) = routing_dump(&f.node, f.peers.len());
 
     let rng = ring::rand::SystemRandom::new();
     let stranger = mint_peer(&rng, 29999);
@@ -747,7 +806,7 @@ fn r9_the_table_learns_only_from_signed_advertisements() {
         );
     }
 
-    let (after, total_after, _) = routing_dump(&f.dir);
+    let (after, total_after, _) = routing_dump(&f.node, f.peers.len());
     assert_eq!(total_before, total_after, "the table grew from an unsigned %from");
     assert_eq!(before, after, "bucket occupancy changed from an unsigned %from");
     let r = ask_raw(f.node.port, &find_node_request("x", &hex::encode(stranger.id)));
@@ -1054,11 +1113,26 @@ fn p4_nothing_persisted() {
     ask_raw(node.port, &find_node_request("x", &"b".repeat(40)));
 
     assert_eq!(object_count(&dir), before, "the node wrote objects while routing");
+
+    // ACCEPTOR REPAIR of this pin. It used to name one path — `.oo/routing/`,
+    // the blueprint REAL_02 §5.1 sketches — and the delivery persisted the
+    // whole index to `.oo/oodp_index.json` instead, satisfying the letter of a
+    // pin that had been written about the wrong thing. A pin must hold the
+    // PROPERTY ("nothing durable appeared"), not one spelling of violating it.
+    let mut unexpected: Vec<String> = Vec::new();
+    for e in fs::read_dir(dir.join(".oo")).unwrap().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        // `objects/` is the store and predates this arc.
+        if name != "objects" {
+            unexpected.push(name);
+        }
+    }
     assert!(
-        !dir.join(".oo").join("routing").exists(),
-        "`.oo/routing/` appeared — REAL_02 §5.1 records that file as a blueprint, \
-         and a directory that becomes durable without anyone deciding it should \
-         is how persistence arrives unaudited"
+        unexpected.is_empty(),
+        "routing left durable state in `.oo/`: {unexpected:?}. Durable OODP \
+         state is an arc of its own — it carries GC, migration, a REAL_02 §5.1 \
+         clause, and the fact that incumbent-first stops being reset by a \
+         restart. Arriving as a side effect is how persistence arrives unaudited"
     );
 }
 
