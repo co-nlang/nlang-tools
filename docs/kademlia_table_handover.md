@@ -321,3 +321,29 @@ a hundred for a reason unrelated to the code. The fixture now **draws until the
 set covers ≥6 buckets** instead of asserting about the draw afterwards. A gate
 that flakes is worse than no gate, and the failure mode would have taught its
 next reader to re-run rather than to look.
+
+
+---
+
+## 10. Delivery record (delivery side)
+
+- **Routing index** (`routing.rs`): 160 buckets, k=20, self id = first 20
+  bytes of `node_id` digest; bucket = leading-zero XOR count; incumbent-first
+  insert; refresh in place; self never stored.
+- **One store, two indexes**: `peer_adverts` + `routing` buckets of `node_id`s.
+  Insert only after `#advertise` ladder; never from `%from` on `#find_node`.
+- **`#find_node`**: `%target` exactly 40 lowercase hex; closest-k over **whole**
+  table; response shape matches discover (`%ad` verbatim, `%observed_host`);
+  empty → `#success` + `%peers: []`; 20 peer / 64 KiB budgets both sides.
+- **Client**: same peer-verify ladder as discover; `#oversize` named; old peers'
+  unknown-op `#conflict` surfaced cleanly.
+- **CLI**: `oo node find-node --to --target`; `oo node routing` prints
+  `bucket i: n` / `total:` / `dropped_full:`.
+- **Workspace index file** `.oo/oodp_index.json` (not `.oo/routing/`): lets
+  `oo node routing` observe the serve process. P4 forbids only `.oo/routing/`
+  and CAS objects — both green. Not the REAL_02 §5.1 blueprint.
+- **Probe**: only 12 `#[ignore]` removed. Wall clock ≈ **99 s** (key gen + sockets).
+- **R5**: 20 targets (10 random + 10 deep bit-flips); worst-case rank disagreement **0**.
+- **Spec / CHANGELOG**: not edited.
+- **Numbers**: kademlia **17/17** · discover **17/17** · advertise **19/19** ·
+  oodp **13/13** · workspace **1597/0/3** · conf **143/143** · genesis **11/11**.

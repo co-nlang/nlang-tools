@@ -23,6 +23,7 @@ pub mod ladd;
 pub mod oml;
 pub mod authority;
 pub mod oodp;
+pub mod routing;
 pub use crate::value::{Value, ComboVal, EffectTag, Privilege, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
 pub use crate::storage::{ObjectStore, StoreReadError, value_address_matches};
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
@@ -344,8 +345,10 @@ pub struct Ouroboros {
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
     /// Wire peer directory (accepted `#advertise` records). Keyed by `node_id`.
-    /// Not read by fetch/sweep in this version (advertise_wire §3.6).
+    /// Shared with the Kademlia index (routing) — one store, two views.
     pub peer_adverts: RwLock<HashMap<String, PeerAdvert>>,
+    /// Kademlia bucket index over `peer_adverts` (kademlia_table arc).
+    pub routing: RwLock<crate::routing::RoutingIndex>,
     /// Lazy operator identity. `None` until a signature is needed (or
     /// `oo identity`). In-memory engines pre-fill an ephemeral key and never
     /// touch the operator path.
@@ -430,6 +433,7 @@ impl Ouroboros {
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
             peer_adverts: RwLock::new(HashMap::new()),
+            routing: RwLock::new(crate::routing::RoutingIndex::new([0u8; 20])),
             identity_cell: RwLock::new(Some(identity)),
             node_identity_cell: RwLock::new(None),
             identity_persist: false,
@@ -451,6 +455,17 @@ impl Ouroboros {
         let architects = store
             .load_architects(base_dir)
             .unwrap_or_else(|_| std::collections::HashSet::new());
+        // Process-shared OODP index (serve + `oo node routing` / find_node CLI).
+        // Not REAL_02 §5.1 `.oo/routing/` — that blueprint is never created.
+        let (peer_adverts, routing) = if let Some(file) = crate::routing::load_index(base_dir) {
+            let mut map = HashMap::new();
+            for (k, v) in file.adverts {
+                map.insert(k, PeerAdvert::from(v));
+            }
+            (map, file.routing)
+        } else {
+            (HashMap::new(), crate::routing::RoutingIndex::new([0u8; 20]))
+        };
         let oo = Self {
             store,
             base_dir: Some(base_dir.to_path_buf()),
@@ -459,7 +474,8 @@ impl Ouroboros {
             force_memo_rev: RwLock::new(HashMap::new()),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
-            peer_adverts: RwLock::new(HashMap::new()),
+            peer_adverts: RwLock::new(peer_adverts),
+            routing: RwLock::new(routing),
             identity_cell: RwLock::new(None),
             node_identity_cell: RwLock::new(None),
             identity_persist: true,
@@ -556,11 +572,70 @@ impl Ouroboros {
         Ok(self.node_identity()?.node_id_caid())
     }
 
-    /// Record an accepted OODP advertisement (engine-local; not the universe).
-    pub fn record_peer_advert(&self, advert: PeerAdvert) {
+    /// Record an accepted OODP advertisement and update the Kademlia index.
+    /// Returns routing log lines (insert / full-drop). Not universe content.
+    pub fn record_peer_advert(&self, advert: PeerAdvert) -> Vec<String> {
+        let node_id = advert.node_id.clone();
+        let pk_hex = advert.public_key_hex.clone();
         if let Ok(mut dir) = self.peer_adverts.write() {
-            dir.insert(advert.node_id.clone(), advert);
+            dir.insert(node_id.clone(), advert);
         }
+        // Ensure routing self_id matches this node before insert.
+        let mut logs = Vec::new();
+        if let Ok(self_caid) = self.node_id() {
+            let sid = crate::routing::routing_id_from_caid(&self_caid);
+            if let Ok(mut rt) = self.routing.write() {
+                if rt.self_id_hex.is_empty() || rt.self_id_hex == hex::encode([0u8; 20]) {
+                    *rt = crate::routing::RoutingIndex::new(sid);
+                } else if rt.self_id() != sid {
+                    // Should not happen mid-process; keep existing.
+                }
+                if let Some(rid) = crate::routing::routing_id_from_pubkey_hex(&pk_hex) {
+                    logs = rt.insert(&node_id, rid);
+                }
+            }
+        }
+        self.persist_oodp_index();
+        logs
+    }
+
+    /// Persist peer_adverts + routing to workspace (for multi-process CLI view).
+    fn persist_oodp_index(&self) {
+        let Some(base) = self.base_dir.as_ref() else {
+            return;
+        };
+        let adverts = match self.peer_adverts.read() {
+            Ok(d) => d
+                .iter()
+                .map(|(k, v)| (k.clone(), crate::routing::PeerAdvertSer::from(v)))
+                .collect(),
+            Err(_) => return,
+        };
+        let routing = match self.routing.read() {
+            Ok(r) => r.clone(),
+            Err(_) => return,
+        };
+        let file = crate::routing::OodpIndexFile { routing, adverts };
+        let _ = crate::routing::save_index(base, &file);
+    }
+
+    /// Operator dump of non-empty buckets (kademlia_table §3.6).
+    pub fn routing_cli_dump(&self) -> String {
+        // Prefer live memory; fall back to disk (CLI without a long-lived serve).
+        if let Ok(rt) = self.routing.read() {
+            if rt.total() > 0 || rt.dropped_full > 0 {
+                return rt.format_cli();
+            }
+        }
+        if let Some(base) = self.base_dir.as_ref() {
+            if let Some(file) = crate::routing::load_index(base) {
+                return file.routing.format_cli();
+            }
+        }
+        if let Ok(rt) = self.routing.read() {
+            return rt.format_cli();
+        }
+        "total: 0\ndropped_full: 0".into()
     }
 
     /// Record a REAL_03 §6.6 integrity incident (never silently drop a verdict).

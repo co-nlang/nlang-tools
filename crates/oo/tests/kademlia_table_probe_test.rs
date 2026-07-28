@@ -488,7 +488,6 @@ fn fixture(tag: &str, n: usize) -> Fixture {
 ///
 /// Baseline: `oo node routing` does not exist.
 #[test]
-#[ignore]
 fn r1_bucket_index_is_the_leading_zero_count() {
     let f = fixture("r1", 220);
     let (buckets, total, _) = routing_dump(&f.dir);
@@ -516,7 +515,6 @@ fn r1_bucket_index_is_the_leading_zero_count() {
 ///
 /// Baseline: `oo node routing` does not exist.
 #[test]
-#[ignore]
 fn r2_a_bucket_holds_exactly_k() {
     let f = fixture("r2", 220);
     let offered_b0 = f.peers.iter().filter(|p| bucket_index(&f.self_id, &p.id) == 0).count();
@@ -541,7 +539,6 @@ fn r2_a_bucket_holds_exactly_k() {
 ///
 /// Baseline: `#find_node` is not implemented.
 #[test]
-#[ignore]
 fn r3_incumbent_first_keeps_the_early_ones() {
     let f = fixture("r3", 220);
     let b0: Vec<&SynthPeer> = f.peers.iter()
@@ -570,7 +567,6 @@ fn r3_incumbent_first_keeps_the_early_ones() {
 ///
 /// Baseline: `oo node routing` does not exist.
 #[test]
-#[ignore]
 fn r4_readvertising_refreshes_rather_than_competes() {
     let f = fixture("r4", 60);
     let (before, total_before, dropped_before) = routing_dump(&f.dir);
@@ -601,7 +597,6 @@ fn r4_readvertising_refreshes_rather_than_competes() {
 ///
 /// Baseline: `#find_node` is not implemented.
 #[test]
-#[ignore]
 fn r5_closest_equals_brute_force_at_every_depth() {
     let f = fixture("r5", 220);
     let held = simulate_table(&f.self_id, &f.peers);
@@ -646,7 +641,6 @@ fn r5_closest_equals_brute_force_at_every_depth() {
 ///
 /// Baseline: `#find_node` is not implemented.
 #[test]
-#[ignore]
 fn r6_self_is_never_in_the_table() {
     let f = fixture("r6", 40);
     let me = hex::encode(f.self_id);
@@ -667,7 +661,6 @@ fn r6_self_is_never_in_the_table() {
 ///
 /// Baseline: `#find_node` is not implemented.
 #[test]
-#[ignore]
 fn r7_relayed_records_verify_from_the_packet_alone() {
     let f = fixture("r7", 30);
     let target = hex::encode(f.peers[0].id);
@@ -709,7 +702,6 @@ fn r7_relayed_records_verify_from_the_packet_alone() {
 /// Baseline: every `#find_node` is `#not_implemented`, so the two cases are
 /// indistinguishable.
 #[test]
-#[ignore]
 fn r8_target_is_an_id_not_a_caid() {
     let f = fixture("r8", 10);
     let good = hex::encode(f.peers[0].id);
@@ -742,7 +734,6 @@ fn r8_target_is_an_id_not_a_caid() {
 ///
 /// Baseline: `oo node routing` does not exist.
 #[test]
-#[ignore]
 fn r9_the_table_learns_only_from_signed_advertisements() {
     let f = fixture("r9", 40);
     let (before, total_before, _) = routing_dump(&f.dir);
@@ -771,7 +762,6 @@ fn r9_the_table_learns_only_from_signed_advertisements() {
 /// Baseline: three identical `#not_implemented` replies, which is why the
 /// liveness assertion is what makes this red.
 #[test]
-#[ignore]
 fn r10_the_answer_does_not_depend_on_who_asks() {
     let f = fixture("r10", 40);
     let target = hex::encode(f.peers[0].id);
@@ -800,7 +790,6 @@ fn r10_the_answer_does_not_depend_on_who_asks() {
 ///
 /// Baseline: `oo node find-node` does not exist.
 #[test]
-#[ignore]
 fn r11_a_relayed_body_that_computes_is_refused_before_it_runs() {
     let dir = fresh_dir("r11-client");
     let caid_dir = fresh_dir("r11-caid");
@@ -847,7 +836,6 @@ fn r11_a_relayed_body_that_computes_is_refused_before_it_runs() {
 ///
 /// Baseline: `#find_node` is not implemented; `oo node find-node` does not exist.
 #[test]
-#[ignore]
 fn r12_both_budgets_are_kept() {
     let f = fixture("r12", 220);
     let r = ask_raw(f.node.port, &find_node_request("x", &hex::encode(f.peers[0].id)));

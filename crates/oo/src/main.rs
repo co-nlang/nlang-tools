@@ -154,6 +154,17 @@ enum NodeCmd {
         #[arg(long = "target", value_name = "CAID")]
         target: String,
     },
+    /// Kademlia FIND_NODE: k closest known peers to a 160-bit id.
+    #[command(name = "find-node")]
+    FindNode {
+        #[arg(long = "to", value_name = "HOST:PORT")]
+        to: String,
+        /// Exactly 40 lowercase hex characters (not a CAID).
+        #[arg(long = "target", value_name = "HEX40")]
+        target: String,
+    },
+    /// Dump non-empty Kademlia bucket occupancy.
+    Routing,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -193,6 +204,8 @@ fn main_on_large_stack() -> anyhow::Result<()> {
                 listen_port,
             } => run_node_advertise(to, services, listen_port),
             NodeCmd::Discover { to, target } => run_node_discover(to, target),
+            NodeCmd::FindNode { to, target } => run_node_find_node(to, target),
+            NodeCmd::Routing => run_node_routing(),
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
@@ -396,6 +409,37 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
             p.node_id, p.observed_host, p.listen_port
         );
     }
+    Ok(())
+}
+
+fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
+    use nlang_interpreter::oodp;
+
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    let result = oodp::remote_find_node_oodp(&engine, &to, &target)
+        .map_err(|e| anyhow::anyhow!("find-node transport: {e:?}"))?;
+
+    if result.status == "oversize" {
+        println!("#oversize");
+        return Ok(());
+    }
+    // v0.2.51 peers answer unknown ops with #conflict — surface cleanly.
+    println!("#{}", result.status);
+    let hops = result.envelope_hops;
+    for p in &result.accepted {
+        println!(
+            "{} {}:{} (host unverified, hops={hops} claimed)",
+            p.node_id, p.observed_host, p.listen_port
+        );
+    }
+    Ok(())
+}
+
+fn run_node_routing() -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    println!("{}", engine.routing_cli_dump());
     Ok(())
 }
 
