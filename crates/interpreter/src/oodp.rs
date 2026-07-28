@@ -18,6 +18,7 @@ use nlang_parser::ast::{AtomKind as AstAtom, Expr, ExprKind, FieldKey, Prefix};
 use nlang_parser::parse_expr_only;
 use ring::signature::{self, UnparsedPublicKey};
 use serde_json::{json, Map, Value as JsonValue};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -46,6 +47,7 @@ pub enum OodpOp {
     Fetch,
     Discover,
     Advertise,
+    FindNode,
     Unknown(String),
 }
 
@@ -55,6 +57,7 @@ impl OodpOp {
             OodpOp::Fetch => "fetch",
             OodpOp::Discover => "discover",
             OodpOp::Advertise => "advertise",
+            OodpOp::FindNode => "find_node",
             OodpOp::Unknown(s) => s.as_str(),
         }
     }
@@ -219,6 +222,7 @@ fn parse_op_tag(s: &str) -> OodpOp {
         "fetch" => OodpOp::Fetch,
         "discover" => OodpOp::Discover,
         "advertise" => OodpOp::Advertise,
+        "find_node" => OodpOp::FindNode,
         other => OodpOp::Unknown(other.to_string()),
     }
 }
@@ -360,6 +364,10 @@ pub fn serve_request(
                 req.from.as_deref(),
                 source_id,
             )
+        }
+        OodpOp::FindNode => {
+            // %from is a claim — never inserted into the table (R-b).
+            serve_find_node(engine, req.target.as_deref(), source_id)
         }
         OodpOp::Unknown(ref name) => {
             let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
@@ -717,7 +725,7 @@ fn serve_advertise(
     // Direct advertise → arrival hops = 0 (REAL_02 §3.2).
     let addr = format!("{peer_host}:{listen_port}");
     let n_services = services.len();
-    engine.record_peer_advert(PeerAdvert {
+    let routing_logs = engine.record_peer_advert(PeerAdvert {
         node_id: node_id.clone(),
         public_key_hex,
         services,
@@ -733,8 +741,75 @@ fn serve_advertise(
     });
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);
-    let log = format!(
+    let mut log = format!(
         "OODP Advert: {node_id} addr={addr} services={n_services} ttl={ttl}"
+    );
+    for line in routing_logs {
+        log.push('\n');
+        log.push_str(&line);
+    }
+    (body, log)
+}
+
+// ── #find_node (Kademlia closest) ───────────────────────────────────────
+
+fn serve_find_node(
+    engine: &Ouroboros,
+    target: Option<&str>,
+    source_id: &str,
+) -> (String, String) {
+    let Some(t) = target else {
+        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        return (body, "OODP #find_node missing %target".into());
+    };
+    let Some(target_id) = crate::routing::parse_find_node_target(t) else {
+        // CAID, uppercase, wrong length, etc. — #conflict (R-e).
+        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        return (
+            body,
+            format!("OODP #find_node %target must be 40 lowercase hex: {t}"),
+        );
+    };
+
+    let closest_ids = {
+        let rt = match engine.routing.read() {
+            Ok(r) => r,
+            Err(_) => {
+                let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+                return (body, "OODP #find_node routing lock poisoned".into());
+            }
+        };
+        let ads = match engine.peer_adverts.read() {
+            Ok(d) => d.clone(),
+            Err(_) => HashMap::new(),
+        };
+        // Ensure self_id is set for distance (may be zeros before first insert).
+        rt.closest(
+            &target_id,
+            &ads,
+            crate::routing::MAX_FIND_NODE_PEERS,
+        )
+    };
+
+    let ads = engine.peer_adverts.read().ok();
+    let mut peers: Vec<(String, String)> = Vec::new();
+    if let Some(ref map) = ads {
+        for nid in closest_ids {
+            if let Some(adv) = map.get(&nid) {
+                peers.push((adv.ad_source.clone(), adv.observed_host.clone()));
+                let trial = encode_discover_response(source_id, 1, &peers);
+                if trial.len() > MAX_DISCOVER_RESPONSE_BYTES {
+                    peers.pop();
+                    break;
+                }
+            }
+        }
+    }
+    let body = encode_discover_response(source_id, 1, &peers);
+    let log = format!(
+        "OODP FindNode: target={} peers={}",
+        hex::encode(target_id),
+        peers.len()
     );
     (body, log)
 }
@@ -1018,6 +1093,67 @@ fn verify_relayed_entry(
         public_key_hex,
         ad_source: ad_src.to_string(),
     })
+}
+
+/// Client: send `#find_node` and process the reply (same peer ladder as discover).
+pub fn remote_find_node_oodp(
+    oo: &Ouroboros,
+    addr: &str,
+    target_hex: &str,
+) -> Result<DiscoverProcessResult, BottomCause> {
+    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
+    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(
+        |e| {
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                BottomCause::PeerTimeout
+            } else {
+                BottomCause::Conflict
+            }
+        },
+    )?;
+    stream
+        .set_read_timeout(Some(OODP_READ_TIMEOUT))
+        .map_err(|_| BottomCause::Conflict)?;
+    stream
+        .set_write_timeout(Some(OODP_READ_TIMEOUT))
+        .map_err(|_| BottomCause::Conflict)?;
+
+    let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
+    let req = format!(
+        "{{{{ %op: #find_node, %from: \"{from}\", %target: \"{target_hex}\" }}}}\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|_| BottomCause::Conflict)?;
+    stream.flush().map_err(|_| BottomCause::Conflict)?;
+
+    // 64 KiB client bound with #oversize naming (same as discover).
+    let mut buffer = Vec::new();
+    let mut limited = (&mut stream).take(MAX_DISCOVER_RESPONSE_BYTES as u64 + 1);
+    match limited.read_to_end(&mut buffer) {
+        Ok(0) => return Err(BottomCause::Conflict),
+        Ok(n) if n > MAX_DISCOVER_RESPONSE_BYTES => {
+            let mut r = DiscoverProcessResult {
+                status: "oversize".into(),
+                ..Default::default()
+            };
+            bump(&mut r.drop_reasons, "oversize");
+            return Ok(r);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            let timed = e.kind() == std::io::ErrorKind::TimedOut
+                || e.kind() == std::io::ErrorKind::WouldBlock;
+            return Err(if timed {
+                BottomCause::PeerTimeout
+            } else {
+                BottomCause::Conflict
+            });
+        }
+    }
+    let text = String::from_utf8_lossy(&buffer);
+    // Old peers answer unknown ops with #conflict — surface as status, not crash.
+    Ok(process_discover_reply(oo, &text))
 }
 
 /// Client: send `#discover` and process the reply.
