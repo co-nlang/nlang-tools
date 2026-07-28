@@ -24,6 +24,7 @@ pub mod oml;
 pub mod authority;
 pub mod oodp;
 pub mod routing;
+pub mod gc;
 pub use crate::value::{Value, ComboVal, EffectTag, Privilege, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
 pub use crate::storage::{ObjectStore, StoreReadError, value_address_matches};
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};

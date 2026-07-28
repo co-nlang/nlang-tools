@@ -146,6 +146,8 @@ pub struct Privilege {
     pub rollback: bool,
     /// `#squash` history op.
     pub squash: bool,
+    /// Local store GC (`oo gc`) — irreversible byte deletion (local_gc arc).
+    pub gc: bool,
 }
 
 impl Privilege {
@@ -155,6 +157,7 @@ impl Privilege {
         commit: false,
         rollback: false,
         squash: false,
+        gc: false,
     };
 
     /// Full grant (CLI `--privileged` back-compat). Does **not** set `commit`
@@ -166,6 +169,7 @@ impl Privilege {
             commit: false,
             rollback: true,
             squash: true,
+            gc: true,
         }
     }
 
@@ -182,6 +186,7 @@ impl Privilege {
             commit: self.commit || other.commit,
             rollback: self.rollback || other.rollback,
             squash: self.squash || other.squash,
+            gc: self.gc || other.gc,
         }
     }
 

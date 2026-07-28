@@ -299,3 +299,51 @@ Two probes changed label at calibration (R2→P5, R4→P6); see above.
    today).
 6. REAL_02 §3.2: unknown op and malformed both answer `#conflict` — four
    things, three codes. Spec-side, ruling deferred.
+
+---
+
+## 9. Delivery record (delivery side)
+
+- **`.oo/format`**: layout marker, contents `1\n`. Written on `init`/open when
+  absent; present and `1` proceeds; any other value refuses the whole
+  operation with a named error (store left untouched). Objects stay
+  self-describing via CAID; this is the **layout** version only.
+- **Mark-and-sweep** (`gc.rs`): roots = HEAD → parent chain + each commit
+  `root` tree, then every digest at any depth (64-hex strings **and** byte
+  arrays). `CommitMeta.abandoned` is **not** a root (R-b). Sweep only under
+  `.oo/objects/`; never `HEAD`/`staged`/`format`/…; empty two-hex dirs
+  removed. Undecodable but reachable → integrity incident, **not** swept.
+- **`oo gc --grant gc`**: plan report (objects / reachable / collectable
+  bytes; abandoned-content warning; exclusive-use notice) then remove.
+  `--dry-run` reports and removes nothing. Without the grant: refuse, remove
+  nothing, name `privilege.gc`. Idempotent; clean store reports zero freeable.
+- **`oo log`**: abandoned lines still print; missing content marked
+  `(content collected)` via live store lookup (no GC-time flag).
+- **Privilege.gc** on the lattice; CLI grant `gc` / `--privileged` includes it.
+- **`oo inspect`**: falls back to commit objects so survivors still verify
+  after GC (R12).
+- **Probe**: only `#[ignore]` removed on the reds in
+  `local_gc_probe_test.rs`. **Suite pin update (not probe body of this
+  arc):** `kademlia_table` P4 allowlist now permits `format` (store layout,
+  not OODP durable state) so P1 stays green under the new marker.
+- **Spec / CHANGELOG**: not edited. No tags. Durable OODP state still out of
+  scope.
+
+### Acceptance numbers (§7)
+
+1. **Suites**: local_gc **17/17** · kademlia **17/17** · workspace
+   **1614/0/3** · conf **143/143** · genesis **11/11**.
+2. Five commits + one `#squash` (mirrors M1): **11 objects, 4 reachable, 7
+   collectable (775,629 bytes)** → `removed 7, freed 775629`; store left with
+   4 objects. Probe R1: removed set == independently computed unreachable set.
+3. **R10**: corrupt reachable object reported as integrity incident and left
+   on disk (probe green).
+4. **P2** root digests (same source, two workspaces), equal:
+   `9ecb95b0c6088b348d582c8f0ed03fa499ff7b6d4cb0b71f3eba70bf9f339ae3`
+5. **Cross-version**: a store marked `format: 1` (and after GC smaller) is
+   still a normal CAS + HEAD for a v0.2.52 engine — that build has never
+   opened `.oo/format`, so the file is ignored and remaining objects load.
+   Unknown layout (`2`) is refused by *this* engine with
+   `store format version 2 is not supported… refusing to open`.
+6. **Wall clock**: 30-generation history then squash → **61 objects**, GC
+   freed 57 (~7.6 MiB) in **~0.05 s**. Full local_gc probe suite ≈ **7 s**.

@@ -283,7 +283,6 @@ fn reachable_before_any_squash_is_everything() {
 ///
 /// Baseline: `oo gc` does not exist.
 #[test]
-#[ignore]
 fn r1_gc_removes_exactly_the_unreachable_set() {
     let d = repo_with_history("r1", 5);
     let base = oldest_commit_caid(&d);
@@ -370,7 +369,6 @@ fn p5_nothing_reachable_is_ever_removed() {
 ///
 /// Baseline: `oo gc` does not exist.
 #[test]
-#[ignore]
 fn r3_abandoned_content_is_collected_and_the_log_admits_it() {
     let d = repo_with_history("r3", 3);
     let target = oldest_commit_caid(&d);
@@ -499,7 +497,6 @@ fn r5_no_command_collects_by_itself() {
 /// Baseline: `oo gc` does not exist, so the subcommand is unrecognised —
 /// which is red on the "removes nothing AND names the grant" half.
 #[test]
-#[ignore]
 fn r6_gc_requires_its_grant() {
     let d = repo_with_history("r6", 4);
     let base = oldest_commit_caid(&d);
@@ -527,7 +524,6 @@ fn r6_gc_requires_its_grant() {
 ///
 /// Baseline: `.oo/format` does not exist and nothing reads it.
 #[test]
-#[ignore]
 fn r7_store_format_version_is_declared_and_enforced() {
     let d = repo_with_history("r7", 2);
     let fmt = d.join(".oo").join("format");
@@ -561,7 +557,6 @@ fn r7_store_format_version_is_declared_and_enforced() {
 
 /// R8 — idempotent.
 #[test]
-#[ignore]
 fn r8_a_second_gc_frees_nothing() {
     let d = repo_with_history("r8", 5);
     let base = oldest_commit_caid(&d);
@@ -578,7 +573,6 @@ fn r8_a_second_gc_frees_nothing() {
 
 /// R9 — a clean store says so rather than saying nothing.
 #[test]
-#[ignore]
 fn r9_a_clean_store_reports_nothing_to_do() {
     let d = repo_with_history("r9", 3);
     let all = store_map(&d);
@@ -605,7 +599,6 @@ fn r9_a_clean_store_reports_nothing_to_do() {
 ///
 /// Baseline: `oo gc` does not exist.
 #[test]
-#[ignore]
 fn r10_a_corrupt_reachable_object_is_reported_not_swept() {
     let d = repo_with_history("r10", 4);
     let live: Vec<String> = reachable(&d, false).into_iter().collect();
@@ -637,7 +630,6 @@ fn r10_a_corrupt_reachable_object_is_reported_not_swept() {
 
 /// R11 — `--dry-run` reports the same and removes nothing.
 #[test]
-#[ignore]
 fn r11_dry_run_reports_without_removing() {
     let d = repo_with_history("r11", 5);
     let base = oldest_commit_caid(&d);
@@ -664,7 +656,6 @@ fn r11_dry_run_reports_without_removing() {
 /// A sweep that rewrites or truncates neighbours would leave a store that
 /// looks smaller and reads wrong.
 #[test]
-#[ignore]
 fn r12_survivors_still_verify() {
     let d = repo_with_history("r12", 5);
     let base = oldest_commit_caid(&d);
