@@ -72,27 +72,69 @@ left this "still undecided"; it is decided here. Nothing may branch on it.
 A discover answer is a re-broadcast of public signed records; making the answer
 depend on who asks buys no security and creates a partition surface.
 
-**R-d — `ttl` is a hop budget, not a duration, and it must not be
-decremented.** This overturns an earlier reading in this arc's own drafting;
-the spec settles it — `ttl: @int & ..15` in the advertisement and `%hops` in
-the response envelope (M7) are the two ends of one unused mechanism, and
-`MAX_ROUTING_HOPS = 16` is 15 plus the origin.
+**R-d — `ttl` is a lattice quantity, and this layer cannot compute it. Treat
+it as a declared relay bound and claim nothing more.**
 
-*   `ttl` (**signed**, `0..=15`) is the originator's declared **maximum
-    propagation depth**. It is **never modified** — it lives inside the
-    signature, and a relayer that decremented it would destroy the signature.
-    A hop counter cannot live inside a signature; a hop *budget* can.
-*   `%hops` (**unsigned**, response envelope) is **how many times this record
-    has been relayed before reaching you**. Spoken directly by its subject
-    (`#advertise`): `0`. Relayed once by an index (`#discover`): `1`.
-*   A node **must not** emit a record whose resulting `%hops` would exceed its
-    signed `ttl`. `ttl: 0` therefore means **"do not relay me"** — a real and
-    useful value, not a degenerate one.
-*   **`%hops` is unverifiable.** A dishonest relayer claims `0` forever. The
-    budget binds honest relayers only; against a dishonest one it degrades to
-    *the receiver's own* budget, which is why the receiver must have one
-    independently of anything on the wire. R7 measures both halves of this,
-    including the half that does not work.
+This ruling was drafted twice and both drafts were wrong. It said "duration"
+first, then "hop count". The author of the design supplied what it actually
+was, and the spec bears it out:
+
+*   §4.1's first routing filter is $MASA_{overlap} = MASA_Q \sqcap MASA_{N_i}$
+    — **every hop is a meet**, and meet descends the lattice order
+    ($A \sqcap B \sqsubseteq A$).
+*   §3.1's mass is $m(C) = \mathrm{Tr}(P_C)$ — an integer, the rank of a
+    projection.
+*   A quantity that is an integer, descends under meet, and is naturally
+    bounded above is exactly the shape of `ttl: @int & ..15`.
+
+**Which is why it has no unit.** A lattice rank is not measured in seconds or
+in hops. And nothing decrements it: *the mathematics* decrements it. Because
+it is recomputed at each node from content-addressed data, the original `ttl`
+is **self-authenticating** — a degree-0 quantity in the sense of discussion
+025, requiring no trust in any relayer.
+
+Two consequences, and the second is why this arc must be modest here:
+
+1.  **A hop count is not that quantity.** It is the degenerate shadow left when
+    the distance cannot be computed — an *asserted pointer*, degree ≥1, on the
+    wrong side of the 025 seam. The distance cannot be computed on this layer
+    for the reason M5 records: $d_L$ lives in `gbb_registry` and `ttl` lives in
+    `peer_adverts`, and the two maps have never met. **The field kept the name
+    of the mechanism and lost the mechanism** — the same disease discussion 026
+    diagnosed, third instance in this arc.
+
+2.  **The monotonicity was deliberately abandoned.** §4.3 step 3 sends a query
+    with no common MASA to a random jump, and §4.4 makes spectral random jumps
+    mandatory — but a node with no common MASA is exactly one §4.1 already
+    filtered to $W_i = 0$. The random jump leaves the descending chain **by
+    construction**, and §7.3 says why: it is the Semantic Eclipse defence.
+    A self-authenticating monotone budget and the ability to escape a captured
+    neighbourhood cannot both be had. The spec chose escape, and then needed a
+    non-monotone safety net — which is what `MAX_ROUTING_HOPS = 16` is.
+
+So three budgets now coexist: `ttl` (lattice quantity, signed), `fuel_limit`
+(the querier's execution budget, APP_05 §2.3), and `MAX_ROUTING_HOPS` (the
+engine's hardcoded net). The third exists because the first stopped being
+monotone. Reconciling them is spec work, not this delivery's.
+
+**What this arc therefore does, and no more:**
+
+*   `ttl` (**signed**, `0..=15`) is treated as the originator's **declared
+    relay bound**. It is **never modified** — it is inside the signature, and
+    modifying it would destroy it.
+*   `ttl: 0` means **"do not relay me"**. This is meaningful under either
+    reading (a rank budget with nothing left to meet; a relay depth of zero),
+    which is why it is safe to build on now.
+*   `%hops` is emitted because the envelope documents it (M7) and it is useful
+    to an operator reading a log. **It is not a check.** Comparing a relay
+    count against a rank bound would be comparing two different quantities —
+    precisely the category error this arc keeps finding elsewhere — so the
+    receiver does **not** gate on `%hops`, and no code may imply that it does.
+*   `%hops` is in any case **unverifiable**: a dishonest relayer claims `0`
+    forever. R7 pins that limitation so nobody later mistakes it for a defence.
+
+Multi-hop gating belongs to the routing arc, where the real mechanism —
+distance recomputed from content-addressed data — is actually available.
 
 **R-e — a bad entry drops the entry, not the response.** SPEC_13 §6.1.1 and
 REAL_03 §6.6: sources are peers at degree 0; skip the liar and keep going.
@@ -131,8 +173,8 @@ The **advert directory only** — entries whose signed `services` list contains
     `#fetch`'s question, asked directly. Say so in the log, do not paper over it.
 *   Do **not** sort, dedupe or normalise `services` before matching — §4.2.1:
     list order is meaningful because it is inside the address.
-*   Records excluded **before** the cap is applied: `ttl` exhausted (R-d) and
-    older than the local staleness bound (R-f).
+*   Records excluded **before** the cap is applied: `ttl == 0` ("do not relay
+    me", R-d) and older than the local staleness bound (R-f).
 
 A hit means **someone claimed to serve this** (§4.2.4). Nothing more.
 
@@ -160,9 +202,12 @@ added, removed, reordered, or rewritten — least of all `ttl`.
 `%observed_host` is a **sibling of `%ad`, not a field inside it**, and `%hops`
 sits in the envelope, outside every `%ad`. This is normative and it is the
 point of R-a: **what the signature does not cover must not sit inside what it
-does.** The two unsigned fields are the same kind of thing — the relayer's own
-assertions — and a reader must be able to see the trust boundary in the shape
-of the packet.
+does.** Both unsigned fields are the relayer's own assertions, and a reader
+must be able to see the trust boundary in the shape of the packet.
+
+`%hops` is `1` on relayed entries and stays `0` on every direct answer, as
+REAL_02 §3.2 already documents. It is **observability, not a gate** (R-d);
+nothing on either side branches on it.
 
 Empty result → `%status: #success` with `%peers: []`. **Not** `#not_found`.
 "Nobody I know of advertises that" is an answer; `#not_found` would collapse it
@@ -178,8 +223,7 @@ For **each** entry of `%peers`, independently (R-e — failure drops the entry):
 | 2 | `CAID(public_key) == node_id` | drop entry |
 | 3 | signature verifies over `"oodp-advert:v1:" ++ CAID(body − signature)` | drop entry |
 | 4 | `0 <= ttl <= 15` | drop entry |
-| 5 | `%hops <= ttl` | drop entry |
-| 6 | `ts` within the receiver's staleness bound (R-f) | drop entry |
+| 5 | `ts` within the receiver's staleness bound (R-f) | drop entry |
 | — | all pass | usable candidate |
 
 Note what is **absent**: there is no `%from == node_id` check here. §4.2.2 step 3
@@ -190,9 +234,11 @@ Step 2 must precede step 3, for the reason already given in §4.2.2: an engine
 that only asks "does the signature match the key in the packet" accepts every
 forgery, because a forger supplies both.
 
-Step 5 is a check against a number **the sender chose**. It is worth doing —
-it catches the honest relayer's bug and the lazy attacker — but it is not a
-defence, and the code comment must say so rather than implying otherwise.
+There is deliberately **no check against `%hops`** (R-d). A relay count and a
+lattice rank bound are different quantities that happen to share a range;
+gating one on the other would look like a defence while being a category
+error. The receiver's protection at this layer is its own budget and its own
+staleness bound, both local, neither claimed to be more than that.
 
 ### 3.5 Body is data, not program — again
 
@@ -244,7 +290,7 @@ that no previously-accepted *valid* advertisement is now refused. Note that
 The responder logs, one line per served discover:
 
 ```
-OODP Discover: target=<caid> matched=<n> capped=<n> excluded=<n ttl,n stale> from=<%from claim>
+OODP Discover: target=<caid> matched=<n> capped=<n> excluded=<n no_relay,n stale> from=<%from claim>
 ```
 
 The querying node logs, one line per response processed:
@@ -371,7 +417,7 @@ does — whose own header records an earlier version of the same mistake.
 | R4 | a relayed record whose `node_id ≠ CAID(public_key)` is dropped **while a good record in the same response is kept** |
 | R5 | **a relayed `%ad` whose body is an expression that would compute** is rejected as `#malformed` **and the effect does not occur** |
 | R6 | `ttl: 0` is not relayed, **while `ttl: 1` from the same directory is** |
-| R7 | the hop budget binds the honest relayer and not the wire: an honest node refuses to emit past `ttl`, **and** a fake relayer that claims `%hops: 0` on a `ttl: 0` record is accepted — the limitation, in code |
+| R7 | the relay bound binds the honest index and not the wire: an honest node refuses to emit a `ttl: 0` record, **and** a fake relayer hands you that same record and is believed — the limitation, in code |
 | R8 | `ttl` outside `0..=15` is `#rejected #malformed` at advertise time |
 | R9 | the cap holds: 12 matching entries in the directory, ≤ 8 in the response |
 | R10 | `%observed_host` is outside the signature: altering it does not break signature verification, and the CLI still prints `(host unverified, …)` |
@@ -439,6 +485,14 @@ Point 6 is not optional. The previous arc's cut record measured cross-version
    comment ("已驗過且在 TTL 內可省略") means the duration one. Spec-side;
    acceptor's.
 7. The advertisement declares no lifetime (R-f). Spec-side; acceptor's.
+8. **Three budgets coexist and none of them is the original one.** `ttl`
+   (APP_05 §2.2 / REAL_02 §4.2, signed, a lattice quantity), `fuel_limit`
+   (APP_05 §2.3, the querier's execution budget) and `MAX_ROUTING_HOPS = 16`
+   (hardcoded in `disc.rs`). The third exists because §4.4's mandatory random
+   jumps — the Semantic Eclipse defence of §7.3 — break the monotonicity the
+   first one relied on. The spec has never said this out loud, and it should:
+   the honest self-authenticating budget was traded for the ability to escape
+   a captured neighbourhood. Spec-side; acceptor's.
 8. Stray `oo node serve` processes from earlier arcs' probe runs are still
    listening on ports 19551–19992 on this machine. A probe that connects to a
    "free" port can hit one. Bind and connect above 21000 for this arc.

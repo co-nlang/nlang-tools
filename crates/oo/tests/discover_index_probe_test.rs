@@ -39,25 +39,42 @@
 // self-authenticating object wrapped in asserted pointers. R2 pins the first
 // half; R10 and R7 pin the second, including the part that does not work.
 //
-// ── `ttl` is a hop budget, and that is why it cannot be decremented ──────
-// `ttl: @int & ..15` (§4.2) and `%hops` (§3.2, "路由跳數；直答為 0") are the
-// two ends of one mechanism that has never been connected: `%hops` is passed
-// literal `0` at all ten of its call sites, and `MAX_ROUTING_HOPS = 16` is 15
-// plus the origin.
+// ── `ttl` is a lattice quantity this layer cannot compute ───────────────
+// It has no unit because it never had one to have. §4.1's first routing
+// filter is MASA_overlap = MASA_Q ⊓ MASA_Ni — **every hop is a meet** — and
+// meet descends the order (A ⊓ B ⊑ A). §3.1's mass is Tr(P_C), an integer:
+// the rank of a projection. A quantity that is an integer, descends under
+// meet, and is naturally bounded above is exactly `ttl: @int & ..15`.
 //
-// `ttl` sits inside the signed body. A relayer that decremented it would
-// destroy the signature.
+//     Nothing decrements it. The mathematics decrements it.
 //
-//     A hop *counter* cannot live inside a signature. A hop *budget* can.
+// And because each node recomputes it from content-addressed data, the
+// original `ttl` is SELF-AUTHENTICATING — degree 0 in the sense of discussion
+// 025, trusting no relayer. A hop count is the degenerate shadow left when
+// the distance cannot be computed: an asserted pointer, degree ≥1, on the
+// wrong side of the seam. It cannot be computed here for the reason M5
+// records — d_L lives in `gbb_registry`, `ttl` lives in `peer_adverts`, and
+// the two maps have never met. **The field kept the name of the mechanism and
+// lost the mechanism**, which is discussion 026's disease, third instance in
+// this arc.
 //
-// Hence: `ttl` is the originator's declared maximum propagation depth and is
-// never modified; the distance travelled rides in `%hops`, outside the
-// signature, as the relayer's claim. `ttl: 0` means "do not relay me".
+// The monotonicity was also abandoned on purpose: §4.3 step 3 sends a query
+// with no common MASA to a random jump and §4.4 makes those jumps mandatory,
+// but a node with no common MASA is one §4.1 already filtered to W = 0. The
+// jump leaves the descending chain by construction, and §7.3 says why — it is
+// the Semantic Eclipse defence. A self-authenticating monotone budget and the
+// ability to escape a captured neighbourhood cannot both be had; the spec
+// chose escape and then needed a non-monotone net, which is what
+// MAX_ROUTING_HOPS = 16 is.
 //
-// And hence the limitation R7 exists to record: **`%hops` is unverifiable**.
-// A dishonest relayer claims 0 forever. The budget binds honest relayers; it
-// is not a defence. A gate that only records successes teaches the next reader
-// the wrong thing, so R7 asserts the failure too.
+// So these probes claim only what this layer can hold up: `ttl` is signed,
+// range-checked, never modified, and `ttl: 0` means "do not relay me" —
+// meaningful under either reading. `%hops` is emitted because §3.2 documents
+// it and an operator reading a log wants it, and it is **not a gate**:
+// comparing a relay count against a rank bound would look like a defence
+// while being a category error, and it is unverifiable besides. R7 pins that
+// limitation, because a gate that only records successes teaches the next
+// reader the wrong thing.
 //
 // ── Explicitly NOT this arc ──────────────────────────────────────────────
 // Kademlia (REAL_02 §4.1): no k-buckets, no XOR distance, no FIND_NODE, no
@@ -893,26 +910,28 @@ fn r6_ttl_zero_is_not_relayed_and_ttl_one_is() {
     );
     assert!(
         !joined.contains(&quiet.node_id),
-        "a ttl:0 record was relayed — the budget is being ignored: {r}"
+        "a ttl:0 record was relayed — `do not relay me` is being ignored: {r}"
     );
 }
 
-/// R7 — the hop budget binds the honest relayer, and **not the wire**.
+/// R7 — the relay bound binds the honest index, and **not the wire**.
 ///
 /// Two halves, and the second one is the point:
 ///
-///   * an honest index will not emit a record past its signed `ttl`;
-///   * a dishonest relayer that simply claims `%hops: 0` gets the very same
-///     record accepted, because `%hops` is outside the signature and there is
-///     nothing to check it against.
+///   * an honest index will not emit a record whose signed `ttl` is 0;
+///   * a dishonest relayer hands you that same record anyway and is believed,
+///     because nothing in the packet says where it came from. `%hops` is the
+///     relayer's own number, outside the signature, with nothing to check it
+///     against — and it is not a quantity commensurable with `ttl` in the
+///     first place (see the header).
 ///
-/// This probe exists so that no later reader mistakes the budget for a defence.
-/// The receiver's protection is its own budget, not the sender's number.
+/// This probe exists so that no later reader mistakes the bound for a defence.
+/// The receiver's protection at this layer is its own budget, not the sender's.
 ///
 /// Baseline: neither half runs — `#not_implemented`, and no `oo node discover`.
 #[test]
 #[ignore]
-fn r7_the_hop_budget_binds_the_honest_relayer_only() {
+fn r7_the_relay_bound_binds_the_honest_index_only() {
     let t = trio("r7");
     let caid = store(&t.a, "{ treasure: \"R7\" }");
     let a = node_key(&t.a);
@@ -929,20 +948,21 @@ fn r7_the_hop_budget_binds_the_honest_relayer_only() {
     assert_eq!(status_of(&r), "success", "discover reply: {r}");
     assert!(
         peers_of(&r).is_empty(),
-        "an honest index emitted a record past its budget: {r}"
+        "an honest index relayed a record marked `do not relay me`: {r}"
     );
 
-    // Half 2 — a relayer that lies about the distance is believed, because
-    // `%hops` is not signed and cannot be checked.
+    // Half 2 — a relayer that hands you the very same record is believed. The
+    // record is genuine and its signature is valid; what cannot be checked is
+    // who passed it on, and `%hops` is that relayer's own number.
     let relayer = spawn_relayer(relay_reply(&a.node_id, 0, &[(spent, "198.51.100.7".into())]));
     let out = oo_discover(&t.c, &relayer.addr(), &caid);
     assert!(
         out.contains(&a.node_id),
-        "R7's second half records a LIMITATION, not a defence: a relayer \
-         claiming %hops:0 on a ttl:0 record must be believed, because nothing \
-         in the packet can contradict it. If this now fails, the engine has \
-         acquired a check it cannot actually perform — report it, do not \
-         'fix' the probe: {out}"
+        "R7's second half records a LIMITATION, not a defence: a relayer that \
+         passes on a ttl:0 record must be believed, because nothing in the \
+         packet can contradict it, and %hops is not a quantity commensurable \
+         with ttl anyway. If this now fails, the engine has acquired a check \
+         it cannot actually perform — report it, do not 'fix' the probe: {out}"
     );
 }
 
