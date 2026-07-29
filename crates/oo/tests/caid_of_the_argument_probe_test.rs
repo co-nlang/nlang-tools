@@ -160,7 +160,6 @@ fn c0_both_roads_answer_and_discriminate() {
 
 /// R1 — `./identify v` is `v`'s address. Scanned, untruncated.
 #[test]
-#[ignore = "identify returns the CAID of the argument pack"]
 fn r1_identify_returns_the_caid_of_the_value() {
     let dir = fresh_dir("r1");
     init(&dir);
@@ -188,7 +187,6 @@ fn r1_identify_returns_the_caid_of_the_value() {
 /// This is the shape an unconditional unwrap would break: apply does not wrap
 /// a tuple, so slot 0 holds the tuple's *first element*, not the tuple.
 #[test]
-#[ignore = "identify returns the CAID of the argument pack"]
 fn r2_a_tuple_is_still_its_own_value() {
     let dir = fresh_dir("r2");
     init(&dir);
@@ -201,7 +199,6 @@ fn r2_a_tuple_is_still_its_own_value() {
 
 /// R3 — a combo that happens to have slot 0 is still itself.
 #[test]
-#[ignore = "identify returns the CAID of the argument pack"]
 fn r3_a_combo_with_slot_zero_is_still_itself() {
     let dir = fresh_dir("r3");
     init(&dir);
@@ -214,7 +211,6 @@ fn r3_a_combo_with_slot_zero_is_still_itself() {
 
 /// R4 — the LADD key and the CAS address are the same address.
 #[test]
-#[ignore = "the LADD key is the argument pack's CAID"]
 fn r4_the_ladd_key_is_the_cas_address() {
     let dir = fresh_dir("r4");
     init(&dir);
@@ -241,7 +237,6 @@ fn r4_the_ladd_key_is_the_cas_address() {
 /// is the road REAL_02 §4.2 describes. If the node accepts it, the protocol
 /// means what the spec says.
 #[test]
-#[ignore = "the signature commits to the argument pack's CAID"]
 fn r5_the_signature_commits_to_the_body_caid() {
     let dir = fresh_dir("r5");
     init(&dir);
@@ -265,7 +260,6 @@ fn r5_the_signature_commits_to_the_body_caid() {
 /// `1`'s address, and `oo inspect` on it prints `1`. **The store confirms it
 /// saved something it did not save.**
 #[test]
-#[ignore = "engine.save unwraps slot 0 unconditionally"]
 fn r6_storing_a_tuple_stores_the_tuple() {
     let dir = fresh_dir("r6");
     init(&dir);
@@ -286,7 +280,6 @@ fn r6_storing_a_tuple_stores_the_tuple() {
 
 /// R7 — and the same for a combo that happens to have slot 0.
 #[test]
-#[ignore = "engine.save unwraps slot 0 unconditionally"]
 fn r7_storing_a_slot_zero_combo_stores_the_combo() {
     let dir = fresh_dir("r7");
     init(&dir);

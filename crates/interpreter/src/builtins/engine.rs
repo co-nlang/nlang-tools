@@ -125,7 +125,9 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     );
 
     m.insert("engine.save".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        let v = if let Value::Combo(ref c) = arg { c.get_field("0").cloned().unwrap_or(arg.clone()) } else { arg.clone() };
+        // caid_of_the_argument: unwrap only when apply wrapped (`%arg`).
+        // Unconditional slot-0 took the first element of tuples / {{0:…}}.
+        let v = crate::value::whole_argument(arg);
         let fv = oo.force_recursive(v, ctx);
         if let Ok(hash) = oo.store.put_value(&fv) {
             return Value::Atom(AtomKind::Str(hash.to_string()), EffectTag::IO, None);

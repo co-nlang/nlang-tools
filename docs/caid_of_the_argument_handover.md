@@ -224,5 +224,73 @@ restarts ORDER_00 §5.1.4's clock, which is 2026-07-27 and therefore cheap.
 
 ## 9. Delivery record (delivery side)
 
-What was built, what was measured, what was left, and the §3.3 site-by-site
-verification.
+### Built
+
+- **`%arg` marker**: set only in `apply_morphism`'s wrapping branch (non-
+  pack-shaped argument placed in a positional slot). Pack-shaped arguments
+  (tuples, `{{0:…}}`) take the other branch and carry no marker. Partial
+  morphisms strip `%arg` when materialised so it never becomes a user-visible
+  field.
+- **`whole_argument(arg)`** (`value.rs`): if `%arg` present → slot `0`, else
+  the pack/value itself.
+- **Whole-argument builtins** unwrap before hash / mass / store:
+  - `disc.identify`
+  - `disc.advertise` (+ `compute_mass` / nerve on the unwrapped value)
+  - `disc.find` (unwrap; CAID **string** used as query node id / direct
+    target so LADD key = CAS address, R4)
+  - `engine.save` (`identify_and_store`) — no more unconditional `get_field("0")`
+- **`oodp.rs` signing helpers**: unchanged; still go through
+  `~%Discovery./identify`, which is now correct (ruling: no split).
+- **Four `caid_of` helpers**: not edited (gate §6.2). All four suites green.
+- **Spec / CHANGELOG**: not edited. **Breaking** Layer 1 (signature payload).
+
+### §3.3 site-by-site (operand readers — no pack hash)
+
+| Site | Reads | Verdict |
+| --- | --- | --- |
+| `diff.diff` / `patch` / `is_compatible` | slots `0`,`1` | ok — never hashes pack; `%arg` stays in meta |
+| `disc.connect` | slots `0`,`1` | ok |
+| `disc.fetch` | slots `0` / `0+1` | ok |
+| `query.select` / `where` / `pluck` / `deep_merge` | slots `0`,`1` | ok |
+| `toml.parse` / `stringify` | slot `0` as string payload | ok — operand extract, not whole-value CAID |
+| `engine.save` | **fixed** via `whole_argument` | was the data-loss path |
+| remaining `engine.*` `get_field("0")` | multi-arg Option/Result helpers | multi-slot APIs; not whole-argument CAID consumers (not in the three + save set) |
+
+No site iterated the pack as a value in a way that would emit `%arg` into a
+user result (P2/P4 green).
+
+### Measurements
+
+- **R1**: all 13 SHAPES — `identify` = store address (including advert body).
+- **Advert body CAID** (was pack `db5dc4d2…` on v0.2.55): now equals own
+  value digest  
+  `706000a89dc79e0d9a4a538c787eb4db31b848311e80b2c81da52aeb4108ce72`
+  (matches the pre-arc measurement of the value's own CAID).
+- **R2/R3**: tuple and `{{0: 5}}` keep their own CAIDs (marker did not
+  erase the non-wrap branch).
+- **R6/R7**: `identify_and_store (1,2)` and `{{0: 9}}` store the whole value.
+- Cross-version both ways: acceptance with a v0.2.55 binary (signature payload
+  moves; expect mutual `#rejected` / bad_signature). Not run in this delivery
+  environment without a pinned older binary on PATH.
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| caid_of_the_argument | **12/12** |
+| advertise_wire | **19/19** (caid_of untouched) |
+| discover_index | **17/17** |
+| kademlia_table | **17/17** |
+| advert_persistence | **19/19** |
+| wire_says_why | **16/16** |
+| oodp_packet_format | **13/13** |
+| local_gc | **17/17** |
+| workspace | **1661 / 0 / 3** |
+| conf | **143/143** |
+| genesis | **11/11** |
+
+### Left
+
+Ledger §8 (lazy `to_nlang`, etc.). Older engine naive `get_field("0")` paths
+outside save remain (same class of bug if ever used as whole-argument stores);
+not in this arc's three + save set.
