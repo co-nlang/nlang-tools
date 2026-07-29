@@ -1119,21 +1119,20 @@ fn p4_nothing_persisted() {
     // whole index to `.oo/oodp_index.json` instead, satisfying the letter of a
     // pin that had been written about the wrong thing. A pin must hold the
     // PROPERTY ("nothing durable appeared"), not one spelling of violating it.
+    // SCHEDULED CHANGE (advert_persistence §6.1): allow-list, not absolute.
+    // `peers/` is the durable peer directory; undeclared paths still fail.
+    let allowed = ["objects", "format", "peers"];
     let mut unexpected: Vec<String> = Vec::new();
     for e in fs::read_dir(dir.join(".oo")).unwrap().flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        // `objects/` is the store and predates this arc.
-        // `format` is the store-layout marker (local_gc arc) — not OODP state.
-        if name != "objects" && name != "format" {
+        if !allowed.contains(&name.as_str()) {
             unexpected.push(name);
         }
     }
     assert!(
         unexpected.is_empty(),
-        "routing left durable state in `.oo/`: {unexpected:?}. Durable OODP \
-         state is an arc of its own — it carries GC, migration, a REAL_02 §5.1 \
-         clause, and the fact that incumbent-first stops being reset by a \
-         restart. Arriving as a side effect is how persistence arrives unaudited"
+        "routing left undeclared durable state in `.oo/`: {unexpected:?}. \
+         Declared: objects, format, peers. Anything else arrives unaudited"
     );
 }
 

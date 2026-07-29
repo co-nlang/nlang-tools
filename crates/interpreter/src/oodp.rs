@@ -833,10 +833,14 @@ fn encode_discover_response(
         .map(|(ad, host)| {
             let mut e = Map::new();
             e.insert("%ad".to_string(), JsonValue::String(ad.clone()));
-            e.insert(
-                "%observed_host".to_string(),
-                JsonValue::String(host.clone()),
-            );
+            // R1 / advert_persistence: an observation that was never made
+            // (empty host after identity mismatch load) must not be claimed.
+            if !host.is_empty() {
+                e.insert(
+                    "%observed_host".to_string(),
+                    JsonValue::String(host.clone()),
+                );
+            }
             JsonValue::Object(e)
         })
         .collect();
@@ -1017,6 +1021,26 @@ pub fn process_discover_reply(
 
 /// §3.4 ladder for one relayed `%ad` source. No `%from` check (speaker is the
 /// relayer). Returns node_id / listen_port / pk on success.
+/// Verify a stored advertisement body exactly as a relayed one is verified.
+///
+/// ACCEPTANCE REPAIR (advert_persistence). The durable directory holds
+/// **signed** records, and R1's ruling — "the signed face travels, because it
+/// is true whoever holds it" — is only true of a signature somebody checks. An
+/// unverified signed record is not a self-authenticating fact; it is an
+/// assertion wearing a signature, which is precisely the stratum confusion
+/// discussion 025 exists to keep apart.
+///
+/// Measured before the repair: corrupting sixteen hex digits of a stored
+/// signature and restarting produced `loaded 1 records, skipped 0 damaged`,
+/// and the node relayed the record. Since `.oo/` is writable by any n/ program
+/// (`~%Io./write_file`, open ledger item since the `#pin` arc), that is a
+/// free and permanent seat in this node's routing table — which is exactly
+/// what SPEC_15 §7.1's cost model prices in minted identities, and it costs
+/// none of them.
+pub fn verify_stored_ad(engine: &Ouroboros, ad_src: &str) -> Result<(), String> {
+    verify_relayed_entry(engine, ad_src, now_secs()).map(|_| ())
+}
+
 fn verify_relayed_entry(
     engine: &Ouroboros,
     ad_src: &str,

@@ -747,7 +747,8 @@ fn p4_no_undeclared_durable_state() {
     let allowed = [
         "objects", "HEAD", "staged", "architects.json",
         "pin_pending", "effect_pending", "abandoned",
-        "format", // declared by this arc
+        "format", // declared by local_gc
+        "peers",  // declared by advert_persistence (scheduled pin update)
     ];
     let mut unexpected = Vec::new();
     for e in fs::read_dir(d.join(".oo")).unwrap().flatten() {

@@ -292,6 +292,12 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
     // Two ports on one workspace share one id; two workspaces do not.
     let source_id = engine.node_id()?.to_string();
     println!("n/ OODP node serving at port {} (node {})", port, source_id);
+    // advert_persistence §3.2 — load report on the serve log (probes parse it).
+    if let Some(ref rep) = engine.peers_load_report {
+        if let Some(ref line) = rep.log_line {
+            println!("{}", line);
+        }
+    }
 
     for stream in listener.incoming() {
         if let Ok(mut stream) = stream {
