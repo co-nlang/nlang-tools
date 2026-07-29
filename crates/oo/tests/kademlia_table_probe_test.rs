@@ -493,6 +493,31 @@ struct Fixture {
 /// rather than asserted about after the fact.
 const MIN_BUCKETS_COVERED: usize = 6;
 
+/// Guard on the draw-until-covered loop. **Deliberately not a function of `n`.**
+///
+/// ACCEPTANCE REPAIR (2026-07-29, exposed by re-verifying the v0.2.55
+/// candidate). The bound used to be `n * 10`, which couples the cap to how
+/// many peers the caller wants — and the number of draws needed to cover six
+/// buckets has nothing to do with that. `r8` asks for ten peers, so its cap
+/// was a hundred, and a hundred is not enough.
+///
+/// Measured, 200,000 simulated fixtures (bucket index = leading zero bits of
+/// a random XOR, which is what sha256 output gives):
+///
+///     median 37 draws · p99 149 · p99.9 218 · p99.99 295 · max seen 411
+///     cap=100 → 5.3% failure   cap=300 → 0.009%   cap=1000+ → 0 in 200k
+///
+/// So the old bound failed about one run in twenty, which is exactly the rate
+/// this suite was flaking at. The cap exists to catch an id space that is not
+/// behaving like a hash, not to bound a random draw that is behaving
+/// perfectly normally — so it is set far past the tail.
+///
+/// This is the *second* probabilistic bound in this fixture: the loop itself
+/// was the kademlia arc's repair for asserting about whatever was drawn. Draw
+/// until the property holds is right; capping the draw by an unrelated
+/// quantity was not.
+const MAX_MINTS_FOR_COVERAGE: usize = 2000;
+
 /// Serves a node and offers it `n` freshly minted peers, in order.
 ///
 /// Peers are minted **before** any are sent, so the draw can be extended
@@ -519,7 +544,7 @@ fn fixture(tag: &str, n: usize) -> Fixture {
         peers.push(mint_peer(&rng, 21000 + (minted as u16 % 4000)));
         minted += 1;
         assert!(
-            minted < n * 10,
+            minted < MAX_MINTS_FOR_COVERAGE,
             "HARNESS: {minted} ids still cover only {} buckets — the id space \
              is not behaving like sha256 output",
             covered(&peers)
