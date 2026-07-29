@@ -1292,6 +1292,22 @@ impl From<BottomCause> for Value {
     }
 }
 
+/// Recover the value that was applied to a morphism (caid_of_the_argument).
+///
+/// `apply_morphism` sets `%arg` **only** when it wraps a non-pack argument into
+/// a positional pack. Whole-argument builtins (identify, save, advertise, …)
+/// must read slot `0` in that case and the pack itself otherwise — never
+/// unconditional `get_field("0")`, which silently drops tuples and slot-0 combos.
+pub fn whole_argument(arg: Value) -> Value {
+    match &arg {
+        Value::Combo(c) if c.contains_key("%arg") => c
+            .get_field("0")
+            .cloned()
+            .unwrap_or(arg),
+        _ => arg,
+    }
+}
+
 // ── ObservationStrategy (moved from observation.rs to break circular dep) ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

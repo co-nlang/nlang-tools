@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn, Peer};
-use crate::value::{Value, EffectTag, BottomCause, BottomDetail, ContentHash};
+use crate::value::{Value, EffectTag, BottomCause, BottomDetail, ContentHash, whole_argument};
 use crate::storage::ObjectStore;
 use nlang_parser::ast::AtomKind;
 
@@ -259,11 +259,14 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     }) as Arc<BuiltinFn>);
     
     m.insert("disc.identify".to_string(), Arc::new(|arg: Value, _oo: &Ouroboros, _ctx: &mut EvalContext| {
-        Value::Atom(AtomKind::Str(arg.content_hash().to_string()), EffectTag::Pure, None)
+        // caid_of_the_argument: hash the applied value, not the pack.
+        let v = whole_argument(arg);
+        Value::Atom(AtomKind::Str(v.content_hash().to_string()), EffectTag::Pure, None)
     }) as Arc<BuiltinFn>);
 
     // Phase 4 / Phase 5: LADD advertise
     m.insert("disc.advertise".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, _ctx: &mut EvalContext| {
+        let arg = whole_argument(arg);
         let hash = arg.content_hash();
         let mass = compute_mass(&arg);
         let sketch_bytes = base64_decode_sketch(&hash.lattice_sketch);
@@ -308,8 +311,15 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
 
     // Phase 4 / Phase 5: LADD find
     m.insert("disc.find".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        // 1. Build initial query GBB
-        let query_hash = arg.content_hash();
+        let arg = whole_argument(arg);
+        // 1. Build initial query GBB.
+        // When the argument is a CAID string (R4: find by store address), use
+        // that CAID as the query node id so it meets the advertised key — not
+        // the content-hash of the string atom.
+        let query_hash = match &arg {
+            Value::Atom(AtomKind::Str(s), _, _) => ContentHash::parse(s).unwrap_or_else(|_| arg.content_hash()),
+            _ => arg.content_hash(),
+        };
         let mut current_query = crate::ladd::GBB {
             node_caid: query_hash.clone(),
             mass: compute_mass(&arg),
@@ -321,7 +331,16 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         // 2. Extract explicit target CAID (optional direct-lookup mode)
         let explicit_target: Option<String> = if let Value::Combo(ref c) = arg {
             c.get_field("target").map(|v| oo.force(v.clone(), ctx).to_string_plain())
-        } else { None };
+        } else if let Value::Atom(AtomKind::Str(s), _, _) = &arg {
+            // find "hash:…" — treat the string as a direct fetch target as well
+            if ContentHash::parse(s).is_ok() {
+                Some(s.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         const EPSILON: f64 = 1e-6;
 

@@ -1425,6 +1425,16 @@ impl Ouroboros {
                         }
                     } 
                     nf.insert((max_idx + 1).to_string(), arg.clone()); 
+                    // caid_of_the_argument: mark wraps only. Pack-shaped args
+                    // (tuples, {{0:…}}) take the branch above and carry no marker.
+                    nf.insert(
+                        "%arg".to_string(),
+                        Value::Atom(
+                            nlang_parser::ast::AtomKind::Tag("true".to_string()),
+                            crate::value::EffectTag::Pure,
+                            None,
+                        ),
+                    );
                 }
                 // Named public fields from the argument (not %, not digit keys).
                 // Force each so builtins that pattern-match Atom/Tag without an
@@ -1472,7 +1482,14 @@ impl Ouroboros {
                         if let Value::Top = res { 
                             let mut partial_fields = c.fields().clone(); 
                             if let Value::Combo(ref ac) = unified_arg { 
-                                for (k, v) in &ac.fields() { partial_fields.insert(k.clone(), v.clone()); } 
+                                for (k, v) in &ac.fields() {
+                                    // Calling-convention marker must not become
+                                    // part of a user-visible partial morphism.
+                                    if k == "%arg" {
+                                        continue;
+                                    }
+                                    partial_fields.insert(k.clone(), v.clone());
+                                } 
                             } 
                             partial_fields.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
                             partial_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None));
