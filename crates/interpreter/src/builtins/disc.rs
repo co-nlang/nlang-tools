@@ -177,6 +177,10 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 // Sweep: continue past lying sources (Q1); only verified bytes win.
                 let mut results = Vec::new();
                 let mut saw_mismatch = false;
+                // Peer said #not_found (honest absence). Distinct from a peer
+                // that refused / does not implement / spoke an unknown dialect.
+                let mut saw_peer_not_found = false;
+                let mut peer_protocol: Option<BottomCause> = None;
 
                 match try_local(oo, &oo.store, &hash, "local") {
                     Ok(val) => results.push(observe(val)),
@@ -205,7 +209,18 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                     // (unordered peer set; degree-0 identity is unique).
                                     return observe(val);
                                 }
+                                // wire_says_why: only substantiated integrity
+                                // sets saw_mismatch; protocol answers do not.
                                 Err(BottomCause::CaidMismatch) => saw_mismatch = true,
+                                Err(BottomCause::MissingKey) => saw_peer_not_found = true,
+                                Err(
+                                    e @ (BottomCause::PeerNotImplemented
+                                    | BottomCause::PeerUnknownStatus
+                                    | BottomCause::PeerRefused
+                                    | BottomCause::PeerTimeout),
+                                ) => {
+                                    peer_protocol = Some(e);
+                                }
                                 Err(_) => {}
                             }
                         }
@@ -213,10 +228,16 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 }
 
                 if results.is_empty() {
+                    // Integrity first; then pure absence (any honest #not_found);
+                    // then a lone protocol answer from the other end; else miss.
                     return if saw_mismatch {
                         BottomCause::CaidMismatch.into()
+                    } else if saw_peer_not_found {
+                        BottomCause::MissingKey.into()
+                    } else if let Some(c) = peer_protocol {
+                        c.into()
                     } else {
-                        BottomCause::Conflict.into()
+                        BottomCause::MissingKey.into()
                     };
                 }
 
