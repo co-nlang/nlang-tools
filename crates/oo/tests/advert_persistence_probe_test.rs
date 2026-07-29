@@ -713,23 +713,57 @@ fn r5_the_rebuilt_index_matches_an_insertion_replay() {
          rebuilt with the right self id from one rebuilt with zeros",
         order.len()
     );
-    let target = peers[0].id;
+    // COUNTERFACTUAL — R5 exists to catch an index rebuilt under the wrong
+    // self id, which places every peer in a different bucket and therefore
+    // drops a different set once buckets overflow.
+    //
+    // ACCEPTANCE REPAIR, THIRD PASS, and the first two are worth keeping:
+    //
+    //   1. compared against the closest 20 of everything advertised — but a
+    //      full bucket drops what it cannot hold, so the table is a strict
+    //      subset of the directory. (Reported by the delivery, not trimmed.)
+    //   2. used `self_id = zeros` as the counterfactual and asserted the
+    //      answers differ. That flakes about half the time, and the reason is
+    //      worth writing down: bucket 0 under self `X` holds the peers whose
+    //      top bit differs from X's, and under self `0` it holds the peers
+    //      whose top bit is 1. **When X's top bit is 0 those are the same
+    //      set** — so an engine shipping an unseeded zero self id would be
+    //      indistinguishable from a correct one on half of all nodes. That is
+    //      how a bug of this class survives, and it is why the probe must not
+    //      depend on the draw.
+    //
+    // So the counterfactual is the real self id with its top bit flipped: a
+    // wrong self id, minimally wrong, and one whose bucket 0 is the exact
+    // complement of the right one. Both halves overflow k=20 here, so the
+    // survivor sets cannot coincide.
+    let mut wrong_self = self_id;
+    wrong_self[0] ^= 0x80;
+    let wrong_surviving = replay_surviving(&wrong_self, &order);
+
+    let a: std::collections::HashSet<[u8; ID_BYTES]> = surviving.iter().cloned().collect();
+    let b: std::collections::HashSet<[u8; ID_BYTES]> = wrong_surviving.iter().cloned().collect();
+    let mut diff: Vec<[u8; ID_BYTES]> = a.symmetric_difference(&b).cloned().collect();
+    diff.sort();
+    // A peer kept by one rebuild and dropped by the other is at distance zero
+    // from itself, so it heads one answer and is absent from the other.
+    let target = *diff.first().unwrap_or_else(|| panic!(
+        "the right rebuild and a wrong-self-id rebuild kept exactly the same \
+         peers, so no target can separate them — {} records, {} survivors",
+        order.len(),
+        surviving.len()
+    ));
+
     let mut expect: Vec<[u8; ID_BYTES]> = surviving.clone();
     expect.sort_by_key(|id| xor(id, &target));
     expect.truncate(20);
 
-    // COUNTERFACTUAL, armed in the probe rather than asserted about it: the
-    // failure R5 exists for is a table rebuilt with self_id = zeros. If that
-    // produced the same answer, this test would be green for nothing.
-    let zero_surviving = replay_surviving(&[0u8; ID_BYTES], &order);
-    let mut expect_zero: Vec<[u8; ID_BYTES]> = zero_surviving;
-    expect_zero.sort_by_key(|id| xor(id, &target));
-    expect_zero.truncate(20);
+    let mut expect_wrong: Vec<[u8; ID_BYTES]> = wrong_surviving;
+    expect_wrong.sort_by_key(|id| xor(id, &target));
+    expect_wrong.truncate(20);
     assert_ne!(
-        expect, expect_zero,
-        "a table rebuilt with self_id = zeros would give the same answer as \
-         one rebuilt correctly, so this comparison cannot fail on the defect \
-         it names"
+        expect, expect_wrong,
+        "a target taken from the symmetric difference still did not separate \
+         the two rebuilds"
     );
 
     let reply = ask_raw(node2.port, &find_node_request("x", &hex::encode(target)));
