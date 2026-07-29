@@ -23,6 +23,8 @@ pub const FORMAT_TAG: &str = "oodp-peers:v1";
 pub struct LoadReport {
     pub records: usize,
     pub skipped: usize,
+    /// Records whose stored signature did not verify (acceptance repair).
+    pub unverifiable: usize,
     /// Log line for the serving process (if anything was attempted).
     pub log_line: Option<String>,
 }
@@ -281,6 +283,7 @@ pub fn load(
     let report = LoadReport {
         records,
         skipped,
+        unverifiable: 0,
         log_line: Some(format!(
             "OODP Peers: loaded {records} records, skipped {skipped} damaged"
         )),
@@ -374,4 +377,52 @@ pub fn compact(
     Some(format!(
         "OODP Peers: compact {bytes} bytes ({live_n} live)"
     ))
+}
+
+/// Drop stored records whose signature does not verify, and rebuild the index.
+///
+/// ACCEPTANCE REPAIR (advert_persistence). `load` runs while the engine is
+/// being constructed, so it cannot verify: `verify_relayed_entry` needs an
+/// `&Ouroboros` to compute the body CAID. This pass runs once the engine
+/// exists and prunes what the loader could only take on trust.
+///
+/// The ladder is the same one a relayed record passes — literal-body gate,
+/// field presence, ttl range, `CAID(pk) == node_id`, Ed25519 — so a stored
+/// record earns its place on exactly the terms it earned it on the wire.
+pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
+    let Some(base) = engine.base_dir.clone() else { return 0 };
+    let _ = base;
+    let bad: Vec<String> = {
+        let Ok(dir) = engine.peer_adverts.read() else { return 0 };
+        dir.values()
+            .filter(|adv| crate::oodp::verify_stored_ad(engine, &adv.ad_source).is_err())
+            .map(|adv| adv.node_id.clone())
+            .collect()
+    };
+    if bad.is_empty() {
+        return 0;
+    }
+    if let Ok(mut dir) = engine.peer_adverts.write() {
+        for nid in &bad {
+            dir.remove(nid);
+        }
+    }
+    // Rebuild the index over what survived, in the same replay order.
+    if let (Ok(dir), Ok(mut rt)) = (engine.peer_adverts.read(), engine.routing.write()) {
+        let self_id = rt.self_id();
+        let mut sorted: Vec<&PeerAdvert> = dir.values().collect();
+        sorted.sort_by(|a, b| {
+            a.received_at
+                .cmp(&b.received_at)
+                .then_with(|| a.node_id.cmp(&b.node_id))
+        });
+        let mut fresh = RoutingIndex::new(self_id);
+        for adv in sorted {
+            if let Some(rid) = routing::routing_id_from_pubkey_hex(&adv.public_key_hex) {
+                let _ = fresh.insert(&adv.node_id, rid);
+            }
+        }
+        *rt = fresh;
+    }
+    bad.len()
 }

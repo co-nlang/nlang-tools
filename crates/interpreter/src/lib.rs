@@ -508,6 +508,20 @@ impl Ouroboros {
             integrity_log: RwLock::new(Vec::new()),
             privileged_discharge_tags: std::sync::atomic::AtomicU8::new(0),
         };
+        // ACCEPTANCE REPAIR (advert_persistence): the loader takes stored
+        // records on trust because it runs before the engine exists. Now that
+        // it does, check the signatures — a signed record that nobody checks
+        // is an assertion wearing a signature.
+        let mut oo = oo;
+        let unverifiable = crate::peers::verify_loaded(&oo);
+        if let Some(ref mut r) = oo.peers_load_report {
+            r.records = r.records.saturating_sub(unverifiable);
+            r.unverifiable = unverifiable;
+            r.log_line = Some(format!(
+                "OODP Peers: loaded {} records, skipped {} damaged, {} unverifiable",
+                r.records, r.skipped, unverifiable
+            ));
+        }
         Ok(oo)
     }
 

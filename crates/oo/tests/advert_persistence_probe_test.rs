@@ -423,6 +423,59 @@ fn advertise_n(node: &Node, caid_dir: &Path, n: usize, base_port: u16) -> Vec<Sy
     peers
 }
 
+
+/// Records as the loader sees them: file order, last-wins per `node_id`, then
+/// sorted by `received_at` then `node_id` — the order `peers::load` replays.
+///
+/// ACCEPTANCE REPAIR. The first version of R5 compared the reloaded answer
+/// against the closest 20 of everything advertised. That is not what the
+/// design says and cannot be satisfied: `insert` drops a peer when its bucket
+/// already holds k=20, so with 60 random peers bucket 0 overflows and the
+/// table is a strict subset of the directory. The delivery reported this
+/// rather than adjusting the probe — the second time it has done so.
+///
+/// The comparison that does hold reads the file (data) and applies the
+/// documented rule (spec), against an engine that reads the same file with
+/// its own code. `closest` scans every bucket and sorts by XOR to the target,
+/// so `self_id` never moves the *answer* — it moves *who is in the table*,
+/// through exactly these overflow drops. Which is why R5 has to keep enough
+/// peers to overflow: without a drop it would pass under a table rebuilt with
+/// self_id = zeros, and that is the failure it exists for.
+fn directory_replay_order(dir: &Path) -> Vec<(String, String)> {
+    let text = fs::read_to_string(peers_path(dir)).expect("durable directory missing");
+    let mut by_id: std::collections::HashMap<String, (i64, String)> = Default::default();
+    for line in text.lines().skip(1) {
+        if line.trim().is_empty() { continue; }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let Some(nid) = v.get("node_id").and_then(|x| x.as_str()) else { continue };
+        let Some(pk) = v.get("public_key").and_then(|x| x.as_str()) else { continue };
+        let ra = v.get("received_at").and_then(|x| x.as_i64()).unwrap_or(0);
+        by_id.insert(nid.to_string(), (ra, pk.to_string()));
+    }
+    let mut rows: Vec<(i64, String, String)> = by_id
+        .into_iter()
+        .map(|(nid, (ra, pk))| (ra, nid, pk))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    rows.into_iter().map(|(_, nid, pk)| (nid, pk)).collect()
+}
+
+/// Replay k-bucket insertion and return the ids that survive.
+fn replay_surviving(self_id: &[u8; ID_BYTES], order: &[(String, String)]) -> Vec<[u8; ID_BYTES]> {
+    let mut buckets: Vec<Vec<[u8; ID_BYTES]>> = vec![Vec::new(); ID_BYTES * 8];
+    let mut out = Vec::new();
+    for (_nid, pk_hex) in order {
+        let Ok(pk) = hex::decode(pk_hex) else { continue };
+        let rid = routing_id(&pk);
+        let b = bucket_index(self_id, &rid);
+        if b >= ID_BYTES * 8 { continue; }
+        if buckets[b].len() >= 20 { continue; }
+        buckets[b].push(rid);
+        out.push(rid);
+    }
+    out
+}
+
 // ════════════════════════════════════════════════════════════════════════
 //  CONTROL — leads the file
 // ════════════════════════════════════════════════════════════════════════
@@ -631,7 +684,6 @@ fn r4b_a_copy_does_not_inherit_an_observation() {
 /// Compared over the whole table, not sampled: a reload that kept only the
 /// first bucket, or that lost incumbent order, differs here and nowhere else.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r5_the_rebuilt_index_matches_an_insertion_replay() {
     let dir = fresh_dir("r5");
     let caid_dir = fresh_dir("r5-caid");
@@ -650,11 +702,35 @@ fn r5_the_rebuilt_index_matches_an_insertion_replay() {
         routing_id_of_caid(caid)
     };
 
-    // brute force: what should the answer be, over everything advertised?
+    // Replay the documented rebuild over the file's own contents, then take
+    // the closest 20 of the SURVIVORS — not of everything advertised.
+    let order = directory_replay_order(&dir);
+    assert_eq!(order.len(), peers.len(), "the file lost records");
+    let surviving = replay_surviving(&self_id, &order);
+    assert!(
+        surviving.len() < order.len(),
+        "no bucket overflowed with {} peers, so this probe cannot tell a table \
+         rebuilt with the right self id from one rebuilt with zeros",
+        order.len()
+    );
     let target = peers[0].id;
-    let mut expect: Vec<[u8; ID_BYTES]> = peers.iter().map(|p| p.id).collect();
+    let mut expect: Vec<[u8; ID_BYTES]> = surviving.clone();
     expect.sort_by_key(|id| xor(id, &target));
     expect.truncate(20);
+
+    // COUNTERFACTUAL, armed in the probe rather than asserted about it: the
+    // failure R5 exists for is a table rebuilt with self_id = zeros. If that
+    // produced the same answer, this test would be green for nothing.
+    let zero_surviving = replay_surviving(&[0u8; ID_BYTES], &order);
+    let mut expect_zero: Vec<[u8; ID_BYTES]> = zero_surviving;
+    expect_zero.sort_by_key(|id| xor(id, &target));
+    expect_zero.truncate(20);
+    assert_ne!(
+        expect, expect_zero,
+        "a table rebuilt with self_id = zeros would give the same answer as \
+         one rebuilt correctly, so this comparison cannot fail on the defect \
+         it names"
+    );
 
     let reply = ask_raw(node2.port, &find_node_request("x", &hex::encode(target)));
     let mut got = answer_ids(&reply);
@@ -662,9 +738,10 @@ fn r5_the_rebuilt_index_matches_an_insertion_replay() {
 
     assert_eq!(
         got, expect,
-        "after a reload `closest(target, k)` was not the closest 20 of the 60 \
-         records on disk. self={} — a table rebuilt with the wrong self id \
-         renumbers every bucket",
+        "after a reload `closest(target, k)` was not the closest 20 of the \
+         records that survive an insertion replay. self={} — a table rebuilt \
+         with the wrong self id renumbers every bucket and drops a different \
+         set",
         hex::encode(self_id)
     );
 }
@@ -685,6 +762,11 @@ fn r6_writes_are_linear_not_quadratic() {
     let (appended, compacted, compactions) = peers_writes(&node, 150);
     let total = appended + compacted;
 
+    println!(
+        "R6: 150 adverts -> appended={appended} B, compacted={compacted} B in \
+         {compactions} compactions, total={total} B ({} B/record)",
+        appended / 150
+    );
     assert!(
         appended > 0,
         "the node reported no durable write at all for 150 accepted \
@@ -733,7 +815,6 @@ fn r7_a_superseded_record_is_replaced_after_reload() {
 
 /// R8 — compaction runs and shrinks the file without changing the live set.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r8_compaction_triggers_and_shrinks_the_file() {
     let dir = fresh_dir("r8");
     let caid_dir = fresh_dir("r8-caid");
@@ -760,17 +841,28 @@ fn r8_compaction_triggers_and_shrinks_the_file() {
     );
 
     let size_after = fs::metadata(peers_path(&dir)).map(|m| m.len()).unwrap_or(0);
+    println!(
+        "R8: 50 lines / 10 live -> {compactions} compactions, {compacted} B \
+         rewritten, file now {size_after} B"
+    );
     node.stop();
 
     let node2 = serve(&dir);
-    let entries = peer_entries(&ask_raw(node2.port, &discover_request("x", &svc)));
+    // ACCEPTANCE REPAIR: the live count is read through `#find_node` (k=20),
+    // not `#discover` — MAX_DISCOVER_PEERS is 8, so asking discover for ten
+    // records asserted something the protocol forbids. The delivery reported
+    // that rather than trimming the assertion to fit.
+    let ids = answer_ids(&ask_raw(node2.port, &find_node_request("x", &"0".repeat(40))));
     assert_eq!(
-        entries.len(),
+        ids.len(),
         10,
         "compaction changed the live set: {} records survived, not 10 \
          (file is {size_after} bytes)",
-        entries.len()
+        ids.len()
     );
+    // and the service is still discoverable at all, capped as the protocol says
+    let entries = peer_entries(&ask_raw(node2.port, &discover_request("x", &svc)));
+    assert_eq!(entries.len(), 8, "discover cap moved: {}", entries.len());
 }
 
 /// R9 — one damaged line costs one record, and the loss is reported.
@@ -969,3 +1061,68 @@ fn p7_the_store_format_marker_is_not_bumped() {
     );
 }
 
+
+/// P8 — a stored record is served only if its signature still verifies.
+///
+/// ACCEPTANCE REPAIR pin. R1's ruling is that the signed face travels because
+/// it is true whoever holds it — which is a property of a signature somebody
+/// checks. The loader could not check: it runs while the engine is being
+/// built, and computing a body CAID needs the engine. So the check moved to
+/// just after construction, and this pin is what keeps it there.
+///
+/// The control matters as much as the target: the same record, untampered,
+/// must still be served. A "repair" that dropped everything would pass the
+/// tampered half and be worthless.
+#[test]
+fn p8_a_tampered_stored_signature_is_not_served() {
+    let dir = fresh_dir("p8");
+    let caid_dir = fresh_dir("p8-caid");
+    init(&dir);
+    init(&caid_dir);
+
+    let node = serve(&dir);
+    let rng = ring::rand::SystemRandom::new();
+    let p = mint_peer(&rng, 23400);
+    let svc = service_caid(&caid_dir, "p8");
+    let req = p.advertise_request_with(&caid_dir, &[&svc], now_secs());
+    assert_eq!(status_of(&ask_raw(node.port, &req)), "success");
+    peers_writes(&node, 1);
+    node.stop();
+
+    // CONTROL: untouched, the record survives a restart.
+    let good = serve(&dir);
+    assert_eq!(
+        peer_entries(&ask_raw(good.port, &discover_request("x", &svc))).len(),
+        1,
+        "the honest record did not survive — a check that drops everything is \
+         not a check"
+    );
+    good.stop();
+
+    // Now corrupt the signature inside the stored record and restart.
+    let path = peers_path(&dir);
+    let text = fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let needle = "signature: \\\"";
+    let i = lines[1].find(needle).expect("no signature in the stored record");
+    let at = i + needle.len();
+    lines[1].replace_range(at..at + 16, &"0".repeat(16));
+    fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let node2 = serve(&dir);
+    let entries = peer_entries(&ask_raw(node2.port, &discover_request("x", &svc)));
+    assert!(
+        entries.is_empty(),
+        "a record whose stored signature was forged was served anyway. `.oo/` \
+         is writable by any n/ program, so an unchecked directory is a free \
+         and permanent seat in this table — and SPEC_15 §7.1 prices that seat \
+         in minted identities"
+    );
+
+    let mut saw = false;
+    for _ in 0..60 {
+        if node2.log().contains("unverifiable") { saw = true; break; }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(saw, "the node dropped a record and did not say so: {}", node2.log());
+}
