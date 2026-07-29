@@ -459,7 +459,6 @@ fn c0_a_node_that_learned_nothing_writes_nothing() {
 
 /// R1 — the directory survives a restart of the same node.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r1_restart_in_place_restores_the_directory() {
     let dir = fresh_dir("r1");
     let caid_dir = fresh_dir("r1-caid");
@@ -487,7 +486,6 @@ fn r1_restart_in_place_restores_the_directory() {
 
 /// R2 — the file appears where the order declares it, and nowhere else.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r2_the_file_appears_where_declared_and_nowhere_else() {
     let dir = fresh_dir("r2");
     let caid_dir = fresh_dir("r2-caid");
@@ -517,7 +515,6 @@ fn r2_the_file_appears_where_declared_and_nowhere_else() {
 ///
 /// Not travel: the same node remembering what it itself saw.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r3_restart_in_place_restores_the_observed_host() {
     let dir = fresh_dir("r3");
     let caid_dir = fresh_dir("r3-caid");
@@ -557,7 +554,6 @@ fn r3_restart_in_place_restores_the_observed_host() {
 /// workspace path (v0.2.48). No second machine and no second process beyond
 /// the one already serving.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r4_a_copy_gets_the_signed_half_only() {
     let dir = fresh_dir("r4");
     let caid_dir = fresh_dir("r4-caid");
@@ -600,7 +596,6 @@ fn r4_a_copy_gets_the_signed_half_only() {
 
 /// R4b — the copy must not claim an observation it never made.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r4b_a_copy_does_not_inherit_an_observation() {
     let dir = fresh_dir("r4b");
     let caid_dir = fresh_dir("r4b-caid");
@@ -679,7 +674,6 @@ fn r5_the_rebuilt_index_matches_an_insertion_replay() {
 /// The second clause is what makes this red today: at v0.2.53 the engine
 /// writes zero bytes, and a bound alone would pass trivially.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r6_writes_are_linear_not_quadratic() {
     let dir = fresh_dir("r6");
     let caid_dir = fresh_dir("r6-caid");
@@ -707,7 +701,6 @@ fn r6_writes_are_linear_not_quadratic() {
 
 /// R7 — a second advertisement from the same node supersedes the first.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r7_a_superseded_record_is_replaced_after_reload() {
     let dir = fresh_dir("r7");
     let caid_dir = fresh_dir("r7-caid");
@@ -782,7 +775,6 @@ fn r8_compaction_triggers_and_shrinks_the_file() {
 
 /// R9 — one damaged line costs one record, and the loss is reported.
 #[test]
-#[ignore = "durable peer directory not implemented"]
 fn r9_one_damaged_line_does_not_cost_the_directory() {
     let dir = fresh_dir("r9");
     let caid_dir = fresh_dir("r9-caid");
@@ -976,3 +968,4 @@ fn p7_the_store_format_marker_is_not_bumped() {
          v0.2.53 refuse a store it can open, and a verdict must be true"
     );
 }
+

@@ -373,5 +373,69 @@ Carried forward, still open:
 
 ## 9. Delivery record (delivery side)
 
-Fill in on return: what was built, what was measured, what was left, anything
-noticed and not fixed. An empty record has happened twice; both were caught.
+### Built
+
+- **`.oo/peers/directory`**: append-only JSON lines; header
+  `# oodp-peers:v1 node_id=<caid>`. One line per accepted advert (after the
+  signature ladder). Compaction when data lines > 2× live unique records.
+- **R1 identity split on load**: signed half always; asserted fields
+  (`observed_host`, `hops`, `received_at`, `addr`) only when file owner equals
+  this node's id. No node key yet → signed half only, routing unseeded (no
+  mint on init). Copy-to-new-path is a different node (path-hashed key).
+- **Index rebuild**: `RoutingIndex` seeded with this node's id; inserts in
+  `received_at` order (or signed `ts` on mismatch). Incumbent-first / k=20
+  drops apply on rebuild as on live insert.
+- **Serve log** (exact spellings):
+  - `OODP Peers: append <bytes> bytes (<live> live)`
+  - `OODP Peers: compact <bytes> bytes (<live> live)`
+  - `OODP Peers: loaded <n> records, skipped <k> damaged`
+- **Damaged line**: skip + count; rest of directory loads.
+- **Relay**: empty `observed_host` omits `%observed_host` (copy must not claim
+  an observation it never made).
+- **Scheduled pin updates** (§6.1): kademlia `p4` and local_gc `p4` allow-lists
+  include `peers`. `.oo/format` not bumped (P7).
+- **Spec / CHANGELOG**: not edited.
+
+### Probe defects (R5, R8) — reported, not “fixed” in the probe
+
+Order: *if a probe looks wrong, say so and stop — do not adjust it to fit.*
+
+| Gate | Probe claim | What the engine does | Why the probe fails |
+| --- | --- | --- | --- |
+| **R5** | After reload, `closest(target,20)` equals the closest 20 of **all 60** advertised ids | Reload answer **equals the live answer** and equals a kademlia `simulate_table` + closest replay (measured: 60 on disk, ~47 held after k=20 drops, answer match) | Expect ignores k-bucket drops. Bucket 0 alone takes ~half of random ids; with 60 peers, drops are normal. The kademlia suite's R5 uses `simulate_table` first; this probe does not. |
+| **R8** | After compaction, `#discover` returns **10** live peers | Compaction runs (3× in the fixture), file holds **10** unique live records, load reports 10, `find_node` returns 10 | `#discover` is capped at **`MAX_DISCOVER_PEERS = 8`** (discover_index). Asserting 10 via discover can never pass under current protocol. |
+
+**R5 and R8 remain `#[ignore]`** pending order repair (expect = k-bucket replay;
+live-set check via file / `find_node` / load report, not discover count 10).
+Independent verification of both behaviours is green (see numbers below).
+Nothing else in the probe file was changed beyond removing `#[ignore]` from the
+passing reds.
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| advert_persistence | **16 passed / 0 failed / 2 ignored** (R5, R8) |
+| kademlia_table | **17/17** |
+| discover_index | **17/17** |
+| advertise_wire | **19/19** |
+| local_gc | **17/17** |
+| workspace | **1630 / 0 / 5** |
+| conf | **143/143** |
+| genesis | **11/11** |
+
+- **R6 (150 ads)**: appended **131,564** bytes, compacted 0, total **≪ 1 MB**
+  (~**877 B/record**). Reverted design: 14.38 MB / ~1,239 B/record with full
+  rewrite each accept.
+- **R8 (independent)**: 50 appends over 10 live → **3** compactions; final file
+  ~20,601 B; **10** unique live; load 10.
+- **R9**: serve log `loaded 11 records, skipped 1 damaged` after mid-line
+  corruption of a 12-record file.
+- **Cross-version (acceptance, not a red)**: a v0.2.53 engine ignores
+  `.oo/peers/` (unknown entry; P6). This engine opens a store without the file
+  as a cold start. Format marker stays `1`.
+
+### Left / not this arc
+
+Age-based expiry, bucket-index persistence, eviction-by-ping, ladder changes,
+spec §5.1 wording, CHANGELOG. Ledger §8 unchanged.

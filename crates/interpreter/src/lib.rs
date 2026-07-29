@@ -25,6 +25,7 @@ pub mod authority;
 pub mod oodp;
 pub mod routing;
 pub mod gc;
+pub mod peers;
 pub use crate::value::{Value, ComboVal, EffectTag, Privilege, ContentHash, CaidVersion, MasaRef, BottomDetail, BottomCause, CommitMeta, Commit, CommitKind, RefineInfo, Holonomy, Identity, AuthorityInfo, BlurDetail, BlurCause, HorizonParams, ObservationStrategy, normalize_union, primary_bottom_from_culled};
 pub use crate::storage::{ObjectStore, StoreReadError, value_address_matches};
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
@@ -350,6 +351,10 @@ pub struct Ouroboros {
     pub peer_adverts: RwLock<HashMap<String, PeerAdvert>>,
     /// Kademlia bucket index over `peer_adverts` (kademlia_table arc).
     pub routing: RwLock<crate::routing::RoutingIndex>,
+    /// Durable peer-directory file state (line count for 2× compaction).
+    pub peer_dir_state: RwLock<crate::peers::PeerDirectoryState>,
+    /// Load report from `.oo/peers/directory` at init (serve prints once).
+    pub peers_load_report: Option<crate::peers::LoadReport>,
     /// Lazy operator identity. `None` until a signature is needed (or
     /// `oo identity`). In-memory engines pre-fill an ephemeral key and never
     /// touch the operator path.
@@ -435,6 +440,8 @@ impl Ouroboros {
             peers: RwLock::new(HashMap::new()),
             peer_adverts: RwLock::new(HashMap::new()),
             routing: RwLock::new(crate::routing::RoutingIndex::new([0u8; 20])),
+            peer_dir_state: RwLock::new(crate::peers::PeerDirectoryState::default()),
+            peers_load_report: None,
             identity_cell: RwLock::new(Some(identity)),
             node_identity_cell: RwLock::new(None),
             identity_persist: false,
@@ -456,11 +463,25 @@ impl Ouroboros {
         let architects = store
             .load_architects(base_dir)
             .unwrap_or_else(|_| std::collections::HashSet::new());
-        // The peer directory and its bucket index are PROCESS MEMORY.
-        // ACCEPTOR REVERT (kademlia_table): the delivery persisted both to
-        // `.oo/oodp_index.json`. See the arc note in `routing.rs`.
-        let (peer_adverts, routing) =
-            (HashMap::new(), crate::routing::RoutingIndex::new([0u8; 20]));
+        // Durable peer directory (advert_persistence): load signed records;
+        // restore observations only when the file's owner matches this node.
+        // Do not mint a node key here (node_identity P5).
+        let this_node_id = match crate::value::Identity::node_key_path(base_dir) {
+            Ok(path) if path.exists() => crate::value::Identity::load(&path)
+                .ok()
+                .map(|id| id.node_id_caid().to_string()),
+            _ => None,
+        };
+        let (peer_adverts, routing, peer_dir_state, load_report) =
+            crate::peers::load(base_dir, this_node_id.as_deref());
+        // Prefill node identity when we already loaded it (no second mint).
+        let node_identity_cell = match crate::value::Identity::node_key_path(base_dir) {
+            Ok(path) if path.exists() => match crate::value::Identity::load(&path) {
+                Ok(id) => RwLock::new(Some(id)),
+                Err(_) => RwLock::new(None),
+            },
+            _ => RwLock::new(None),
+        };
         let oo = Self {
             store,
             base_dir: Some(base_dir.to_path_buf()),
@@ -471,8 +492,14 @@ impl Ouroboros {
             peers: RwLock::new(HashMap::new()),
             peer_adverts: RwLock::new(peer_adverts),
             routing: RwLock::new(routing),
+            peer_dir_state: RwLock::new(peer_dir_state),
+            peers_load_report: if load_report.log_line.is_some() {
+                Some(load_report)
+            } else {
+                None
+            },
             identity_cell: RwLock::new(None),
-            node_identity_cell: RwLock::new(None),
+            node_identity_cell,
             identity_persist: true,
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
@@ -568,12 +595,13 @@ impl Ouroboros {
     }
 
     /// Record an accepted OODP advertisement and update the Kademlia index.
-    /// Returns routing log lines (insert / full-drop). Not universe content.
+    /// Appends to `.oo/peers/directory` when this engine has a workspace.
+    /// Returns log lines (routing insert / full-drop + peers append/compact).
     pub fn record_peer_advert(&self, advert: PeerAdvert) -> Vec<String> {
         let node_id = advert.node_id.clone();
         let pk_hex = advert.public_key_hex.clone();
         if let Ok(mut dir) = self.peer_adverts.write() {
-            dir.insert(node_id.clone(), advert);
+            dir.insert(node_id.clone(), advert.clone());
         }
         // Ensure routing self_id matches this node before insert.
         let mut logs = Vec::new();
@@ -587,6 +615,17 @@ impl Ouroboros {
                 }
                 if let Some(rid) = crate::routing::routing_id_from_pubkey_hex(&pk_hex) {
                     logs = rt.insert(&node_id, rid);
+                }
+            }
+            // Durable append (only for workspace engines).
+            if let Some(ref base) = self.base_dir {
+                let owner = self_caid.to_string();
+                if let (Ok(live), Ok(mut st)) =
+                    (self.peer_adverts.read(), self.peer_dir_state.write())
+                {
+                    let peer_logs =
+                        crate::peers::append(base, &owner, &advert, &live, &mut st);
+                    logs.extend(peer_logs);
                 }
             }
         }

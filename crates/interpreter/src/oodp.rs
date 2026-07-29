@@ -833,10 +833,14 @@ fn encode_discover_response(
         .map(|(ad, host)| {
             let mut e = Map::new();
             e.insert("%ad".to_string(), JsonValue::String(ad.clone()));
-            e.insert(
-                "%observed_host".to_string(),
-                JsonValue::String(host.clone()),
-            );
+            // R1 / advert_persistence: an observation that was never made
+            // (empty host after identity mismatch load) must not be claimed.
+            if !host.is_empty() {
+                e.insert(
+                    "%observed_host".to_string(),
+                    JsonValue::String(host.clone()),
+                );
+            }
             JsonValue::Object(e)
         })
         .collect();
