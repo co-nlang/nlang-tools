@@ -29,7 +29,7 @@ enum Commands {
         #[arg(long)]
         privileged: bool,
         /// Selective capability grant (repeatable; accumulates by union).
-        /// SPEC: effect_override[:tag[+tag]*] | pin | commit | rollback | squash
+        /// SPEC: effect_override[:tag[+tag]*] | pin | commit | rollback | squash | gc
         #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
         grants: Vec<String>,
     },
@@ -110,6 +110,17 @@ enum Commands {
         grants: Vec<String>,
         #[arg(long)]
         privileged: bool,
+    },
+    /// Local store GC: remove unreachable objects under `.oo/objects/`.
+    /// Requires `--grant gc`. Never automatic (local_gc / discussion 025).
+    Gc {
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
+        #[arg(long)]
+        privileged: bool,
+        /// Mark phase + report only; remove nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Show the operator public key (64 hex) and the identity file path.
     /// Mints at `OO_IDENTITY` or `~/.oo/identity` on first use.
@@ -229,6 +240,11 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             grants,
             privileged,
         } => run_squash(caid, grants, privileged),
+        Commands::Gc {
+            grants,
+            privileged,
+            dry_run,
+        } => run_gc(grants, privileged, dry_run),
         Commands::Lint { path, json } => {
             let code = oo::nlint::run_cli(&path, json);
             std::process::exit(code);
@@ -467,7 +483,15 @@ fn run_log() -> anyhow::Result<()> {
         }
         if let Some(ref abs) = meta.abandoned {
             for a in abs {
-                println!("    abandoned {}", a);
+                // R-b / local_gc §3.5: the fact survives; mark when content is gone.
+                let present = ContentHash::parse(a)
+                    .map(|h| nlang_interpreter::gc::content_present(&engine.store, &h))
+                    .unwrap_or(false);
+                if present {
+                    println!("    abandoned {}", a);
+                } else {
+                    println!("    abandoned {} (content collected)", a);
+                }
             }
         }
         // universe_determinism: refine authority status lives on RefineInfo
@@ -784,6 +808,10 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             squash: true,
             ..Privilege::NONE
         }),
+        "gc" => Ok(Privilege {
+            gc: true,
+            ..Privilege::NONE
+        }),
         "effect_override" => Ok(Privilege {
             effect_override: Some(EffectTag::all_active()),
             ..Privilege::NONE
@@ -814,9 +842,31 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             })
         }
         _ => anyhow::bail!(
-            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash)"
+            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash, gc)"
         ),
     }
+}
+
+fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let mut engine = Ouroboros::init(&cur)?;
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
+    if !engine.privilege.gc {
+        anyhow::bail!(
+            "#privileged_required: gc requires --grant gc (privilege.gc capability)"
+        );
+    }
+
+    let report = nlang_interpreter::gc::run_gc(&engine.store, &cur, dry_run)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    print!("{}", nlang_interpreter::gc::format_plan_report(&report));
+    if dry_run {
+        println!("oo gc: dry-run — removed 0 objects, freed 0 bytes");
+    } else {
+        println!("{}", nlang_interpreter::gc::format_done_report(&report));
+    }
+    Ok(())
 }
 
 fn apply_cli_privilege(
@@ -975,27 +1025,43 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
     let hash = ContentHash::parse(&caid_str)
         .map_err(|_| anyhow::anyhow!("Invalid CAID format: {}", caid_str))?;
 
-    let val = engine
-        .store
-        .get_value(&hash)
-        .map_err(|e| format_store_read_error(e, &caid_str))?;
-    // SPEC_08 §4.2.4: inspect is user-facing observation — solidify active
-    // tags to #cached on the display projection (store object stays raw).
-    let val = val.solidify_effects();
-
-    println!("CAID:   {}", caid_str);
-    println!("MASA:   {}", hash.masa_ref);
-    if !hash.lattice_sketch.is_empty() {
-        let sketch_preview = if hash.lattice_sketch.len() > 32 {
-            format!("{}...", &hash.lattice_sketch[..32])
-        } else {
-            hash.lattice_sketch.clone()
-        };
-        println!("Sketch: {}", sketch_preview);
+    // CAS holds both values and commits. Try value first; fall back to commit
+    // so address re-verification works for survivors after GC (local_gc R12).
+    match engine.store.get_value(&hash) {
+        Ok(val) => {
+            let val = val.solidify_effects();
+            println!("CAID:   {}", caid_str);
+            println!("MASA:   {}", hash.masa_ref);
+            if !hash.lattice_sketch.is_empty() {
+                let sketch_preview = if hash.lattice_sketch.len() > 32 {
+                    format!("{}...", &hash.lattice_sketch[..32])
+                } else {
+                    hash.lattice_sketch.clone()
+                };
+                println!("Sketch: {}", sketch_preview);
+            }
+            println!();
+            println!("{}", val.to_nlang(0));
+            Ok(())
+        }
+        Err(e_val) => match engine.store.get_commit(&hash) {
+            Ok(commit) => {
+                println!("CAID:   {}", caid_str);
+                println!("kind:   commit");
+                if let Some(p) = &commit.parent {
+                    println!("parent: {}", p);
+                } else {
+                    println!("parent: (none)");
+                }
+                println!("root:   {}", commit.root);
+                Ok(())
+            }
+            Err(_) => Err(anyhow::anyhow!(
+                "{}",
+                format_store_read_error(e_val, &caid_str)
+            )),
+        },
     }
-    println!();
-    println!("{}", val.to_nlang(0));
-    Ok(())
 }
 
 fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {

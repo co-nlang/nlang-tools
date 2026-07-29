@@ -1123,7 +1123,8 @@ fn p4_nothing_persisted() {
     for e in fs::read_dir(dir.join(".oo")).unwrap().flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         // `objects/` is the store and predates this arc.
-        if name != "objects" {
+        // `format` is the store-layout marker (local_gc arc) — not OODP state.
+        if name != "objects" && name != "format" {
             unexpected.push(name);
         }
     }

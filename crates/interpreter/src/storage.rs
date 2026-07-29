@@ -71,17 +71,112 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
     requested.digest == recomputed.digest
 }
 
+/// On-disk layout version for `.oo/` (local_gc arc). Objects are self-describing
+/// via CAID `v1`/`v2`; this is the **layout** marker.
+pub const STORE_FORMAT_VERSION: u32 = 1;
+
 pub struct ObjectStore {
     root: PathBuf,
 }
 
 impl ObjectStore {
+    /// Ensure `.oo/format` is present and understood. Absent → write `1`.
+    /// Unknown version → refuse (do not read/write/GC the store).
+    pub fn ensure_format(base_dir: &Path) -> Result<()> {
+        let oo = base_dir.join(".oo");
+        if !oo.exists() {
+            return Ok(());
+        }
+        let path = oo.join("format");
+        if path.exists() {
+            let raw = fs::read_to_string(&path)?;
+            let v = raw.trim();
+            if v != STORE_FORMAT_VERSION.to_string() {
+                anyhow::bail!(
+                    "store format version {v} is not supported by this engine \
+                     (understands format {STORE_FORMAT_VERSION}); refusing to open"
+                );
+            }
+        } else {
+            // Every existing store is version 1; announce rather than refuse.
+            fs::write(&path, format!("{STORE_FORMAT_VERSION}\n"))?;
+        }
+        Ok(())
+    }
+
     pub fn init(base_dir: &Path) -> Result<Self> {
+        Self::ensure_format(base_dir)?;
         let root = base_dir.join(".oo").join("objects");
         if !root.exists() {
             fs::create_dir_all(&root)?;
+            // New store: ensure format after creating .oo/
+            Self::ensure_format(base_dir)?;
         }
         Ok(Self { root })
+    }
+
+    /// Digest path for an object (sha256/ab/cdef…).
+    pub fn digest_path(&self, digest_hex: &str) -> PathBuf {
+        let algo_dir = "sha256";
+        self.root
+            .join(algo_dir)
+            .join(&digest_hex[0..2])
+            .join(&digest_hex[2..])
+    }
+
+    pub fn object_exists_digest(&self, digest_hex: &str) -> bool {
+        if digest_hex.len() < 4 {
+            return false;
+        }
+        self.digest_path(digest_hex).exists()
+    }
+
+    /// List every object digest (64 hex) under the store.
+    pub fn list_digests(&self) -> Result<Vec<(String, u64)>> {
+        let mut out = Vec::new();
+        let sha = self.root.join("sha256");
+        if !sha.exists() {
+            return Ok(out);
+        }
+        for a in fs::read_dir(&sha)? {
+            let a = a?;
+            if !a.path().is_dir() {
+                continue;
+            }
+            let pre = a.file_name().to_string_lossy().to_string();
+            for b in fs::read_dir(a.path())? {
+                let b = b?;
+                if !b.path().is_file() {
+                    continue;
+                }
+                let rest = b.file_name().to_string_lossy().to_string();
+                let len = b.metadata()?.len();
+                out.push((format!("{pre}{rest}"), len));
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn remove_digest(&self, digest_hex: &str) -> Result<()> {
+        let p = self.digest_path(digest_hex);
+        if p.exists() {
+            fs::remove_file(&p)?;
+        }
+        // Empty two-hex-digit directory.
+        if let Some(parent) = p.parent() {
+            if parent.exists() && fs::read_dir(parent)?.next().is_none() {
+                let _ = fs::remove_dir(parent);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn read_raw_digest(&self, digest_hex: &str) -> Result<Vec<u8>> {
+        let p = self.digest_path(digest_hex);
+        if !p.exists() {
+            anyhow::bail!("not found");
+        }
+        Ok(fs::read(p)?)
     }
 
     pub fn put_value(&self, value: &Value) -> Result<ContentHash> {
