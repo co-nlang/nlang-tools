@@ -1080,6 +1080,9 @@ impl BottomDetail {
             BottomCause::PrivilegedRequired => "#privileged_required",
             BottomCause::StoreBoundary => "#store_boundary",
             BottomCause::CaidMismatch => "#caid_mismatch",
+            BottomCause::PeerNotImplemented => "#peer_not_implemented",
+            BottomCause::PeerUnknownStatus => "#peer_unknown_status",
+            BottomCause::PeerRefused => "#peer_refused",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1212,6 +1215,13 @@ pub enum BottomCause {
     /// An arc whose entire thesis is that four situations must be separable
     /// cannot ship a fifth that is not.
     PeerTimeout,
+    /// Peer answered `#not_implemented` (wire_says_why). Not an integrity incident.
+    PeerNotImplemented,
+    /// Peer answered a `%status` this client does not recognise (forward compat).
+    PeerUnknownStatus,
+    /// Peer answered `#conflict` without a substantiated integrity reason
+    /// (older peer, or non-integrity conflict). Not an integrity incident.
+    PeerRefused,
 }
 
 impl BottomCause {
@@ -1238,6 +1248,9 @@ impl BottomCause {
             BottomCause::PrivilegedRequired => "privileged_required",
             BottomCause::StoreBoundary => "store_boundary",
             BottomCause::CaidMismatch => "caid_mismatch",
+            BottomCause::PeerNotImplemented => "peer_not_implemented",
+            BottomCause::PeerUnknownStatus => "peer_unknown_status",
+            BottomCause::PeerRefused => "peer_refused",
         }
     }
 
@@ -1264,6 +1277,9 @@ impl BottomCause {
             BottomCause::FuelExhausted
             | BottomCause::Timeout
             | BottomCause::PeerTimeout
+            | BottomCause::PeerNotImplemented
+            | BottomCause::PeerUnknownStatus
+            | BottomCause::PeerRefused
             | BottomCause::OutOfHorizon => 3,
             BottomCause::MissingKey | BottomCause::InvalidPath => 4,
         }

@@ -278,7 +278,6 @@ fn c0_a_wellformed_request_is_still_answered() {
 
 /// R1 — an op this node does not serve says so.
 #[test]
-#[ignore = "the wire cannot say why yet"]
 fn r1_unknown_op_is_not_implemented() {
     let dir = fresh_dir("r1");
     init(&dir);
@@ -290,7 +289,6 @@ fn r1_unknown_op_is_not_implemented() {
 
 /// R2 — REAL_02 §3.2's MUST, as one assertion.
 #[test]
-#[ignore = "the wire cannot say why yet"]
 fn r2_corrupt_and_unknown_op_are_distinguishable() {
     let dir = fresh_dir("r2");
     init(&dir);
@@ -313,7 +311,6 @@ fn r2_corrupt_and_unknown_op_are_distinguishable() {
 
 /// R3 — nothing that is not `#success` answers without saying why.
 #[test]
-#[ignore = "the wire cannot say why yet"]
 fn r3_every_non_success_carries_a_reason() {
     let dir = fresh_dir("r3");
     init(&dir);
@@ -339,7 +336,6 @@ fn r3_every_non_success_carries_a_reason() {
 
 /// R4 — the reason names which `#conflict` this is.
 #[test]
-#[ignore = "the wire cannot say why yet"]
 fn r4_the_reason_names_which_conflict_it_is() {
     let dir = fresh_dir("r4");
     init(&dir);
@@ -364,7 +360,6 @@ fn r4_the_reason_names_which_conflict_it_is() {
 
 /// R5 — "I do not serve that op" is not an integrity failure.
 #[test]
-#[ignore = "the client records protocol answers as integrity verdicts"]
 fn r5_not_implemented_is_not_an_integrity_incident() {
     let dir = fresh_dir("r5");
     init(&dir);
@@ -380,7 +375,6 @@ fn r5_not_implemented_is_not_an_integrity_incident() {
 
 /// R6 — a peer newer than this client is not a broken peer.
 #[test]
-#[ignore = "the client records protocol answers as integrity verdicts"]
 fn r6_an_unknown_status_is_not_an_integrity_incident() {
     let dir = fresh_dir("r6");
     init(&dir);
@@ -397,7 +391,6 @@ fn r6_an_unknown_status_is_not_an_integrity_incident() {
 
 /// R7 — an unexplained refusal is a refusal, not an accusation.
 #[test]
-#[ignore = "the client records protocol answers as integrity verdicts"]
 fn r7_an_unexplained_conflict_is_a_refusal() {
     let dir = fresh_dir("r7");
     init(&dir);
@@ -439,7 +432,6 @@ fn p7_a_reasoned_caid_mismatch_still_accuses() {
 
 /// R9 — a scan past a refusing peer reports absence, not corruption.
 #[test]
-#[ignore = "every peer failure collapses to #caid_mismatch"]
 fn r9_a_scan_past_a_refusing_peer_says_missing() {
     let dir = fresh_dir("r9");
     let holder = fresh_dir("r9-holder");

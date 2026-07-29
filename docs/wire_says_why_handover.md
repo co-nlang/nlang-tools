@@ -253,5 +253,77 @@ ignore. Acceptance must run this both ways rather than assume it.
 
 ## 9. Delivery record (delivery side)
 
-Fill in on return: what was built, what was measured, what was left, anything
-noticed and not fixed.
+### Built
+
+- **Server `%reason`**: every non-`#success` response carries `%reason`
+  (`encode_response_reason` no longer fences reason to `#rejected` only).
+- **Unknown op** → `#not_implemented` + `%reason: #unknown_op` (was
+  `#conflict`).
+- **Reason vocabulary** (§3.1): `malformed`, `missing_field`,
+  `unparseable_caid`, `caid_mismatch`, `not_held`, `unknown_op`; rejected
+  reasons unchanged.
+- **`%hash` discrimination**: `hash_raw` on the request so missing field vs
+  unparseable CAID are distinct.
+- **Client causes** (`remote_fetch_oodp`): integrity incident **only** for
+  `#conflict` + `%reason: #caid_mismatch`. Otherwise
+  `#peer_not_implemented` / `#peer_unknown_status` / `#peer_refused` — no
+  integrity log line. Unexplained `#conflict` (older peer) is `#peer_refused`.
+- **New `BottomCause` tail**: `PeerNotImplemented`, `PeerUnknownStatus`,
+  `PeerRefused` (append-only).
+- **Multi-source scan** (`disc.fetch`): `saw_mismatch` only on
+  `CaidMismatch`. Protocol peer answers are skipped for integrity; if a peer
+  reported `#not_found` the scan ends in `#missing_key`; a lone protocol
+  answer surfaces that peer cause (R5–R7); refusing + honest miss →
+  `#missing_key` (R9).
+- **Scheduled pin**: advertise_wire `p4` unknown op → `#not_implemented`.
+- **Spec / ERROR_CODES / CHANGELOG**: not edited (acceptance).
+
+### Seven-case matrix (this build)
+
+| case | `%status` | `%reason` |
+| --- | --- | --- |
+| held + intact | `#success` | — |
+| held but corrupt | `#conflict` | `#caid_mismatch` |
+| not held | `#not_found` | `#not_held` |
+| unknown op | `#not_implemented` | `#unknown_op` |
+| field missing | `#conflict` | `#missing_field` |
+| malformed line | `#conflict` | `#malformed` |
+| unparseable caid | `#conflict` | `#unparseable_caid` |
+
+### Stub-peer re-measurements (§1.2)
+
+| peer says | cause | integrity log |
+| --- | --- | --- |
+| `#not_implemented` | `#peer_not_implemented` | empty |
+| `#teapot` | `#peer_unknown_status` | empty |
+| `#conflict` (no reason) | `#peer_refused` | empty |
+| `#conflict` + `#caid_mismatch` | `#caid_mismatch` | one line (P7) |
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| wire_says_why | **16/16** |
+| advertise_wire | **19/19** |
+| oodp_packet_format | **13/13** |
+| peer_fetch_verification | **12/12** |
+| discover_index | **17/17** |
+| advert_persistence | **19/19** |
+| kademlia_table | **17/17** |
+| local_gc | **17/17** |
+| workspace | **1649 / 0 / 3** |
+| conf | **143/143** |
+| genesis | **11/11** |
+
+### Cross-version (acceptance note)
+
+- **Older client → this node**: unknown op is now `#not_implemented` (was
+  `#conflict`); clients that collapsed both to the same result see no
+  behavioural change. `%reason` is ignored if unrecognised.
+- **This client → older peer**: `#conflict` without `%reason` →
+  `#peer_refused`, not an integrity incident (R7).
+
+### Left
+
+Ledger §8 unchanged. Spec ERROR_CODES for the three `peer_*` causes are
+acceptance's.

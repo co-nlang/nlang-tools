@@ -67,6 +67,9 @@ impl OodpOp {
 pub struct OodpRequest {
     pub op: OodpOp,
     pub hash: Option<ContentHash>,
+    /// Raw `%hash` string when the field was present but failed CAID parse.
+    /// Distinguishes `#missing_field` from `#unparseable_caid` (wire_says_why).
+    pub hash_raw: Option<String>,
     /// Claimed sender node id. **Never used for authorization** on fetch/discover
     /// (R-c) — parsed only for observability. On `#advertise` it is checked
     /// against `%ad.node_id`.
@@ -99,7 +102,7 @@ impl OodpStatus {
 }
 
 /// Encode a response envelope. `%result` absent when there is no payload.
-/// `%reason` is present **iff** status is `#rejected` (advertise_wire Q3).
+/// `%reason` is required on every non-`#success` (wire_says_why / REAL_02 §3.2).
 pub fn encode_response(
     status: OodpStatus,
     result: Option<&Value>,
@@ -121,12 +124,16 @@ pub fn encode_response_reason(
         "%status".to_string(),
         JsonValue::String(format!("#{}", status.as_tag())),
     );
-    if matches!(status, OodpStatus::Rejected) {
+    // wire_says_why R1: every non-success carries %reason. Older clients ignore
+    // unknown fields; reject-only reason is no longer the fence.
+    if !matches!(status, OodpStatus::Success) {
         if let Some(r) = reason {
-            map.insert(
-                "%reason".to_string(),
-                JsonValue::String(format!("#{r}")),
-            );
+            let tag = if r.starts_with('#') {
+                r.to_string()
+            } else {
+                format!("#{r}")
+            };
+            map.insert("%reason".to_string(), JsonValue::String(tag));
         }
     }
     if let Some(v) = result {
@@ -138,6 +145,11 @@ pub fn encode_response_reason(
     map.insert("%source".to_string(), JsonValue::String(source.to_string()));
     map.insert("%hops".to_string(), json!(hops));
     serde_json::to_string(&JsonValue::Object(map)).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Non-success envelope with a required reason tag (no leading `#` needed).
+fn refuse(status: OodpStatus, reason: &str, source_id: &str) -> String {
+    encode_response_reason(status, Some(reason), None, source_id, 0)
 }
 
 fn rejected(source_id: &str, reason: &str, from: Option<&str>, detail: &str) -> (String, String) {
@@ -192,11 +204,12 @@ fn parse_json_request(obj: &Map<String, JsonValue>) -> Result<OodpRequest, Strin
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing %op".to_string())?;
     let op = parse_op_tag(op_s);
-    let hash = obj
+    let hash_raw = obj
         .get("%hash")
         .or_else(|| obj.get("hash"))
         .and_then(|v| v.as_str())
-        .and_then(|s| ContentHash::parse(s).ok());
+        .map(|s| s.to_string());
+    let hash = hash_raw.as_deref().and_then(|s| ContentHash::parse(s).ok());
     // %from is a claim — recorded, never consulted for outcomes.
     let from = obj
         .get("%from")
@@ -211,6 +224,7 @@ fn parse_json_request(obj: &Map<String, JsonValue>) -> Result<OodpRequest, Strin
     Ok(OodpRequest {
         op,
         hash,
+        hash_raw,
         from,
         target,
     })
@@ -257,6 +271,7 @@ fn parse_nlang_request(expr: &nlang_parser::ast::Expr) -> Result<OodpRequest, St
     };
     let mut op = None;
     let mut hash = None;
+    let mut hash_raw = None;
     let mut from = None;
     let mut target = None;
     for f in fields {
@@ -272,8 +287,16 @@ fn parse_nlang_request(expr: &nlang_parser::ast::Expr) -> Result<OodpRequest, St
                 });
             }
             "%hash" | "hash" => {
-                if let ExprKind::Atom(AstAtom::Str(s)) = &f.value.kind {
-                    hash = ContentHash::parse(s).ok();
+                match &f.value.kind {
+                    ExprKind::Atom(AstAtom::Str(s)) => {
+                        hash_raw = Some(s.clone());
+                        hash = ContentHash::parse(s).ok();
+                    }
+                    other => {
+                        // Field present but not a CAID string.
+                        hash_raw = Some(format!("{other:?}"));
+                        hash = None;
+                    }
                 }
             }
             "%from" | "from" => {
@@ -293,6 +316,7 @@ fn parse_nlang_request(expr: &nlang_parser::ast::Expr) -> Result<OodpRequest, St
     Ok(OodpRequest {
         op,
         hash,
+        hash_raw,
         from,
         target,
     })
@@ -313,7 +337,7 @@ pub fn serve_request(
     let req = match parse_request(line) {
         Ok(r) => r,
         Err(e) => {
-            let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+            let body = refuse(OodpStatus::Conflict, "malformed", source_id);
             return (body, format!("OODP bad request: {e}"));
         }
     };
@@ -322,9 +346,16 @@ pub fn serve_request(
         OodpOp::Fetch => {
             // Deliberately do not consult req.from for any fetch branch.
             let _ = &req.from;
-            let Some(hash) = req.hash else {
-                let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
-                return (body, "OODP #fetch missing %hash".into());
+            let hash = match (&req.hash, &req.hash_raw) {
+                (Some(h), _) => h.clone(),
+                (None, Some(raw)) => {
+                    let body = refuse(OodpStatus::Conflict, "unparseable_caid", source_id);
+                    return (body, format!("OODP #fetch unparseable %hash: {raw}"));
+                }
+                (None, None) => {
+                    let body = refuse(OodpStatus::Conflict, "missing_field", source_id);
+                    return (body, "OODP #fetch missing %hash".into());
+                }
             };
             match engine.store.get_value(&hash) {
                 Ok(val) => {
@@ -333,11 +364,11 @@ pub fn serve_request(
                 }
                 Err(e) => match e.downcast_ref::<StoreReadError>() {
                     Some(StoreReadError::NotFound { .. }) | None => {
-                        let body = encode_response(OodpStatus::NotFound, None, source_id, 0);
+                        let body = refuse(OodpStatus::NotFound, "not_held", source_id);
                         (body, format!("OODP Miss: {hash}"))
                     }
                     Some(StoreReadError::CaidMismatch { requested, recomputed }) => {
-                        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+                        let body = refuse(OodpStatus::Conflict, "caid_mismatch", source_id);
                         (
                             body,
                             format!(
@@ -346,7 +377,8 @@ pub fn serve_request(
                         )
                     }
                     Some(StoreReadError::ObjectUndecodable { requested, detail }) => {
-                        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+                        // Corrupt-on-disk is still the integrity half of §3.2.
+                        let body = refuse(OodpStatus::Conflict, "caid_mismatch", source_id);
                         (
                             body,
                             format!("OODP integrity #object_undecodable: {requested} ({detail})"),
@@ -370,7 +402,7 @@ pub fn serve_request(
             serve_find_node(engine, req.target.as_deref(), source_id)
         }
         OodpOp::Unknown(ref name) => {
-            let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+            let body = refuse(OodpStatus::NotImplemented, "unknown_op", source_id);
             (body, format!("OODP unknown %op: #{name}"))
         }
     }
@@ -759,12 +791,12 @@ fn serve_find_node(
     source_id: &str,
 ) -> (String, String) {
     let Some(t) = target else {
-        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        let body = refuse(OodpStatus::Conflict, "missing_field", source_id);
         return (body, "OODP #find_node missing %target".into());
     };
     let Some(target_id) = crate::routing::parse_find_node_target(t) else {
-        // CAID, uppercase, wrong length, etc. — #conflict (R-e).
-        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        // Wrong shape / length — not a well-formed target.
+        let body = refuse(OodpStatus::Conflict, "malformed", source_id);
         return (
             body,
             format!("OODP #find_node %target must be 40 lowercase hex: {t}"),
@@ -775,7 +807,7 @@ fn serve_find_node(
         let rt = match engine.routing.read() {
             Ok(r) => r,
             Err(_) => {
-                let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+                let body = refuse(OodpStatus::Conflict, "malformed", source_id);
                 return (body, "OODP #find_node routing lock poisoned".into());
             }
         };
@@ -857,12 +889,12 @@ fn serve_discover(
     source_id: &str,
 ) -> (String, String) {
     let Some(target) = target.filter(|t| !t.is_empty()) else {
-        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        let body = refuse(OodpStatus::Conflict, "missing_field", source_id);
         return (body, "OODP #discover missing %target".into());
     };
     // Target must be a well-formed CAID string (or at least non-garbage).
     if ContentHash::parse(target).is_err() && !target.starts_with("hash:") {
-        let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+        let body = refuse(OodpStatus::Conflict, "unparseable_caid", source_id);
         return (
             body,
             format!("OODP #discover unparseable %target: {target}"),
@@ -873,7 +905,7 @@ fn serve_discover(
     let dir = match engine.peer_adverts.read() {
         Ok(d) => d,
         Err(_) => {
-            let body = encode_response(OodpStatus::Conflict, None, source_id, 0);
+            let body = refuse(OodpStatus::Conflict, "malformed", source_id);
             return (body, "OODP #discover directory lock poisoned".into());
         }
     };
@@ -1384,22 +1416,28 @@ pub fn remote_fetch_oodp(
         .and_then(|v| v.as_str())
         .unwrap_or("#conflict");
     let status_tag = status.trim().trim_start_matches('#');
+    let reason_tag = obj
+        .get("%reason")
+        .or_else(|| obj.get("reason"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().trim_start_matches('#').to_string());
 
+    // wire_says_why §3.2 — integrity incidents only for substantiated
+    // #caid_mismatch. Protocol-level answers are peer causes, not corruption.
     match status_tag {
         "not_found" => return Err(BottomCause::MissingKey),
-        "not_implemented" => {
-            oo.record_integrity(hash, &source, IntegrityKind::Mismatch);
-            return Err(BottomCause::CaidMismatch);
-        }
+        "not_implemented" => return Err(BottomCause::PeerNotImplemented),
         "conflict" => {
-            oo.record_integrity(hash, &source, IntegrityKind::Mismatch);
-            return Err(BottomCause::CaidMismatch);
+            if reason_tag.as_deref() == Some("caid_mismatch") {
+                oo.record_integrity(hash, &source, IntegrityKind::Mismatch);
+                return Err(BottomCause::CaidMismatch);
+            }
+            // Other reasons, or no reason (older peer): refusal, not accusation.
+            return Err(BottomCause::PeerRefused);
         }
+        "rejected" => return Err(BottomCause::PeerRefused),
         "success" => {}
-        _ => {
-            oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
-            return Err(BottomCause::CaidMismatch);
-        }
+        _ => return Err(BottomCause::PeerUnknownStatus),
     }
 
     let result_j = obj.get("%result").or_else(|| obj.get("result")).ok_or_else(|| {

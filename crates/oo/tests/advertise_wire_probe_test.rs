@@ -827,8 +827,8 @@ fn p3_discover_is_served() {
     );
 }
 
-/// P4 — unknown ops and the retired bare-CAID form are still `#conflict`, and
-/// neither is answered with silence.
+/// P4 — unknown ops say `#not_implemented` (wire_says_why); the retired bare-
+/// CAID form and garbage lines stay `#conflict`. None is answered with silence.
 #[test]
 fn p4_unknown_and_retired_forms() {
     let p = pair("p4");
@@ -836,7 +836,8 @@ fn p4_unknown_and_retired_forms() {
     let node = serve(&p.a);
 
     let unknown = ask_raw(node.port, "{{ %op: #teleport, %hash: \"x\" }}\n");
-    assert_eq!(status_of(&unknown), "conflict", "{unknown}");
+    // SCHEDULED CHANGE (wire_says_why §6.1): unknown op is not #conflict.
+    assert_eq!(status_of(&unknown), "not_implemented", "{unknown}");
 
     let bare = ask_raw(node.port, &format!("{caid}\n"));
     assert_eq!(status_of(&bare), "conflict", "bare CAID stays retired: {bare}");
