@@ -235,7 +235,13 @@ fn fetch_from(dir: &Path, home: &Path, addr: &str, caid: &str, secs: u64) -> Str
             "p: ~%Discovery./connect(\"a\", \"{addr}\")\nout: ~%Discovery./fetch(\"a\", \"{caid}\")\n"
         ),
     );
-    run_bounded(dir, home, &["run", "q.n", "--observe", "out"], secs)
+    // connect_consent §5.1: remote ./connect needs --grant connect.
+    run_bounded(
+        dir,
+        home,
+        &["run", "q.n", "--observe", "out", "--grant", "connect"],
+        secs,
+    )
 }
 
 /// The 64-hex id `oo node id` prints.

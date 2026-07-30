@@ -148,6 +148,9 @@ pub struct Privilege {
     pub squash: bool,
     /// Local store GC (`oo gc`) — irreversible byte deletion (local_gc arc).
     pub gc: bool,
+    /// Remote `~%Discovery./connect` with `tcp://` (connect_consent).
+    /// Local ObjectStore form needs no grant.
+    pub connect: bool,
 }
 
 impl Privilege {
@@ -158,10 +161,11 @@ impl Privilege {
         rollback: false,
         squash: false,
         gc: false,
+        connect: false,
     };
 
     /// Full grant (CLI `--privileged` back-compat). Does **not** set `commit`
-    /// (retired spelling).
+    /// (retired spelling). Includes `connect` (full §6 grant surface).
     pub fn all() -> Privilege {
         Privilege {
             effect_override: Some(EffectTag::all_active()),
@@ -170,6 +174,7 @@ impl Privilege {
             rollback: true,
             squash: true,
             gc: true,
+            connect: true,
         }
     }
 
@@ -187,6 +192,7 @@ impl Privilege {
             rollback: self.rollback || other.rollback,
             squash: self.squash || other.squash,
             gc: self.gc || other.gc,
+            connect: self.connect || other.connect,
         }
     }
 

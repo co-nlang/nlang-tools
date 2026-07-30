@@ -263,7 +263,6 @@ fn c1_the_harness_sees_both_allowed_and_refused() {
 /// Today it can, and the engine dials what it added. This is the sentence in
 /// §4.2.6 becoming a gate instead of an intention.
 #[test]
-#[ignore]
 fn r1_an_unprivileged_program_cannot_add_a_remote_source() {
     let dir = fresh_dir("r1");
     init(&dir);
@@ -286,7 +285,6 @@ fn r1_an_unprivileged_program_cannot_add_a_remote_source() {
 /// does not say which word to pass leaves the operator guessing. The existing
 /// `runPure` refusal already sets the pattern: it names `effect_override`.
 #[test]
-#[ignore]
 fn r2_the_refusal_names_the_capability() {
     let dir = fresh_dir("r2");
     init(&dir);
@@ -309,7 +307,6 @@ fn r2_the_refusal_names_the_capability() {
 /// reason: `--grant connect` is rejected by the flag parser, whose message
 /// lists the capabilities that exist.
 #[test]
-#[ignore]
 fn r3_with_the_grant_a_remote_source_is_added() {
     let dir = fresh_dir("r3");
     init(&dir);
@@ -340,7 +337,6 @@ fn r3_with_the_grant_a_remote_source_is_added() {
 /// Timing, not inspection, because what must not happen is a syscall. Floor
 /// 0.040 s, dial 5.05 s, threshold 2 s.
 #[test]
-#[ignore]
 fn r4_a_refused_connect_does_not_dial() {
     let dir = fresh_dir("r4");
     init(&dir);
@@ -369,7 +365,6 @@ fn r4_a_refused_connect_does_not_dial() {
 /// long-lived token precisely because what is not kept cannot leak. A gate
 /// that remembers is a token.
 #[test]
-#[ignore]
 fn r5_the_grant_does_not_persist_to_the_next_run() {
     let dir = fresh_dir("r5");
     init(&dir);

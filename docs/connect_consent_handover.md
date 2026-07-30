@@ -221,3 +221,56 @@ green both before and after — a pin that needs the thing it pins is not a pin.
 * `advert_persistence`'s object-count comparison has no non-empty baseline
   guard; `to_nlang` prints unforced Thunks as `Debug`; `reader.read_line` is
   unbounded; `free_port()` is TOCTOU; `routing_id_from_digest` zero-pads.
+
+---
+
+## 8. Delivery record (delivery side)
+
+### Built
+
+- **`Privilege.connect`** on the capability lattice; `--grant connect` on the
+  CLI; **`--privileged` includes `connect`** (full §6 grant remains complete).
+- **`disc.connect` with `tcp://`**: requires `ctx.privilege.connect` **before**
+  any peer-table write. Refusal:
+  `⊥ #privileged_required` with message naming `connect`.
+- **Local form** (filesystem path): still ungated (P1).
+- **Probe suites (authorized + one more of the same class)**:
+  | suite | edit |
+  | --- | --- |
+  | `node_identity` | `fetch_from` → `--grant connect` |
+  | `peer_fetch_verification` | `run_observe` → `--grant connect` |
+  | `oodp_packet_format` | `fetch_from` → same (order undercounted; same surface) |
+- **`wire_says_why`**: already uses `--privileged`; no probe edit.
+- Directory still not a fetch source (P2). Spec / CHANGELOG not edited.
+
+### Breaking surface
+
+- Language: remote `./connect` without grant → `#privileged_required`.
+- Conformance corpus: **0** remote `./connect` vectors (confirmed).
+- `tests/pending/federation_test_tcp.n` still has one `tcp://` connect (pending,
+  not conformance).
+
+### Acceptance
+
+1. Diff purity: only `#[ignore]` removals in this probe file; grant flags only
+   in the three helpers above.
+2. Workspace **1701/0/3** · conf **143/143** · genesis **11/11**.
+3. Refused connect timing: **~0.03 s** wall (floor; no dial).
+4. `--privileged` **does** imply `connect`.
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| connect_consent | **9/9** |
+| node_identity | **13/13** |
+| peer_fetch_verification | **12/12** |
+| oodp_packet_format | **13/13** |
+| wire_says_why | **16/16** |
+| workspace | **1701 / 0 / 3** |
+| conf | **143/143** |
+| genesis | **11/11** |
+
+### Left
+
+Directory size cap / discovery admission (next arcs). Ledger §7 unchanged.

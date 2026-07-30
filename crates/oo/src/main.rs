@@ -923,6 +923,10 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             gc: true,
             ..Privilege::NONE
         }),
+        "connect" => Ok(Privilege {
+            connect: true,
+            ..Privilege::NONE
+        }),
         "effect_override" => Ok(Privilege {
             effect_override: Some(EffectTag::all_active()),
             ..Privilege::NONE
@@ -953,7 +957,7 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             })
         }
         _ => anyhow::bail!(
-            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash, gc)"
+            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash, gc, connect)"
         ),
     }
 }

@@ -276,7 +276,13 @@ fn fetch_from(dir: &Path, addr: &str, caid: &str, secs: u64) -> String {
             "p: ~%Discovery./connect(\"a\", \"{addr}\")\nout: ~%Discovery./fetch(\"a\", \"{caid}\")\n"
         ),
     );
-    run_bounded(dir, &["run", "q.n", "--observe", "out"], secs)
+    // Same class as connect_consent §5.1 (order listed two suites; this helper
+    // is the same tcp:// consent surface).
+    run_bounded(
+        dir,
+        &["run", "q.n", "--observe", "out", "--grant", "connect"],
+        secs,
+    )
 }
 
 /// Replaces an object's bytes with a valid encoding of a DIFFERENT value, so
