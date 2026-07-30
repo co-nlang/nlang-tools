@@ -279,11 +279,12 @@ fn serve(dir: &Path) -> Node {
         .spawn()
         .unwrap();
     let node = Node { child, port, log };
+    let t0 = std::time::Instant::now();
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(100));
         if TcpStream::connect(("127.0.0.1", port)).is_ok() { return node; }
     }
-    panic!("`oo node serve` never came up: {}", node.log());
+    panic!("`oo node serve` never came up after {:?}: {}", t0.elapsed(), node.log());
 }
 
 fn ask_raw(port: u16, payload: &str) -> String {
@@ -367,11 +368,48 @@ fn answer_ids(reply: &str) -> Vec<[u8; ID_BYTES]> {
 ///
 /// This is the same shape as the kademlia arc's fix: the observability the
 /// order specifies needs no second process.
+/// HARDENED at the discover_sampling arc's acceptance (2026-07-30).
+///
+/// The wait was 80 × 50 ms and, on expiry, **fell through silently** and
+/// computed byte totals from a partial log — so a timeout would have surfaced
+/// as a caller's assertion about bytes, naming the wrong cause.
+///
+/// Context, stated honestly because the obvious story turned out to be wrong.
+/// One workspace run during that arc's candidate re-verification reported
+/// 17 passed / 2 failed in this binary; its output was not captured and it did
+/// not reproduce in ~70 attempts (26 isolated runs of this suite, 16 workspace
+/// runs, 18 concurrent-suite runs, 2 forced cold rebuilds). The binary was
+/// identified by arithmetic: `cargo test` runs binaries in sequence and stops
+/// at the first failure, the cumulative count before this one is 1293, and
+/// 1293 + 17 = 1310, the number that run reported.
+///
+/// **The timeout hypothesis was then measured and rejected**: the 150-line wait
+/// takes **761 µs** on this machine and the others tens of microseconds, against
+/// a 4 s budget — `advertise_n` already awaits each response, so the lines are
+/// there before the poll begins. Node startup was likewise measured at 100 ms
+/// against a 4 s budget. Neither guard was close.
+///
+/// The repair stands anyway, for a reason independent of that: a gate that
+/// gives up quietly is wrong whether or not it has ever given up. The budget is
+/// now 60 s and expiry is an **assertion**, so if this ever is the cause, the
+/// next occurrence says so instead of blaming a byte count. Same for `serve`,
+/// whose panic now reports how long it actually waited.
+///
+/// The cause remains unknown. That is recorded rather than papered over.
 fn peers_writes(node: &Node, expect_lines: usize) -> (u64, u64, usize) {
     let count = |s: &str| s.lines().filter(|l| l.contains("OODP Peers: ")).count();
     let mut log = node.log();
-    for _ in 0..80 {
-        if count(&log) >= expect_lines { break; }
+    let started = std::time::Instant::now();
+    let budget = Duration::from_secs(60);
+    while count(&log) < expect_lines {
+        assert!(
+            started.elapsed() < budget,
+            "waited {:?} for {expect_lines} `OODP Peers:` lines and saw {}. \
+             This is a harness timeout, not a fact about the engine — every \
+             byte total below would be computed from a partial log.",
+            started.elapsed(),
+            count(&log)
+        );
         std::thread::sleep(Duration::from_millis(50));
         log = node.log();
     }
