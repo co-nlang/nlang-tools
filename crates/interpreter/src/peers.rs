@@ -190,6 +190,8 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         hops,
         ad_source,
         received_at,
+        // Derived at load / accept — never read from the durable line.
+        verified_operator_key: None,
     })
 }
 
@@ -379,16 +381,18 @@ pub fn compact(
     ))
 }
 
-/// Drop stored records whose signature does not verify, and rebuild the index.
+/// Check stored signatures, rebuild the index, re-derive affiliations.
 ///
 /// ACCEPTANCE REPAIR (advert_persistence). `load` runs while the engine is
 /// being constructed, so it cannot verify: `verify_relayed_entry` needs an
 /// `&Ouroboros` to compute the body CAID. This pass runs once the engine
-/// exists and prunes what the loader could only take on trust.
+/// exists.
 ///
-/// The ladder is the same one a relayed record passes — literal-body gate,
-/// field presence, ttl range, `CAID(pk) == node_id`, Ed25519 — so a stored
-/// record earns its place on exactly the terms it earned it on the wire.
+/// **Serve vs list (affiliation_claim R9 vs advert_persistence P8):**
+/// a record whose node signature fails is not **relayed** (`services` cleared
+/// so `#discover` will not match it; routing entry removed), but the peer
+/// row is **kept** so `oo node peers` can still name the node. Affiliation
+/// is re-derived separately; a broken claim never subtracts the peer.
 pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
     let Some(base) = engine.base_dir.clone() else { return 0 };
     let _ = base;
@@ -399,18 +403,25 @@ pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
             .map(|adv| adv.node_id.clone())
             .collect()
     };
-    if bad.is_empty() {
-        return 0;
-    }
-    if let Ok(mut dir) = engine.peer_adverts.write() {
-        for nid in &bad {
-            dir.remove(nid);
+    if !bad.is_empty() {
+        if let Ok(mut dir) = engine.peer_adverts.write() {
+            for nid in &bad {
+                // Keep the row (R9: claim tamper must not erase the peer);
+                // stop serving it (P8: forged signature must not be relayed).
+                if let Some(adv) = dir.get_mut(nid) {
+                    adv.services.clear();
+                    adv.verified_operator_key = None;
+                }
+            }
         }
     }
-    // Rebuild the index over what survived, in the same replay order.
+    // Rebuild the index over peers whose ad_source still verifies.
     if let (Ok(dir), Ok(mut rt)) = (engine.peer_adverts.read(), engine.routing.write()) {
         let self_id = rt.self_id();
-        let mut sorted: Vec<&PeerAdvert> = dir.values().collect();
+        let mut sorted: Vec<&PeerAdvert> = dir
+            .values()
+            .filter(|a| crate::oodp::verify_stored_ad(engine, &a.ad_source).is_ok())
+            .collect();
         sorted.sort_by(|a, b| {
             a.received_at
                 .cmp(&b.received_at)
@@ -424,5 +435,27 @@ pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
         }
         *rt = fresh;
     }
+    // Re-derive affiliation from verbatim ad (path three of three).
+    // Only succeeds when the body (incl. claim) is intact under the node sig.
+    refresh_affiliations(engine);
     bad.len()
+}
+
+/// Recompute `verified_operator_key` for every peer from `ad_source`.
+pub fn refresh_affiliations(engine: &crate::Ouroboros) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let Ok(mut dir) = engine.peer_adverts.write() else {
+        return;
+    };
+    for adv in dir.values_mut() {
+        adv.verified_operator_key = crate::oodp::verified_operator_of_ad_source(
+            engine,
+            &adv.ad_source,
+            &adv.node_id,
+            now,
+        );
+    }
 }

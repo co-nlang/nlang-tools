@@ -468,7 +468,6 @@ fn c2_a_plain_advert_is_accepted() {
 ///
 /// Does not use `oo node peers` — so the reds are not a monoculture.
 #[test]
-#[ignore]
 fn r1_minting_signs_with_the_key_that_oo_identity_reports() {
     let dir = fresh_dir("r1");
     init(&dir);
@@ -503,7 +502,6 @@ fn r1_minting_signs_with_the_key_that_oo_identity_reports() {
 /// R2 — the claim rides the advert. Watched on the wire through a stub peer,
 /// so this red is independent of the new observation command too.
 #[test]
-#[ignore]
 fn r2_the_claim_rides_the_advert() {
     let dir = fresh_dir("r2");
     init(&dir);
@@ -527,7 +525,6 @@ fn r2_the_claim_rides_the_advert() {
 /// operator string present for exactly one of them. A `peers` command that
 /// prints nothing, or that prints the operator unconditionally, fails.
 #[test]
-#[ignore]
 fn r3_a_verified_claim_is_reported_and_an_absent_one_is_not() {
     let rng = ring::rand::SystemRandom::new();
     let dir = fresh_dir("r3");
@@ -562,7 +559,6 @@ fn r3_a_verified_claim_is_reported_and_an_absent_one_is_not() {
 /// R4 — a claim whose signature does not compute is not reported, and the
 /// advert is still accepted (ruling 3: additive only, never subtractive).
 #[test]
-#[ignore]
 fn r4_a_claim_that_does_not_compute_is_dropped_but_the_advert_stands() {
     let rng = ring::rand::SystemRandom::new();
     let dir = fresh_dir("r4");
@@ -605,7 +601,6 @@ fn r4_a_claim_that_does_not_compute_is_dropped_but_the_advert_stands() {
 /// something. Standing rule, learned again: every red that asserts an absence
 /// must assert a presence in the same run.
 #[test]
-#[ignore]
 fn r5_a_claim_cannot_be_extended_by_its_holder() {
     let rng = ring::rand::SystemRandom::new();
     let dir = fresh_dir("r5");
@@ -650,7 +645,6 @@ fn r5_a_claim_cannot_be_extended_by_its_holder() {
 /// operator signature is genuine, issued by a real operator, for a real node
 /// — just not this one. Node B signs its own body correctly around it.
 #[test]
-#[ignore]
 fn r6_another_nodes_claim_does_not_transfer() {
     let rng = ring::rand::SystemRandom::new();
     let dir = fresh_dir("r6");
@@ -686,7 +680,6 @@ fn r6_another_nodes_claim_does_not_transfer() {
 /// is not reported either. Without the ceiling, ruling 4 buys nothing: an
 /// operator could issue a hundred-year claim and call it short-lived.
 #[test]
-#[ignore]
 fn r7_expiry_is_enforced_at_both_ends() {
     let rng = ring::rand::SystemRandom::new();
     let dir = fresh_dir("r7");
@@ -729,7 +722,6 @@ fn r7_expiry_is_enforced_at_both_ends() {
 /// R8 — path two of three: a claim relayed inside a #discover answer is
 /// verified by the receiver. B learns about the peer from A, never directly.
 #[test]
-#[ignore]
 fn r8_the_relayed_path_verifies_the_claim() {
     let rng = ring::rand::SystemRandom::new();
     let a_dir = fresh_dir("r8a");
@@ -777,7 +769,6 @@ fn r8_the_relayed_path_verifies_the_claim() {
 /// the node signature. Nothing about the verdict is persisted; it is derived
 /// from the verbatim `%ad` every time.
 #[test]
-#[ignore]
 fn r9_the_stored_claim_is_reverified_on_load() {
     let rng = ring::rand::SystemRandom::new();
     let dir = fresh_dir("r9");
@@ -832,7 +823,6 @@ fn r9_the_stored_claim_is_reverified_on_load() {
 /// the operator key, an affiliated node would be a machine holding the
 /// operator's signing power, and copying the workspace would copy it.
 #[test]
-#[ignore]
 fn r10_serving_an_affiliation_never_needs_the_operator_key() {
     let dir = fresh_dir("r10");
     init(&dir);

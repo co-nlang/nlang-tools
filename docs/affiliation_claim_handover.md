@@ -275,3 +275,59 @@ answer three different questions, but writing that down is #3c-b's job.
   larger adverts, so §7.1's pricing should be revisited when #3c-b lands.
 * `to_nlang` prints unforced Thunks as Rust `Debug`; `reader.read_line` is
   unbounded; `free_port()` is TOCTOU; `routing_id_from_digest` zero-pads.
+
+---
+
+## 10. Delivery record (delivery side)
+
+### Built
+
+- **Wire**: optional `affiliation: {{ operator_key, signature, expires }}` in
+  the advert body. Payload
+  `oodp-affiliation:v1:<node_id>:<expires>`; max lifetime
+  `MAX_AFFILIATION_LIFETIME_SECS = 30d`.
+- **`oo node affiliate`**: signs with the operator key (`oo identity`),
+  default expiry `now + MAX`, refuses longer. Persists beside the node key
+  as `{node_key_path}.affiliation` (not under workspace `.oo/`).
+- **`oo node advertise`**: embeds a live claim into the body before the **node**
+  signs; never needs the operator private key (R10).
+- **Verification (all three paths, additive only)**:
+  1. direct `#advertise` accept ladder
+  2. `verify_relayed_entry` (relayed `#discover`)
+  3. load / `refresh_affiliations` from verbatim `ad_source`
+  Broken claim → advert still accepted; `verified_operator_key` left empty.
+- **`PeerAdvert.verified_operator_key`**: in-memory derived field only — not
+  written to `.oo/peers/directory` (P6 format unchanged).
+- **`oo node peers`**: lists every known peer's node id; prints operator hex
+  only when the claim verifies.
+- **Discover client**: records accepted relayed peers into the local directory
+  so path two is observable (R8).
+- **Load policy (R9 vs advert_persistence P8)**: a non-verifying node signature
+  keeps the peer **row** (for listing) but clears services / omits from routing
+  so it is not **served**. Affiliation re-derived separately.
+- **Spec / CHANGELOG / trust root (#3c-b)**: not touched.
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| affiliation_claim | **20/20** |
+| advert_persistence | **19/19** (P8 green) |
+| advertise_wire | **19/19** |
+| discover_index | **17/17** |
+| kademlia_table | **17/17** |
+| workspace | **1681 / 0 / 3** |
+| conf | **143/143** |
+| genesis | **11/11** |
+
+### Cross-version / size
+
+- Incremental expectation (nested unknown field already accepted on v0.3.0):
+  unaffiliated adverts exchange unchanged. Full dual-binary check is
+  acceptance's (§8.3).
+- Affilated advert remains well under 64 KiB; `MAX_DISCOVER_PEERS = 8` still
+  binds first.
+
+### Left
+
+Trust lists and policy effects (#3c-b). Ledger §9 unchanged.
