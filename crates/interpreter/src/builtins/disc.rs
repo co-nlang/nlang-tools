@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use crate::{Ouroboros, EvalContext, BuiltinFn, Peer};
-use crate::value::{Value, EffectTag, BottomCause, BottomDetail, ContentHash, whole_argument};
+use crate::value::{
+    Value, EffectTag, BottomCause, BottomDetail, ContentHash, whole_argument,
+};
 use crate::storage::ObjectStore;
 use nlang_parser::ast::AtomKind;
 
@@ -89,6 +91,22 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 // cause is the work order, so the note lives here rather than
                 // as a finding against the delivery.
                 if path_str.starts_with("tcp://") {
+                    // connect_consent: remote dial is privileged. Gate before
+                    // any peer table write (and thus before any later dial).
+                    if !ctx.privilege.connect {
+                        return Value::Bottom(Box::new(BottomDetail {
+                            cause: BottomCause::PrivilegedRequired,
+                            path: Some("Discovery./connect".to_string()),
+                            message: Some(
+                                "connect requires --grant connect (privilege.connect capability)"
+                                    .to_string(),
+                            ),
+                            expected: None,
+                            found: None,
+                            involved: vec![],
+                            ..Default::default()
+                        }));
+                    }
                     if let Ok(mut peers) = oo.peers.write() {
                         peers.insert(name, Peer::Remote(path_str[6..].to_string()));
                         return Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None);

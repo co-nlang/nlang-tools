@@ -142,7 +142,9 @@ fn write(dir: &Path, name: &str, src: &str) {
 /// Runs one n/ source and observes one coordinate.
 fn run_observe(dir: &Path, src: &str, coord: &str) -> String {
     write(dir, "p.n", src);
-    oo(dir, &["run", "p.n", "--observe", coord])
+    // connect_consent §5.1: this suite's programs dial tcp:// sources; grant
+    // models an operator who consented (more faithful, not weaker).
+    oo(dir, &["run", "p.n", "--observe", coord, "--grant", "connect"])
 }
 
 /// `.oo/objects/sha256/<aa>/<rest>` for the digest of a CAID. The digest is
