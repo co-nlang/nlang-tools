@@ -184,3 +184,48 @@ at design time. Classified as an invariant the arc must not break.
   test-tidying arc).
 * `to_nlang` prints unforced Thunks as Rust `Debug`; `reader.read_line` is
   unbounded; `free_port()` is TOCTOU; `routing_id_from_digest` zero-pads.
+
+---
+
+## 7. Delivery record (delivery side)
+
+### Built
+
+- **`#discover` overflow selection**: after §4.3.2 exclusion (`ttl==0`, stale),
+  if candidates exceed `MAX_DISCOVER_PEERS` (8), draw a **uniform sample
+  without replacement** via partial Fisher–Yates using `ring::SystemRandom`
+  (`sample_uniform_cap` / `random_below` with rejection sampling).
+- **Per query**: each request re-draws; no memo, no process-fixed permutation.
+- **Under the cap**: vector unchanged — all candidates returned every time.
+- **Not weighted** by `capacity` or any claim; **not keyed** on `%from`.
+- **`#find_node`**: still XOR-ordered `closest`; only shares
+  `encode_discover_response` for wire shape (P7).
+- **Spec / CHANGELOG**: not edited. Wire shape unchanged (incremental).
+
+### Acceptance measurements (§5)
+
+1. Probe body: only `#[ignore]` removed.
+2. Workspace **1692/0/3** · conf **143/143** · genesis **11/11**.
+3. Suite re-run **3×**: 11/11 each time (~42 s/run); no flake.
+4. **Uniformity** (N=20, k=8, 2000 queries): appearance rate per peer  
+   **min 0.379 · mean 0.400 · max 0.425** (expected 8/20 = 0.40).  
+   Wall ~**6.7 s** for 2000 discovers (fixture + network).
+5. **Cost**: sampling is O(k) swaps after the existing O(N) candidate scan —
+   no measurable extra at N=20; at thousands of candidates the scan still
+   dominates, not the k=8 draws.
+6. Cross-version: wire shape identical; expected incremental (acceptor's
+   dual-binary check).
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| discover_sampling | **11/11** (×3 stable) |
+| discover_index | **17/17** |
+| workspace | **1692 / 0 / 3** |
+| conf | **143/143** |
+| genesis | **11/11** |
+
+### Left
+
+Ledger §6. Affiliation preference / trust (#3c-b2) not this arc.

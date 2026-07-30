@@ -341,7 +341,6 @@ fn c2_the_fixture_exceeds_the_cap() {
 /// is to restart the server. Under uniform sampling the union exceeds 8 after
 /// four queries with probability 1 − 5e-16.
 #[test]
-#[ignore]
 fn r1_asking_again_can_return_someone_else() {
     let dir = fresh_dir("r1");
     init(&dir);
@@ -387,7 +386,6 @@ fn r1_asking_again_can_return_someone_else() {
 /// arc shipped a loop whose guard was tied to an unrelated n and flaked 5.3%
 /// of the time.
 #[test]
-#[ignore]
 fn r2_every_eligible_peer_can_be_reached() {
     let dir = fresh_dir("r2");
     init(&dir);

@@ -16,6 +16,7 @@ use crate::value::{ContentHash, Value, BottomCause, ComboVal, Identity};
 use crate::{IntegrityKind, Ouroboros, PeerAdvert};
 use nlang_parser::ast::{AtomKind as AstAtom, Expr, ExprKind, FieldKey, Prefix};
 use nlang_parser::parse_expr_only;
+use ring::rand::{SecureRandom, SystemRandom};
 use ring::signature::{self, UnparsedPublicKey};
 use serde_json::{json, Map, Value as JsonValue};
 use std::collections::HashMap;
@@ -1092,9 +1093,15 @@ fn serve_discover(
         candidates.push(adv);
     }
 
-    // Cap after exclusions.
+    // Cap after exclusions (§4.3.2 before §4.3.5). Under the cap, return all.
+    // Overflow → uniform sample without replacement, **per query**
+    // (discover_sampling / #3c-b1). Not HashMap iteration order, not capacity-
+    // weighted, not asker-keyed (REAL_02 §3.2).
+    let mut candidates = candidates;
+    sample_uniform_cap(&mut candidates, MAX_DISCOVER_PEERS);
+
     let mut peers: Vec<(String, String)> = Vec::new();
-    for adv in candidates.into_iter().take(MAX_DISCOVER_PEERS) {
+    for adv in candidates {
         peers.push((adv.ad_source.clone(), adv.observed_host.clone()));
         // 64 KiB body budget — emit fewer if over.
         let trial = encode_discover_response(source_id, 1, &peers);
@@ -1111,6 +1118,47 @@ fn serve_discover(
         peers.len()
     );
     (body, log)
+}
+
+/// Uniform sample without replacement down to at most `k` items, in place.
+/// When `items.len() <= k`, the vector is unchanged (every candidate returned).
+/// Partial Fisher–Yates; each query draws independently (ring SystemRandom).
+fn sample_uniform_cap<T>(items: &mut Vec<T>, k: usize) {
+    let n = items.len();
+    if n <= k || k == 0 {
+        if k == 0 {
+            items.clear();
+        }
+        return;
+    }
+    let rng = SystemRandom::new();
+    for i in 0..k {
+        // Uniform j in [i, n).
+        let j = i + random_below(&rng, n - i);
+        items.swap(i, j);
+    }
+    items.truncate(k);
+}
+
+/// Uniform integer in `0..bound` (rejection sampling so the modulus is unbiased).
+fn random_below(rng: &SystemRandom, bound: usize) -> usize {
+    if bound <= 1 {
+        return 0;
+    }
+    let bound = bound as u64;
+    // Largest multiple of `bound` that fits in u64.
+    let max = u64::MAX - (u64::MAX % bound);
+    loop {
+        let mut buf = [0u8; 8];
+        // SystemRandom::fill is fallible only on OS entropy failure; treat as 0.
+        if rng.fill(&mut buf).is_err() {
+            return 0;
+        }
+        let v = u64::from_le_bytes(buf);
+        if v < max {
+            return (v % bound) as usize;
+        }
+    }
 }
 
 /// One accepted peer from a `#discover` reply (after §3.4 verification).
