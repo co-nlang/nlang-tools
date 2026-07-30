@@ -381,18 +381,30 @@ pub fn compact(
     ))
 }
 
-/// Check stored signatures, rebuild the index, re-derive affiliations.
+/// Drop stored records whose signature does not verify, rebuild the index, and
+/// re-derive affiliations.
 ///
 /// ACCEPTANCE REPAIR (advert_persistence). `load` runs while the engine is
 /// being constructed, so it cannot verify: `verify_relayed_entry` needs an
 /// `&Ouroboros` to compute the body CAID. This pass runs once the engine
-/// exists.
+/// exists and prunes what the loader could only take on trust.
 ///
-/// **Serve vs list (affiliation_claim R9 vs advert_persistence P8):**
-/// a record whose node signature fails is not **relayed** (`services` cleared
-/// so `#discover` will not match it; routing entry removed), but the peer
-/// row is **kept** so `oo node peers` can still name the node. Affiliation
-/// is re-derived separately; a broken claim never subtracts the peer.
+/// The ladder is the same one a relayed record passes — literal-body gate,
+/// field presence, ttl range, `CAID(pk) == node_id`, Ed25519 — so a stored
+/// record earns its place on exactly the terms it earned it on the wire.
+///
+/// ACCEPTANCE REPAIR (affiliation_claim, 2026-07-30). The delivery weakened
+/// this from "drop" to "keep the row, clear `services`", because R9 tampered
+/// with the affiliation signature and then required the peer to stay listed.
+/// R9 was miscalibrated: the claim lives **inside** the node-signed body, so
+/// tampering with it necessarily breaks the node signature too — there is no
+/// such thing as a claim-only tamper, and the probe was asking for a state
+/// that cannot arise. Measured cost of the weakening: 50 fabricated rows
+/// appended to `.oo/peers/directory` were all listed by `oo node peers` and
+/// all survived further activity on disk. `.oo/` is writable by any n/ program
+/// (SPEC_08 §6.3), so "keep the row" is an unbounded, attacker-chosen listing.
+/// Reverted; R9 now tests the one load-specific thing that is real — a claim
+/// that expires between receipt and load.
 pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
     let Some(base) = engine.base_dir.clone() else { return 0 };
     let _ = base;
@@ -406,22 +418,14 @@ pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
     if !bad.is_empty() {
         if let Ok(mut dir) = engine.peer_adverts.write() {
             for nid in &bad {
-                // Keep the row (R9: claim tamper must not erase the peer);
-                // stop serving it (P8: forged signature must not be relayed).
-                if let Some(adv) = dir.get_mut(nid) {
-                    adv.services.clear();
-                    adv.verified_operator_key = None;
-                }
+                dir.remove(nid);
             }
         }
     }
-    // Rebuild the index over peers whose ad_source still verifies.
+    // Rebuild the index over what survived, in the same replay order.
     if let (Ok(dir), Ok(mut rt)) = (engine.peer_adverts.read(), engine.routing.write()) {
         let self_id = rt.self_id();
-        let mut sorted: Vec<&PeerAdvert> = dir
-            .values()
-            .filter(|a| crate::oodp::verify_stored_ad(engine, &a.ad_source).is_ok())
-            .collect();
+        let mut sorted: Vec<&PeerAdvert> = dir.values().collect();
         sorted.sort_by(|a, b| {
             a.received_at
                 .cmp(&b.received_at)

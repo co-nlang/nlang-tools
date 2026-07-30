@@ -763,58 +763,83 @@ fn r8_the_relayed_path_verifies_the_claim() {
     );
 }
 
-/// R9 — path three of three: the claim is re-verified when the durable
-/// directory is loaded. Tampering with the stored claim must remove the
-/// affiliation while leaving the peer, exactly as v0.2.54's P8 requires of
-/// the node signature. Nothing about the verdict is persisted; it is derived
-/// from the verbatim `%ad` every time.
+/// R9 — path three of three: affiliation is re-derived when the durable
+/// directory is loaded, and re-derived means *re-judged*, not replayed.
+///
+/// REWRITTEN AT ACCEPTANCE, 2026-07-30. The original tampered with the stored
+/// operator signature and required the peer to stay listed. That was a probe
+/// built on a false model: **the claim lives inside the node-signed body**, so
+/// changing one byte of it breaks the node signature too. There is no such
+/// thing as a claim-only tamper, and the state the probe demanded cannot
+/// arise. The delivery satisfied it by weakening `verify_loaded` from "drop
+/// unverifiable records" to "keep the row, clear services" — after which 50
+/// fabricated rows appended to `.oo/peers/directory` were all listed by
+/// `oo node peers` and all survived on disk. `.oo/` is writable by any n/
+/// program (SPEC_08 §6.3). Both the policy and this probe are repaired.
+///
+/// Tampering is already owned by `advert_persistence`'s
+/// `p8_a_tampered_stored_signature_is_not_served`, and with the revert the
+/// whole record is dropped there, as it was at v0.2.54.
+///
+/// What is left is the one thing only the load path can get wrong, and it is
+/// genuinely time-dependent: **a claim that was valid when it arrived and has
+/// expired by the time the directory is read**. Nothing about the record
+/// changes; only `now` does. A load path that stored the verdict, or that
+/// replayed the accept-time answer, reports a stale affiliation and fails.
 #[test]
-fn r9_the_stored_claim_is_reverified_on_load() {
+fn r9_an_affiliation_valid_at_receipt_expires_by_load() {
     let rng = ring::rand::SystemRandom::new();
     let dir = fresh_dir("r9");
     init(&dir);
-    let op = mint_key(&rng);
-    let ad = Advert::new(mint_key(&rng), 24701);
-    let claim = claim_block(&op, &ad.node.node_id, now_secs() + 3600);
+
+    // Peer A: a long-lived claim. It must survive the restart, or the absence
+    // asserted of B below proves only that nothing is ever reported.
+    let long_op = mint_key(&rng);
+    let long = Advert::new(mint_key(&rng), 24701);
+    let long_claim = claim_block(&long_op, &long.node.node_id, now_secs() + 3600);
+
+    // Peer B: a claim that dies while the directory sits on disk.
+    let short_op = mint_key(&rng);
+    let short = Advert::new(mint_key(&rng), 24702);
+    let deadline = now_secs() + 6;
+    let short_claim = claim_block(&short_op, &short.node.node_id, deadline);
 
     let node = serve(&dir);
-    assert_eq!(status_of(&ask_raw(node.port, &ad.request(&dir, &[], &claim))), "success");
+    assert_eq!(status_of(&ask_raw(node.port, &long.request(&dir, &[], &long_claim))), "success");
+    assert_eq!(status_of(&ask_raw(node.port, &short.request(&dir, &[], &short_claim))), "success");
+
+    // Both are live right now — assert it before the clock moves, so a slow
+    // machine fails loudly here instead of passing vacuously later.
+    assert!(now_secs() < deadline, "the harness took longer than the claim lived");
+    let live = peers_output(&dir);
+    assert!(
+        peers_shows_operator(&live, &short_op.pk_hex),
+        "the short-lived claim was never honoured, so its later absence would \
+         mean nothing:\n{live}"
+    );
     node.stop();
 
-    // Honest restart first: the affiliation must survive one, or the tamper
-    // below would be indistinguishable from "it never worked".
-    let after_restart = peers_output(&dir);
-    assert!(
-        peers_shows_operator(&after_restart, &op.pk_hex),
-        "the affiliation did not survive a restart at all:\n{after_restart}"
-    );
+    while now_secs() <= deadline {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(now_secs() > deadline, "harness: the deadline has not passed");
 
-    // Now corrupt the operator signature where it is stored, verbatim, inside
-    // `ad_source`, and prove the file really changed.
-    let path = peers_file(&dir);
-    let before = fs::read_to_string(&path).expect("no durable directory");
-    let sig_hex = {
-        let i = claim.find("signature: \\\"").map(|i| i + 12).unwrap_or_else(|| {
-            claim.find("signature: \"").unwrap() + "signature: \"".len()
-        });
-        claim[i..i + 128].to_string()
-    };
-    assert!(before.contains(&sig_hex), "the stored record does not hold the claim verbatim");
-    let mut flipped: Vec<char> = sig_hex.chars().collect();
-    flipped[0] = if flipped[0] == 'a' { 'b' } else { 'a' };
-    let flipped: String = flipped.into_iter().collect();
-    fs::write(&path, before.replace(&sig_hex, &flipped)).unwrap();
-
+    // Fresh process, same bytes on disk, later clock.
     let out = peers_output(&dir);
     assert!(
-        peers_lists_node(&out, &ad.node.node_id),
-        "tampering with the claim removed the whole peer — the claim is additive \
-         and must not be able to subtract (ruling 3):\n{out}"
+        peers_lists_node(&out, &long.node.node_id) && peers_lists_node(&out, &short.node.node_id),
+        "a peer disappeared across the restart — an expiring claim is additive \
+         and must not subtract the peer (ruling 3):\n{out}"
     );
     assert!(
-        !peers_shows_operator(&out, &op.pk_hex),
-        "a tampered stored claim was still reported — path three of three is \
-         unchecked, which is the v0.2.54 defect verbatim:\n{out}"
+        peers_shows_operator(&out, &long_op.pk_hex),
+        "the long-lived affiliation did not survive the restart, so path three \
+         is not running at all:\n{out}"
+    );
+    assert!(
+        !peers_shows_operator(&out, &short_op.pk_hex),
+        "an expired affiliation was still reported — the load path replayed a \
+         verdict instead of re-judging it:\n{out}"
     );
 }
 
