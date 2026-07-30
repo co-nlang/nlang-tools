@@ -190,6 +190,8 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         hops,
         ad_source,
         received_at,
+        // Derived at load / accept — never read from the durable line.
+        verified_operator_key: None,
     })
 }
 
@@ -379,7 +381,8 @@ pub fn compact(
     ))
 }
 
-/// Drop stored records whose signature does not verify, and rebuild the index.
+/// Drop stored records whose signature does not verify, rebuild the index, and
+/// re-derive affiliations.
 ///
 /// ACCEPTANCE REPAIR (advert_persistence). `load` runs while the engine is
 /// being constructed, so it cannot verify: `verify_relayed_entry` needs an
@@ -389,6 +392,19 @@ pub fn compact(
 /// The ladder is the same one a relayed record passes — literal-body gate,
 /// field presence, ttl range, `CAID(pk) == node_id`, Ed25519 — so a stored
 /// record earns its place on exactly the terms it earned it on the wire.
+///
+/// ACCEPTANCE REPAIR (affiliation_claim, 2026-07-30). The delivery weakened
+/// this from "drop" to "keep the row, clear `services`", because R9 tampered
+/// with the affiliation signature and then required the peer to stay listed.
+/// R9 was miscalibrated: the claim lives **inside** the node-signed body, so
+/// tampering with it necessarily breaks the node signature too — there is no
+/// such thing as a claim-only tamper, and the probe was asking for a state
+/// that cannot arise. Measured cost of the weakening: 50 fabricated rows
+/// appended to `.oo/peers/directory` were all listed by `oo node peers` and
+/// all survived further activity on disk. `.oo/` is writable by any n/ program
+/// (SPEC_08 §6.3), so "keep the row" is an unbounded, attacker-chosen listing.
+/// Reverted; R9 now tests the one load-specific thing that is real — a claim
+/// that expires between receipt and load.
 pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
     let Some(base) = engine.base_dir.clone() else { return 0 };
     let _ = base;
@@ -399,12 +415,11 @@ pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
             .map(|adv| adv.node_id.clone())
             .collect()
     };
-    if bad.is_empty() {
-        return 0;
-    }
-    if let Ok(mut dir) = engine.peer_adverts.write() {
-        for nid in &bad {
-            dir.remove(nid);
+    if !bad.is_empty() {
+        if let Ok(mut dir) = engine.peer_adverts.write() {
+            for nid in &bad {
+                dir.remove(nid);
+            }
         }
     }
     // Rebuild the index over what survived, in the same replay order.
@@ -424,5 +439,27 @@ pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
         }
         *rt = fresh;
     }
+    // Re-derive affiliation from verbatim ad (path three of three).
+    // Only succeeds when the body (incl. claim) is intact under the node sig.
+    refresh_affiliations(engine);
     bad.len()
+}
+
+/// Recompute `verified_operator_key` for every peer from `ad_source`.
+pub fn refresh_affiliations(engine: &crate::Ouroboros) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let Ok(mut dir) = engine.peer_adverts.write() else {
+        return;
+    };
+    for adv in dir.values_mut() {
+        adv.verified_operator_key = crate::oodp::verified_operator_of_ad_source(
+            engine,
+            &adv.ad_source,
+            &adv.node_id,
+            now,
+        );
+    }
 }

@@ -29,6 +29,18 @@ pub const OODP_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Domain separation for advertisement signatures (must match probe / CLI).
 pub const ADVERT_DOMAIN: &str = "oodp-advert:v1:";
 
+/// Affiliation claim domain (operator key; affiliation_claim / #3c-a).
+/// Carries `:v1:` — unlike `refine:`, which omitted one.
+pub const AFFILIATION_DOMAIN: &str = "oodp-affiliation:v1:";
+
+/// Maximum claim lifetime (ruling 4). Same style as `STALE_SKEW_SECS`.
+pub const MAX_AFFILIATION_LIFETIME_SECS: i64 = 30 * 24 * 3600;
+
+/// Signed affiliation payload: binds claim to **this** node and **this** expiry.
+pub fn affiliation_payload(node_id: &str, expires: i64) -> String {
+    format!("{AFFILIATION_DOMAIN}{node_id}:{expires}")
+}
+
 /// `|now − ts| ≤ STALE_SKEW_SECS` or `#stale` at **#advertise** accept.
 pub const STALE_SKEW_SECS: i64 = 60;
 
@@ -537,6 +549,146 @@ fn field_as_i64(cv: &ComboVal, key: &str) -> Option<i64> {
     s.parse().ok()
 }
 
+/// Verify an optional `affiliation` block on an advert body (signature already
+/// stripped or still present — field is independent). **Additive only**: never
+/// fails the advert; returns `None` when absent or unproven.
+pub fn verified_operator_of_body(body: &Value, advert_node_id: &str, now: i64) -> Option<String> {
+    let Value::Combo(cv) = body else {
+        return None;
+    };
+    let aff = cv.get_field("affiliation")?;
+    let Value::Combo(ac) = aff else {
+        return None;
+    };
+    let op_key = field_as_str(ac, "operator_key")?;
+    let sig_hex = field_as_str(ac, "signature")?;
+    let expires = field_as_i64(ac, "expires")?;
+    if expires <= now {
+        return None;
+    }
+    if expires > now + MAX_AFFILIATION_LIFETIME_SECS {
+        return None;
+    }
+    let op_bytes = hex::decode(op_key.trim()).ok()?;
+    if op_bytes.is_empty() {
+        return None;
+    }
+    let sig_bytes = hex::decode(sig_hex.trim()).ok()?;
+    let payload = affiliation_payload(advert_node_id, expires);
+    let vk = UnparsedPublicKey::new(&signature::ED25519, &op_bytes);
+    if vk.verify(payload.as_bytes(), &sig_bytes).is_err() {
+        return None;
+    }
+    Some(op_key.trim().to_lowercase())
+}
+
+/// Re-derive a verified operator key from verbatim `%ad` source (load / peers).
+pub fn verified_operator_of_ad_source(
+    engine: &Ouroboros,
+    ad_src: &str,
+    advert_node_id: &str,
+    now: i64,
+) -> Option<String> {
+    let ad_expr = parse_expr_only(ad_src.trim()).ok()?;
+    ensure_literal_body(&ad_expr, 0).ok()?;
+    let ad_val = eval_expr_value(engine, &ad_expr);
+    let Value::Combo(mut cv) = ad_val else {
+        return None;
+    };
+    // Body CAID ignores signature; affiliation is part of the signed body.
+    cv.remove_field("signature");
+    verified_operator_of_body(&Value::Combo(cv), advert_node_id, now)
+}
+
+/// Path of the durable claim beside the node key: `{node_key_path}.affiliation`.
+pub fn affiliation_claim_path(node_key_path: &std::path::Path) -> std::path::PathBuf {
+    let mut s = node_key_path.as_os_str().to_os_string();
+    s.push(".affiliation");
+    std::path::PathBuf::from(s)
+}
+
+/// On-disk claim (public material only). Not a secret.
+#[derive(Debug, Clone)]
+pub struct AffiliationClaim {
+    pub operator_key: String,
+    pub signature: String,
+    pub expires: i64,
+}
+
+impl AffiliationClaim {
+    pub fn to_nlang_block(&self) -> String {
+        format!(
+            "affiliation: {{{{ operator_key: \"{}\", signature: \"{}\", expires: {} }}}}",
+            self.operator_key, self.signature, self.expires
+        )
+    }
+
+    pub fn write_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Simple line format — public fields only.
+        let body = format!(
+            "operator_key: {}\nsignature: {}\nexpires: {}\n",
+            self.operator_key, self.signature, self.expires
+        );
+        std::fs::write(path, body)
+    }
+
+    pub fn read_file(path: &std::path::Path) -> Option<Self> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let mut operator_key = None;
+        let mut signature = None;
+        let mut expires = None;
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("operator_key:") {
+                operator_key = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.strip_prefix("signature:") {
+                signature = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.strip_prefix("expires:") {
+                expires = rest.trim().parse().ok();
+            }
+        }
+        Some(Self {
+            operator_key: operator_key?,
+            signature: signature?,
+            expires: expires?,
+        })
+    }
+
+    /// Still within lifetime and under the MAX ceiling.
+    pub fn is_live(&self, now: i64) -> bool {
+        self.expires > now && self.expires <= now + MAX_AFFILIATION_LIFETIME_SECS
+    }
+}
+
+/// Sign an affiliation claim with the operator identity for `node_id`.
+pub fn mint_affiliation_claim(
+    operator: &Identity,
+    node_id: &str,
+    expires: i64,
+) -> Result<AffiliationClaim, String> {
+    use ring::signature::KeyPair;
+    if expires <= now_secs() {
+        return Err("expires must be in the future".into());
+    }
+    if expires > now_secs() + MAX_AFFILIATION_LIFETIME_SECS {
+        return Err(format!(
+            "expires exceeds maximum lifetime of {MAX_AFFILIATION_LIFETIME_SECS}s"
+        ));
+    }
+    let payload = affiliation_payload(node_id, expires);
+    let key_pair = signature::Ed25519KeyPair::from_pkcs8(&operator.private_key)
+        .map_err(|e| format!("operator key: {e:?}"))?;
+    let sig = hex::encode(key_pair.sign(payload.as_bytes()).as_ref());
+    Ok(AffiliationClaim {
+        operator_key: operator.public_key_hex(),
+        signature: sig,
+        expires,
+    })
+}
+
 /// Services list: do **not** sort/dedupe (M5 — order is significant for CAID).
 fn field_as_str_list(cv: &ComboVal, key: &str) -> Option<Vec<String>> {
     let v = cv.get_field(key)?;
@@ -753,6 +905,9 @@ fn serve_advertise(
         );
     }
 
+    // Affiliation (optional, additive): never rejects the advert.
+    let verified_operator_key = verified_operator_of_body(&body_val, &node_id, now);
+
     // Success — store in peer directory (host observed, port claimed).
     // Direct advertise → arrival hops = 0 (REAL_02 §3.2).
     let addr = format!("{peer_host}:{listen_port}");
@@ -770,12 +925,16 @@ fn serve_advertise(
         hops: 0,
         ad_source,
         received_at: SystemTime::now(),
+        verified_operator_key: verified_operator_key.clone(),
     });
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);
     let mut log = format!(
         "OODP Advert: {node_id} addr={addr} services={n_services} ttl={ttl}"
     );
+    if let Some(ref op) = verified_operator_key {
+        log.push_str(&format!(" affiliation={op}"));
+    }
     for line in routing_logs {
         log.push('\n');
         log.push_str(&line);
@@ -962,6 +1121,8 @@ pub struct DiscoveredPeer {
     pub listen_port: u16,
     pub public_key_hex: String,
     pub ad_source: String,
+    /// Verified affiliation operator key, if any (affiliation_claim).
+    pub verified_operator_key: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -1142,12 +1303,16 @@ fn verify_relayed_entry(
         return Err("stale".into());
     }
 
+    // Affiliation: additive; does not affect accept/reject of the peer record.
+    let verified_operator_key = verified_operator_of_body(&body_val, &node_id, now);
+
     Ok(DiscoveredPeer {
         node_id,
         observed_host: String::new(), // filled by caller
         listen_port,
         public_key_hex,
         ad_source: ad_src.to_string(),
+        verified_operator_key,
     })
 }
 
@@ -1296,6 +1461,10 @@ pub fn format_advertise_request(from: &str, ad_nlang: &str) -> String {
 }
 
 /// n/ source of a signed advertisement (for CLI).
+///
+/// If a live affiliation claim sits beside the node key, it is embedded in the
+/// body **before** the node signs (affiliation_claim §3.3). Serving never
+/// needs the operator private key.
 pub fn signed_advert_nlang(
     identity: &Identity,
     services: &[String],
@@ -1312,9 +1481,31 @@ pub fn signed_advert_nlang(
         .map(|s| format!("\"{s}\""))
         .collect::<Vec<_>>()
         .join(", ");
+    // Optional live claim (public material only) — no operator private key.
+    let aff_extra = if let Some(base) = engine.base_dir.as_ref() {
+        if let Ok(nk) = Identity::node_key_path(base) {
+            let path = affiliation_claim_path(&nk);
+            if let Some(claim) = AffiliationClaim::read_file(&path) {
+                if claim.is_live(ts) {
+                    format!(
+                        ", affiliation: {{{{ operator_key: \"{}\", signature: \"{}\", expires: {} }}}}",
+                        claim.operator_key, claim.signature, claim.expires
+                    )
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
     let body_src = format!(
         "{{{{ node_id: \"{node_id}\", public_key: \"{pk}\", services: [{services_n}], \
-         listen_port: {listen_port}, capacity: {capacity}, ts: {ts}, ttl: {ttl} }}}}"
+         listen_port: {listen_port}, capacity: {capacity}, ts: {ts}, ttl: {ttl}{aff_extra} }}}}"
     );
     let body_caid = identify_caid_src(engine, &body_src)?;
     let payload = format!("{ADVERT_DOMAIN}{body_caid}");
@@ -1323,7 +1514,7 @@ pub fn signed_advert_nlang(
     let sig = hex::encode(key_pair.sign(payload.as_bytes()).as_ref());
     let ad = format!(
         "{{{{ node_id: \"{node_id}\", public_key: \"{pk}\", services: [{services_n}], \
-         listen_port: {listen_port}, capacity: {capacity}, ts: {ts}, ttl: {ttl}, \
+         listen_port: {listen_port}, capacity: {capacity}, ts: {ts}, ttl: {ttl}{aff_extra}, \
          signature: \"{sig}\" }}}}"
     );
     let req = format_advertise_request(&node_id, &ad);

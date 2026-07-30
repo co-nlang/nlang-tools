@@ -301,6 +301,9 @@ pub struct PeerAdvert {
     /// this byte-for-byte — not a re-serialisation (discover_index §3.3).
     pub ad_source: String,
     pub received_at: std::time::SystemTime,
+    /// Derived affiliation operator public key (64 hex), if a claim verified.
+    /// **Never persisted** — rebuilt from `ad_source` (affiliation_claim / #3c-a).
+    pub verified_operator_key: Option<String>,
 }
 
 /// Force-memo key (Stage 5): (expr CAID, frame CAID, context CAID | #open).

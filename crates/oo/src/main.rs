@@ -174,6 +174,15 @@ enum NodeCmd {
         #[arg(long = "target", value_name = "HEX40")]
         target: String,
     },
+    /// Mint an affiliation claim for this workspace's node (operator-signed).
+    /// Persists beside the node key; serving attaches it without the operator key.
+    Affiliate {
+        /// Claim lifetime in seconds (default and max: 30 days).
+        #[arg(long = "ttl-secs")]
+        ttl_secs: Option<i64>,
+    },
+    /// List known peers and any verified affiliation operator key.
+    Peers,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -214,6 +223,8 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             } => run_node_advertise(to, services, listen_port),
             NodeCmd::Discover { to, target } => run_node_discover(to, target),
             NodeCmd::FindNode { to, target } => run_node_find_node(to, target),
+            NodeCmd::Affiliate { ttl_secs } => run_node_affiliate(ttl_secs),
+            NodeCmd::Peers => run_node_peers(),
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
@@ -337,6 +348,76 @@ fn run_node_id() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Mint an affiliation claim signed by the **operator** key for this node id.
+/// Persists beside the node key (not under workspace `.oo/`).
+fn run_node_affiliate(ttl_secs: Option<i64>) -> anyhow::Result<()> {
+    use nlang_interpreter::oodp::{
+        affiliation_claim_path, mint_affiliation_claim, MAX_AFFILIATION_LIFETIME_SECS,
+    };
+
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    // Node id for *this* workspace (minting a node key is allowed here —
+    // affiliation is an actual network-identity need).
+    let node_id = engine.node_id()?.to_string();
+    let node_key_path = nlang_interpreter::Identity::node_key_path(&cur)?;
+    let _ = engine.node_identity()?;
+
+    // Operator key — same one `oo identity` reports (R1 / REAL_01 §7.5.2).
+    let operator = engine.identity()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let ttl = ttl_secs.unwrap_or(MAX_AFFILIATION_LIFETIME_SECS);
+    if ttl <= 0 {
+        anyhow::bail!("affiliation ttl must be positive");
+    }
+    if ttl > MAX_AFFILIATION_LIFETIME_SECS {
+        anyhow::bail!(
+            "affiliation ttl {ttl}s exceeds maximum {MAX_AFFILIATION_LIFETIME_SECS}s (30 days)"
+        );
+    }
+    let expires = now + ttl;
+    let claim = mint_affiliation_claim(&operator, &node_id, expires)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let path = affiliation_claim_path(&node_key_path);
+    claim
+        .write_file(&path)
+        .map_err(|e| anyhow::anyhow!("write claim {}: {e}", path.display()))?;
+
+    // Probe R1 parses whitespace tokens: 128-hex signature and a plausible expiry.
+    println!("node: {}", node_id);
+    println!("operator_key: {}", claim.operator_key);
+    println!("signature: {}", claim.signature);
+    println!("expires: {}", claim.expires);
+    println!("path: {}", path.display());
+    Ok(())
+}
+
+/// List known peers and verified affiliation operator keys (derived, not stored).
+fn run_node_peers() -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let engine = Ouroboros::init(&cur)?;
+    // Refresh derived affiliation from verbatim ad (R9: re-verify on every view).
+    nlang_interpreter::peers::refresh_affiliations(&engine);
+    let dir = engine
+        .peer_adverts
+        .read()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut rows: Vec<_> = dir.values().collect();
+    rows.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    for adv in rows {
+        // node_id (full CAID) so the digest tail is recoverable; operator only
+        // when verified.
+        match &adv.verified_operator_key {
+            Some(op) => println!("{} operator {}", adv.node_id, op),
+            None => println!("{}", adv.node_id),
+        }
+    }
+    Ok(())
+}
+
 fn run_node_advertise(
     to: String,
     services: Vec<String>,
@@ -427,6 +508,30 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
             "{} {}:{} (host unverified, hops={hops} claimed)",
             p.node_id, p.observed_host, p.listen_port
         );
+        // Affiliation path two of three: record the relayed peer (and claim
+        // verdict) into this workspace's directory so `oo node peers` sees it.
+        let addr = if p.observed_host.is_empty() {
+            String::new()
+        } else {
+            format!("{}:{}", p.observed_host, p.listen_port)
+        };
+        // Services unknown from a bare discover entry — leave empty; the
+        // durable record still carries the full ad_source for re-verify.
+        let _ = engine.record_peer_advert(nlang_interpreter::PeerAdvert {
+            node_id: p.node_id.clone(),
+            public_key_hex: p.public_key_hex.clone(),
+            services: Vec::new(),
+            addr,
+            observed_host: p.observed_host.clone(),
+            listen_port: p.listen_port,
+            capacity: 0,
+            ttl: 15,
+            ts: 0,
+            hops: hops as i64,
+            ad_source: p.ad_source.clone(),
+            received_at: std::time::SystemTime::now(),
+            verified_operator_key: p.verified_operator_key.clone(),
+        });
     }
     Ok(())
 }
