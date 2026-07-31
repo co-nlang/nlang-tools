@@ -293,3 +293,41 @@ nine ignored reds move into the pass column (1734 + 9 = 1743; 12 − 9 = 3).
 No durable source-map persistence, no runtime root reload, no backfill after
 slot free, no ranking by capacity, no automatic dial on receipt. Manual
 `./connect` remains the explicit consent path outside the automatic cap.
+
+## 9. Independent acceptance (2026-07-31)
+
+The acceptor independently reran the delivered tree at `7db653c` on
+`nlang-tools/dev`. The delivery probe diff was inspected separately and
+contains exactly the nine permitted `#[ignore]` removals; it changes no
+fixture, helper, control, assertion, wire/body field, CAID, or `.oo/format`
+line.
+
+| Gate | Independent result |
+| --- | ---: |
+| `automatic_admission_probe_test` | **11/11** |
+| `direct_observation_provenance_probe_test` | **11/11** |
+| `advert_persistence_probe_test` | **19/19** |
+| `advertise_wire_probe_test` | **19/19** |
+| `discover_index_probe_test` | **17/17** |
+| `affiliation_claim_probe_test` | **20/20** |
+| `discovery_trust_probe_test` | **20/20** |
+| `connect_consent_probe_test` | **9/9** |
+| `peer_fetch_verification_probe_test` | **12/12** |
+| `local_gc_probe_test` | **17/17** |
+| `kademlia_table_probe_test` | **17/17** |
+| Full workspace | **1743 passed / 0 failed / 3 ignored**, 179 result blocks |
+| Conformance corpus | **143/143** |
+| Genesis | **11/11** |
+| `cargo fmt --all -- --check` | pass |
+| `git diff --check` | pass |
+| Clean release workspace build | pass |
+
+The clean release executable reports `oo v0.8.0-453-g7db653c`, which is the
+expected post-`v0.8.0` development descriptor before a subsequent tag; no
+version bump or tag is part of this acceptance. The child repository is clean
+on `dev`, and the acceptance did not update the superproject or push anything.
+
+**Acceptance verdict: accepted.** The implementation satisfies the chosen
+three-slot automatic-only, incumbent-first/no-eviction policy and the opening
+eligibility/lazy-network contract. The next release boundary remains a
+separate operation.
