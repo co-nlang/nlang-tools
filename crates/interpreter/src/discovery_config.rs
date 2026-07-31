@@ -5,11 +5,11 @@
 //! public keys. Absence and `affiliation_roots: []` are both an empty set;
 //! malformed / unreadable is a named error (never silently empty).
 
-use nlang_parser::ast::{AtomKind, ExprKind, FieldKey, Prefix};
+use nlang_parser::ast::{AtomKind, ExprKind, FieldKey, PathAnchor};
 use nlang_parser::parse_program;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 pub const CONFIG_FILE: &str = "discovery.n";
@@ -28,14 +28,25 @@ impl DiscoveryConfig {
     /// Load from workspace. Missing file → empty set. Present but bad → Err.
     pub fn load(base_dir: &Path) -> anyhow::Result<Self> {
         let path = Self::path(base_dir);
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let meta = fs::metadata(&path)
-            .map_err(|e| anyhow::anyhow!("discovery.n: cannot read {}: {e}", path.display()))?;
-        if meta.is_dir() {
+        let entry_meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "discovery.n: cannot inspect {}: {e}",
+                    path.display()
+                ));
+            }
+        };
+        let meta = if entry_meta.file_type().is_symlink() {
+            fs::metadata(&path)
+                .map_err(|e| anyhow::anyhow!("discovery.n: cannot read {}: {e}", path.display()))?
+        } else {
+            entry_meta
+        };
+        if !meta.is_file() {
             anyhow::bail!(
-                "discovery.n: path is a directory, not a file: {}",
+                "discovery.n: path is not a regular file: {}",
                 path.display()
             );
         }
@@ -116,12 +127,17 @@ fn parse_config_text(text: &str, path: &Path) -> anyhow::Result<DiscoveryConfig>
     let mut roots = BTreeSet::new();
 
     for field in &program.fields {
-        let name = field_key_name(&field.key).ok_or_else(|| {
-            anyhow::anyhow!(
-                "discovery.n: unknown or non-literal field key in {}",
-                path.display()
-            )
-        })?;
+        let name = match &field.key {
+            FieldKey::Path(p) if p.anchor == PathAnchor::Bare && p.segments.len() == 1 => {
+                &p.segments[0]
+            }
+            _ => {
+                anyhow::bail!(
+                    "discovery.n: unknown or non-literal field key in {}",
+                    path.display()
+                );
+            }
+        };
         if name != FIELD_NAME {
             anyhow::bail!(
                 "discovery.n: unknown field `{name}` in {} (only `{FIELD_NAME}` is allowed)",
@@ -139,14 +155,6 @@ fn parse_config_text(text: &str, path: &Path) -> anyhow::Result<DiscoveryConfig>
     }
 
     if !found_roots {
-        // Empty file or no recognized fields — treat as closed-shape failure
-        // only if the file was non-empty after parse produced fields?
-        // An empty program (no fields) is not a valid declaration of the closed
-        // shape when the file exists and had content. If parse succeeded with
-        // zero fields (whitespace-only file), accept as empty set.
-        if text.trim().is_empty() {
-            return Ok(DiscoveryConfig::default());
-        }
         anyhow::bail!(
             "discovery.n: missing required field `{FIELD_NAME}` in {}",
             path.display()
@@ -158,22 +166,9 @@ fn parse_config_text(text: &str, path: &Path) -> anyhow::Result<DiscoveryConfig>
     })
 }
 
-fn field_key_name(key: &FieldKey) -> Option<String> {
-    match key {
-        FieldKey::Named { name, prefix: None } => Some(name.clone()),
-        FieldKey::Named {
-            name,
-            prefix: Some(Prefix::Meta),
-        } => Some(format!("%{name}")),
-        FieldKey::Quoted(s) => Some(s.clone()),
-        FieldKey::Path(p) if p.segments.len() == 1 => Some(p.segments[0].clone()),
-        _ => None,
-    }
-}
-
 fn parse_roots_list(kind: &ExprKind, path: &Path) -> anyhow::Result<BTreeSet<String>> {
     let items = match kind {
-        ExprKind::List(items) | ExprKind::Tuple(items) => items,
+        ExprKind::List(items) => items,
         _ => {
             anyhow::bail!(
                 "discovery.n: `{FIELD_NAME}` must be a list of strings in {} (got non-list)",

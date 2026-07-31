@@ -529,6 +529,48 @@ workflows). Spec/CHANGELOG not edited.
     network input or makes a dial. This arc has no remote-input parser of its
     own; `discovery.n` is operator input.
 
+### Acceptance record (acceptor)
+
+Delivery `820ddb4` required **one acceptance repair, in one category**: the
+closed declaration still had aliases. Direct measurement showed that blank and
+whitespace-only files, a tuple in place of the declared list, and a quoted field
+name all exited 0. `Path::exists()` also erased a physically present dangling
+`discovery.n` link into the same state as absence. The repair makes both words
+in "closed data" carry weight:
+
+* exactly the bare `affiliation_roots` field and exactly a list are accepted;
+* a present file must contain that field — blank is not another spelling of
+  absence;
+* `symlink_metadata` distinguishes no directory entry from a dangling entry,
+  and every resolved entry must be a regular file.
+
+Two acceptor-owned probes now pin those properties. The delivery had changed
+the original probe only by removing its 11 ignores, as required.
+
+The delivery also ran `rustfmt` across the whole legacy `lib.rs` and `main.rs`,
+turning a three-site integration into a 2,879-line diff. The acceptor restored
+the pre-existing formatting and reapplied only the semantic insertions. This was
+diff-purity repair, not a behaviour change; cumulative comparison against
+`1f39e64` is the authoritative diff.
+
+**Independent acceptance numbers**
+
+| Measurement | Result |
+| --- | --- |
+| discovery_trust | **20/20** (18 delivery + 2 acceptance) |
+| workspace | **1721 / 0 / 3**, 177 suites |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| v0.6.0 engine opens a workspace with valid `discovery.n` | exit 0 |
+| new engine opens an old workspace with no file | exit 0, empty list, no file created |
+| canonical file, 1 root | **95 B** |
+| canonical file, 100 roots | **7,223 B** |
+
+The 1/100-root files were sorted and left no `discovery.n.tmp`. Static inspection
+of all added Rust lines found zero source-set insertion, advert mutation, TCP
+connect, routing construction, or identity call. Ruling F therefore remains
+true after repair.
+
 ---
 
 ## 11. Ledger — known and deliberately not fixed here

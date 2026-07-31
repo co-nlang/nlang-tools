@@ -670,3 +670,63 @@ fn red_config_path_that_cannot_be_read_as_a_file_is_loud() {
         out.text
     );
 }
+
+/// Acceptance repair — "closed literal data" means exactly the declared field
+/// and list shape. The delivered parser also admitted blank files, tuples and a
+/// quoted alias for the field, making four spellings for one declaration.
+#[test]
+fn acceptance_closed_shape_has_one_spelling() {
+    let tuple = format!("{FIELD}: (\"{KEY_A}\",)\n");
+    let quoted = format!("\"{FIELD}\": [\"{KEY_A}\"]\n");
+    for (name, text) in [
+        ("blank", ""),
+        ("whitespace", "  \n\t"),
+        ("tuple", tuple.as_str()),
+        ("quoted-field", quoted.as_str()),
+    ] {
+        let d = fresh_dir(&format!("accept-closed-{name}"));
+        init(&d);
+        write_config(&d, text);
+        assert!(config_path(&d).exists(), "presence control: {name}");
+        let out = oo_raw(&d, &["status"]);
+        assert!(
+            !out.ok,
+            "non-canonical {name} shape was accepted: {}",
+            out.text
+        );
+        assert!(
+            out.text.contains(CONFIG),
+            "{name} refusal did not name discovery.n: {}",
+            out.text
+        );
+    }
+}
+
+/// Acceptance repair — a dangling link is a present but unreadable declaration,
+/// not an absent declaration. `Path::exists()` erases exactly that distinction.
+#[cfg(unix)]
+#[test]
+fn acceptance_dangling_config_link_is_loud() {
+    use std::os::unix::fs::symlink;
+
+    let d = fresh_dir("accept-dangling-link");
+    init(&d);
+    let target = d.join("missing-discovery-target");
+    symlink(&target, config_path(&d)).unwrap();
+    assert!(
+        fs::symlink_metadata(config_path(&d)).is_ok() && !target.exists(),
+        "presence control: dangling link was not constructed"
+    );
+
+    let out = oo_raw(&d, &["status"]);
+    assert!(
+        !out.ok,
+        "dangling discovery.n silently became absence: {}",
+        out.text
+    );
+    assert!(
+        out.text.contains(CONFIG),
+        "dangling-link error did not name discovery.n: {}",
+        out.text
+    );
+}
