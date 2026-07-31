@@ -53,6 +53,7 @@
 // SOLELY so the wire gates are not confounded by the rename. R5 is what decides
 // the name; nothing else in this file may be read as tolerating either spelling.
 
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -60,7 +61,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::fs;
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
@@ -191,10 +191,7 @@ impl Drop for Node {
 }
 
 fn serve(dir: &Path) -> Node {
-    for args in [
-        vec!["node", "serve", "--port"],
-        vec!["serve", "--port"],
-    ] {
+    for args in [vec!["node", "serve", "--port"], vec!["serve", "--port"]] {
         let port = free_port();
         let p = port.to_string();
         let mut a = args.clone();

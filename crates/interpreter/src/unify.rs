@@ -1,14 +1,19 @@
-use std::collections::HashSet;
-use std::cmp::Ordering;
-use indexmap::IndexMap;
-use crate::{Ouroboros, EvalContext};
-use crate::value::{Value, ComboVal, BottomCause, BottomDetail, EffectTag, MasaRef, BlurDetail, normalize_union, primary_bottom_from_culled};
-use crate::type_constraint::{TypeConstraint, type_constraint_meet, is_type_constraint_combo, get_type_constraint_name};
-use crate::observation::handle_resource_exhausted;
 use crate::lattice_sketch;
+use crate::observation::handle_resource_exhausted;
+use crate::type_constraint::{
+    get_type_constraint_name, is_type_constraint_combo, type_constraint_meet, TypeConstraint,
+};
+use crate::value::{
+    normalize_union, primary_bottom_from_culled, BlurDetail, BottomCause, BottomDetail, ComboVal,
+    EffectTag, MasaRef, Value,
+};
+use crate::{EvalContext, Ouroboros};
+use indexmap::IndexMap;
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
+use std::cmp::Ordering;
+use std::collections::HashSet;
 
 const EPSILON_COHERENT: f64 = 0.1;
 
@@ -47,7 +52,10 @@ fn make_h1_split_bottom(a: &ComboVal, b: &ComboVal, theta: f64) -> Value {
     Value::Bottom(Box::new(BottomDetail {
         cause: BottomCause::H1Split,
         path: None,
-        message: Some(format!("H¹ phase obstruction: θ={:.4} rad ≥ ε_coherent={}", theta, EPSILON_COHERENT)),
+        message: Some(format!(
+            "H¹ phase obstruction: θ={:.4} rad ≥ ε_coherent={}",
+            theta, EPSILON_COHERENT
+        )),
         expected: None,
         found: None,
         involved: vec![
@@ -63,7 +71,10 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
     Value::Bottom(Box::new(BottomDetail {
         cause: BottomCause::H2Split,
         path: None,
-        message: Some(format!("H² MASA obstruction: incompatible contexts {} vs {}", a.masa_ref, b.masa_ref)),
+        message: Some(format!(
+            "H² MASA obstruction: incompatible contexts {} vs {}",
+            a.masa_ref, b.masa_ref
+        )),
         expected: None,
         found: None,
         involved: vec![
@@ -78,8 +89,15 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
 impl Ouroboros {
     pub fn unify(&self, a: Value, b: Value) -> Value {
         let mut ctx = self.eval_context();
-        if let Err(e) = ctx.check_resources(10) { 
-            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+        if let Err(e) = ctx.check_resources(10) {
+            return handle_resource_exhausted(
+                e,
+                ctx.strategy,
+                &ctx.horizon_salt,
+                ctx.fuel,
+                None,
+                EffectTag::Pure,
+            );
         }
         self.unify_internal(a, b, &mut ctx)
     }
@@ -111,8 +129,9 @@ impl Ouroboros {
                     }
                 }
             }
-            (Value::TopCaused { cause, members }, _)
-            | (_, Value::TopCaused { cause, members }) => Value::TopCaused { cause, members },
+            (Value::TopCaused { cause, members }, _) | (_, Value::TopCaused { cause, members }) => {
+                Value::TopCaused { cause, members }
+            }
             (a, _) => a,
         }
     }
@@ -140,8 +159,10 @@ impl Ouroboros {
             // union with a different content_hash than Value::Top & Union. The
             // recursion makes Atom(Top) a *faithful* alias (it cannot re-hit this
             // arm: `other` is the non-Top operand).
-            (Value::Atom(AtomKind::Top, _, _), other) | (other, Value::Atom(AtomKind::Top, _, _)) =>
-                return self.unify_internal(Value::Top, other.clone(), ctx),
+            (Value::Atom(AtomKind::Top, _, _), other)
+            | (other, Value::Atom(AtomKind::Top, _, _)) => {
+                return self.unify_internal(Value::Top, other.clone(), ctx)
+            }
             // Atom(Bottom) alias — dual of Atom(Top). Literal `_|_` evaluates to
             // Value::Bottom (eval normalization), but complement / manual
             // construction still emit Atom(Bottom). Re-enter as declared-empty
@@ -171,13 +192,18 @@ impl Ouroboros {
             _ => {}
         }
 
-        if let (Value::Atom(AtomKind::Tag(ta), _, _), Value::Atom(AtomKind::Tag(tb), _, _)) = (&a, &b) {
-            if ta.trim_start_matches('#') == tb.trim_start_matches('#') { return a.clone(); }
+        if let (Value::Atom(AtomKind::Tag(ta), _, _), Value::Atom(AtomKind::Tag(tb), _, _)) =
+            (&a, &b)
+        {
+            if ta.trim_start_matches('#') == tb.trim_start_matches('#') {
+                return a.clone();
+            }
         }
 
         let a = self.force(a, ctx).collapse().clone();
         let b = self.force(b, ctx).collapse().clone();
-        let id_a = a.content_hash(); let id_b = b.content_hash();
+        let id_a = a.content_hash();
+        let id_b = b.content_hash();
         if id_a == id_b {
             return Self::prefer_caused_top(a, b);
         }
@@ -264,18 +290,31 @@ impl Ouroboros {
             return r;
         }
 
-        let nondet = a.effect().contains(EffectTag::NonDet) || b.effect().contains(EffectTag::NonDet);
-        let cache_key = if id_a.digest <= id_b.digest { (id_a, id_b) } else { (id_b, id_a) };
+        let nondet =
+            a.effect().contains(EffectTag::NonDet) || b.effect().contains(EffectTag::NonDet);
+        let cache_key = if id_a.digest <= id_b.digest {
+            (id_a, id_b)
+        } else {
+            (id_b, id_a)
+        };
         if !nondet {
-            if let Ok(memo) = self.unify_memo.read() { if let Some(cached_res) = memo.get(&cache_key) { return cached_res.clone(); } }
+            if let Ok(memo) = self.unify_memo.read() {
+                if let Some(cached_res) = memo.get(&cache_key) {
+                    return cached_res.clone();
+                }
+            }
         }
         let mut result = self.do_unify(a.clone(), b.clone(), ctx);
         let combined_effect = a.effect().union(b.effect());
-        if let Value::Combo(ref mut cv) = result { cv.effect = cv.effect.union(combined_effect); }
+        if let Value::Combo(ref mut cv) = result {
+            cv.effect = cv.effect.union(combined_effect);
+        }
         if !nondet && !matches!(result, Value::Bottom(_)) && !result.contains_blur() {
             if let Ok(mut memo) = self.unify_memo.write() {
                 const UNIFY_MEMO_CAP: usize = 100_000;
-                if memo.len() >= UNIFY_MEMO_CAP { memo.clear(); }
+                if memo.len() >= UNIFY_MEMO_CAP {
+                    memo.clear();
+                }
                 memo.insert(cache_key, result.clone());
             }
         }
@@ -284,11 +323,16 @@ impl Ouroboros {
 
     fn do_unify(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
         match (a, b) {
-            (Value::Atom(AtomKind::Tag(ta), ae, ra), Value::Atom(AtomKind::Tag(tb), be, rb)) if ta.trim_start_matches('#') == tb.trim_start_matches('#') => {
+            (Value::Atom(AtomKind::Tag(ta), ae, ra), Value::Atom(AtomKind::Tag(tb), be, rb))
+                if ta.trim_start_matches('#') == tb.trim_start_matches('#') =>
+            {
                 Value::Atom(AtomKind::Tag(ta), ae.union(be), ra.or(rb))
             }
-            (Value::Atom(ak, ae, ra), Value::Atom(bk, be, rb)) if ak == bk => Value::Atom(ak, ae.union(be), ra.or(rb)),
-            (Value::Atom(ak, ae, ra), Value::Combo(mut cv)) | (Value::Combo(mut cv), Value::Atom(ak, ae, ra)) => { 
+            (Value::Atom(ak, ae, ra), Value::Atom(bk, be, rb)) if ak == bk => {
+                Value::Atom(ak, ae.union(be), ra.or(rb))
+            }
+            (Value::Atom(ak, ae, ra), Value::Combo(mut cv))
+            | (Value::Combo(mut cv), Value::Atom(ak, ae, ra)) => {
                 if is_type_constraint_combo(&cv) {
                     if let Some(type_name) = get_type_constraint_name(&cv) {
                         return type_constraint_meet(Value::Atom(ak, ae, ra), &type_name);
@@ -299,15 +343,17 @@ impl Ouroboros {
                 if Value::Combo(cv.clone()).is_morphism() {
                     return BottomCause::Conflict.into();
                 }
-                let val_key = "%val".to_string(); 
-                let existing_val = cv.get_field(&val_key).cloned().unwrap_or(Value::Top); 
-                let merged_val = self.unify_internal(Value::Atom(ak, ae, ra), existing_val, ctx); 
-                if let Value::Bottom(c) = merged_val { return Value::Bottom(c); } 
-                cv.insert_field(&val_key, merged_val); 
-                Value::Combo(cv) 
+                let val_key = "%val".to_string();
+                let existing_val = cv.get_field(&val_key).cloned().unwrap_or(Value::Top);
+                let merged_val = self.unify_internal(Value::Atom(ak, ae, ra), existing_val, ctx);
+                if let Value::Bottom(c) = merged_val {
+                    return Value::Bottom(c);
+                }
+                cv.insert_field(&val_key, merged_val);
+                Value::Combo(cv)
             }
             (Value::Combo(ac), Value::Combo(bc)) => self.unify_combo(ac, bc, ctx),
-            (Value::Union(mut branches), other) | (other, Value::Union(mut branches)) => { 
+            (Value::Union(mut branches), other) | (other, Value::Union(mut branches)) => {
                 let max_branches = ctx.max_branches;
                 // Preserve source / navigate encounter order among survivors
                 // (F4: `({a:1}|7).a` → `1 | _`, partial-field → `_ | 2`).
@@ -365,7 +411,11 @@ impl Ouroboros {
                     (None, None) => None,
                 };
                 let eff = ba.effect.union(bb.effect);
-                let base = if ba.horizon.fuel_remaining <= bb.horizon.fuel_remaining { ba } else { bb };
+                let base = if ba.horizon.fuel_remaining <= bb.horizon.fuel_remaining {
+                    ba
+                } else {
+                    bb
+                };
                 Value::Blur(BlurDetail {
                     cause: base.cause.clone(),
                     horizon: base.horizon.clone(),
@@ -389,7 +439,10 @@ impl Ouroboros {
                     }
                     None => Some(Box::new(other.clone())),
                 };
-                Value::Blur(BlurDetail { partial: new_partial, ..bd.clone() })
+                Value::Blur(BlurDetail {
+                    partial: new_partial,
+                    ..bd.clone()
+                })
             }
             (other, Value::Blur(bd)) => {
                 let new_partial = match bd.partial.as_deref() {
@@ -403,16 +456,20 @@ impl Ouroboros {
                     }
                     None => Some(Box::new(other.clone())),
                 };
-                Value::Blur(BlurDetail { partial: new_partial, ..bd.clone() })
+                Value::Blur(BlurDetail {
+                    partial: new_partial,
+                    ..bd.clone()
+                })
             }
-            (a, b) => Value::Bottom(Box::new(BottomDetail { 
-                cause: BottomCause::Conflict, 
-                path: None, 
+            (a, b) => Value::Bottom(Box::new(BottomDetail {
+                cause: BottomCause::Conflict,
+                path: None,
                 message: Some(format!("Incompatible types: {:?} vs {:?}", a, b)),
                 expected: Some(a.clone()),
                 found: Some(b.clone()),
                 involved: vec![a.content_hash(), b.content_hash()],
-             ..Default::default() })),
+                ..Default::default()
+            })),
         }
     }
 
@@ -442,53 +499,67 @@ impl Ouroboros {
             let ta = get_type_constraint_name(&a);
             let tb = get_type_constraint_name(&b);
             if let (Some(na), Some(nb)) = (ta, tb) {
-                if na == nb { return Value::Combo(a); }
+                if na == nb {
+                    return Value::Combo(a);
+                }
                 let ca = TypeConstraint::from_name(&na);
                 let cb = TypeConstraint::from_name(&nb);
                 let subtype_check = self.check_subtype_relation(&ca, &cb);
-                if subtype_check { return Value::Combo(a); }
+                if subtype_check {
+                    return Value::Combo(a);
+                }
                 let reverse_check = self.check_subtype_relation(&cb, &ca);
-                if reverse_check { return Value::Combo(b); }
+                if reverse_check {
+                    return Value::Combo(b);
+                }
             }
         }
-        
-        let mut rf = IndexMap::new(); let mut rl = IndexMap::new(); 
-        let all_keys: HashSet<_> = a.field_keys().into_iter().chain(b.field_keys().into_iter()).collect();
+
+        let mut rf = IndexMap::new();
+        let mut rl = IndexMap::new();
+        let all_keys: HashSet<_> = a
+            .field_keys()
+            .into_iter()
+            .chain(b.field_keys().into_iter())
+            .collect();
         for key in all_keys {
-            let va = a.get_field(&key).cloned().unwrap_or(Value::Top); 
+            let va = a.get_field(&key).cloned().unwrap_or(Value::Top);
             let vb = b.get_field(&key).cloned().unwrap_or(Value::Top);
             let va_is_top = va.is_top();
             let vb_is_top = vb.is_top();
             // SPEC_03 §1.2 #2: closed-key rejection only for NON-TOP extras.
             // `b: _` is often Thunk(Top) — force before judging "no constraint".
-            let is_no_constraint = |v: &Value, is_top: bool, engine: &Self, ctx: &mut EvalContext| -> bool {
-                if is_top {
-                    return true;
-                }
-                let f = engine.force(v.clone(), ctx).collapse().clone();
-                f.is_top()
-            };
-            if a.closed && !a.contains_key(&key) && !is_no_constraint(&vb, vb_is_top, self, ctx) { 
-                return Value::Bottom(Box::new(BottomDetail { 
-                    cause: BottomCause::MissingKey, 
-                    path: Some(key.clone()), 
-                    message: Some(format!("Key '{}' missing in closed Cocoon", key)), 
-                    expected: None, 
-                    found: Some(vb.clone()), 
+            let is_no_constraint =
+                |v: &Value, is_top: bool, engine: &Self, ctx: &mut EvalContext| -> bool {
+                    if is_top {
+                        return true;
+                    }
+                    let f = engine.force(v.clone(), ctx).collapse().clone();
+                    f.is_top()
+                };
+            if a.closed && !a.contains_key(&key) && !is_no_constraint(&vb, vb_is_top, self, ctx) {
+                return Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::MissingKey,
+                    path: Some(key.clone()),
+                    message: Some(format!("Key '{}' missing in closed Cocoon", key)),
+                    expected: None,
+                    found: Some(vb.clone()),
                     involved: vec![],
-                 ..Default::default() }));
+                    ..Default::default()
+                }));
             }
-            if b.closed && !b.contains_key(&key) && !is_no_constraint(&va, va_is_top, self, ctx) { 
-                return Value::Bottom(Box::new(BottomDetail { 
-                    cause: BottomCause::MissingKey, 
-                    path: Some(key.clone()), 
-                    message: Some(format!("Key '{}' missing in incoming closed Cocoon", key)), 
-                    expected: Some(va.clone()), 
-                    found: None, 
+            if b.closed && !b.contains_key(&key) && !is_no_constraint(&va, va_is_top, self, ctx) {
+                return Value::Bottom(Box::new(BottomDetail {
+                    cause: BottomCause::MissingKey,
+                    path: Some(key.clone()),
+                    message: Some(format!("Key '{}' missing in incoming closed Cocoon", key)),
+                    expected: Some(va.clone()),
+                    found: None,
                     involved: vec![],
-                 ..Default::default() }));
+                    ..Default::default()
+                }));
             }
-            let merged = self.unify_internal(va, vb, ctx); 
+            let merged = self.unify_internal(va, vb, ctx);
             if let Value::Bottom(mut detail) = merged {
                 // L2-17: Top & ⊥ at a single field stores the Bottom binding
                 // (divergent / no_context coordinates) instead of aborting the
@@ -499,25 +570,36 @@ impl Ouroboros {
                     rf.insert(key.clone(), Value::Bottom(detail));
                     continue;
                 }
-                let cp = detail.path.as_ref().map(|p| format!("{}.{}", key, p)).unwrap_or_else(|| key.clone()); 
-                detail.path = Some(cp); 
-                return Value::Bottom(detail); 
+                let cp = detail
+                    .path
+                    .as_ref()
+                    .map(|p| format!("{}.{}", key, p))
+                    .unwrap_or_else(|| key.clone());
+                detail.path = Some(cp);
+                return Value::Bottom(detail);
             }
             // Drop bare Top (open miss); keep TopCaused (static-cycle provenance).
             if !matches!(&merged, Value::Top) {
                 rf.insert(key.clone(), merged);
             }
         }
-        let all_lkeys: HashSet<_> = a.local_keys().into_iter().chain(b.local_keys().into_iter()).collect();
+        let all_lkeys: HashSet<_> = a
+            .local_keys()
+            .into_iter()
+            .chain(b.local_keys().into_iter())
+            .collect();
         for key in all_lkeys {
             let key_stripped = key.trim_start_matches('~');
-            let va = a.local.get(key_stripped).cloned().unwrap_or(Value::Top); 
+            let va = a.local.get(key_stripped).cloned().unwrap_or(Value::Top);
             let vb = b.local.get(key_stripped).cloned().unwrap_or(Value::Top);
-            let merged = self.unify_internal(va, vb, ctx); 
-            if let Value::Bottom(mut detail) = merged { 
-                let cp = detail.path.map(|p| format!("~{}.{}", key, p)).unwrap_or(format!("~{}", key)); 
-                detail.path = Some(cp); 
-                return Value::Bottom(detail); 
+            let merged = self.unify_internal(va, vb, ctx);
+            if let Value::Bottom(mut detail) = merged {
+                let cp = detail
+                    .path
+                    .map(|p| format!("~{}.{}", key, p))
+                    .unwrap_or(format!("~{}", key));
+                detail.path = Some(cp);
+                return Value::Bottom(detail);
             }
             if !matches!(&merged, Value::Top) {
                 rl.insert(key.clone(), merged);
@@ -539,7 +621,7 @@ impl Ouroboros {
         out.pending_spreads = pending_spreads;
         Value::Combo(out)
     }
-    
+
     pub fn check_subtype_relation(&self, child: &TypeConstraint, parent: &TypeConstraint) -> bool {
         match (child, parent) {
             (_, TypeConstraint::Any) => true,
@@ -573,12 +655,7 @@ fn range_unify(a: &Value, b: &Value) -> Option<Value> {
     }
 }
 
-fn range_membership(
-    atom: &Value,
-    start: &Value,
-    end: &Value,
-    step: Option<&Value>,
-) -> Value {
+fn range_membership(atom: &Value, start: &Value, end: &Value, step: Option<&Value>) -> Value {
     // x must be a numeric atom
     let Some(x) = numeric_f64(atom) else {
         return BottomCause::Conflict.into();
@@ -590,10 +667,16 @@ fn range_membership(
         return BottomCause::Conflict.into();
     };
     // closed-closed: lo ≤ x ≤ hi
-    if bound_cmp(&lo, &bound_key_num(x)).map(|o| o == Ordering::Greater).unwrap_or(true) {
+    if bound_cmp(&lo, &bound_key_num(x))
+        .map(|o| o == Ordering::Greater)
+        .unwrap_or(true)
+    {
         return BottomCause::Conflict.into();
     }
-    if bound_cmp(&bound_key_num(x), &hi).map(|o| o == Ordering::Greater).unwrap_or(true) {
+    if bound_cmp(&bound_key_num(x), &hi)
+        .map(|o| o == Ordering::Greater)
+        .unwrap_or(true)
+    {
         return BottomCause::Conflict.into();
     }
     // step: (x - start) % step == 0; anchors as start use 0 as offset base for density
@@ -606,8 +689,18 @@ fn range_membership(
 }
 
 fn range_intersect(a: &Value, b: &Value) -> Value {
-    let (Value::Range { start: s1, end: e1, step: st1 }, Value::Range { start: s2, end: e2, step: st2 }) =
-        (a, b)
+    let (
+        Value::Range {
+            start: s1,
+            end: e1,
+            step: st1,
+        },
+        Value::Range {
+            start: s2,
+            end: e2,
+            step: st2,
+        },
+    ) = (a, b)
     else {
         return BottomCause::Conflict.into();
     };
@@ -695,7 +788,11 @@ fn bound_to_value(k: &BoundKey) -> Value {
         _ => {
             // Prefer Int when the float is integral
             if k.1.fract() == 0.0 && k.1.abs() < (i64::MAX as f64) {
-                Value::Atom(AtomKind::Int(BigInt::from(k.1 as i64)), EffectTag::Pure, None)
+                Value::Atom(
+                    AtomKind::Int(BigInt::from(k.1 as i64)),
+                    EffectTag::Pure,
+                    None,
+                )
             } else {
                 Value::Atom(AtomKind::Float(k.1), EffectTag::Pure, None)
             }
@@ -731,7 +828,10 @@ fn on_step(x: &Value, start: &Value, step: &Value) -> bool {
         // start is anchor → only accept if step is zero-offset from a numeric reading;
         // for TagStart/-∞ with step, membership reduces to "any number on the ray"
         // with no discrete grid — treat as dense (always on-step if in bounds).
-        if matches!(start, Value::Atom(AtomKind::TagStart | AtomKind::TagEnd, _, _)) {
+        if matches!(
+            start,
+            Value::Atom(AtomKind::TagStart | AtomKind::TagEnd, _, _)
+        ) {
             return true;
         }
         return false;

@@ -30,8 +30,8 @@
 // validation (REAL_02), physical-thread isolation (§6.1.1), #ext: (§4.1).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};

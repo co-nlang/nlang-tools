@@ -89,6 +89,7 @@
 // verification). Adding a lifetime field is a spec change and it is not the
 // delivery's to make.
 
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -96,7 +97,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::fs;
 
 use ring::signature::{Ed25519KeyPair, KeyPair};
 
@@ -217,7 +217,10 @@ fn root_digest(dir: &Path) -> String {
             .map(|b| format!("{:02x}", b.as_u64().expect("digest byte")))
             .collect()
     } else {
-        panic!("commit root has no usable `digest` field: {}", commit["root"]);
+        panic!(
+            "commit root has no usable `digest` field: {}",
+            commit["root"]
+        );
     };
     assert!(
         hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()),
@@ -554,7 +557,9 @@ fn spawn_relayer(reply: String) -> Relayer {
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            let Ok(clone) = stream.try_clone() else { continue };
+            let Ok(clone) = stream.try_clone() else {
+                continue;
+            };
             let mut line = String::new();
             if BufReader::new(clone).read_line(&mut line).is_err() {
                 continue;
@@ -685,7 +690,11 @@ fn r2_relayed_record_verifies_from_the_packet_alone() {
         "the host must be the one the index OBSERVED on A's connection, not \
          anything A said (§4.2.5): {r}"
     );
-    assert_eq!(hops_of(&r), 1, "a relayed record has travelled one hop: {r}");
+    assert_eq!(
+        hops_of(&r),
+        1,
+        "a relayed record has travelled one hop: {r}"
+    );
 
     // Verified with packet contents only — `t.c` is merely a workspace to ask
     // for the canonical CAID encoding, and holds nothing about A.
@@ -721,8 +730,12 @@ fn r3_tampered_signature_drops_only_itself() {
     let a = node_key(&t.a);
     let d = node_key(&t.b); // stands in for a second advertiser
 
-    let good = Advert::new(&a, 21732).serving(&caid).signed(&t.a, &a.key_pair);
-    let honest = Advert::new(&d, 21733).serving(&caid).signed(&t.b, &d.key_pair);
+    let good = Advert::new(&a, 21732)
+        .serving(&caid)
+        .signed(&t.a, &a.key_pair);
+    let honest = Advert::new(&d, 21733)
+        .serving(&caid)
+        .signed(&t.b, &d.key_pair);
     // Flip one hex digit of the signature: still well-formed, no longer valid.
     let sig = field_str(&honest, "signature");
     let flipped = format!(
@@ -735,10 +748,7 @@ fn r3_tampered_signature_drops_only_itself() {
     let relayer = spawn_relayer(relay_reply(
         &d.node_id,
         1,
-        &[
-            (good, "198.51.100.1".into()),
-            (bad, "198.51.100.2".into()),
-        ],
+        &[(good, "198.51.100.1".into()), (bad, "198.51.100.2".into())],
     ));
 
     let out = oo_discover(&t.c, &relayer.addr(), &caid);
@@ -766,7 +776,9 @@ fn r4_identity_mismatch_drops_only_itself() {
     let a = node_key(&t.a);
     let d = node_key(&t.b);
 
-    let good = Advert::new(&a, 21734).serving(&caid).signed(&t.a, &a.key_pair);
+    let good = Advert::new(&a, 21734)
+        .serving(&caid)
+        .signed(&t.a, &a.key_pair);
 
     // D's key, D's signature — but claiming A's node_id. Nothing about the
     // signature is wrong; the binding is.
@@ -819,7 +831,9 @@ fn r5_a_relayed_body_that_computes_is_refused_before_it_runs() {
     let caid = store(&t.a, "{ treasure: \"R5\" }");
     let a = node_key(&t.a);
 
-    let good = Advert::new(&a, 21736).serving(&caid).signed(&t.a, &a.key_pair);
+    let good = Advert::new(&a, 21736)
+        .serving(&caid)
+        .signed(&t.a, &a.key_pair);
 
     let loot = t.c.join("pwned-by-discover.txt");
     assert!(!loot.exists(), "probe error: loot path already exists");
@@ -947,7 +961,11 @@ fn r7_the_relay_bound_binds_the_honest_index_only() {
     // Half 2 — a relayer that hands you the very same record is believed. The
     // record is genuine and its signature is valid; what cannot be checked is
     // who passed it on, and `%hops` is that relayer's own number.
-    let relayer = spawn_relayer(relay_reply(&a.node_id, 0, &[(spent, "198.51.100.7".into())]));
+    let relayer = spawn_relayer(relay_reply(
+        &a.node_id,
+        0,
+        &[(spent, "198.51.100.7".into())],
+    ));
     let out = oo_discover(&t.c, &relayer.addr(), &caid);
     assert!(
         out.contains(&a.node_id),
@@ -1064,7 +1082,9 @@ fn r10_observed_host_is_outside_the_signature_and_says_so() {
     let t = trio("r10");
     let caid = store(&t.a, "{ treasure: \"R10\" }");
     let a = node_key(&t.a);
-    let ad = Advert::new(&a, 21742).serving(&caid).signed(&t.a, &a.key_pair);
+    let ad = Advert::new(&a, 21742)
+        .serving(&caid)
+        .signed(&t.a, &a.key_pair);
 
     // The relayer names a host that has nothing to do with A. The record still
     // verifies — that IS the finding, not a bug.
@@ -1181,7 +1201,9 @@ fn p1_advertise_ladder_intact() {
     let a = node_key(&t.a);
     let caid = store(&t.a, "{ treasure: \"P1\" }");
 
-    let ok = Advert::new(&a, 21745).serving(&caid).signed(&t.a, &a.key_pair);
+    let ok = Advert::new(&a, 21745)
+        .serving(&caid)
+        .signed(&t.a, &a.key_pair);
     let r = ask_raw(b.port, &advert_request(&a.node_id, &ok));
     assert_eq!(status_of(&r), "success", "a valid advertisement: {r}");
 
@@ -1203,7 +1225,11 @@ fn p1_advertise_ladder_intact() {
     );
     let r = ask_raw(b.port, &bomb);
     assert_eq!(status_of(&r), "rejected", "{r}");
-    assert!(!loot.exists(), "the v0.2.50 repair regressed: {}", loot.display());
+    assert!(
+        !loot.exists(),
+        "the v0.2.50 repair regressed: {}",
+        loot.display()
+    );
 }
 
 /// P2 — `#fetch` is untouched: it serves, and its outcome is independent of
@@ -1214,7 +1240,10 @@ fn p2_fetch_untouched() {
     let caid = store(&t.a, "{ treasure: \"P2\" }");
     let a = serve(&t.a);
 
-    let plain = ask_raw(a.port, &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n"));
+    let plain = ask_raw(
+        a.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n"),
+    );
     assert_eq!(status_of(&plain), "success", "{plain}");
 
     for from in ["", "hash:sha256:v1:whoever", "not-even-a-caid"] {
@@ -1256,7 +1285,9 @@ fn p3_the_directory_never_reaches_the_root() {
     init(&ad_src);
     let caid = store(&ad_src, "{ treasure: \"P3\" }");
     let k = node_key(&ad_src);
-    let ad = Advert::new(&k, 21746).serving(&caid).signed(&ad_src, &k.key_pair);
+    let ad = Advert::new(&k, 21746)
+        .serving(&caid)
+        .signed(&ad_src, &k.key_pair);
     let r = ask_raw(b.port, &advert_request(&k.node_id, &ad));
     assert_eq!(status_of(&r), "success", "P3 setup advertisement: {r}");
     ask_raw(b.port, &discover_request("whoever", &caid));
@@ -1307,11 +1338,16 @@ fn p5_serving_discovery_stores_nothing() {
 
     let caid = store(&t.a, "{ treasure: \"P5\" }");
     let a = node_key(&t.a);
-    let ad = Advert::new(&a, 21748).serving(&caid).signed(&t.a, &a.key_pair);
+    let ad = Advert::new(&a, 21748)
+        .serving(&caid)
+        .signed(&t.a, &a.key_pair);
     let r = ask_raw(b.port, &advert_request(&a.node_id, &ad));
     assert_eq!(status_of(&r), "success", "{r}");
     ask_raw(b.port, &discover_request("whoever", &caid));
-    ask_raw(b.port, &discover_request("whoever", "hash:sha256:v1:nothing"));
+    ask_raw(
+        b.port,
+        &discover_request("whoever", "hash:sha256:v1:nothing"),
+    );
 
     assert_eq!(
         object_count(&t.b),

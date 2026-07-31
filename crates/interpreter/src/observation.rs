@@ -1,7 +1,9 @@
-use crate::value::{Value, BottomCause, BottomDetail, EffectTag, ContentHash, BlurDetail, BlurCause, HorizonParams};
 pub use crate::value::ObservationStrategy;
+use crate::value::{
+    BlurCause, BlurDetail, BottomCause, BottomDetail, ContentHash, EffectTag, HorizonParams, Value,
+};
 use nlang_parser::ast::AtomKind;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObservationState {
@@ -28,15 +30,18 @@ impl ObservationState {
             ObservationState::Blur(_) => true,
         }
     }
-    
+
     pub fn is_terminal(&self) -> bool {
-        matches!(self, ObservationState::Converged | ObservationState::Conflict)
+        matches!(
+            self,
+            ObservationState::Converged | ObservationState::Conflict
+        )
     }
-    
+
     pub fn is_transient(&self) -> bool {
         matches!(self, ObservationState::Incomplete)
     }
-    
+
     pub fn to_tag(&self) -> String {
         match self {
             ObservationState::Lazy => "lazy".to_string(),
@@ -70,12 +75,13 @@ pub fn handle_resource_exhausted(
                 expected: None,
                 found: partial_result,
                 involved: vec![],
-             ..Default::default() }))
+                ..Default::default()
+            }))
         }
         ObservationStrategy::Blur => {
             let blur_cause = match cause {
                 crate::ResourceExhausted::FuelExhausted => BlurCause::FuelExhausted,
-                crate::ResourceExhausted::Timeout       => BlurCause::Timeout,
+                crate::ResourceExhausted::Timeout => BlurCause::Timeout,
                 crate::ResourceExhausted::StackOverflow => BlurCause::StackOverflow,
             };
             Value::Blur(BlurDetail {

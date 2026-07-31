@@ -1,7 +1,7 @@
-use nlang_interpreter::{Ouroboros, Value, ComboVal, EvalContext, EffectTag, BottomCause};
-use nlang_parser::parse_program;
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::{BottomCause, ComboVal, EffectTag, EvalContext, Ouroboros, Value};
+use nlang_parser::ast::AtomKind;
+use nlang_parser::parse_program;
 use num_bigint::BigInt;
 use num_traits::Zero;
 
@@ -10,7 +10,13 @@ fn setup() -> Ouroboros {
 }
 
 fn empty_ctx() -> EvalContext {
-    EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]))
+    EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 #[test]
@@ -95,12 +101,17 @@ fn test_sqrt_negative() {
 fn test_overflow_to_infinity() {
     let oo = setup();
     let mut ctx = empty_ctx();
-    
+
     let large_val = Value::Atom(AtomKind::Float(1e308), EffectTag::Pure, None);
     let result = large_val.clone();
-    
+
     let mul_result = 1e308_f64 * 1e308_f64;
-    println!("Rust: 1e308 * 1e308 = {} (is_inf={}, is_nan={})", mul_result, mul_result.is_infinite(), mul_result.is_nan());
+    println!(
+        "Rust: 1e308 * 1e308 = {} (is_inf={}, is_nan={})",
+        mul_result,
+        mul_result.is_infinite(),
+        mul_result.is_nan()
+    );
 }
 
 #[test]
@@ -114,7 +125,10 @@ fn test_inf_arithmetic_prohibited() {
     println!("#_ + 1 = {:?}", val);
     match val {
         Value::Bottom(_) => {}
-        other => panic!("FAIL: expected _|_ (arithmetic on order anchor), got {:?}", other),
+        other => panic!(
+            "FAIL: expected _|_ (arithmetic on order anchor), got {:?}",
+            other
+        ),
     }
 }
 
@@ -130,7 +144,11 @@ fn ln_principal_branch_neg_one() {
     let result = ln_fn(arg, &oo, &mut ctx);
     if let Value::Atom(AtomKind::Complex(r, i), _, _) = result {
         assert!((r).abs() < 1e-10, "real part should be ~0, got {}", r);
-        assert!((i - std::f64::consts::PI).abs() < 1e-10, "imag part should be π, got {}", i);
+        assert!(
+            (i - std::f64::consts::PI).abs() < 1e-10,
+            "imag part should be π, got {}",
+            i
+        );
     } else {
         panic!("ln(-1) should return Complex, got {:?}", result);
     }
@@ -143,16 +161,35 @@ fn ln_branch_1_neg_one() {
     let builtins = &oo.builtin_registry;
     let ln_fn = builtins.get("math.ln").unwrap();
     let mut fields = IndexMap::new();
-    fields.insert("0".to_string(), Value::Atom(AtomKind::Float(-1.0), EffectTag::Pure, None));
-    fields.insert("%branch".to_string(), Value::Atom(AtomKind::Int(1i64.into()), EffectTag::Pure, None));
-    let arg = Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    fields.insert(
+        "0".to_string(),
+        Value::Atom(AtomKind::Float(-1.0), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%branch".to_string(),
+        Value::Atom(AtomKind::Int(1i64.into()), EffectTag::Pure, None),
+    );
+    let arg = Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = ln_fn(arg, &oo, &mut ctx);
     if let Value::Atom(AtomKind::Complex(r, i), _, _) = result {
         assert!((r).abs() < 1e-10, "real part should be ~0, got {}", r);
         let expected_i = 3.0 * std::f64::consts::PI;
-        assert!((i - expected_i).abs() < 1e-10, "imag should be 3π, got {}", i);
+        assert!(
+            (i - expected_i).abs() < 1e-10,
+            "imag should be 3π, got {}",
+            i
+        );
     } else {
-        panic!("ln(-1) {{%branch: 1}} should return Complex, got {:?}", result);
+        panic!(
+            "ln(-1) {{%branch: 1}} should return Complex, got {:?}",
+            result
+        );
     }
 }
 
@@ -178,9 +215,21 @@ fn sqrt_branch_1_is_negative() {
     let builtins = &oo.builtin_registry;
     let sqrt_fn = builtins.get("math.sqrt").unwrap();
     let mut fields = IndexMap::new();
-    fields.insert("0".to_string(), Value::Atom(AtomKind::Float(4.0), EffectTag::Pure, None));
-    fields.insert("%branch".to_string(), Value::Atom(AtomKind::Int(1i64.into()), EffectTag::Pure, None));
-    let arg = Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    fields.insert(
+        "0".to_string(),
+        Value::Atom(AtomKind::Float(4.0), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%branch".to_string(),
+        Value::Atom(AtomKind::Int(1i64.into()), EffectTag::Pure, None),
+    );
+    let arg = Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = sqrt_fn(arg, &oo, &mut ctx);
     if let Value::Atom(AtomKind::Float(f), _, _) = result {
         assert!((f + 2.0).abs() < 1e-10, "sqrt(4) branch 1 = -2.0");

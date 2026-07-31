@@ -45,8 +45,8 @@
 // NOT pin either shape here, adjudication belongs to the SPEC_12 family).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -199,19 +199,13 @@ fn pin_all_top_dedupe() {
 fn pin_immediate_bottom_cull_cocoon() {
     // Cocoon eigenstate arc face: immediate ⊥ branches cull today and
     // must keep culling — all-⊥ → single primary ⊥.
-    assert_obs(
-        "u: {{b: 1}}|{{c: 2}}\nout: (u.a).%cause",
-        "#missing_key",
-    );
+    assert_obs("u: {{b: 1}}|{{c: 2}}\nout: (u.a).%cause", "#missing_key");
 }
 
 #[test]
 fn pin_mixed_rank_conflict_over_missing() {
     // REAL_04 §4: lattice family (rank 3) beats coordinate miss (rank 5).
-    assert_obs(
-        "u: {a: (1&2)}|{{c: 2}}\nout: (u.a).%cause",
-        "#conflict",
-    );
+    assert_obs("u: {a: (1&2)}|{{c: 2}}\nout: (u.a).%cause", "#conflict");
 }
 
 #[test]

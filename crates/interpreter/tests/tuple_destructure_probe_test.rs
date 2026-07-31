@@ -23,8 +23,8 @@
 //   param (pinned below) — no implicit cross-over in either direction.
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -113,13 +113,19 @@ fn red_tuple_body_sees_context_whole() {
 #[test]
 fn red_tuple_arity_mismatch_bottom() {
     // 2-param tuple, 3-tuple argument — exact arity, no partial destructure
-    assert_obs("tf: ((x, y) -> x + y)\nout: tf (1, 2, 3)", "_|_ (%cause: #conflict)");
+    assert_obs(
+        "tf: ((x, y) -> x + y)\nout: tf (1, 2, 3)",
+        "_|_ (%cause: #conflict)",
+    );
 }
 
 #[test]
 fn red_tuple_nontuple_arg_bottom() {
     // definition side chose tuple → application side must use tuple
-    assert_obs("tf: ((x, y) -> x + y)\nout: tf 5", "_|_ (%cause: #conflict)");
+    assert_obs(
+        "tf: ((x, y) -> x + y)\nout: tf 5",
+        "_|_ (%cause: #conflict)",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -290,7 +290,11 @@ fn red_a_copied_workspace_is_a_different_node() {
     oo(&a, &home, &["commit", "-m", "x"]);
 
     let first = node_id(&a, &home);
-    assert_eq!(first.len(), 64, "a node id must be a 64-hex digest: {first}");
+    assert_eq!(
+        first.len(),
+        64,
+        "a node id must be a 64-hex digest: {first}"
+    );
 
     // Same workspace, a second process.
     let again = node_id(&a, &home);
@@ -384,10 +388,7 @@ fn red_source_identifies_the_node_not_the_port() {
     store(&b, &home, "{ pkg: \"src\" }");
 
     let ask = |n: &Node| {
-        let r = ask_raw(
-            n.port,
-            &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}"),
-        );
+        let r = ask_raw(n.port, &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}"));
         let i = r.find("\"%source\"").unwrap_or_else(|| {
             panic!("no %source in the reply: {r}");
         });
@@ -409,10 +410,7 @@ fn red_source_identifies_the_node_not_the_port() {
 
     let nb = serve(&b, &home);
     let sb = ask(&nb);
-    assert_ne!(
-        s1, sb,
-        "two different workspaces reported the same source"
-    );
+    assert_ne!(s1, sb, "two different workspaces reported the same source");
 }
 
 /// R4 — the request carries `%from`.
@@ -607,7 +605,10 @@ fn pin_the_node_key_is_refused_to_the_language_layer() {
     let ok = oo(
         &d,
         &home,
-        &["eval", &format!("~%Io./read_file(\"{}\")", outside.display())],
+        &[
+            "eval",
+            &format!("~%Io./read_file(\"{}\")", outside.display()),
+        ],
     );
     assert!(
         !ok.contains("store_boundary"),
@@ -700,8 +701,7 @@ fn pin_root_caid_stays_deterministic() {
                 .join("sha256")
                 .join(&h[..2])
                 .join(&h[2..]);
-            let j: serde_json::Value =
-                serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+            let j: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
             let dg = &j["root"]["digest"];
             if let Some(s) = dg.as_str() {
                 s.to_string()

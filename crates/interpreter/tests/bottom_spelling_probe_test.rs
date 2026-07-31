@@ -12,15 +12,21 @@
 // normalize Atom(Bottom) → Value::Bottom(Conflict); unify re-enters Atom(Bottom)
 // as a faithful alias (same pattern as Atom(Top) in 5b501e5).
 
-use nlang_interpreter::{Ouroboros, EvalContext, Value};
-use nlang_interpreter::value::{ComboVal, EffectTag};
-use nlang_parser::parse_program;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag};
+use nlang_interpreter::{EvalContext, Ouroboros, Value};
+use nlang_parser::parse_program;
 
 fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 

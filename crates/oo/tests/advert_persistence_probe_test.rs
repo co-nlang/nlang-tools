@@ -41,13 +41,13 @@
 // the delegation arc's problem; it is named here so nobody reads these greens
 // as covering it.
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::fs;
 
 use nlang_interpreter::value::Identity;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -127,7 +127,11 @@ fn object_count(dir: &Path) -> usize {
         if let Ok(rd) = fs::read_dir(p) {
             for e in rd.flatten() {
                 let path = e.path();
-                if path.is_dir() { walk(&path, n); } else { *n += 1; }
+                if path.is_dir() {
+                    walk(&path, n);
+                } else {
+                    *n += 1;
+                }
             }
         }
     }
@@ -137,7 +141,10 @@ fn object_count(dir: &Path) -> usize {
 }
 
 fn now_secs() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 fn copy_tree(src: &Path, dst: &Path) {
@@ -156,8 +163,11 @@ fn copy_tree(src: &Path, dst: &Path) {
 // ── ids, probe side ─────────────────────────────────────────────────────
 
 fn routing_id(public_key: &[u8]) -> [u8; ID_BYTES] {
-    let caid = Identity { public_key: public_key.to_vec(), private_key: Vec::new() }
-        .node_id_caid();
+    let caid = Identity {
+        public_key: public_key.to_vec(),
+        private_key: Vec::new(),
+    }
+    .node_id_caid();
     let d = caid.digest;
     let mut out = [0u8; ID_BYTES];
     out.copy_from_slice(&d[..ID_BYTES]);
@@ -173,7 +183,9 @@ fn routing_id_of_caid(caid: &str) -> [u8; ID_BYTES] {
 
 fn xor(a: &[u8; ID_BYTES], b: &[u8; ID_BYTES]) -> [u8; ID_BYTES] {
     let mut o = [0u8; ID_BYTES];
-    for i in 0..ID_BYTES { o[i] = a[i] ^ b[i]; }
+    for i in 0..ID_BYTES {
+        o[i] = a[i] ^ b[i];
+    }
     o
 }
 
@@ -182,7 +194,12 @@ fn bucket_index(self_id: &[u8; ID_BYTES], peer: &[u8; ID_BYTES]) -> usize {
     let x = xor(self_id, peer);
     let mut n = 0;
     for b in x.iter() {
-        if *b == 0 { n += 8; } else { n += b.leading_zeros() as usize; break; }
+        if *b == 0 {
+            n += 8;
+        } else {
+            n += b.leading_zeros() as usize;
+            break;
+        }
     }
     n.min(ID_BYTES * 8)
 }
@@ -201,9 +218,12 @@ fn mint_peer(rng: &ring::rand::SystemRandom, listen_port: u16) -> SynthPeer {
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(rng).unwrap();
     let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
     let pk = key_pair.public_key().as_ref().to_vec();
-    let node_id = Identity { public_key: pk.clone(), private_key: Vec::new() }
-        .node_id_caid()
-        .to_string();
+    let node_id = Identity {
+        public_key: pk.clone(),
+        private_key: Vec::new(),
+    }
+    .node_id_caid()
+    .to_string();
     SynthPeer {
         public_key_hex: hex::encode(&pk),
         id: routing_id(&pk),
@@ -215,7 +235,11 @@ fn mint_peer(rng: &ring::rand::SystemRandom, listen_port: u16) -> SynthPeer {
 
 impl SynthPeer {
     fn body(&self, services: &[&str], ts: i64) -> String {
-        let svc = services.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", ");
+        let svc = services
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "{{{{ node_id: \"{}\", public_key: \"{}\", services: [{svc}], \
              listen_port: {}, capacity: 10, ts: {ts}, ttl: 15 }}}}",
@@ -227,7 +251,9 @@ impl SynthPeer {
         let body = self.body(services, ts);
         let caid = caid_of(caid_dir, &body);
         let sig = hex::encode(
-            self.key_pair.sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes()).as_ref(),
+            self.key_pair
+                .sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes())
+                .as_ref(),
         );
         let inner = body.trim_start_matches("{{").trim_end_matches("}}").trim();
         format!("{{{{ {inner}, signature: \"{sig}\" }}}}")
@@ -248,22 +274,36 @@ impl SynthPeer {
 
 // ── running node ────────────────────────────────────────────────────────
 
-struct Node { child: Child, port: u16, log: PathBuf }
+struct Node {
+    child: Child,
+    port: u16,
+    log: PathBuf,
+}
 
 impl Drop for Node {
-    fn drop(&mut self) { self.child.kill().ok(); self.child.wait().ok(); }
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
 }
 
 impl Node {
-    fn log(&self) -> String { fs::read_to_string(&self.log).unwrap_or_default() }
-    fn stop(mut self) { self.child.kill().ok(); self.child.wait().ok(); }
+    fn log(&self) -> String {
+        fs::read_to_string(&self.log).unwrap_or_default()
+    }
+    fn stop(mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
 }
 
 fn free_port() -> u16 {
     for _ in 0..64 {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let p = l.local_addr().unwrap().port();
-        if p > 22000 { return p; }
+        if p > 22000 {
+            return p;
+        }
     }
     panic!("no free port above 22000");
 }
@@ -282,16 +322,24 @@ fn serve(dir: &Path) -> Node {
     let t0 = std::time::Instant::now();
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(100));
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() { return node; }
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return node;
+        }
     }
-    panic!("`oo node serve` never came up after {:?}: {}", t0.elapsed(), node.log());
+    panic!(
+        "`oo node serve` never came up after {:?}: {}",
+        t0.elapsed(),
+        node.log()
+    );
 }
 
 fn ask_raw(port: u16, payload: &str) -> String {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     s.write_all(payload.as_bytes()).unwrap();
-    if !payload.ends_with('\n') { s.write_all(b"\n").unwrap(); }
+    if !payload.ends_with('\n') {
+        s.write_all(b"\n").unwrap();
+    }
     s.flush().unwrap();
     s.shutdown(std::net::Shutdown::Write).ok();
     let mut buf = Vec::new();
@@ -329,8 +377,12 @@ fn service_caid(caid_dir: &Path, tag: &str) -> String {
 
 /// `%peers` entries as (ad_source, observed_host option).
 fn peer_entries(reply: &str) -> Vec<(String, Option<String>)> {
-    let Ok(j) = serde_json::from_str::<serde_json::Value>(reply.trim()) else { return vec![] };
-    let Some(arr) = j.get("%peers").and_then(|v| v.as_array()) else { return vec![] };
+    let Ok(j) = serde_json::from_str::<serde_json::Value>(reply.trim()) else {
+        return vec![];
+    };
+    let Some(arr) = j.get("%peers").and_then(|v| v.as_array()) else {
+        return vec![];
+    };
     arr.iter()
         .filter_map(|e| {
             let ad = e.get("%ad").and_then(|v| v.as_str())?.to_string();
@@ -346,12 +398,21 @@ fn peer_entries(reply: &str) -> Vec<(String, Option<String>)> {
 
 fn ad_node_id(ad: &str) -> String {
     let needle = "node_id: \"";
-    let i = ad.find(needle).unwrap_or_else(|| panic!("no node_id in {ad}"));
-    ad[i + needle.len()..].split('"').next().unwrap().to_string()
+    let i = ad
+        .find(needle)
+        .unwrap_or_else(|| panic!("no node_id in {ad}"));
+    ad[i + needle.len()..]
+        .split('"')
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 fn answer_ids(reply: &str) -> Vec<[u8; ID_BYTES]> {
-    peer_entries(reply).iter().map(|(a, _)| routing_id_of_caid(&ad_node_id(a))).collect()
+    peer_entries(reply)
+        .iter()
+        .map(|(a, _)| routing_id_of_caid(&ad_node_id(a)))
+        .collect()
 }
 
 /// The serving process's own account of what it wrote durably.
@@ -417,14 +478,21 @@ fn peers_writes(node: &Node, expect_lines: usize) -> (u64, u64, usize) {
     let mut compacted = 0u64;
     let mut compactions = 0usize;
     for line in log.lines() {
-        let Some(rest) = line.trim().split("OODP Peers: ").nth(1) else { continue };
+        let Some(rest) = line.trim().split("OODP Peers: ").nth(1) else {
+            continue;
+        };
         let n: u64 = rest
             .split_whitespace()
             .nth(1)
             .and_then(|t| t.parse().ok())
             .unwrap_or(0);
-        if rest.starts_with("append") { appended += n; }
-        if rest.starts_with("compact") { compacted += n; compactions += 1; }
+        if rest.starts_with("append") {
+            appended += n;
+        }
+        if rest.starts_with("compact") {
+            compacted += n;
+            compactions += 1;
+        }
     }
     (appended, compacted, compactions)
 }
@@ -455,12 +523,15 @@ fn advertise_n(node: &Node, caid_dir: &Path, n: usize, base_port: u16) -> Vec<Sy
     for i in 0..n {
         let p = mint_peer(&rng, base_port + i as u16);
         let reply = ask_raw(node.port, &p.advertise_request(caid_dir));
-        assert_eq!(status_of(&reply), "success", "advertise {i} was not accepted");
+        assert_eq!(
+            status_of(&reply),
+            "success",
+            "advertise {i} was not accepted"
+        );
         peers.push(p);
     }
     peers
 }
-
 
 /// Records as the loader sees them: file order, last-wins per `node_id`, then
 /// sorted by `received_at` then `node_id` — the order `peers::load` replays.
@@ -483,10 +554,18 @@ fn directory_replay_order(dir: &Path) -> Vec<(String, String)> {
     let text = fs::read_to_string(peers_path(dir)).expect("durable directory missing");
     let mut by_id: std::collections::HashMap<String, (i64, String)> = Default::default();
     for line in text.lines().skip(1) {
-        if line.trim().is_empty() { continue; }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-        let Some(nid) = v.get("node_id").and_then(|x| x.as_str()) else { continue };
-        let Some(pk) = v.get("public_key").and_then(|x| x.as_str()) else { continue };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(nid) = v.get("node_id").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let Some(pk) = v.get("public_key").and_then(|x| x.as_str()) else {
+            continue;
+        };
         let ra = v.get("received_at").and_then(|x| x.as_i64()).unwrap_or(0);
         by_id.insert(nid.to_string(), (ra, pk.to_string()));
     }
@@ -503,11 +582,17 @@ fn replay_surviving(self_id: &[u8; ID_BYTES], order: &[(String, String)]) -> Vec
     let mut buckets: Vec<Vec<[u8; ID_BYTES]>> = vec![Vec::new(); ID_BYTES * 8];
     let mut out = Vec::new();
     for (_nid, pk_hex) in order {
-        let Ok(pk) = hex::decode(pk_hex) else { continue };
+        let Ok(pk) = hex::decode(pk_hex) else {
+            continue;
+        };
         let rid = routing_id(&pk);
         let b = bucket_index(self_id, &rid);
-        if b >= ID_BYTES * 8 { continue; }
-        if buckets[b].len() >= 20 { continue; }
+        if b >= ID_BYTES * 8 {
+            continue;
+        }
+        if buckets[b].len() >= 20 {
+            continue;
+        }
         buckets[b].push(rid);
         out.push(rid);
     }
@@ -534,8 +619,15 @@ fn c0_a_node_that_learned_nothing_writes_nothing() {
 
     // alive and answering — otherwise "no file" means "no node"
     let reply = ask_raw(node.port, &find_node_request("x", &"a".repeat(40)));
-    assert_eq!(status_of(&reply), "success", "the node was not serving: {reply}");
-    assert!(answer_ids(&reply).is_empty(), "a fresh node named peers it never met");
+    assert_eq!(
+        status_of(&reply),
+        "success",
+        "the node was not serving: {reply}"
+    );
+    assert!(
+        answer_ids(&reply).is_empty(),
+        "a fresh node named peers it never met"
+    );
 
     assert!(
         !peers_path(&dir).exists(),
@@ -570,7 +662,10 @@ fn r1_restart_in_place_restores_the_directory() {
     );
     let known: std::collections::HashSet<_> = peers.iter().map(|p| p.id).collect();
     for id in &got {
-        assert!(known.contains(id), "the reloaded table named a peer nobody advertised");
+        assert!(
+            known.contains(id),
+            "the reloaded table named a peer nobody advertised"
+        );
     }
     assert_eq!(got.len(), 20.min(peers.len()), "reloaded answer was short");
 }
@@ -587,19 +682,34 @@ fn r2_the_file_appears_where_declared_and_nowhere_else() {
     // the write must have landed before the file is inspected
     peers_writes(&node, 5);
 
-    assert!(peers_path(&dir).exists(), "{} was never written", peers_path(&dir).display());
+    assert!(
+        peers_path(&dir).exists(),
+        "{} was never written",
+        peers_path(&dir).display()
+    );
 
     let allowed = [
-        "objects", "HEAD", "staged", "architects.json",
-        "pin_pending", "effect_pending", "abandoned", "format",
+        "objects",
+        "HEAD",
+        "staged",
+        "architects.json",
+        "pin_pending",
+        "effect_pending",
+        "abandoned",
+        "format",
         PEERS_DIR,
     ];
     let mut unexpected = Vec::new();
     for e in fs::read_dir(dir.join(".oo")).unwrap().flatten() {
         let n = e.file_name().to_string_lossy().to_string();
-        if !allowed.contains(&n.as_str()) { unexpected.push(n); }
+        if !allowed.contains(&n.as_str()) {
+            unexpected.push(n);
+        }
     }
-    assert!(unexpected.is_empty(), "undeclared durable state appeared: {unexpected:?}");
+    assert!(
+        unexpected.is_empty(),
+        "undeclared durable state appeared: {unexpected:?}"
+    );
 }
 
 /// R3 — a restart in place restores this node's own observations.
@@ -620,7 +730,11 @@ fn r3_restart_in_place_restores_the_observed_host() {
     assert_eq!(status_of(&ask_raw(node.port, &req)), "success");
 
     let before = peer_entries(&ask_raw(node.port, &discover_request("x", &svc)));
-    assert_eq!(before.len(), 1, "the advertised service was not discoverable before restart");
+    assert_eq!(
+        before.len(),
+        1,
+        "the advertised service was not discoverable before restart"
+    );
     assert_eq!(
         before[0].1.as_deref(),
         Some("127.0.0.1"),
@@ -636,7 +750,10 @@ fn r3_restart_in_place_restores_the_observed_host() {
         Some("127.0.0.1"),
         "the same node forgot its own observation across a restart"
     );
-    assert_eq!(after[0].0, before[0].0, "the verbatim %ad source was not preserved byte for byte");
+    assert_eq!(
+        after[0].0, before[0].0,
+        "the verbatim %ad source was not preserved byte for byte"
+    );
 }
 
 /// R4 — a copy inherits the signed half and not the observed half.
@@ -735,7 +852,9 @@ fn r5_the_rebuilt_index_matches_an_insertion_replay() {
     let node2 = serve(&dir);
     let self_id = {
         let out = oo(&dir, &["node", "id"]);
-        let caid = out.split_whitespace().find(|t| t.starts_with("hash:sha256:"))
+        let caid = out
+            .split_whitespace()
+            .find(|t| t.starts_with("hash:sha256:"))
             .unwrap_or_else(|| panic!("`oo node id` gave no CAID: {out}"));
         routing_id_of_caid(caid)
     };
@@ -784,12 +903,14 @@ fn r5_the_rebuilt_index_matches_an_insertion_replay() {
     diff.sort();
     // A peer kept by one rebuild and dropped by the other is at distance zero
     // from itself, so it heads one answer and is absent from the other.
-    let target = *diff.first().unwrap_or_else(|| panic!(
-        "the right rebuild and a wrong-self-id rebuild kept exactly the same \
+    let target = *diff.first().unwrap_or_else(|| {
+        panic!(
+            "the right rebuild and a wrong-self-id rebuild kept exactly the same \
          peers, so no target can separate them — {} records, {} survivors",
-        order.len(),
-        surviving.len()
-    ));
+            order.len(),
+            surviving.len()
+        )
+    });
 
     let mut expect: Vec<[u8; ID_BYTES]> = surviving.clone();
     expect.sort_by_key(|id| xor(id, &target));
@@ -809,7 +930,8 @@ fn r5_the_rebuilt_index_matches_an_insertion_replay() {
     got.sort_by_key(|id| xor(id, &target));
 
     assert_eq!(
-        got, expect,
+        got,
+        expect,
         "after a reload `closest(target, k)` was not the closest 20 of the \
          records that survive an insertion replay. self={} — a table rebuilt \
          with the wrong self id renumbers every bucket and drops a different \
@@ -868,11 +990,17 @@ fn r7_a_superseded_record_is_replaced_after_reload() {
     let old_svc = service_caid(&caid_dir, "r7-old");
     let new_svc = service_caid(&caid_dir, "r7-new");
     assert_eq!(
-        status_of(&ask_raw(node.port, &p.advertise_request_with(&caid_dir, &[&old_svc], t0))),
+        status_of(&ask_raw(
+            node.port,
+            &p.advertise_request_with(&caid_dir, &[&old_svc], t0)
+        )),
         "success"
     );
     assert_eq!(
-        status_of(&ask_raw(node.port, &p.advertise_request_with(&caid_dir, &[&new_svc], t0 + 1))),
+        status_of(&ask_raw(
+            node.port,
+            &p.advertise_request_with(&caid_dir, &[&new_svc], t0 + 1)
+        )),
         "success"
     );
     peers_writes(&node, 2);
@@ -881,7 +1009,10 @@ fn r7_a_superseded_record_is_replaced_after_reload() {
     let node2 = serve(&dir);
     let old = peer_entries(&ask_raw(node2.port, &discover_request("x", &old_svc)));
     let new = peer_entries(&ask_raw(node2.port, &discover_request("x", &new_svc)));
-    assert!(old.is_empty(), "the superseded advertisement came back after a reload");
+    assert!(
+        old.is_empty(),
+        "the superseded advertisement came back after a reload"
+    );
     assert_eq!(new.len(), 1, "the newer advertisement did not survive");
 }
 
@@ -924,7 +1055,10 @@ fn r8_compaction_triggers_and_shrinks_the_file() {
     // not `#discover` — MAX_DISCOVER_PEERS is 8, so asking discover for ten
     // records asserted something the protocol forbids. The delivery reported
     // that rather than trimming the assertion to fit.
-    let ids = answer_ids(&ask_raw(node2.port, &find_node_request("x", &"0".repeat(40))));
+    let ids = answer_ids(&ask_raw(
+        node2.port,
+        &find_node_request("x", &"0".repeat(40)),
+    ));
     assert_eq!(
         ids.len(),
         10,
@@ -953,7 +1087,11 @@ fn r9_one_damaged_line_does_not_cost_the_directory() {
     let path = peers_path(&dir);
     let text = fs::read_to_string(&path).expect("the durable directory was never written");
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    assert!(lines.len() >= 6, "expected a line per record, got {}", lines.len());
+    assert!(
+        lines.len() >= 6,
+        "expected a line per record, got {}",
+        lines.len()
+    );
     let victim = lines.len() / 2;
     lines[victim] = "{ this is not a record".to_string();
     fs::write(&path, lines.join("\n") + "\n").unwrap();
@@ -966,10 +1104,14 @@ fn r9_one_damaged_line_does_not_cost_the_directory() {
         "one damaged line emptied the whole directory: {reply}"
     );
 
-    let (loaded, skipped) = loaded_report(&node2)
-        .expect("the node did not report what it loaded — a silent skip is how \
-                 a directory quietly becomes empty");
-    assert_eq!(skipped, 1, "the node loaded {loaded} and admitted to skipping {skipped}");
+    let (loaded, skipped) = loaded_report(&node2).expect(
+        "the node did not report what it loaded — a silent skip is how \
+                 a directory quietly becomes empty",
+    );
+    assert_eq!(
+        skipped, 1,
+        "the node loaded {loaded} and admitted to skipping {skipped}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1003,7 +1145,10 @@ fn p1_unsigned_adverts_never_reach_the_directory() {
     assert_ne!(status, "success", "a tampered signature was accepted");
 
     let entries = peer_entries(&ask_raw(node.port, &discover_request("x", &svc)));
-    assert!(entries.is_empty(), "a rejected advertisement reached the directory");
+    assert!(
+        entries.is_empty(),
+        "a rejected advertisement reached the directory"
+    );
     assert!(
         !peers_path(&dir).exists(),
         "a rejected advertisement was written durably"
@@ -1056,7 +1201,11 @@ fn p3_advertising_writes_no_objects() {
 fn p4_fetch_is_untouched() {
     let dir = fresh_dir("p4");
     init(&dir);
-    write(&dir, "i.n", "id: ~%Discovery./identify_and_store { p4: 1 }\n");
+    write(
+        &dir,
+        "i.n",
+        "id: ~%Discovery./identify_and_store { p4: 1 }\n",
+    );
     let caid = first_string(&oo(&dir, &["run", "i.n", "--observe", "id"]));
     let node = serve(&dir);
     for from in ["", "hash:sha256:v1:whoever", "not-a-caid"] {
@@ -1083,7 +1232,10 @@ fn p5_find_node_answers_are_unchanged_within_one_process() {
     expect.sort_by_key(|id| xor(id, &target));
     expect.truncate(20);
 
-    let mut got = answer_ids(&ask_raw(node.port, &find_node_request("x", &hex::encode(target))));
+    let mut got = answer_ids(&ask_raw(
+        node.port,
+        &find_node_request("x", &hex::encode(target)),
+    ));
     got.sort_by_key(|id| xor(id, &target));
     assert_eq!(got, expect, "a live node's `closest(target, k)` moved");
 }
@@ -1099,15 +1251,28 @@ fn p6_an_unknown_entry_under_oo_is_tolerated() {
     let dir = fresh_dir("p6");
     init(&dir);
     fs::create_dir_all(dir.join(".oo").join("something-from-the-future")).unwrap();
-    fs::write(dir.join(".oo").join("a-file-from-the-future"), b"\x00\x01not utf8").unwrap();
+    fs::write(
+        dir.join(".oo").join("a-file-from-the-future"),
+        b"\x00\x01not utf8",
+    )
+    .unwrap();
 
     write(&dir, "u.n", "x: { n: 2 }\n");
     let out = oo(&dir, &["evolve", "u.n"]);
-    assert!(!out.contains("Error"), "an unknown `.oo/` entry broke evolve: {out}");
+    assert!(
+        !out.contains("Error"),
+        "an unknown `.oo/` entry broke evolve: {out}"
+    );
     let c = oo(&dir, &["commit", "-m", "m"]);
-    assert!(c.contains("hash:sha256:"), "an unknown `.oo/` entry broke commit: {c}");
+    assert!(
+        c.contains("hash:sha256:"),
+        "an unknown `.oo/` entry broke commit: {c}"
+    );
     let l = oo(&dir, &["log"]);
-    assert!(l.contains("commit "), "an unknown `.oo/` entry broke log: {l}");
+    assert!(
+        l.contains("commit "),
+        "an unknown `.oo/` entry broke log: {l}"
+    );
 }
 
 /// P7 — the store format marker is an invariant of this arc, not a target.
@@ -1132,7 +1297,6 @@ fn p7_the_store_format_marker_is_not_bumped() {
          v0.2.53 refuse a store it can open, and a verdict must be true"
     );
 }
-
 
 /// P8 — a stored record is served only if its signature still verifies.
 ///
@@ -1176,7 +1340,9 @@ fn p8_a_tampered_stored_signature_is_not_served() {
     let text = fs::read_to_string(&path).unwrap();
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let needle = "signature: \\\"";
-    let i = lines[1].find(needle).expect("no signature in the stored record");
+    let i = lines[1]
+        .find(needle)
+        .expect("no signature in the stored record");
     let at = i + needle.len();
     lines[1].replace_range(at..at + 16, &"0".repeat(16));
     fs::write(&path, lines.join("\n") + "\n").unwrap();
@@ -1193,8 +1359,15 @@ fn p8_a_tampered_stored_signature_is_not_served() {
 
     let mut saw = false;
     for _ in 0..60 {
-        if node2.log().contains("unverifiable") { saw = true; break; }
+        if node2.log().contains("unverifiable") {
+            saw = true;
+            break;
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(saw, "the node dropped a record and did not say so: {}", node2.log());
+    assert!(
+        saw,
+        "the node dropped a record and did not say so: {}",
+        node2.log()
+    );
 }

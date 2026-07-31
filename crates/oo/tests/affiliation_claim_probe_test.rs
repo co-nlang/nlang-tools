@@ -95,6 +95,7 @@
 // ones. So the field names, the domain string and the signed payload below
 // are normative, and the probe asserts them literally.
 
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -102,7 +103,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::fs;
 
 use nlang_interpreter::value::Identity;
 use ring::signature::{self as rsig, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
@@ -189,7 +189,10 @@ fn peers_file(dir: &Path) -> PathBuf {
 }
 
 fn now_secs() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 fn first_string(out: &str) -> String {
@@ -224,7 +227,11 @@ fn object_count(dir: &Path) -> usize {
         if let Ok(rd) = fs::read_dir(p) {
             for e in rd.flatten() {
                 let path = e.path();
-                if path.is_dir() { walk(&path, n); } else { *n += 1; }
+                if path.is_dir() {
+                    walk(&path, n);
+                } else {
+                    *n += 1;
+                }
             }
         }
     }
@@ -237,16 +244,32 @@ fn free_port() -> u16 {
     for _ in 0..64 {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let p = l.local_addr().unwrap().port();
-        if p > 23000 { return p; }
+        if p > 23000 {
+            return p;
+        }
     }
     panic!("no free port above 23000");
 }
 
-struct Node { child: Child, port: u16, log: PathBuf }
-impl Drop for Node { fn drop(&mut self) { self.child.kill().ok(); self.child.wait().ok(); } }
+struct Node {
+    child: Child,
+    port: u16,
+    log: PathBuf,
+}
+impl Drop for Node {
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
+}
 impl Node {
-    fn log(&self) -> String { fs::read_to_string(&self.log).unwrap_or_default() }
-    fn stop(mut self) { self.child.kill().ok(); self.child.wait().ok(); }
+    fn log(&self) -> String {
+        fs::read_to_string(&self.log).unwrap_or_default()
+    }
+    fn stop(mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
 }
 
 fn serve(dir: &Path) -> Node {
@@ -262,7 +285,9 @@ fn serve(dir: &Path) -> Node {
     let node = Node { child, port, log };
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(100));
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() { return node; }
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return node;
+        }
     }
     panic!("`oo node serve` never came up: {}", node.log());
 }
@@ -271,7 +296,9 @@ fn ask_raw(port: u16, payload: &str) -> String {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     s.write_all(payload.as_bytes()).unwrap();
-    if !payload.ends_with('\n') { s.write_all(b"\n").unwrap(); }
+    if !payload.ends_with('\n') {
+        s.write_all(b"\n").unwrap();
+    }
     s.flush().unwrap();
     s.shutdown(std::net::Shutdown::Write).ok();
     let mut buf = Vec::new();
@@ -285,7 +312,11 @@ fn json_of(reply: &str) -> Option<serde_json::Value> {
 
 fn status_of(reply: &str) -> String {
     json_of(reply)
-        .and_then(|j| j.get("%status").and_then(|v| v.as_str()).map(str::to_string))
+        .and_then(|j| {
+            j.get("%status")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
         .map(|s| s.trim().trim_start_matches('#').to_string())
         .unwrap_or_else(|| format!("<no %status in {}>", reply.trim()))
 }
@@ -302,7 +333,9 @@ fn stub_peer() -> (u16, mpsc::Receiver<String>) {
             let Ok(mut s) = stream else { continue };
             let mut line = String::new();
             let mut r = BufReader::new(s.try_clone().unwrap());
-            if r.read_line(&mut line).is_err() { continue; }
+            if r.read_line(&mut line).is_err() {
+                continue;
+            }
             let _ = s.write_all(b"{\"%status\": \"#success\", \"%hops\": 0}\n");
             let _ = s.flush();
             let _ = tx.send(line);
@@ -313,16 +346,27 @@ fn stub_peer() -> (u16, mpsc::Receiver<String>) {
 
 // ── keys ────────────────────────────────────────────────────────────────
 
-struct Key { kp: Ed25519KeyPair, pk_hex: String, node_id: String }
+struct Key {
+    kp: Ed25519KeyPair,
+    pk_hex: String,
+    node_id: String,
+}
 
 fn mint_key(rng: &ring::rand::SystemRandom) -> Key {
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(rng).unwrap();
     let kp = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
     let pk = kp.public_key().as_ref().to_vec();
-    let node_id = Identity { public_key: pk.clone(), private_key: Vec::new() }
-        .node_id_caid()
-        .to_string();
-    Key { pk_hex: hex::encode(&pk), node_id, kp }
+    let node_id = Identity {
+        public_key: pk.clone(),
+        private_key: Vec::new(),
+    }
+    .node_id_caid()
+    .to_string();
+    Key {
+        pk_hex: hex::encode(&pk),
+        node_id,
+        kp,
+    }
 }
 
 fn verify_ed25519(pk_hex: &str, payload: &str, sig_hex: &str) -> bool {
@@ -339,7 +383,10 @@ fn verify_ed25519(pk_hex: &str, payload: &str, sig_hex: &str) -> bool {
 /// The normative claim shape. `expires` is seconds since the epoch.
 fn claim_block(operator: &Key, node_id: &str, expires: i64) -> String {
     let sig = hex::encode(
-        operator.kp.sign(affiliation_payload(node_id, expires).as_bytes()).as_ref(),
+        operator
+            .kp
+            .sign(affiliation_payload(node_id, expires).as_bytes())
+            .as_ref(),
     );
     format!(
         ", affiliation: {{{{ operator_key: \"{}\", signature: \"{}\", expires: {} }}}}",
@@ -347,13 +394,22 @@ fn claim_block(operator: &Key, node_id: &str, expires: i64) -> String {
     )
 }
 
-struct Advert { node: Key, port: u16 }
+struct Advert {
+    node: Key,
+    port: u16,
+}
 
 impl Advert {
-    fn new(node: Key, port: u16) -> Self { Advert { node, port } }
+    fn new(node: Key, port: u16) -> Self {
+        Advert { node, port }
+    }
 
     fn body(&self, svc: &[&str], ts: i64, extra: &str) -> String {
-        let s = svc.iter().map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", ");
+        let s = svc
+            .iter()
+            .map(|x| format!("\"{x}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "{{{{ node_id: \"{}\", public_key: \"{}\", services: [{s}], \
              listen_port: {}, capacity: 10, ts: {ts}, ttl: 15{extra} }}}}",
@@ -368,7 +424,10 @@ impl Advert {
         let body = self.body(svc, now_secs(), extra);
         let caid = caid_of(caid_dir, &body);
         let sig = hex::encode(
-            self.node.kp.sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes()).as_ref(),
+            self.node
+                .kp
+                .sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes())
+                .as_ref(),
         );
         let inner = body.trim_start_matches("{{").trim_end_matches("}}").trim();
         format!("{{{{ {inner}, signature: \"{sig}\" }}}}")
@@ -435,12 +494,20 @@ fn c1_the_claim_fixture_actually_signs_and_verifies() {
     // otherwise R6 would pass for free.
     let other = mint_key(&rng);
     assert!(
-        !verify_ed25519(&op.pk_hex, &affiliation_payload(&other.node_id, expires), &sig),
+        !verify_ed25519(
+            &op.pk_hex,
+            &affiliation_payload(&other.node_id, expires),
+            &sig
+        ),
         "a claim for one node verified for another — R6 would be vacuous"
     );
     // Counter-case: same node, different expiry, otherwise R5 would be vacuous.
     assert!(
-        !verify_ed25519(&op.pk_hex, &affiliation_payload(&node.node_id, expires + 1), &sig),
+        !verify_ed25519(
+            &op.pk_hex,
+            &affiliation_payload(&node.node_id, expires + 1),
+            &sig
+        ),
         "a claim verified under a different expiry — R5 would be vacuous"
     );
 }
@@ -488,7 +555,11 @@ fn r1_minting_signs_with_the_key_that_oo_identity_reports() {
         .to_string();
     let expires: i64 = out
         .split_whitespace()
-        .filter_map(|t| t.trim_matches(|c: char| !c.is_ascii_digit()).parse::<i64>().ok())
+        .filter_map(|t| {
+            t.trim_matches(|c: char| !c.is_ascii_digit())
+                .parse::<i64>()
+                .ok()
+        })
         .find(|n| *n > now_secs() && *n <= now_secs() + MAX_AFFILIATION_LIFETIME_SECS)
         .unwrap_or_else(|| panic!("`oo node affiliate` printed no plausible expiry: {out}"));
 
@@ -508,7 +579,10 @@ fn r2_the_claim_rides_the_advert() {
     oo(&dir, &["node", "affiliate"]);
 
     let (port, rx) = stub_peer();
-    let out = oo(&dir, &["node", "advertise", "--to", &format!("127.0.0.1:{port}")]);
+    let out = oo(
+        &dir,
+        &["node", "advertise", "--to", &format!("127.0.0.1:{port}")],
+    );
     let seen = rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or_else(|e| panic!("stub peer saw no request ({e:?}); cli said: {out}"));
@@ -534,10 +608,16 @@ fn r3_a_verified_claim_is_reported_and_an_absent_one_is_not() {
 
     let with = Advert::new(mint_key(&rng), 24101);
     let claim = claim_block(&op, &with.node.node_id, now_secs() + 3600);
-    assert_eq!(status_of(&ask_raw(node.port, &with.request(&dir, &[], &claim))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &with.request(&dir, &[], &claim))),
+        "success"
+    );
 
     let without = Advert::new(mint_key(&rng), 24102);
-    assert_eq!(status_of(&ask_raw(node.port, &without.request(&dir, &[], ""))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &without.request(&dir, &[], ""))),
+        "success"
+    );
 
     let out = peers_output(&dir);
     assert!(
@@ -578,10 +658,17 @@ fn r4_a_claim_that_does_not_compute_is_dropped_but_the_advert_stands() {
     assert_ne!(good, bad, "harness failed to corrupt the signature");
 
     let r = ask_raw(node.port, &ad.request(&dir, &[], &bad));
-    assert_eq!(status_of(&r), "success", "a broken claim must not reject the advert: {r}");
+    assert_eq!(
+        status_of(&r),
+        "success",
+        "a broken claim must not reject the advert: {r}"
+    );
 
     let out = peers_output(&dir);
-    assert!(peers_lists_node(&out, &ad.node.node_id), "peer vanished:\n{out}");
+    assert!(
+        peers_lists_node(&out, &ad.node.node_id),
+        "peer vanished:\n{out}"
+    );
     assert!(
         !peers_shows_operator(&out, &op.pk_hex),
         "an unverifiable claim was reported as an affiliation:\n{out}"
@@ -612,7 +699,10 @@ fn r5_a_claim_cannot_be_extended_by_its_holder() {
     let ctl_op = mint_key(&rng);
     let ctl = Advert::new(mint_key(&rng), 24302);
     let ctl_claim = claim_block(&ctl_op, &ctl.node.node_id, now_secs() + 600);
-    assert_eq!(status_of(&ask_raw(node.port, &ctl.request(&dir, &[], &ctl_claim))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &ctl.request(&dir, &[], &ctl_claim))),
+        "success"
+    );
 
     let op = mint_key(&rng);
     let ad = Advert::new(mint_key(&rng), 24301);
@@ -625,7 +715,11 @@ fn r5_a_claim_cannot_be_extended_by_its_holder() {
     assert_ne!(block, stretched, "harness failed to move the expiry");
 
     let r = ask_raw(node.port, &ad.request(&dir, &[], &stretched));
-    assert_eq!(status_of(&r), "success", "ruling 3: the advert still stands: {r}");
+    assert_eq!(
+        status_of(&r),
+        "success",
+        "ruling 3: the advert still stands: {r}"
+    );
 
     let out = peers_output(&dir);
     assert!(
@@ -657,7 +751,10 @@ fn r6_another_nodes_claim_does_not_transfer() {
     let a_claim = claim_block(&op, &a.node.node_id, now_secs() + 3600);
 
     // A's claim really is good — establish that first, or R6 proves nothing.
-    assert_eq!(status_of(&ask_raw(node.port, &a.request(&dir, &[], &a_claim))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &a.request(&dir, &[], &a_claim))),
+        "success"
+    );
     let out = peers_output(&dir);
     assert!(
         peers_shows_operator(&out, &op.pk_hex),
@@ -666,7 +763,11 @@ fn r6_another_nodes_claim_does_not_transfer() {
 
     // Now B wears it.
     let r = ask_raw(node.port, &b.request(&dir, &[], &a_claim));
-    assert_eq!(status_of(&r), "success", "ruling 3: the advert still stands: {r}");
+    assert_eq!(
+        status_of(&r),
+        "success",
+        "ruling 3: the advert still stands: {r}"
+    );
 
     let out = peers_output(&dir);
     assert_eq!(
@@ -689,7 +790,10 @@ fn r7_expiry_is_enforced_at_both_ends() {
     let past_op = mint_key(&rng);
     let past = Advert::new(mint_key(&rng), 24501);
     let expired = claim_block(&past_op, &past.node.node_id, now_secs() - 60);
-    assert_eq!(status_of(&ask_raw(node.port, &past.request(&dir, &[], &expired))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &past.request(&dir, &[], &expired))),
+        "success"
+    );
 
     let far_op = mint_key(&rng);
     let far = Advert::new(mint_key(&rng), 24502);
@@ -698,13 +802,19 @@ fn r7_expiry_is_enforced_at_both_ends() {
         &far.node.node_id,
         now_secs() + MAX_AFFILIATION_LIFETIME_SECS + 86_400,
     );
-    assert_eq!(status_of(&ask_raw(node.port, &far.request(&dir, &[], &too_long))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &far.request(&dir, &[], &too_long))),
+        "success"
+    );
 
     // A control claim inside the window, so "reports nothing ever" cannot pass.
     let ok_op = mint_key(&rng);
     let ok = Advert::new(mint_key(&rng), 24503);
     let good = claim_block(&ok_op, &ok.node.node_id, now_secs() + 3600);
-    assert_eq!(status_of(&ask_raw(node.port, &ok.request(&dir, &[], &good))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &ok.request(&dir, &[], &good))),
+        "success"
+    );
 
     let out = peers_output(&dir);
     assert!(
@@ -712,7 +822,10 @@ fn r7_expiry_is_enforced_at_both_ends() {
         "the in-window control claim was not reported, so the two refusals below \
          prove only that nothing is ever reported:\n{out}"
     );
-    assert!(!peers_shows_operator(&out, &past_op.pk_hex), "an expired claim was reported:\n{out}");
+    assert!(
+        !peers_shows_operator(&out, &past_op.pk_hex),
+        "an expired claim was reported:\n{out}"
+    );
     assert!(
         !peers_shows_operator(&out, &far_op.pk_hex),
         "a claim beyond MAX_AFFILIATION_LIFETIME_SECS was reported:\n{out}"
@@ -735,14 +848,24 @@ fn r8_the_relayed_path_verifies_the_claim() {
     let ad = Advert::new(mint_key(&rng), 24601);
     let claim = claim_block(&op, &ad.node.node_id, now_secs() + 3600);
     assert_eq!(
-        status_of(&ask_raw(a.port, &ad.request(&a_dir, &[svc.as_str()], &claim))),
+        status_of(&ask_raw(
+            a.port,
+            &ad.request(&a_dir, &[svc.as_str()], &claim)
+        )),
         "success"
     );
 
     // B asks A. The answer carries `%ad` verbatim, claim included (measured).
     let out = oo(
         &b_dir,
-        &["node", "discover", "--to", &format!("127.0.0.1:{}", a.port), "--target", &svc],
+        &[
+            "node",
+            "discover",
+            "--to",
+            &format!("127.0.0.1:{}", a.port),
+            "--target",
+            &svc,
+        ],
     );
     // A CLI error is also non-empty. Assert the query actually ran, or B's
     // empty directory below would be explained by the query never happening.
@@ -805,12 +928,21 @@ fn r9_an_affiliation_valid_at_receipt_expires_by_load() {
     let short_claim = claim_block(&short_op, &short.node.node_id, deadline);
 
     let node = serve(&dir);
-    assert_eq!(status_of(&ask_raw(node.port, &long.request(&dir, &[], &long_claim))), "success");
-    assert_eq!(status_of(&ask_raw(node.port, &short.request(&dir, &[], &short_claim))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &long.request(&dir, &[], &long_claim))),
+        "success"
+    );
+    assert_eq!(
+        status_of(&ask_raw(node.port, &short.request(&dir, &[], &short_claim))),
+        "success"
+    );
 
     // Both are live right now — assert it before the clock moves, so a slow
     // machine fails loudly here instead of passing vacuously later.
-    assert!(now_secs() < deadline, "the harness took longer than the claim lived");
+    assert!(
+        now_secs() < deadline,
+        "the harness took longer than the claim lived"
+    );
     let live = peers_output(&dir);
     assert!(
         peers_shows_operator(&live, &short_op.pk_hex),
@@ -822,7 +954,10 @@ fn r9_an_affiliation_valid_at_receipt_expires_by_load() {
     while now_secs() <= deadline {
         std::thread::sleep(Duration::from_millis(200));
     }
-    assert!(now_secs() > deadline, "harness: the deadline has not passed");
+    assert!(
+        now_secs() > deadline,
+        "harness: the deadline has not passed"
+    );
 
     // Fresh process, same bytes on disk, later clock.
     let out = peers_output(&dir);
@@ -854,11 +989,17 @@ fn r10_serving_an_affiliation_never_needs_the_operator_key() {
     oo(&dir, &["node", "affiliate"]);
 
     let ident = identity_path(&dir);
-    assert!(ident.exists(), "minting did not create an operator key, so removing it proves nothing");
+    assert!(
+        ident.exists(),
+        "minting did not create an operator key, so removing it proves nothing"
+    );
     fs::remove_file(&ident).unwrap();
 
     let (port, rx) = stub_peer();
-    let out = oo(&dir, &["node", "advertise", "--to", &format!("127.0.0.1:{port}")]);
+    let out = oo(
+        &dir,
+        &["node", "advertise", "--to", &format!("127.0.0.1:{port}")],
+    );
     let seen = rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or_else(|e| panic!("stub peer saw no request ({e:?}); cli said: {out}"));
@@ -887,7 +1028,10 @@ fn p1_an_advert_without_a_claim_is_still_ordinary() {
     init(&dir);
     let node = serve(&dir);
     let ad = Advert::new(mint_key(&rng), 24801);
-    assert_eq!(status_of(&ask_raw(node.port, &ad.request(&dir, &[], ""))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &ad.request(&dir, &[], ""))),
+        "success"
+    );
     assert!(
         fs::read_to_string(peers_file(&dir))
             .unwrap_or_default()
@@ -912,7 +1056,11 @@ fn p2_a_broken_claim_does_not_reject_the_advert() {
     let ad = Advert::new(mint_key(&rng), 24901);
     let junk = ", affiliation: {{ operator_key: \"00\", signature: \"00\", expires: 1 }}";
     let r = ask_raw(node.port, &ad.request(&dir, &[], junk));
-    assert_eq!(status_of(&r), "success", "a broken claim rejected the advert: {r}");
+    assert_eq!(
+        status_of(&r),
+        "success",
+        "a broken claim rejected the advert: {r}"
+    );
 }
 
 /// P3 — the node signature still governs. A body mutated after signing is
@@ -935,7 +1083,11 @@ fn p3_the_node_signature_still_governs() {
             ad.node.node_id, mutated
         ),
     );
-    assert_eq!(status_of(&r), "rejected", "a mutated body was accepted: {r}");
+    assert_eq!(
+        status_of(&r),
+        "rejected",
+        "a mutated body was accepted: {r}"
+    );
 }
 
 /// P4 — advertising still writes no objects. SPEC_13 §4.1.2 obligation #3:
@@ -956,9 +1108,16 @@ fn p4_advertising_writes_no_objects() {
     let op = mint_key(&rng);
     let ad = Advert::new(mint_key(&rng), 25101);
     let claim = claim_block(&op, &ad.node.node_id, now_secs() + 3600);
-    assert_eq!(status_of(&ask_raw(node.port, &ad.request(&dir, &[], &claim))), "success");
+    assert_eq!(
+        status_of(&ask_raw(node.port, &ad.request(&dir, &[], &claim))),
+        "success"
+    );
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(object_count(&dir), before, "receiving a claim minted objects");
+    assert_eq!(
+        object_count(&dir),
+        before,
+        "receiving a claim minted objects"
+    );
 }
 
 /// P5 — the universe root does not move when a claim is received.
@@ -981,7 +1140,11 @@ fn p5_the_universe_root_is_unmoved_by_a_claim() {
     let claim = claim_block(&op, &ad.node.node_id, now_secs() + 3600);
     ask_raw(node.port, &ad.request(&dir, &[], &claim));
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(oo(&dir, &["status"]), before, "a received claim moved the universe root");
+    assert_eq!(
+        oo(&dir, &["status"]),
+        before,
+        "a received claim moved the universe root"
+    );
 }
 
 /// P6 — the store format marker is not bumped. Measured at reconnaissance:
@@ -996,7 +1159,10 @@ fn p6_the_store_format_marker_is_not_bumped() {
     init(&dir);
     let fmt = dir.join(".oo").join("format");
     let before = fs::read_to_string(&fmt).unwrap_or_default();
-    assert!(!before.trim().is_empty(), "harness: `.oo/format` is empty or absent");
+    assert!(
+        !before.trim().is_empty(),
+        "harness: `.oo/format` is empty or absent"
+    );
 
     let node = serve(&dir);
     let op = mint_key(&rng);
@@ -1004,7 +1170,11 @@ fn p6_the_store_format_marker_is_not_bumped() {
     let claim = claim_block(&op, &ad.node.node_id, now_secs() + 3600);
     ask_raw(node.port, &ad.request(&dir, &[], &claim));
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(fs::read_to_string(&fmt).unwrap_or_default(), before, "`.oo/format` was bumped");
+    assert_eq!(
+        fs::read_to_string(&fmt).unwrap_or_default(),
+        before,
+        "`.oo/format` was bumped"
+    );
 }
 
 /// P7 — the operator private key never enters the workspace store. REAL_01
@@ -1045,7 +1215,10 @@ fn p7_the_operator_private_key_never_enters_the_store() {
         }
     }
     walk(&dir.join(".oo"), &secret, &mut checked);
-    assert!(checked > 0, "the scan visited no files — a silent walker passes everything");
+    assert!(
+        checked > 0,
+        "the scan visited no files — a silent walker passes everything"
+    );
 }
 
 /// P8 — ordinary work still does not mint a node key. REAL_01 §7.5.4: reading
@@ -1061,7 +1234,11 @@ fn p8_ordinary_work_does_not_mint_a_node_key() {
             if let Ok(rd) = fs::read_dir(p) {
                 for e in rd.flatten() {
                     let path = e.path();
-                    if path.is_dir() { walk(&path, n); } else { *n += 1; }
+                    if path.is_dir() {
+                        walk(&path, n);
+                    } else {
+                        *n += 1;
+                    }
                 }
             }
         }
@@ -1074,5 +1251,9 @@ fn p8_ordinary_work_does_not_mint_a_node_key() {
     oo(&dir, &["log"]);
     fs::write(dir.join("w.n"), "w: { x: 2 }\n").unwrap();
     oo(&dir, &["run", "w.n"]);
-    assert_eq!(count(&home), before, "ordinary work minted something in the node key home");
+    assert_eq!(
+        count(&home),
+        before,
+        "ordinary work minted something in the node key home"
+    );
 }

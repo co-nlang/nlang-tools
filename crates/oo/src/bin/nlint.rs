@@ -3,7 +3,11 @@ use clap::Parser as ClapParser;
 use std::path::PathBuf;
 
 #[derive(ClapParser)]
-#[command(author, version, about = "Tier 1 linter (pure syntax / pure graph theory) — no obstruction claims")]
+#[command(
+    author,
+    version,
+    about = "Tier 1 linter (pure syntax / pure graph theory) — no obstruction claims"
+)]
 struct Cli {
     /// .n file or directory (recursive)
     path: PathBuf,

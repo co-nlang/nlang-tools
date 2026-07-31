@@ -40,7 +40,10 @@ fn lint_src(src: &str) -> Vec<nlint::Diagnostic> {
 }
 
 fn r4s(src: &str) -> Vec<nlint::Diagnostic> {
-    lint_src(src).into_iter().filter(|d| d.rule == "R4").collect()
+    lint_src(src)
+        .into_iter()
+        .filter(|d| d.rule == "R4")
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -57,7 +60,7 @@ fn r4_undefined_bare_name_flagged() {
 }
 
 #[test]
-          // (silent pass-through = enforcement the user believes in)
+// (silent pass-through = enforcement the user believes in)
 fn r4_undefined_type_marker_flagged() {
     let ds = r4s("x: { age: 20 } & @Never\nout: x");
     let hit = ds

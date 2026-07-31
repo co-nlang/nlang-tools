@@ -45,10 +45,10 @@
 // at least as consequential as making them unreachable.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::fs;
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
@@ -101,7 +101,9 @@ fn objects_dir(dir: &Path) -> PathBuf {
 fn store_map(dir: &Path) -> BTreeMap<String, u64> {
     let mut out = BTreeMap::new();
     let root = objects_dir(dir);
-    let Ok(top) = fs::read_dir(&root) else { return out };
+    let Ok(top) = fs::read_dir(&root) else {
+        return out;
+    };
     for a in top.flatten() {
         if !a.path().is_dir() {
             continue;
@@ -185,8 +187,12 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
             continue;
         }
         seen.insert(d.clone());
-        let Ok(bytes) = fs::read(object_path(dir, &d)) else { continue };
-        let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else { continue };
+        let Ok(bytes) = fs::read(object_path(dir, &d)) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
         let mut r = Vec::new();
         refs_of(&json, follow_abandoned, &mut r);
         stack.extend(r);
@@ -240,7 +246,9 @@ fn root_digest(dir: &Path) -> String {
     let hex = if let Some(s) = dg.as_str() {
         s.to_string()
     } else if let Some(a) = dg.as_array() {
-        a.iter().map(|b| format!("{:02x}", b.as_u64().unwrap())).collect()
+        a.iter()
+            .map(|b| format!("{:02x}", b.as_u64().unwrap()))
+            .collect()
     } else {
         panic!("commit root has no usable digest: {}", commit["root"]);
     };
@@ -263,7 +271,11 @@ fn reachable_before_any_squash_is_everything() {
     let d = repo_with_history("control", 4);
     let all = store_map(&d);
     let live = reachable(&d, false);
-    assert!(all.len() >= 4, "HARNESS: store too small to mean anything: {}", all.len());
+    assert!(
+        all.len() >= 4,
+        "HARNESS: store too small to mean anything: {}",
+        all.len()
+    );
     assert_eq!(
         live.len(),
         all.len(),
@@ -290,7 +302,11 @@ fn r1_gc_removes_exactly_the_unreachable_set() {
 
     let before = store_map(&d);
     let live = reachable(&d, false);
-    let dead: BTreeSet<String> = before.keys().filter(|k| !live.contains(*k)).cloned().collect();
+    let dead: BTreeSet<String> = before
+        .keys()
+        .filter(|k| !live.contains(*k))
+        .cloned()
+        .collect();
     assert!(
         !dead.is_empty(),
         "HARNESS: the squash orphaned nothing, so there is nothing to collect"
@@ -298,8 +314,11 @@ fn r1_gc_removes_exactly_the_unreachable_set() {
 
     let out = oo(&d, &["gc", "--grant", "gc"]);
     let after = store_map(&d);
-    let removed: BTreeSet<String> =
-        before.keys().filter(|k| !after.contains_key(*k)).cloned().collect();
+    let removed: BTreeSet<String> = before
+        .keys()
+        .filter(|k| !after.contains_key(*k))
+        .cloned()
+        .collect();
 
     assert_eq!(
         removed, dead,
@@ -359,7 +378,10 @@ fn p5_nothing_reachable_is_ever_removed() {
     write(&d, "u.n", "after_gc: { n: 7 }\n");
     oo(&d, &["evolve", "u.n"]);
     let out = oo(&d, &["commit", "-m", "after gc"]);
-    assert!(out.contains("hash:"), "the universe stopped committing after GC: {out}");
+    assert!(
+        out.contains("hash:"),
+        "the universe stopped committing after GC: {out}"
+    );
 }
 
 /// R3 — abandoned-head content is collected, and the log says so.
@@ -442,7 +464,10 @@ fn p6_staged_work_survives_collection() {
     let staged_after = fs::read(d.join(".oo").join("staged")).expect("GC deleted `staged`");
     assert_eq!(staged_before, staged_after, "GC modified `staged`");
     let out = oo(&d, &["commit", "-m", "staged survived"]);
-    assert!(out.contains("hash:"), "staged work no longer commits after GC: {out}");
+    assert!(
+        out.contains("hash:"),
+        "staged work no longer commits after GC: {out}"
+    );
 }
 
 /// R5 — nothing collects by itself.
@@ -582,7 +607,11 @@ fn r9_a_clean_store_reports_nothing_to_do() {
         "HARNESS: this store already has garbage"
     );
     let out = oo(&d, &["gc", "--grant", "gc"]);
-    assert_eq!(store_map(&d), all, "GC removed something from a clean store");
+    assert_eq!(
+        store_map(&d),
+        all,
+        "GC removed something from a clean store"
+    );
     assert!(!out.is_empty(), "GC on a clean store said nothing at all");
     assert!(
         out.contains('0'),
@@ -605,7 +634,10 @@ fn r10_a_corrupt_reachable_object_is_reported_not_swept() {
     // The root tree of HEAD — reachable by construction, and not the commit
     // itself, so `oo log` still works.
     let victim = root_digest(&d);
-    assert!(live.contains(&victim), "HARNESS: the victim is not reachable");
+    assert!(
+        live.contains(&victim),
+        "HARNESS: the victim is not reachable"
+    );
 
     let p = object_path(&d, &victim);
     let original = fs::read(&p).unwrap();
@@ -622,7 +654,8 @@ fn r10_a_corrupt_reachable_object_is_reported_not_swept() {
         "HARNESS: the corruption did not take"
     );
     assert!(
-        out.contains(&victim[..16]) || out.to_lowercase().contains("integrity")
+        out.contains(&victim[..16])
+            || out.to_lowercase().contains("integrity")
             || out.to_lowercase().contains("undecodable"),
         "GC did not report the undecodable object: {out}"
     );
@@ -683,8 +716,10 @@ fn p1_history_ops_unchanged() {
     let target = oldest_commit_caid(&d);
 
     let (out, ok) = oo_raw(&d, &["rollback", &target]);
-    assert!(!ok || out.contains("privileged") || out.contains("grant"),
-            "rollback without a grant was allowed: {out}");
+    assert!(
+        !ok || out.contains("privileged") || out.contains("grant"),
+        "rollback without a grant was allowed: {out}"
+    );
 
     let out = oo(&d, &["rollback", &target, "--grant", "rollback"]);
     assert!(out.contains("hash:"), "granted rollback failed: {out}");
@@ -710,7 +745,10 @@ fn p2_universe_determinism() {
         write(&d, "u.n", src);
         oo(&d, &["evolve", "u.n"]);
         let out = oo(&d, &["commit", "-m", "p2"]);
-        assert!(out.contains("hash:"), "LIVENESS: p2 commit {i} failed: {out}");
+        assert!(
+            out.contains("hash:"),
+            "LIVENESS: p2 commit {i} failed: {out}"
+        );
         roots.push(root_digest(&d));
     }
     assert_eq!(roots[0], roots[1], "same source, two roots");
@@ -724,12 +762,17 @@ fn p3_squash_unchanged() {
     let before = oo(&d, &["log"]).matches("commit ").count();
 
     let (out, ok) = oo_raw(&d, &["squash", &base]);
-    assert!(!ok || out.contains("grant") || out.contains("privileged"),
-            "ungranted squash was allowed: {out}");
+    assert!(
+        !ok || out.contains("grant") || out.contains("privileged"),
+        "ungranted squash was allowed: {out}"
+    );
 
     oo(&d, &["squash", &base, "--grant", "squash"]);
     let after = oo(&d, &["log"]).matches("commit ").count();
-    assert!(after < before, "squash did not compress history: {before} → {after}");
+    assert!(
+        after < before,
+        "squash did not compress history: {before} → {after}"
+    );
 }
 
 /// P4 — nothing durable appears under `.oo/` beyond what this arc declares.
@@ -745,8 +788,13 @@ fn p4_no_undeclared_durable_state() {
     oo(&d, &["log"]);
 
     let allowed = [
-        "objects", "HEAD", "staged", "architects.json",
-        "pin_pending", "effect_pending", "abandoned",
+        "objects",
+        "HEAD",
+        "staged",
+        "architects.json",
+        "pin_pending",
+        "effect_pending",
+        "abandoned",
         "format", // declared by local_gc
         "peers",  // declared by advert_persistence (scheduled pin update)
     ];

@@ -77,14 +77,14 @@
 // guard is a new number and needs its own measurement. This is that
 // measurement, and the guard is deliberately not tied to N.
 
+use std::collections::HashSet;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::collections::HashSet;
-use std::fs;
 
 use nlang_interpreter::value::Identity;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -140,7 +140,10 @@ fn init(dir: &Path) {
 }
 
 fn now_secs() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 fn first_string(out: &str) -> String {
@@ -166,16 +169,32 @@ fn free_port() -> u16 {
     for _ in 0..64 {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let p = l.local_addr().unwrap().port();
-        if p > 32000 { return p; }
+        if p > 32000 {
+            return p;
+        }
     }
     panic!("no free port above 32000");
 }
 
-struct Node { child: Child, port: u16, log: PathBuf }
-impl Drop for Node { fn drop(&mut self) { self.child.kill().ok(); self.child.wait().ok(); } }
+struct Node {
+    child: Child,
+    port: u16,
+    log: PathBuf,
+}
+impl Drop for Node {
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
+}
 impl Node {
-    fn log(&self) -> String { fs::read_to_string(&self.log).unwrap_or_default() }
-    fn stop(mut self) { self.child.kill().ok(); self.child.wait().ok(); }
+    fn log(&self) -> String {
+        fs::read_to_string(&self.log).unwrap_or_default()
+    }
+    fn stop(mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
 }
 
 fn serve(dir: &Path) -> Node {
@@ -191,7 +210,9 @@ fn serve(dir: &Path) -> Node {
     let node = Node { child, port, log };
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(100));
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() { return node; }
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return node;
+        }
     }
     panic!("`oo node serve` never came up: {}", node.log());
 }
@@ -200,7 +221,9 @@ fn ask_raw(port: u16, payload: &str) -> String {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     s.write_all(payload.as_bytes()).unwrap();
-    if !payload.ends_with('\n') { s.write_all(b"\n").unwrap(); }
+    if !payload.ends_with('\n') {
+        s.write_all(b"\n").unwrap();
+    }
     s.flush().unwrap();
     s.shutdown(std::net::Shutdown::Write).ok();
     let mut buf = Vec::new();
@@ -211,7 +234,11 @@ fn ask_raw(port: u16, payload: &str) -> String {
 fn status_of(reply: &str) -> String {
     serde_json::from_str::<serde_json::Value>(reply.trim())
         .ok()
-        .and_then(|j| j.get("%status").and_then(|v| v.as_str()).map(str::to_string))
+        .and_then(|j| {
+            j.get("%status")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
         .map(|s| s.trim().trim_start_matches('#').to_string())
         .unwrap_or_else(|| format!("<no %status in {}>", reply.trim()))
 }
@@ -240,21 +267,38 @@ fn answer_ids(reply: &str) -> Vec<String> {
 
 // ── fixture ─────────────────────────────────────────────────────────────
 
-struct Peer { kp: Ed25519KeyPair, pk_hex: String, node_id: String, port: u16 }
+struct Peer {
+    kp: Ed25519KeyPair,
+    pk_hex: String,
+    node_id: String,
+    port: u16,
+}
 
 fn mint(rng: &ring::rand::SystemRandom, port: u16) -> Peer {
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(rng).unwrap();
     let kp = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
     let pk = kp.public_key().as_ref().to_vec();
-    let node_id = Identity { public_key: pk.clone(), private_key: Vec::new() }
-        .node_id_caid()
-        .to_string();
-    Peer { pk_hex: hex::encode(&pk), node_id, kp, port }
+    let node_id = Identity {
+        public_key: pk.clone(),
+        private_key: Vec::new(),
+    }
+    .node_id_caid()
+    .to_string();
+    Peer {
+        pk_hex: hex::encode(&pk),
+        node_id,
+        kp,
+        port,
+    }
 }
 
 impl Peer {
     fn request(&self, dir: &Path, svc: &[&str], capacity: i64, ttl: i64, ts: i64) -> String {
-        let s = svc.iter().map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", ");
+        let s = svc
+            .iter()
+            .map(|x| format!("\"{x}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let body = format!(
             "{{{{ node_id: \"{}\", public_key: \"{}\", services: [{s}], \
              listen_port: {}, capacity: {capacity}, ts: {ts}, ttl: {ttl} }}}}",
@@ -262,7 +306,9 @@ impl Peer {
         );
         let caid = caid_of(dir, &body);
         let sig = hex::encode(
-            self.kp.sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes()).as_ref(),
+            self.kp
+                .sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes())
+                .as_ref(),
         );
         let inner = body.trim_start_matches("{{").trim_end_matches("}}").trim();
         format!(
@@ -305,9 +351,19 @@ fn c1_the_index_answers_at_all() {
     let svc = service_caid(&dir, "c1");
     let node = serve(&dir);
     let p = mint(&rng, 33001);
-    assert_eq!(status_of(&ask_raw(node.port, &p.request(&dir, &[&svc], 10, 15, now_secs()))), "success");
+    assert_eq!(
+        status_of(&ask_raw(
+            node.port,
+            &p.request(&dir, &[&svc], 10, 15, now_secs())
+        )),
+        "success"
+    );
     let ids = answer_ids(&discover(node.port, "x", &svc));
-    assert_eq!(ids, vec![p.node_id], "one advertiser must produce exactly one hit: {ids:?}");
+    assert_eq!(
+        ids,
+        vec![p.node_id],
+        "one advertiser must produce exactly one hit: {ids:?}"
+    );
 }
 
 /// C2 — the fixture really does exceed the cap, or every gate below is empty.
@@ -319,7 +375,10 @@ fn c2_the_fixture_exceeds_the_cap() {
     let node = serve(&dir);
     let ids = populate(&node, &dir, &svc, N_PEERS, 33100);
     assert_eq!(ids.len(), N_PEERS);
-    assert!(N_PEERS > MAX_DISCOVER_PEERS, "fixture must exceed the cap to test selection");
+    assert!(
+        N_PEERS > MAX_DISCOVER_PEERS,
+        "fixture must exceed the cap to test selection"
+    );
     let a = answer_ids(&discover(node.port, "x", &svc));
     assert_eq!(
         a.len(),
@@ -357,13 +416,18 @@ fn r1_asking_again_can_return_someone_else() {
             MAX_DISCOVER_PEERS,
             "query {q} did not return a full answer, so the union below means nothing: {a:?}"
         );
-        if first.is_none() { first = Some(a.clone()); }
+        if first.is_none() {
+            first = Some(a.clone());
+        }
         union.extend(a);
     }
     // Every id returned must be one we actually advertised — otherwise the
     // union could grow by invention rather than by sampling.
     for id in &union {
-        assert!(ids.contains(id), "answer named a peer that was never advertised: {id}");
+        assert!(
+            ids.contains(id),
+            "answer named a peer that was never advertised: {id}"
+        );
     }
     assert!(
         union.len() > MAX_DISCOVER_PEERS,
@@ -427,8 +491,13 @@ fn p1_under_the_cap_the_answer_is_everyone_every_time() {
     let ids = populate(&node, &dir, &svc, MAX_DISCOVER_PEERS - 3, 33400);
     let all: HashSet<String> = ids.iter().cloned().collect();
     for q in 0..6 {
-        let a: HashSet<String> = answer_ids(&discover(node.port, "x", &svc)).into_iter().collect();
-        assert_eq!(a, all, "query {q} dropped or invented a peer when all of them fit");
+        let a: HashSet<String> = answer_ids(&discover(node.port, "x", &svc))
+            .into_iter()
+            .collect();
+        assert_eq!(
+            a, all,
+            "query {q} dropped or invented a peer when all of them fit"
+        );
     }
 }
 
@@ -452,12 +521,21 @@ fn p2_capacity_does_not_bias_selection() {
     let mut humble: HashSet<String> = HashSet::new();
     for i in 0..10u16 {
         let p = mint(&rng, 33500 + i);
-        assert_eq!(status_of(&ask_raw(node.port, &p.request(&dir, &[&svc], 1, 15, now_secs()))), "success");
+        assert_eq!(
+            status_of(&ask_raw(
+                node.port,
+                &p.request(&dir, &[&svc], 1, 15, now_secs())
+            )),
+            "success"
+        );
         humble.insert(p.node_id);
     }
     for i in 0..10u16 {
         let p = mint(&rng, 33600 + i);
-        let r = ask_raw(node.port, &p.request(&dir, &[&svc], 1_000_000, 15, now_secs()));
+        let r = ask_raw(
+            node.port,
+            &p.request(&dir, &[&svc], 1_000_000, 15, now_secs()),
+        );
         assert_eq!(status_of(&r), "success");
     }
 
@@ -466,7 +544,10 @@ fn p2_capacity_does_not_bias_selection() {
     // query, so over eight queries a false red is ~1e-27.
     let mut saw_humble = false;
     for _ in 0..8 {
-        if answer_ids(&discover(node.port, "x", &svc)).iter().any(|id| humble.contains(id)) {
+        if answer_ids(&discover(node.port, "x", &svc))
+            .iter()
+            .any(|id| humble.contains(id))
+        {
             saw_humble = true;
             break;
         }
@@ -492,11 +573,17 @@ fn p3_excluded_peers_never_appear_however_often_you_ask() {
     let node = serve(&dir);
 
     let eligible = populate(&node, &dir, &svc, 6, 33700);
-    assert!(!eligible.is_empty(), "harness: no eligible peers, absence proves nothing");
+    assert!(
+        !eligible.is_empty(),
+        "harness: no eligible peers, absence proves nothing"
+    );
 
     let no_relay = mint(&rng, 33800);
     assert_eq!(
-        status_of(&ask_raw(node.port, &no_relay.request(&dir, &[&svc], 10, 0, now_secs()))),
+        status_of(&ask_raw(
+            node.port,
+            &no_relay.request(&dir, &[&svc], 10, 0, now_secs())
+        )),
         "success",
         "a ttl=0 advert must still be accepted; it is relaying that is refused"
     );
@@ -544,8 +631,15 @@ fn p5_no_hits_is_still_success_with_an_empty_list() {
     let node = serve(&dir);
     populate(&node, &dir, &known, 3, 34000);
     let r = discover(node.port, "x", &unknown);
-    assert_eq!(status_of(&r), "success", "an unknown target must not be an error: {r}");
-    assert!(answer_ids(&r).is_empty(), "an unknown target named peers: {r}");
+    assert_eq!(
+        status_of(&r),
+        "success",
+        "an unknown target must not be an error: {r}"
+    );
+    assert!(
+        answer_ids(&r).is_empty(),
+        "an unknown target named peers: {r}"
+    );
 }
 
 /// P6 — `%from` still decides nothing (REAL_02 §3.2, 2026-07-28 ruling). Two
@@ -568,13 +662,18 @@ fn p6_the_asker_does_not_change_what_is_reachable() {
         let mut seen = HashSet::new();
         for _ in 0..R2_MAX_QUERIES {
             seen.extend(answer_ids(&discover(node.port, asker, &svc)));
-            if seen.len() == all.len() { break; }
+            if seen.len() == all.len() {
+                break;
+            }
         }
         seen
     };
     let a = reach("hash:sha256:v2:_:aaaa:1111");
     let b = reach("hash:sha256:v2:_:bbbb:2222");
-    assert!(!a.is_empty() && !b.is_empty(), "harness: neither asker saw anything");
+    assert!(
+        !a.is_empty() && !b.is_empty(),
+        "harness: neither asker saw anything"
+    );
     assert_eq!(
         a, b,
         "two askers reach different peer sets — the answer depends on `%from`, \
@@ -598,12 +697,19 @@ fn p7_find_node_is_still_deterministic() {
     let target = "b".repeat(40);
     let q = format!("{{{{ %op: #find_node, %from: \"x\", %target: \"{target}\" }}}}\n");
     let first = ask_raw(node.port, &q);
-    assert_eq!(status_of(&first), "success", "find_node did not answer: {first}");
+    assert_eq!(
+        status_of(&first),
+        "success",
+        "find_node did not answer: {first}"
+    );
     // Calibration: `find_node` shares `encode_discover_response` with
     // `#discover`, so it is the same `%peers: [{%ad, …}]` shape. The first
     // version of this pin invented a second parser and its own guard caught it.
     let base = answer_ids(&first);
-    assert!(!base.is_empty(), "harness: find_node named nobody, so equality proves nothing");
+    assert!(
+        !base.is_empty(),
+        "harness: find_node named nobody, so equality proves nothing"
+    );
     for q_i in 0..6 {
         assert_eq!(
             answer_ids(&ask_raw(node.port, &q)),

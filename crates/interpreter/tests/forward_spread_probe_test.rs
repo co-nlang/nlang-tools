@@ -28,8 +28,8 @@
 //   record what ships).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -101,7 +101,10 @@ fn red_fwd_spread_collision_intersect() {
 #[test]
 fn red_fwd_spread_bottom_propagates() {
     // L2-82 twin: ⊥ source spreads its cause regardless of position.
-    assert_obs("w: {b: 1, ...bot}\nbot: 1 & 2\nout: (w).%cause", "#conflict");
+    assert_obs(
+        "w: {b: 1, ...bot}\nbot: 1 & 2\nout: (w).%cause",
+        "#conflict",
+    );
 }
 
 #[test]
@@ -139,7 +142,10 @@ fn red_fwd_spread_commutativity_eq() {
 fn pin_backward_spread_unchanged() {
     assert_obs("later: {a: 7}\nq: {...later, b: 1}\nout: q.a", "7");
     assert_obs("src: {a: 1}\nw: {a: 1..5, ...src}\nout: w.a", "1");
-    assert_obs("bot: 1 & 2\nw: {b: 1, ...bot}\nout: (w).%cause", "#conflict");
+    assert_obs(
+        "bot: 1 & 2\nw: {b: 1, ...bot}\nout: (w).%cause",
+        "#conflict",
+    );
 }
 
 #[test]

@@ -102,7 +102,10 @@ fn golden_paths() {
 #[test]
 fn golden_list_tuple_spread() {
     assert_shape("[1, 2]", "List([Atom(Int(1)), Atom(Int(2))])");
-    assert_shape("[1; 2; 3,]", "List([Atom(Int(1)), Atom(Int(2)), Atom(Int(3))])");
+    assert_shape(
+        "[1; 2; 3,]",
+        "List([Atom(Int(1)), Atom(Int(2)), Atom(Int(3))])",
+    );
     assert_shape("(1, 2)", "Tuple([Atom(Int(1)), Atom(Int(2))])");
     assert_shape("(1,)", "Tuple([Atom(Int(1))])");
     // grouping, not 1-tuple
@@ -116,7 +119,10 @@ fn golden_list_tuple_spread() {
 fn golden_range() {
     assert_shape("1..10", "Range(Atom(Int(1)), Atom(Int(10)))");
     assert_shape("-5..5", "Range(Atom(Int(-5)), Atom(Int(5)))");
-    assert_shape("0..10..2", "Range(Atom(Int(0)), Atom(Int(10)), Atom(Int(2)))");
+    assert_shape(
+        "0..10..2",
+        "Range(Atom(Int(0)), Atom(Int(10)), Atom(Int(2)))",
+    );
 }
 
 #[test]
@@ -158,8 +164,14 @@ fn golden_prefix_keys() {
 #[test]
 fn golden_ops_and_precedence() {
     // meet tighter than cmp (SPEC_14 / ENGINE_SYNC #1 / SYNTAX_06 §4.8)
-    assert_shape("a < b & c", "Lt(Path(Bare:a), Meet(Path(Bare:b), Path(Bare:c)))");
-    assert_shape("a & b = a", "LatticeEq(Meet(Path(Bare:a), Path(Bare:b)), Path(Bare:a))");
+    assert_shape(
+        "a < b & c",
+        "Lt(Path(Bare:a), Meet(Path(Bare:b), Path(Bare:c)))",
+    );
+    assert_shape(
+        "a & b = a",
+        "LatticeEq(Meet(Path(Bare:a), Path(Bare:b)), Path(Bare:a))",
+    );
     // set ops looser than cmp — bare form is almost never intended (SYNTAX_06 §4.9)
     assert_shape(
         "a \\ b = c",
@@ -259,10 +271,7 @@ fn golden_poset() {
     );
     assert_shape("#{ #a = #b }", "Poset([Tag(a)=Tag(b)])");
     // mixed-direction chain (SYNTAX_10 §4.2)
-    assert_shape(
-        "#{ #a < #c > #b }",
-        "Poset([Tag(a)<Tag(c), Tag(c)>Tag(b)])",
-    );
+    assert_shape("#{ #a < #c > #b }", "Poset([Tag(a)<Tag(c), Tag(c)>Tag(b)])");
     // enum member as path segment
     assert_shape("Status.#draft", "Path(Bare:Status.#draft)");
 }
@@ -311,10 +320,7 @@ fn golden_morphism_definition() {
         "x@int -> x",
         "Morphism(TypeAnnotation(Path(Bare:x), Path(Bare:int)), Path(Bare:x))",
     );
-    assert_shape(
-        "x @ int",
-        "TypeAnnotation(Path(Bare:x), Path(Bare:int))",
-    );
+    assert_shape("x @ int", "TypeAnnotation(Path(Bare:x), Path(Bare:int))");
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +371,10 @@ fn golden_lens() {
 #[test]
 fn golden_rejections() {
     assert!(parse_program("%@a: 1").is_err(), "%@a must reject");
-    assert!(parse_program("`k${i}`: 1").is_err(), "interp key must reject");
+    assert!(
+        parse_program("`k${i}`: 1").is_err(),
+        "interp key must reject"
+    );
     assert!(
         parse_program("k: a ? b : c ? d : e").is_err(),
         "chained ternary must reject"

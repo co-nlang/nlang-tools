@@ -1,4 +1,4 @@
-use crate::value::{Value, BottomCause, BottomDetail};
+use crate::value::{BottomCause, BottomDetail, Value};
 use nlang_parser::ast::AtomKind;
 use num_traits::ToPrimitive;
 
@@ -59,19 +59,11 @@ impl TypeConstraint {
             IndexMap::from_iter(vec![
                 (
                     "%kind".to_string(),
-                    Value::Atom(
-                        AtomKind::Tag("type".to_string()),
-                        EffectTag::Pure,
-                        None,
-                    ),
+                    Value::Atom(AtomKind::Tag("type".to_string()), EffectTag::Pure, None),
                 ),
                 (
                     "%name".to_string(),
-                    Value::Atom(
-                        AtomKind::Str(type_name.to_string()),
-                        EffectTag::Pure,
-                        None,
-                    ),
+                    Value::Atom(AtomKind::Str(type_name.to_string()), EffectTag::Pure, None),
                 ),
             ]),
             true,
@@ -88,8 +80,8 @@ impl TypeConstraint {
         let n = type_name.trim_start_matches('@');
         match n {
             "any" => None,
-            "unit" | "bool" | "str" | "list" | "combo" | "morphism" | "type" | "caid"
-            | "num" | "option" | "result" => Some("any"),
+            "unit" | "bool" | "str" | "list" | "combo" | "morphism" | "type" | "caid" | "num"
+            | "option" | "result" => Some("any"),
             "complex" | "int" => Some("num"),
             // §2.1 tree (not §2.3 non-immediate table): float under complex.
             "float" => Some("complex"),
@@ -110,7 +102,9 @@ impl TypeConstraint {
         match self {
             TypeConstraint::Any => ValidationResult::Pass,
             TypeConstraint::Num => match value {
-                Value::Atom(AtomKind::Int(_), _, _) | Value::Atom(AtomKind::Float(_), _, _) | Value::Atom(AtomKind::Complex(_, _), _, _) => ValidationResult::Pass,
+                Value::Atom(AtomKind::Int(_), _, _)
+                | Value::Atom(AtomKind::Float(_), _, _)
+                | Value::Atom(AtomKind::Complex(_, _), _, _) => ValidationResult::Pass,
                 _ => ValidationResult::Fail("Value is not a number".to_string()),
             },
             TypeConstraint::Complex => match value {
@@ -129,7 +123,8 @@ impl TypeConstraint {
                 _ => ValidationResult::Fail("Value is not an integer".to_string()),
             },
             TypeConstraint::Str => match value {
-                Value::Atom(AtomKind::Str(_), _, _) | Value::Atom(AtomKind::MultilineStr(_), _, _) => ValidationResult::Pass,
+                Value::Atom(AtomKind::Str(_), _, _)
+                | Value::Atom(AtomKind::MultilineStr(_), _, _) => ValidationResult::Pass,
                 _ => ValidationResult::Fail("Value is not a string".to_string()),
             },
             TypeConstraint::Bool => match value {
@@ -145,9 +140,11 @@ impl TypeConstraint {
             },
             TypeConstraint::List => match value {
                 Value::Combo(cv) => {
-                    if cv.get_field("%kind").map(|k| {
-                        k.to_string_plain().trim_start_matches('#') == "list"
-                    }).unwrap_or(false) {
+                    if cv
+                        .get_field("%kind")
+                        .map(|k| k.to_string_plain().trim_start_matches('#') == "list")
+                        .unwrap_or(false)
+                    {
                         ValidationResult::Pass
                     } else {
                         ValidationResult::Fail("Combo is not a list".to_string())
@@ -173,13 +170,17 @@ impl TypeConstraint {
                 Value::Atom(AtomKind::Tag(t), _, _) if t == "none" => ValidationResult::Pass,
                 Value::Combo(cv) if cv.get_field("%val").is_some() => ValidationResult::Pass,
                 Value::Top => ValidationResult::Pass,
-                _ => ValidationResult::Fail("Value is not @option (expected #none or Combo with %val)".to_string()),
+                _ => ValidationResult::Fail(
+                    "Value is not @option (expected #none or Combo with %val)".to_string(),
+                ),
             },
             TypeConstraint::Result => match value {
                 Value::Combo(cv) if cv.get_field("%val").is_some() => ValidationResult::Pass,
                 Value::Combo(cv) if cv.get_field("%cause").is_some() => ValidationResult::Pass,
                 Value::Top => ValidationResult::Pass,
-                _ => ValidationResult::Fail("Value is not @result (expected Combo with %val or %cause)".to_string()),
+                _ => ValidationResult::Fail(
+                    "Value is not @result (expected Combo with %val or %cause)".to_string(),
+                ),
             },
             TypeConstraint::Unknown(name) => ValidationResult::Unknown(name.clone()),
         }
@@ -233,7 +234,7 @@ pub enum ValidationResult {
 pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
     let constraint = TypeConstraint::from_name(type_name);
     let result = constraint.validate_value(&value);
-    
+
     match result {
         ValidationResult::Pass => value,
         ValidationResult::PassWithProjection => {
@@ -243,7 +244,9 @@ pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
             }
             match &constraint {
                 TypeConstraint::Float => match value {
-                    Value::Atom(AtomKind::Int(i), e, _) => Value::Atom(AtomKind::Float(i.to_f64().unwrap_or(0.0)), e, None),
+                    Value::Atom(AtomKind::Int(i), e, _) => {
+                        Value::Atom(AtomKind::Float(i.to_f64().unwrap_or(0.0)), e, None)
+                    }
                     _ => value,
                 },
                 _ => value,
@@ -256,7 +259,8 @@ pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
             expected: None,
             found: Some(value),
             involved: vec![],
-         ..Default::default() })),
+            ..Default::default()
+        })),
         ValidationResult::Unknown(_) => value,
     }
 }

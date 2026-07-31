@@ -1,10 +1,17 @@
-use nlang_interpreter::authority::{compute_refine_payload, sign_refine, verify_refine_authority, AuthVerifyResult};
-use nlang_interpreter::value::{ContentHash, HashAlgorithm, CaidVersion, MasaRef};
+use nlang_interpreter::authority::{
+    compute_refine_payload, sign_refine, verify_refine_authority, AuthVerifyResult,
+};
+use nlang_interpreter::value::{CaidVersion, ContentHash, HashAlgorithm, MasaRef};
 use std::collections::HashSet;
 
 fn dummy_caid(seed: u8) -> ContentHash {
-    ContentHash { algorithm: HashAlgorithm::Sha256, version: CaidVersion::V1,
-        masa_ref: MasaRef::Top, lattice_sketch: String::new(), digest: vec![seed; 32] }
+    ContentHash {
+        algorithm: HashAlgorithm::Sha256,
+        version: CaidVersion::V1,
+        masa_ref: MasaRef::Top,
+        lattice_sketch: String::new(),
+        digest: vec![seed; 32],
+    }
 }
 
 fn test_identity() -> nlang_interpreter::value::Identity {
@@ -22,7 +29,10 @@ fn test_sign_and_verify_valid() {
     let mut registry = HashSet::new();
     registry.insert(hex::encode(&id.public_key));
     let result = verify_refine_authority(Some(&auth), &payload, &registry, false);
-    assert!(matches!(result, AuthVerifyResult::Valid), "sign+verify should pass");
+    assert!(
+        matches!(result, AuthVerifyResult::Valid),
+        "sign+verify should pass"
+    );
 }
 
 #[test]
@@ -34,7 +44,10 @@ fn test_verify_wrong_signature() {
     let mut registry = HashSet::new();
     registry.insert(hex::encode(&id.public_key));
     let result = verify_refine_authority(Some(&auth), &payload, &registry, false);
-    assert!(matches!(result, AuthVerifyResult::Invalid(_)), "wrong sig should fail");
+    assert!(
+        matches!(result, AuthVerifyResult::Invalid(_)),
+        "wrong sig should fail"
+    );
 }
 
 #[test]
@@ -44,19 +57,28 @@ fn test_verify_signer_not_in_registry() {
     let auth = sign_refine(&payload, &id).unwrap();
     let registry = HashSet::new(); // empty
     let result = verify_refine_authority(Some(&auth), &payload, &registry, false);
-    assert!(matches!(result, AuthVerifyResult::Invalid(_)), "signer not in registry");
+    assert!(
+        matches!(result, AuthVerifyResult::Invalid(_)),
+        "signer not in registry"
+    );
 }
 
 #[test]
 fn test_verify_no_authority_bootstrap_exempt() {
     let result = verify_refine_authority(None, b"test", &HashSet::new(), true);
-    assert!(matches!(result, AuthVerifyResult::Exempt), "bootstrap exempt");
+    assert!(
+        matches!(result, AuthVerifyResult::Exempt),
+        "bootstrap exempt"
+    );
 }
 
 #[test]
 fn test_verify_no_authority_non_bootstrap() {
     let result = verify_refine_authority(None, b"test", &HashSet::new(), false);
-    assert!(matches!(result, AuthVerifyResult::Invalid(_)), "non-bootstrap requires authority");
+    assert!(
+        matches!(result, AuthVerifyResult::Invalid(_)),
+        "non-bootstrap requires authority"
+    );
 }
 
 #[test]
@@ -77,8 +99,8 @@ fn test_payload_different_caids() {
 
 #[test]
 fn test_universe_refine_with_authority() {
+    use nlang_interpreter::value::{CommitMeta, EffectTag, Value};
     use nlang_interpreter::*;
-    use nlang_interpreter::value::{CommitMeta, Value, EffectTag};
     use nlang_parser::ast::AtomKind;
     use std::sync::Arc;
 
@@ -94,7 +116,13 @@ fn test_universe_refine_with_authority() {
 
     let payload = compute_refine_payload(&[src.clone()], &[tgt.clone()]);
     let authority = sign_refine(&payload, &oo.identity().unwrap()).unwrap();
-    let meta = CommitMeta { author: None, timestamp: 0, message: None, abandoned: None, privileged_effect: None };
+    let meta = CommitMeta {
+        author: None,
+        timestamp: 0,
+        message: None,
+        abandoned: None,
+        privileged_effect: None,
+    };
 
     let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta);
     assert!(result.is_ok(), "refine with valid authority should succeed");
@@ -123,7 +151,10 @@ fn architect_persists_across_init() {
     {
         let oo2 = Ouroboros::init(&dir).unwrap();
         let reg = oo2.architect_registry.read().unwrap();
-        assert!(reg.contains(&fake_pk), "persisted architect should be loaded on re-init");
+        assert!(
+            reg.contains(&fake_pk),
+            "persisted architect should be loaded on re-init"
+        );
     }
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -133,7 +164,10 @@ fn architect_persists_across_init() {
 fn in_memory_no_persist() {
     use nlang_interpreter::Ouroboros;
     let oo = Ouroboros::new_in_memory();
-    assert!(oo.base_dir.is_none(), "new_in_memory should have base_dir = None");
+    assert!(
+        oo.base_dir.is_none(),
+        "new_in_memory should have base_dir = None"
+    );
     {
         let fake_pk = "b".repeat(64);
         let mut reg = oo.architect_registry.write().unwrap();

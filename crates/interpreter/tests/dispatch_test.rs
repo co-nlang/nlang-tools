@@ -1,7 +1,7 @@
-use nlang_interpreter::{Ouroboros, Value, ComboVal, EvalContext, EffectTag};
-use nlang_parser::parse_program;
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::{ComboVal, EffectTag, EvalContext, Ouroboros, Value};
+use nlang_parser::ast::AtomKind;
+use nlang_parser::parse_program;
 use num_bigint::BigInt;
 
 fn setup() -> Ouroboros {
@@ -9,7 +9,13 @@ fn setup() -> Ouroboros {
 }
 
 fn empty_ctx() -> EvalContext {
-    EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]))
+    EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 // Stage 2 (call-by-observation): eval_observed is the observation API

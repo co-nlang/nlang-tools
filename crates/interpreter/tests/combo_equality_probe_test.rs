@@ -21,8 +21,8 @@
 //        affect any semantic judgment.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -105,7 +105,10 @@ fn red_lattice_eq_combo_bound_span_blind() {
 #[test]
 fn red_lattice_eq_combo_nested_same_relation() {
     // Nested fields recurse with the same equality relation.
-    assert_obs("x: { a: { b: 1 } }\ny: { a: { b: 1 } }\nout: x = y", "#true");
+    assert_obs(
+        "x: { a: { b: 1 } }\ny: { a: { b: 1 } }\nout: x = y",
+        "#true",
+    );
 }
 
 #[test]
@@ -117,10 +120,7 @@ fn red_lattice_eq_field_order_blind() {
 #[test]
 fn red_lattice_eq_symbol_spelling_blind() {
     // Fields referencing different symbols with equal values solidify equal.
-    assert_obs(
-        "p: 1\nq: 1\nw: { b: p }\nv: { b: q }\nout: w = v",
-        "#true",
-    );
+    assert_obs("p: 1\nq: 1\nw: { b: p }\nv: { b: q }\nout: w = v", "#true");
 }
 
 #[test]

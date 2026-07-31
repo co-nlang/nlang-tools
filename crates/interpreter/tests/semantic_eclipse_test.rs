@@ -1,10 +1,12 @@
-use nlang_interpreter::{Ouroboros, EvalContext};
-use nlang_interpreter::value::{Value, EffectTag, BottomCause, ComboVal};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{BottomCause, ComboVal, EffectTag, Value};
+use nlang_interpreter::{EvalContext, Ouroboros};
+use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
-fn oo() -> Ouroboros { Ouroboros::new_in_memory() }
+fn oo() -> Ouroboros {
+    Ouroboros::new_in_memory()
+}
 
 fn int_val(n: i64) -> Value {
     Value::Atom(AtomKind::Int(BigInt::from(n)), EffectTag::Pure, None)
@@ -12,8 +14,16 @@ fn int_val(n: i64) -> Value {
 
 fn combo(fields: &[(&str, i64)]) -> Value {
     let mut m = IndexMap::new();
-    for (k, v) in fields { m.insert(k.to_string(), int_val(*v)); }
-    Value::Combo(ComboVal::new(m, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    for (k, v) in fields {
+        m.insert(k.to_string(), int_val(*v));
+    }
+    Value::Combo(ComboVal::new(
+        m,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn call_find(oo: &Ouroboros, ctx: &mut EvalContext, arg: Value) -> Value {
@@ -28,11 +38,13 @@ fn call_advertise(oo: &Ouroboros, ctx: &mut EvalContext, arg: Value) -> Value {
 
 #[test]
 fn test_find_empty_registry_is_missing_key() {
-    let oo = oo(); let mut ctx = oo.eval_context();
+    let oo = oo();
+    let mut ctx = oo.eval_context();
     let result = call_find(&oo, &mut ctx, combo(&[("x", 1)]));
     assert!(
         matches!(&result, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::MissingKey)),
-        "empty registry should be MissingKey, got {:?}", result
+        "empty registry should be MissingKey, got {:?}",
+        result
     );
 }
 
@@ -40,22 +52,33 @@ fn test_find_empty_registry_is_missing_key() {
 
 #[test]
 fn test_find_adds_to_visited() {
-    let oo = oo(); let mut ctx = oo.eval_context();
+    let oo = oo();
+    let mut ctx = oo.eval_context();
     let node = combo(&[("x", 1)]);
     oo.store.put_value(&node).expect("put_value");
     call_advertise(&oo, &mut ctx, node.clone());
 
-    assert!(ctx.disc_routing_visited.is_empty(), "visited should start empty");
+    assert!(
+        ctx.disc_routing_visited.is_empty(),
+        "visited should start empty"
+    );
     let _ = call_find(&oo, &mut ctx, node.clone());
-    assert_eq!(ctx.disc_routing_hops, 1, "hop count should be 1 after one find");
-    assert!(!ctx.disc_routing_visited.is_empty(), "visited should be non-empty after find");
+    assert_eq!(
+        ctx.disc_routing_hops, 1,
+        "hop count should be 1 after one find"
+    );
+    assert!(
+        !ctx.disc_routing_visited.is_empty(),
+        "visited should be non-empty after find"
+    );
 }
 
 // ─── 3. Budget exceeded → SemanticEclipse ─────────────────────────────────────
 
 #[test]
 fn test_find_hop_budget_exceeded_returns_semantic_eclipse() {
-    let oo = oo(); let mut ctx = oo.eval_context();
+    let oo = oo();
+    let mut ctx = oo.eval_context();
     let node = combo(&[("x", 42)]);
     call_advertise(&oo, &mut ctx, node.clone());
 
@@ -64,7 +87,8 @@ fn test_find_hop_budget_exceeded_returns_semantic_eclipse() {
     let result = call_find(&oo, &mut ctx, node);
     assert!(
         matches!(&result, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse)),
-        "exceeded hop budget should return SemanticEclipse, got {:?}", result
+        "exceeded hop budget should return SemanticEclipse, got {:?}",
+        result
     );
 }
 
@@ -79,7 +103,8 @@ fn test_semantic_eclipse_as_tag() {
 
 #[test]
 fn test_find_all_visited_still_returns() {
-    let oo = oo(); let mut ctx = oo.eval_context();
+    let oo = oo();
+    let mut ctx = oo.eval_context();
     let node = combo(&[("p", 100), ("q", 200)]);
     oo.store.put_value(&node).expect("put_value");
     call_advertise(&oo, &mut ctx, node.clone());
@@ -90,7 +115,8 @@ fn test_find_all_visited_still_returns() {
     let r2 = call_find(&oo, &mut ctx, node.clone());
     assert!(
         !matches!(&r2, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse)),
-        "all-visited with budget remaining should not SemanticEclipse, got {:?}", r2
+        "all-visited with budget remaining should not SemanticEclipse, got {:?}",
+        r2
     );
     assert_eq!(ctx.disc_routing_hops, 2);
 }
@@ -122,6 +148,10 @@ fn test_find_tiebreaker_is_deterministic() {
     assert_eq!(ctx1.disc_routing_visited.len(), 1);
     assert_eq!(ctx2.disc_routing_visited.len(), 1);
 
-    assert!(!matches!(&r1, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse)));
-    assert!(!matches!(&r2, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse)));
+    assert!(
+        !matches!(&r1, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse))
+    );
+    assert!(
+        !matches!(&r2, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse))
+    );
 }

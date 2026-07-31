@@ -6,10 +6,10 @@
 // is NOT a self-loop (`s: { v: s.v }`, thunk lives at s.v). True cycles
 // stay ⊥ #divergent (both-sides pins below).
 
-use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_interpreter::value::BottomCause;
-use nlang_parser::parse_program;
+use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use num_bigint::BigInt;
 use std::fs;
 use std::path::PathBuf;

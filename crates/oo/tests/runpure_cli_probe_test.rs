@@ -115,7 +115,10 @@ fn cli_guard_runpure_seam_no_false_violation() {
     // discharge). Both the bare container and the #pure-declared one read
     // #pure; neither collapses.
     assert_eq!(
-        run_cli("out: { v: (~%Effect./runPure (~%Time.now _)) }.%effect", true),
+        run_cli(
+            "out: { v: (~%Effect./runPure (~%Time.now _)) }.%effect",
+            true
+        ),
         "#pure",
     );
     assert_eq!(

@@ -8,23 +8,31 @@
 // B. Evolve between observations: memo must not serve pre-evolution values
 //    (root CAID key component = natural invalidation).
 
+use nlang_interpreter::value::{BottomCause, ComboVal};
 use nlang_interpreter::{Ouroboros, Universe, Value};
-use nlang_interpreter::value::{ComboVal, BottomCause};
+use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
 use nlang_parser::parse_program;
-use nlang_parser::ast::{Path, PathAnchor, Span, AtomKind};
 use std::fs;
 use std::path::PathBuf;
 
 fn tmp_dir(tag: &str) -> PathBuf {
     let mut d = std::env::temp_dir();
-    d.push(format!("nlang-stage4-redline-{}-{}", tag, std::process::id()));
+    d.push(format!(
+        "nlang-stage4-redline-{}-{}",
+        tag,
+        std::process::id()
+    ));
     fs::remove_dir_all(&d).ok();
     fs::create_dir_all(&d).unwrap();
     d
 }
 
 fn path_of(segments: &[&str]) -> Path {
-    Path { anchor: PathAnchor::Bare, segments: segments.iter().map(|s| s.to_string()).collect(), span: Span::default() }
+    Path {
+        anchor: PathAnchor::Bare,
+        segments: segments.iter().map(|s| s.to_string()).collect(),
+        span: Span::default(),
+    }
 }
 
 // A. observe v.w.x.a first (caches "Logic" under the shared thunk), then
@@ -64,7 +72,9 @@ fn redline_memo_must_not_survive_evolve() {
     let engine = Ouroboros::init(&dir).unwrap();
     let mut universe = Universe::new(None, ComboVal::default());
     let p1 = parse_program("s: \"Logic\" |> { a: $ }\nw: { y: s.a }").unwrap();
-    for field in &p1.fields { universe.evolve(&engine, field).unwrap(); }
+    for field in &p1.fields {
+        universe.evolve(&engine, field).unwrap();
+    }
 
     let before = universe.observe(&engine, &path_of(&["w", "y"]));
     match &before {
@@ -75,12 +85,16 @@ fn redline_memo_must_not_survive_evolve() {
     // evolve s to a new value (refinement direction irrelevant here — the
     // point is the root changes)
     let p2 = parse_program("t: \"Rust\" |> { a: $ }\nu: { y: t.a }").unwrap();
-    for field in &p2.fields { universe.evolve(&engine, field).unwrap(); }
+    for field in &p2.fields {
+        universe.evolve(&engine, field).unwrap();
+    }
 
     let after = universe.observe(&engine, &path_of(&["u", "y"]));
     match &after {
-        Value::Atom(AtomKind::Str(v), _, _) => assert_eq!(v, "Rust",
-            "RED LINE: post-evolve observation served a stale value"),
+        Value::Atom(AtomKind::Str(v), _, _) => assert_eq!(
+            v, "Rust",
+            "RED LINE: post-evolve observation served a stale value"
+        ),
         other => panic!("u.y should be \"Rust\" after evolve, got {:?}", other),
     }
 }

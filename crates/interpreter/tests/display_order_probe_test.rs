@@ -33,8 +33,8 @@
 //   (already law — pin guards it).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -152,10 +152,7 @@ fn red_display_math_result_sorted() {
 #[test]
 fn red_display_blur_after_values() {
     // Blur branch sorts after solid values, before Top.
-    let got = observe_nlang(
-        &format!("big: {}\nout: big | 2", flat_chain(4000)),
-        "out",
-    );
+    let got = observe_nlang(&format!("big: {}\nout: big | 2", flat_chain(4000)), "out");
     assert!(
         got.starts_with("2 | ") && got.contains("#blur"),
         "blur must sort after solid values: {got:?}"

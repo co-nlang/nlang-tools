@@ -29,8 +29,8 @@
 // (longest-match boundary pinned below); ~%Config field-name validation.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -124,13 +124,19 @@ fn red_root_novel_loud() {
 #[test]
 fn red_combo_system_key_bottom() {
     // L2-60.
-    assert_obs("c: { ~%Math: 9 }\nout: (c.~%Math).%cause", "#system_reserved");
+    assert_obs(
+        "c: { ~%Math: 9 }\nout: (c.~%Math).%cause",
+        "#system_reserved",
+    );
 }
 
 #[test]
 fn red_combo_novel_key_bottom() {
     // L2-61.
-    assert_obs("d: { ~%Mine: 5 }\nout: (d.~%Mine).%cause", "#system_reserved");
+    assert_obs(
+        "d: { ~%Mine: 5 }\nout: (d.~%Mine).%cause",
+        "#system_reserved",
+    );
 }
 
 #[test]

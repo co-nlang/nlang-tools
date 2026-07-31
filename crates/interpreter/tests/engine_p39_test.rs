@@ -1,17 +1,28 @@
-use nlang_interpreter::{Ouroboros, EvalContext};
-use nlang_interpreter::value::{Value, EffectTag};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
 use nlang_interpreter::value::ComboVal;
+use nlang_interpreter::value::{EffectTag, Value};
+use nlang_interpreter::{EvalContext, Ouroboros};
+use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
-fn make_oo() -> Ouroboros { Ouroboros::new_in_memory() }
+fn make_oo() -> Ouroboros {
+    Ouroboros::new_in_memory()
+}
 
-fn str_val(s: &str) -> Value { Value::Atom(AtomKind::Str(s.to_string()), EffectTag::Pure, None) }
+fn str_val(s: &str) -> Value {
+    Value::Atom(AtomKind::Str(s.to_string()), EffectTag::Pure, None)
+}
 
 fn combo1(a: Value) -> Value {
-    let mut m = IndexMap::new(); m.insert("0".to_string(), a);
-    Value::Combo(ComboVal::new(m, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    let mut m = IndexMap::new();
+    m.insert("0".to_string(), a);
+    Value::Combo(ComboVal::new(
+        m,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn call(oo: &Ouroboros, ctx: &mut EvalContext, name: &str, arg: Value) -> Value {
@@ -30,7 +41,8 @@ fn is_list(v: &Value) -> bool {
 
 #[test]
 fn test_equivalence_map_empty_returns_kind_tag() {
-    let oo = make_oo(); let mut ctx = oo.eval_context();
+    let oo = make_oo();
+    let mut ctx = oo.eval_context();
     let r = call(&oo, &mut ctx, "engine.equivalence_map", Value::Top);
     assert!(matches!(r, Value::Combo(_)), "should return a Combo");
     if let Value::Combo(ref c) = r {
@@ -49,14 +61,16 @@ fn test_equivalence_map_empty_returns_kind_tag() {
 
 #[test]
 fn test_equivalence_map_effect_is_state() {
-    let oo = make_oo(); let mut ctx = oo.eval_context();
+    let oo = make_oo();
+    let mut ctx = oo.eval_context();
     let r = call(&oo, &mut ctx, "engine.equivalence_map", Value::Top);
     assert_eq!(r.effect(), EffectTag::State);
 }
 
 #[test]
 fn test_resolve_unknown_caid_returns_itself() {
-    let oo = make_oo(); let mut ctx = oo.eval_context();
+    let oo = make_oo();
+    let mut ctx = oo.eval_context();
     let caid_str = caid_of(9999);
     let r = call(&oo, &mut ctx, "engine.resolve", combo1(str_val(&caid_str)));
     match &r {
@@ -69,7 +83,8 @@ fn test_resolve_unknown_caid_returns_itself() {
 
 #[test]
 fn test_resolve_follows_one_hop() {
-    let oo = make_oo(); let mut ctx = oo.eval_context();
+    let oo = make_oo();
+    let mut ctx = oo.eval_context();
     let caid_a = caid_of(1001);
     let caid_b = caid_of(2001);
 
@@ -89,7 +104,8 @@ fn test_resolve_follows_one_hop() {
 
 #[test]
 fn test_equivalence_map_shows_refined_entry() {
-    let oo = make_oo(); let mut ctx = oo.eval_context();
+    let oo = make_oo();
+    let mut ctx = oo.eval_context();
     let caid_a = caid_of(3001);
     let caid_b = caid_of(4001);
 
@@ -109,10 +125,22 @@ fn test_equivalence_map_shows_refined_entry() {
             let entry = lc.get_field("0").expect("entries[0]");
             if let Value::Combo(ref ec) = entry {
                 let from = ec.get_field("from").expect("entry.from");
-                let to   = ec.get_field("to").expect("entry.to");
-                assert!(matches!(from, Value::Atom(AtomKind::Str(s), _, _) if s == &caid_a), "from should be caid_a");
-                assert!(matches!(to,   Value::Atom(AtomKind::Str(s), _, _) if s == &caid_b), "to should be caid_b");
-            } else { panic!("entries[0] should be a Combo"); }
-        } else { panic!("entries should be a Combo"); }
-    } else { panic!("result should be a Combo"); }
+                let to = ec.get_field("to").expect("entry.to");
+                assert!(
+                    matches!(from, Value::Atom(AtomKind::Str(s), _, _) if s == &caid_a),
+                    "from should be caid_a"
+                );
+                assert!(
+                    matches!(to,   Value::Atom(AtomKind::Str(s), _, _) if s == &caid_b),
+                    "to should be caid_b"
+                );
+            } else {
+                panic!("entries[0] should be a Combo");
+            }
+        } else {
+            panic!("entries should be a Combo");
+        }
+    } else {
+        panic!("result should be a Combo");
+    }
 }

@@ -9,15 +9,21 @@
 //   v: <<_.>> |> <<_.>>         ;; evolve stores thunk, observe resolves late
 //   _: v                        ;; full → #fuel_exhausted (self-referential)
 
-use nlang_interpreter::{Ouroboros, EvalContext};
-use nlang_interpreter::value::{ComboVal, EffectTag, Value, BottomCause};
-use nlang_parser::{parse_program, ast::AtomKind};
 use indexmap::IndexMap;
+use nlang_interpreter::value::{BottomCause, ComboVal, EffectTag, Value};
+use nlang_interpreter::{EvalContext, Ouroboros};
+use nlang_parser::{ast::AtomKind, parse_program};
 
 fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
@@ -42,19 +48,35 @@ fn stage3_pre_pipe_field_navigation() {
 fn stage2_open_term_no_context() {
     let program = parse_program("w: { x: $.s }").unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = oo.eval_observed(&program.fields[0].value, &mut ctx);
     let x_val = field_of(&result, "x");
     let is_no_context = matches!(&x_val, Value::Bottom(d) if matches!(d.cause, BottomCause::NoContext))
         || matches!(&x_val, Value::Atom(AtomKind::Bottom, _, _));
-    assert!(is_no_context, "free $ should collapse to _|_ #no_context, got {:?}", x_val);
+    assert!(
+        is_no_context,
+        "free $ should collapse to _|_ #no_context, got {:?}",
+        x_val
+    );
 }
 
 #[test]
 fn stage3_ref_structural_creates_ref() {
     let program = parse_program("x: <<_.>>").unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = oo.eval(&program.fields[0].value, &mut ctx);
     match &result {
         Value::Ref(_) => {}
@@ -72,12 +94,24 @@ fn stage3_pipe_with_ref_late_binding() {
     let src = "v: <<_.>> |> <<_.>>";
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = oo.eval(&program.fields[0].value, &mut ctx);
     // Pipe result before force: Ref (late binding — resolves to root at force time)
     match &result {
-        Value::Ref(p) => assert!(p.anchor == nlang_parser::ast::PathAnchor::Root || p.anchor == nlang_parser::ast::PathAnchor::Bare),
-        other => panic!("pipe result before force should be Ref (late binding), got {:?}", other),
+        Value::Ref(p) => assert!(
+            p.anchor == nlang_parser::ast::PathAnchor::Root
+                || p.anchor == nlang_parser::ast::PathAnchor::Bare
+        ),
+        other => panic!(
+            "pipe result before force should be Ref (late binding), got {:?}",
+            other
+        ),
     }
 }
 
@@ -86,16 +120,27 @@ fn stage3_ref_forces_against_root() {
     // Force <<_.>> → resolves Ref against ctx.root at observation time.
     let program = parse_program("x: <<_.>>").unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut root = ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]);
-    root.insert_field("y", Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None));
+    let mut root = ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    );
+    root.insert_field(
+        "y",
+        Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None),
+    );
     let mut ctx = EvalContext::new(root);
     let result = oo.eval(&program.fields[0].value, &mut ctx);
     // result is Ref(root)
     let forced = oo.force(result, &mut ctx);
     match forced {
         Value::Combo(ref root_cv) => {
-            assert!(root_cv.get_field("y").is_some(),
-                "forced Ref should resolve to root which contains y");
+            assert!(
+                root_cv.get_field("y").is_some(),
+                "forced Ref should resolve to root which contains y"
+            );
         }
         other => panic!("forced Ref should be Combo (root), got {:?}", other),
     }
@@ -108,6 +153,9 @@ fn stage3_ref_content_hash_is_deterministic() {
     let p1 = eval_one("a: <<_.>>");
     let p2 = eval_one("b: <<_.>>");
     // Both are Refs to the same path → same CAID
-    assert_eq!(p1.content_hash(), p2.content_hash(),
-        "Refs to same path should have same CAID");
+    assert_eq!(
+        p1.content_hash(),
+        p2.content_hash(),
+        "Refs to same path should have same CAID"
+    );
 }

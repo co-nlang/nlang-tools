@@ -16,8 +16,8 @@
 // root-name resolution (separate case).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -74,13 +74,19 @@ fn assert_obs(src: &str, expect: &str) {
 #[test]
 fn red_external_spread_excludes_local() {
     // L2-36. Today: 1 — the exfiltration primitive.
-    assert_obs("p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek", "_");
+    assert_obs(
+        "p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek",
+        "_",
+    );
 }
 
 #[test]
 fn red_external_spread_eq_public_only() {
     // L2-37: the spread result carries ONLY the public axes.
-    assert_obs("p: { ~s: 1, a: 2 }\nq: { ...p }\nout: q = { a: 2 }", "#true");
+    assert_obs(
+        "p: { ~s: 1, a: 2 }\nq: { ...p }\nout: q = { a: 2 }",
+        "#true",
+    );
 }
 
 #[test]
@@ -107,7 +113,10 @@ fn pin_insider_spread_corpus_shape() {
 fn pin_insider_nested_spread_keeps_local() {
     // Spread INSIDE the target's own scope keeps the local axis
     // (SPEC_03 clause is conditional on being external).
-    assert_obs("p: { ~s: 1, a: 2, c2: { ...p, rd: ~s } }\nout: p.c2.rd", "1");
+    assert_obs(
+        "p: { ~s: 1, a: 2, c2: { ...p, rd: ~s } }\nout: p.c2.rd",
+        "1",
+    );
 }
 
 #[test]
@@ -118,7 +127,10 @@ fn pin_spread_public_fields_travel() {
 #[test]
 fn pin_spec03_example_shape() {
     // SPEC_03 §3.1's own example: { a: 1, ...~c } → { a: 1, b: 2 }.
-    assert_obs("~c: { b: 2 }\nresult_spread: { a: 1, ...~c }\nout: result_spread.b", "2");
+    assert_obs(
+        "~c: { b: 2 }\nresult_spread: { a: 1, ...~c }\nout: result_spread.b",
+        "2",
+    );
 }
 
 #[test]
@@ -130,7 +142,10 @@ fn pin_unify_merge_untouched() {
 #[test]
 fn pin_unify_literal_seal_no_steal() {
     // Frozen current: the `&` RHS literal seals separately — no read.
-    assert_obs("p: { ~s: 1, a: 2 }\nq: p & { peek2: ~s }\nout: q.peek2", "_");
+    assert_obs(
+        "p: { ~s: 1, a: 2 }\nq: p & { peek2: ~s }\nout: q.peek2",
+        "_",
+    );
 }
 
 #[test]

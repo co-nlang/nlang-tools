@@ -6,7 +6,7 @@
 // Value::Atom 單欄 / with_timeout）。nlint Tier 1 只用靜態分析部分（handover §6
 // 非目標：不做求值／不依賴 interpreter crate 的 eval），動態部分已移除。
 
-use nlang_parser::ast::{Expr, ExprKind, AtomKind, Path, PathAnchor, Field, FieldKey};
+use nlang_parser::ast::{AtomKind, Expr, ExprKind, Field, FieldKey, Path, PathAnchor};
 use std::collections::HashSet;
 
 /// 靜態違規類型
@@ -47,7 +47,10 @@ impl StaticViolation {
                 format!("私有欄位存取違規: {} - 違反 Invariant 3 (觀測純粹性)", path)
             }
             StaticViolation::PotentialInfiniteRecursion { name, .. } => {
-                format!("潛在無限遞迴: {} - 建議添加終止條件或 %termination_proof", name)
+                format!(
+                    "潛在無限遞迴: {} - 建議添加終止條件或 %termination_proof",
+                    name
+                )
             }
             StaticViolation::TypeConflict { message, .. } => {
                 format!("型別衝突: {}", message)
@@ -115,7 +118,10 @@ impl StaticAnalyzer {
             },
             ExprKind::Path(p) => {
                 let path_str = path_to_string(p);
-                self.type_env.get(&path_str).cloned().unwrap_or(SimpleType::Unknown)
+                self.type_env
+                    .get(&path_str)
+                    .cloned()
+                    .unwrap_or(SimpleType::Unknown)
             }
             ExprKind::Morphism { .. } => {
                 // 簡化：morphism 類型暫時標記為 Unknown -> Unknown
@@ -143,8 +149,11 @@ impl StaticAnalyzer {
     /// 檢查型別衝突
     fn check_type_conflict(&mut self, expr: &Expr) {
         match &expr.kind {
-            ExprKind::Add(lhs, rhs) | ExprKind::Sub(lhs, rhs) |
-            ExprKind::Mul(lhs, rhs) | ExprKind::Div(lhs, rhs) | ExprKind::Rem(lhs, rhs) => {
+            ExprKind::Add(lhs, rhs)
+            | ExprKind::Sub(lhs, rhs)
+            | ExprKind::Mul(lhs, rhs)
+            | ExprKind::Div(lhs, rhs)
+            | ExprKind::Rem(lhs, rhs) => {
                 let left_type = self.infer_type(lhs);
                 let right_type = self.infer_type(rhs);
 
@@ -152,10 +161,14 @@ impl StaticAnalyzer {
                 match (&left_type, &right_type) {
                     (SimpleType::Int, SimpleType::Int) => {}
                     (SimpleType::Float, SimpleType::Float) => {}
-                    (SimpleType::Int, SimpleType::Float) | (SimpleType::Float, SimpleType::Int) => {}
+                    (SimpleType::Int, SimpleType::Float) | (SimpleType::Float, SimpleType::Int) => {
+                    }
                     (SimpleType::Str, _) | (_, SimpleType::Str) => {
                         self.violations.push(StaticViolation::TypeConflict {
-                            message: format!("Cannot perform arithmetic on string types: {:?} + {:?}", left_type, right_type),
+                            message: format!(
+                                "Cannot perform arithmetic on string types: {:?} + {:?}",
+                                left_type, right_type
+                            ),
                             line: expr.span.start,
                         });
                     }
@@ -178,7 +191,10 @@ impl StaticAnalyzer {
                     SimpleType::Unknown => {}
                     _ => {
                         self.violations.push(StaticViolation::TypeConflict {
-                            message: format!("Cannot apply non-function type {:?} to argument {:?}", func_type, arg_type),
+                            message: format!(
+                                "Cannot apply non-function type {:?} to argument {:?}",
+                                func_type, arg_type
+                            ),
                             line: expr.span.start,
                         });
                     }
@@ -202,9 +218,7 @@ impl StaticAnalyzer {
     fn analyze_field(&mut self, field: &Field) {
         // 檢查欄位名是否為測試模式
         let is_test = match &field.key {
-            FieldKey::Named { name, .. } => {
-                name.starts_with("test_") || name.starts_with("~%test")
-            }
+            FieldKey::Named { name, .. } => name.starts_with("test_") || name.starts_with("~%test"),
             _ => false,
         };
 
@@ -236,10 +250,11 @@ impl StaticAnalyzer {
                         });
                     }
                     if self.env_dependency_fns.contains(&path_str) {
-                        self.violations.push(StaticViolation::EnvironmentDependency {
-                            path: path_str.clone(),
-                            line,
-                        });
+                        self.violations
+                            .push(StaticViolation::EnvironmentDependency {
+                                path: path_str.clone(),
+                                line,
+                            });
                     }
                 }
             }
@@ -258,13 +273,20 @@ impl StaticAnalyzer {
                 self.analyze_expr(a, in_test);
                 self.analyze_expr(b, in_test);
             }
-            ExprKind::Add(a, b) | ExprKind::Sub(a, b) | ExprKind::Mul(a, b)
-            | ExprKind::Div(a, b) | ExprKind::Rem(a, b) => {
+            ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b) => {
                 self.analyze_expr(a, in_test);
                 self.analyze_expr(b, in_test);
             }
-            ExprKind::Eq(a, b) | ExprKind::Ne(a, b) | ExprKind::Lt(a, b)
-            | ExprKind::Gt(a, b) | ExprKind::Lte(a, b) | ExprKind::Gte(a, b) => {
+            ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b) => {
                 self.analyze_expr(a, in_test);
                 self.analyze_expr(b, in_test);
             }
@@ -278,7 +300,11 @@ impl StaticAnalyzer {
                     self.analyze_expr(item, in_test);
                 }
             }
-            ExprKind::Ternary { cond, then_branch, else_branch } => {
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 self.analyze_expr(cond, in_test);
                 self.analyze_expr(then_branch, in_test);
                 self.analyze_expr(else_branch, in_test);
@@ -294,16 +320,23 @@ impl StaticAnalyzer {
                 self.analyze_expr(expr, in_test);
                 self.analyze_expr(ty, in_test);
             }
-            ExprKind::AnonSet(expr) | ExprKind::Spread(expr) | ExprKind::Complement(expr) | ExprKind::Structural(expr) => {
+            ExprKind::AnonSet(expr)
+            | ExprKind::Spread(expr)
+            | ExprKind::Complement(expr)
+            | ExprKind::Structural(expr) => {
                 self.analyze_expr(expr, in_test);
             }
             ExprKind::Range { start, end, step } => {
                 self.analyze_expr(start, in_test);
                 self.analyze_expr(end, in_test);
-                if let Some(s) = step { self.analyze_expr(s, in_test); }
+                if let Some(s) = step {
+                    self.analyze_expr(s, in_test);
+                }
             }
             ExprKind::Tuple(items) => {
-                for item in items { self.analyze_expr(item, in_test); }
+                for item in items {
+                    self.analyze_expr(item, in_test);
+                }
             }
             ExprKind::LatticeEq(a, b) | ExprKind::Probe(a, b) => {
                 self.analyze_expr(a, in_test);
@@ -329,10 +362,11 @@ impl StaticAnalyzer {
             // 簡單檢查：如果路徑包含 ~ 但不是 ~% 開頭，可能是違規
             // 實際上需要更複雜的語境分析
             if path.anchor != PathAnchor::Bare || !path.segments.is_empty() {
-                self.violations.push(StaticViolation::PrivateAccessViolation {
-                    path: path_str.clone(),
-                    line,
-                });
+                self.violations
+                    .push(StaticViolation::PrivateAccessViolation {
+                        path: path_str.clone(),
+                        line,
+                    });
             }
         }
 
@@ -346,10 +380,11 @@ impl StaticAnalyzer {
 
         // 檢查環境依賴
         if self.env_dependency_fns.contains(&path_str) {
-            self.violations.push(StaticViolation::EnvironmentDependency {
-                path: path_str.clone(),
-                line,
-            });
+            self.violations
+                .push(StaticViolation::EnvironmentDependency {
+                    path: path_str.clone(),
+                    line,
+                });
         }
     }
 
@@ -378,16 +413,23 @@ impl StaticAnalyzer {
         match &expr.kind {
             ExprKind::Apply(f, arg) => {
                 // 檢查是否是 self-application (param param)
-                if self.is_param_reference(f, param_name) && self.is_param_reference(arg, param_name) {
-                    self.violations.push(StaticViolation::PotentialInfiniteRecursion {
-                        name: format!("{} {}", param_name, param_name),
-                        line: expr.span.start,
-                    });
+                if self.is_param_reference(f, param_name)
+                    && self.is_param_reference(arg, param_name)
+                {
+                    self.violations
+                        .push(StaticViolation::PotentialInfiniteRecursion {
+                            name: format!("{} {}", param_name, param_name),
+                            line: expr.span.start,
+                        });
                 }
                 self.check_expr_for_self_application(f, param_name, depth + 1);
                 self.check_expr_for_self_application(arg, param_name, depth + 1);
             }
-            ExprKind::Morphism { param, body: m_body, .. } => {
+            ExprKind::Morphism {
+                param,
+                body: m_body,
+                ..
+            } => {
                 let new_param = self.extract_param_name(param);
                 self.check_expr_for_self_application(m_body, &new_param, depth + 1);
             }
@@ -399,7 +441,11 @@ impl StaticAnalyzer {
                 self.check_expr_for_self_application(a, param_name, depth + 1);
                 self.check_expr_for_self_application(b, param_name, depth + 1);
             }
-            ExprKind::Ternary { cond, then_branch, else_branch } => {
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 self.check_expr_for_self_application(cond, param_name, depth + 1);
                 self.check_expr_for_self_application(then_branch, param_name, depth + 1);
                 self.check_expr_for_self_application(else_branch, param_name, depth + 1);
@@ -474,14 +520,16 @@ pub fn run_static_tests(files: &[std::path::PathBuf], pattern: Option<&str>) -> 
                 let violations = analyzer.analyze(&prog.fields);
 
                 // 計算測試數量（~%test 或 test_ 開頭的欄位）
-                let test_count = prog.fields.iter().filter(|f| {
-                    match &f.key {
+                let test_count = prog
+                    .fields
+                    .iter()
+                    .filter(|f| match &f.key {
                         FieldKey::Named { name, .. } => {
                             name.starts_with("test_") || name.starts_with("~%test")
                         }
                         _ => false,
-                    }
-                }).count();
+                    })
+                    .count();
 
                 TestResult {
                     file: file.to_string_lossy().to_string(),
@@ -490,17 +538,15 @@ pub fn run_static_tests(files: &[std::path::PathBuf], pattern: Option<&str>) -> 
                     violations,
                 }
             }
-            Err(e) => {
-                TestResult {
-                    file: file.to_string_lossy().to_string(),
-                    tests_run: 0,
-                    tests_passed: 0,
-                    violations: vec![StaticViolation::TypeConflict {
-                        message: format!("Parse error: {}", e),
-                        line: 0,
-                    }],
-                }
-            }
+            Err(e) => TestResult {
+                file: file.to_string_lossy().to_string(),
+                tests_run: 0,
+                tests_passed: 0,
+                violations: vec![StaticViolation::TypeConflict {
+                    message: format!("Parse error: {}", e),
+                    line: 0,
+                }],
+            },
         };
 
         results.push(result);

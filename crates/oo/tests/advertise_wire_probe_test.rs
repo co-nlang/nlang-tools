@@ -79,13 +79,13 @@
 // The peer directory this arc writes is not read by any fetch path. That is
 // deliberate and declared, not implied: routing is the discover arc.
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::fs;
 
 use ring::signature::{Ed25519KeyPair, KeyPair};
 
@@ -512,8 +512,8 @@ fn r3_wrong_identity_is_not_bad_signature() {
 
     let mut ad = Advert::new(&mine, 8080);
     ad.node_id = other.node_id.clone(); // claim to be A …
-    // … while carrying B's key and signing with B's key: internally consistent
-    // except for the one binding that matters.
+                                        // … while carrying B's key and signing with B's key: internally consistent
+                                        // except for the one binding that matters.
     let packet = ad.signed(&p.b, &mine.key_pair);
     let reply = ask_raw(node.port, &advert_request(&other.node_id, &packet));
 
@@ -564,10 +564,7 @@ fn r5_malformed_is_its_own_reason() {
     let nk = node_key(&p.b);
 
     // `%ad` absent entirely.
-    let no_ad = format!(
-        "{{{{ %op: #advertise, %from: \"{}\" }}}}\n",
-        nk.node_id
-    );
+    let no_ad = format!("{{{{ %op: #advertise, %from: \"{}\" }}}}\n", nk.node_id);
     let r = ask_raw(node.port, &no_ad);
     assert_eq!(status_of(&r), "rejected", "got {r}");
     assert_eq!(reason_of(&r), "malformed", "missing %ad: {r}");
@@ -793,7 +790,10 @@ fn p2_from_is_still_a_claim_on_fetch() {
         seen.push(status_of(&r));
     }
     // Omitted entirely.
-    let r = ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n"));
+    let r = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n"),
+    );
     seen.push(status_of(&r));
 
     assert!(
@@ -840,7 +840,11 @@ fn p4_unknown_and_retired_forms() {
     assert_eq!(status_of(&unknown), "not_implemented", "{unknown}");
 
     let bare = ask_raw(node.port, &format!("{caid}\n"));
-    assert_eq!(status_of(&bare), "conflict", "bare CAID stays retired: {bare}");
+    assert_eq!(
+        status_of(&bare),
+        "conflict",
+        "bare CAID stays retired: {bare}"
+    );
 
     let garbage = ask_raw(node.port, "not a packet at all\n");
     assert_eq!(status_of(&garbage), "conflict", "{garbage}");
@@ -915,7 +919,10 @@ fn p7_advertising_stores_nothing() {
     let p = pair("p7");
     store(&p.a, "{{ pre: \"existing\" }}");
     let before = object_count(&p.a);
-    assert!(before > 0, "harness: nothing in the store to compare against");
+    assert!(
+        before > 0,
+        "harness: nothing in the store to compare against"
+    );
 
     let node = serve(&p.a);
     let nk = node_key(&p.b);
@@ -945,7 +952,10 @@ fn p8_universe_root_unmoved() {
     oo(&p.a, &["run", "u.n"]);
     oo(&p.a, &["commit", "-m", "anchor"]);
     let before = oo(&p.a, &["status"]);
-    assert!(!before.trim().is_empty(), "harness: `oo status` said nothing");
+    assert!(
+        !before.trim().is_empty(),
+        "harness: `oo status` said nothing"
+    );
 
     let node = serve(&p.a);
     let nk = node_key(&p.b);
@@ -979,7 +989,11 @@ fn p9_node_id_stable() {
         node.port,
         &advert_request(&nk.node_id, &ad.signed(&p.b, &nk.key_pair)),
     );
-    assert_eq!(node_key(&p.b).node_id, first, "advertising rotated the node id");
+    assert_eq!(
+        node_key(&p.b).node_id,
+        first,
+        "advertising rotated the node id"
+    );
 }
 
 /// P10 — the operator key and the node key stay different keys

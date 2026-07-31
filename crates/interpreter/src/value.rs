@@ -1,9 +1,12 @@
-use nlang_parser::ast::{Expr, AtomKind, Path, PathAnchor};
 use indexmap::IndexMap;
-use sha2::{Sha256, Digest};
+use nlang_parser::ast::{AtomKind, Expr, Path, PathAnchor};
+use ring::{
+    rand,
+    signature::{self, KeyPair as _},
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt;
-use serde::{Serialize, Deserialize};
-use ring::{signature::{self, KeyPair as _}, rand};
 use std::sync::{Arc, RwLock};
 
 /// Effect label **set** (SPEC_08 §4.1 join-semilattice). Composition is
@@ -78,10 +81,10 @@ impl EffectTag {
     /// (Pure=0, State=1, IO=2, NonDet=3); multi-tag / Cached use high bit.
     pub fn to_serial_byte(self) -> u8 {
         match self.0 {
-            0 => 0,          // Pure
-            0b0100 => 1,     // State (legacy)
-            0b0001 => 2,     // IO (legacy)
-            0b0010 => 3,     // NonDet (legacy)
+            0 => 0,      // Pure
+            0b0100 => 1, // State (legacy)
+            0b0001 => 2, // IO (legacy)
+            0b0010 => 3, // NonDet (legacy)
             bits => 0x80 | bits,
         }
     }
@@ -225,7 +228,10 @@ pub enum Value {
         /// Empty for open-miss `#no_coordinate`.
         members: Vec<String>,
     },
-    Atom(AtomKind, EffectTag, Option<i64>), Combo(ComboVal), Union(Vec<Value>), Code(Box<Expr>),
+    Atom(AtomKind, EffectTag, Option<i64>),
+    Combo(ComboVal),
+    Union(Vec<Value>),
+    Code(Box<Expr>),
     Thunk {
         expr: Box<Expr>,
         closure: Vec<ComboVal>,
@@ -296,7 +302,13 @@ pub fn caused_top_cause_combo(cause: &str, members: &[String]) -> Value {
         );
         fields.insert(
             "%members".to_string(),
-            Value::Combo(ComboVal::new(mf, false, IndexMap::new(), EffectTag::Pure, vec![])),
+            Value::Combo(ComboVal::new(
+                mf,
+                false,
+                IndexMap::new(),
+                EffectTag::Pure,
+                vec![],
+            )),
         );
     }
     Value::Combo(ComboVal::new(
@@ -384,17 +396,33 @@ impl PartialEq for Value {
             // source property). Spelling still differs (`q` vs `w`). Shared
             // with normalize_union so cmp and dedupe stay one relation.
             (Value::Code(c1), Value::Code(c2)) => c1.without_spans() == c2.without_spans(),
-            (Value::Thunk { expr: ex1, closure: cl1, context: c1, effect: ef1 },
-             Value::Thunk { expr: ex2, closure: cl2, context: c2, effect: ef2 }) =>
-                ex1.without_spans() == ex2.without_spans()
-                    && cl1 == cl2
-                    && c1 == c2
-                    && ef1 == ef2,
+            (
+                Value::Thunk {
+                    expr: ex1,
+                    closure: cl1,
+                    context: c1,
+                    effect: ef1,
+                },
+                Value::Thunk {
+                    expr: ex2,
+                    closure: cl2,
+                    context: c2,
+                    effect: ef2,
+                },
+            ) => ex1.without_spans() == ex2.without_spans() && cl1 == cl2 && c1 == c2 && ef1 == ef2,
             (Value::Bottom(b1), Value::Bottom(b2)) => b1 == b2,
             (Value::Blur(b1), Value::Blur(b2)) => b1 == b2,
             (
-                Value::Range { start: s1, end: e1, step: st1 },
-                Value::Range { start: s2, end: e2, step: st2 },
+                Value::Range {
+                    start: s1,
+                    end: e1,
+                    step: st1,
+                },
+                Value::Range {
+                    start: s2,
+                    end: e2,
+                    step: st2,
+                },
             ) => s1 == s2 && e1 == e2 && st1 == st2,
             (Value::Ref(p1), Value::Ref(p2)) => p1 == p2,
             _ => false,
@@ -407,9 +435,7 @@ impl PartialEq for Value {
 /// does not erase the mark during evolve unify.
 pub fn is_structural_view(cv: &ComboVal) -> bool {
     match cv.get_field("%structural") {
-        Some(Value::Atom(AtomKind::Tag(t), _, _)) => {
-            t.trim_start_matches('#') == "true"
-        }
+        Some(Value::Atom(AtomKind::Tag(t), _, _)) => t.trim_start_matches('#') == "true",
         _ => false,
     }
 }
@@ -426,10 +452,9 @@ pub fn structural_node(cv: &ComboVal) -> Option<&Value> {
 /// Unwrap structural-view mark to the full node; otherwise return `v` unchanged.
 pub fn unwrap_structural_view(v: Value) -> Value {
     match v {
-        Value::Combo(c) if is_structural_view(&c) => c
-            .get_field("%node")
-            .cloned()
-            .unwrap_or(Value::Combo(c)),
+        Value::Combo(c) if is_structural_view(&c) => {
+            c.get_field("%node").cloned().unwrap_or(Value::Combo(c))
+        }
         other => other,
     }
 }
@@ -444,10 +469,7 @@ pub fn strip_local_axis(v: Value) -> Value {
     match v {
         Value::Combo(mut c) => {
             if is_structural_view(&c) {
-                let inner = c
-                    .get_field("%node")
-                    .cloned()
-                    .unwrap_or(Value::Combo(c));
+                let inner = c.get_field("%node").cloned().unwrap_or(Value::Combo(c));
                 return strip_local_axis(inner);
             }
             c.local.clear();
@@ -473,9 +495,7 @@ pub fn strip_local_axis(v: Value) -> Value {
             }
             Value::Combo(c)
         }
-        Value::Union(branches) => {
-            normalize_union(branches.into_iter().map(strip_local_axis))
-        }
+        Value::Union(branches) => normalize_union(branches.into_iter().map(strip_local_axis)),
         other => other,
     }
 }
@@ -498,10 +518,7 @@ pub fn project_value_context(v: Value) -> Value {
         Value::Combo(c) => {
             // Structural view: full node, no hybrid peel (still strip local).
             if is_structural_view(&c) {
-                let inner = c
-                    .get_field("%node")
-                    .cloned()
-                    .unwrap_or(Value::Combo(c));
+                let inner = c.get_field("%node").cloned().unwrap_or(Value::Combo(c));
                 return strip_local_axis(inner);
             }
             // Hybrid or pure wrapper: value context reads %val.
@@ -519,9 +536,7 @@ pub fn project_value_context(v: Value) -> Value {
             }
             Value::Combo(new_c)
         }
-        Value::Union(branches) => {
-            normalize_union(branches.into_iter().map(project_value_context))
-        }
+        Value::Union(branches) => normalize_union(branches.into_iter().map(project_value_context)),
         other => other,
     }
 }
@@ -728,9 +743,7 @@ pub fn canonical_display_order(branches: &[Value]) -> Vec<&Value> {
 /// pass that `_|_` out **verbatim** (message/path/involved preserved).
 /// Ties keep encounter-order leftmost (`min_by_key` first-min). Empty
 /// culled list → tag-only `#conflict` defensive mint.
-pub fn primary_bottom_from_culled(
-    culled: impl IntoIterator<Item = BottomDetail>,
-) -> Value {
+pub fn primary_bottom_from_culled(culled: impl IntoIterator<Item = BottomDetail>) -> Value {
     let detail = culled
         .into_iter()
         .min_by_key(|d| d.cause.primary_rank())
@@ -837,7 +850,13 @@ impl Default for ComboVal {
 }
 
 impl ComboVal {
-    pub fn new(fields: IndexMap<String, Value>, closed: bool, local_fields: IndexMap<String, Value>, effect: EffectTag, relations: Vec<ValRelation>) -> Self {
+    pub fn new(
+        fields: IndexMap<String, Value>,
+        closed: bool,
+        local_fields: IndexMap<String, Value>,
+        effect: EffectTag,
+        relations: Vec<ValRelation>,
+    ) -> Self {
         let mut cv = Self::default();
         cv.closed = closed;
         cv.effect = effect;
@@ -932,41 +951,81 @@ impl ComboVal {
 
     pub fn fields(&self) -> IndexMap<String, Value> {
         let mut all = IndexMap::new();
-        for (k, v) in &self.data { all.insert(k.clone(), v.clone()); }
-        for (k, v) in &self.rules { all.insert(format!("/{}", k), v.clone()); }
-        for (k, v) in &self.types { all.insert(format!("@{}", k), v.clone()); }
-        for (k, v) in &self.meta { all.insert(format!("%{}", k), v.clone()); }
-        for (k, v) in &self.system { all.insert(format!("~%{}", k), v.clone()); }
+        for (k, v) in &self.data {
+            all.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &self.rules {
+            all.insert(format!("/{}", k), v.clone());
+        }
+        for (k, v) in &self.types {
+            all.insert(format!("@{}", k), v.clone());
+        }
+        for (k, v) in &self.meta {
+            all.insert(format!("%{}", k), v.clone());
+        }
+        for (k, v) in &self.system {
+            all.insert(format!("~%{}", k), v.clone());
+        }
         all
     }
 
     pub fn fields_iter(&self) -> impl Iterator<Item = (&String, &Value)> {
-        self.data.iter()
+        self.data
+            .iter()
             .chain(self.rules.iter().map(|(k, v)| (k, v)))
     }
 
     pub fn all_fields_iter(&self) -> impl Iterator<Item = (String, Value)> + '_ {
-        self.data.iter()
+        self.data
+            .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
-            .chain(self.rules.iter().map(|(k, v)| (format!("/{}", k), v.clone())))
-            .chain(self.types.iter().map(|(k, v)| (format!("@{}", k), v.clone())))
-            .chain(self.meta.iter().map(|(k, v)| (format!("%{}", k), v.clone())))
-            .chain(self.system.iter().map(|(k, v)| (format!("~%{}", k), v.clone())))
+            .chain(
+                self.rules
+                    .iter()
+                    .map(|(k, v)| (format!("/{}", k), v.clone())),
+            )
+            .chain(
+                self.types
+                    .iter()
+                    .map(|(k, v)| (format!("@{}", k), v.clone())),
+            )
+            .chain(
+                self.meta
+                    .iter()
+                    .map(|(k, v)| (format!("%{}", k), v.clone())),
+            )
+            .chain(
+                self.system
+                    .iter()
+                    .map(|(k, v)| (format!("~%{}", k), v.clone())),
+            )
     }
 
     pub fn field_keys(&self) -> Vec<String> {
         let mut keys = Vec::new();
-        for k in self.data.keys() { keys.push(k.clone()); }
-        for k in self.rules.keys() { keys.push(format!("/{}", k)); }
-        for k in self.types.keys() { keys.push(format!("@{}", k)); }
-        for k in self.meta.keys() { keys.push(format!("%{}", k)); }
-        for k in self.system.keys() { keys.push(format!("~%{}", k)); }
+        for k in self.data.keys() {
+            keys.push(k.clone());
+        }
+        for k in self.rules.keys() {
+            keys.push(format!("/{}", k));
+        }
+        for k in self.types.keys() {
+            keys.push(format!("@{}", k));
+        }
+        for k in self.meta.keys() {
+            keys.push(format!("%{}", k));
+        }
+        for k in self.system.keys() {
+            keys.push(format!("~%{}", k));
+        }
         keys
     }
 
     pub fn local_fields(&self) -> IndexMap<String, Value> {
         let mut all = IndexMap::new();
-        for (k, v) in &self.local { all.insert(format!("~{}", k), v.clone()); }
+        for (k, v) in &self.local {
+            all.insert(format!("~{}", k), v.clone());
+        }
         all
     }
 
@@ -997,27 +1056,51 @@ impl ComboVal {
 
     pub fn bits(&self) -> u64 {
         let mut b = 64u64;
-        for (k, v) in &self.data { b += (k.len() as u64) * 8 + v.bits(); }
-        for (k, v) in &self.rules { b += ((k.len() + 1) as u64) * 8 + v.bits(); }
-        for (k, v) in &self.types { b += ((k.len() + 1) as u64) * 8 + v.bits(); }
-        for (k, v) in &self.meta { b += ((k.len() + 1) as u64) * 8 + v.bits(); }
-        for (k, v) in &self.system { b += ((k.len() + 2) as u64) * 8 + v.bits(); }
-        for (k, v) in &self.local { b += ((k.len() + 1) as u64) * 8 + v.bits(); }
+        for (k, v) in &self.data {
+            b += (k.len() as u64) * 8 + v.bits();
+        }
+        for (k, v) in &self.rules {
+            b += ((k.len() + 1) as u64) * 8 + v.bits();
+        }
+        for (k, v) in &self.types {
+            b += ((k.len() + 1) as u64) * 8 + v.bits();
+        }
+        for (k, v) in &self.meta {
+            b += ((k.len() + 1) as u64) * 8 + v.bits();
+        }
+        for (k, v) in &self.system {
+            b += ((k.len() + 2) as u64) * 8 + v.bits();
+        }
+        for (k, v) in &self.local {
+            b += ((k.len() + 1) as u64) * 8 + v.bits();
+        }
         b
     }
 }
 
 impl PartialEq for ComboVal {
     fn eq(&self, other: &Self) -> bool {
-        self.data == other.data && self.types == other.types && self.rules == other.rules 
-            && self.meta == other.meta && self.system == other.system && self.local == other.local
-            && self.closed == other.closed && self.effect == other.effect && self.relations == other.relations
+        self.data == other.data
+            && self.types == other.types
+            && self.rules == other.rules
+            && self.meta == other.meta
+            && self.system == other.system
+            && self.local == other.local
+            && self.closed == other.closed
+            && self.effect == other.effect
+            && self.relations == other.relations
             && self.pending_spreads == other.pending_spreads
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RelOp { Lt, Gt, Lte, Gte, Eq }
+pub enum RelOp {
+    Lt,
+    Gt,
+    Lte,
+    Gte,
+    Eq,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValRelation {
@@ -1034,8 +1117,8 @@ pub enum Holonomy {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct BottomDetail {
-    pub cause: BottomCause, 
-    pub path: Option<String>, 
+    pub cause: BottomCause,
+    pub path: Option<String>,
     pub message: Option<String>,
     pub expected: Option<Value>,
     pub found: Option<Value>,
@@ -1046,18 +1129,41 @@ pub struct BottomDetail {
 
 impl BottomDetail {
     /// Construct a BottomDetail with default None for obstruction fields
-    pub fn new(cause: BottomCause, path: Option<String>, message: Option<String>,
-               expected: Option<Value>, found: Option<Value>, involved: Vec<ContentHash>) -> Self {
-        BottomDetail { cause, path, message, expected, found, involved, obstruction_degree: None, holonomy: None }
+    pub fn new(
+        cause: BottomCause,
+        path: Option<String>,
+        message: Option<String>,
+        expected: Option<Value>,
+        found: Option<Value>,
+        involved: Vec<ContentHash>,
+    ) -> Self {
+        BottomDetail {
+            cause,
+            path,
+            message,
+            expected,
+            found,
+            involved,
+            obstruction_degree: None,
+            holonomy: None,
+        }
     }
 
     pub fn bits(&self) -> u64 {
         let mut b = 128u64;
-        if let Some(ref p) = self.path { b += (p.len() as u64) * 8; }
-        if let Some(ref m) = self.message { b += (m.len() as u64) * 8; }
+        if let Some(ref p) = self.path {
+            b += (p.len() as u64) * 8;
+        }
+        if let Some(ref m) = self.message {
+            b += (m.len() as u64) * 8;
+        }
         b += (self.involved.len() as u64) * 256;
-        if self.obstruction_degree.is_some() { b += 64; }
-        if self.holonomy.is_some() { b += 64; }
+        if self.obstruction_degree.is_some() {
+            b += 64;
+        }
+        if self.holonomy.is_some() {
+            b += 64;
+        }
         b
     }
 
@@ -1096,22 +1202,29 @@ impl BottomDetail {
         // Fossil %type twin removed (cocoon_shape arc 2026-07-19).
         fields.insert(
             "%val".to_string(),
-            Value::Atom(AtomKind::Tag(type_tag[1..].to_string()), EffectTag::Pure, None),
+            Value::Atom(
+                AtomKind::Tag(type_tag[1..].to_string()),
+                EffectTag::Pure,
+                None,
+            ),
         );
         // Non-empty data axis so lattice unify does not treat this as a pure
         // wrapper and peel to the bare tag during evolve field-merge (which
         // would erase the cocoon before `m.%val` can navigate). Collapsed
         // observation still peels %val (project_value_context). Engine
         // scaffolding: stripped at display (to_nlang) — never user-visible.
-        fields.insert(
-            "_".to_string(),
-            Value::Top,
-        );
+        fields.insert("_".to_string(), Value::Top);
         if let Some(ref p) = self.path {
-            fields.insert("%path".to_string(), Value::Atom(AtomKind::Str(p.clone()), EffectTag::Pure, None));
+            fields.insert(
+                "%path".to_string(),
+                Value::Atom(AtomKind::Str(p.clone()), EffectTag::Pure, None),
+            );
         }
         if let Some(ref m) = self.message {
-            fields.insert("%message".to_string(), Value::Atom(AtomKind::Str(m.clone()), EffectTag::Pure, None));
+            fields.insert(
+                "%message".to_string(),
+                Value::Atom(AtomKind::Str(m.clone()), EffectTag::Pure, None),
+            );
         }
         if let Some(ref e) = self.expected {
             fields.insert("%expected".to_string(), e.clone());
@@ -1122,49 +1235,110 @@ impl BottomDetail {
         if !self.involved.is_empty() {
             let mut involved_fields = IndexMap::new();
             for (i, h) in self.involved.iter().enumerate() {
-                involved_fields.insert(i.to_string(), Value::Atom(AtomKind::Str(h.to_string()), EffectTag::Pure, None));
+                involved_fields.insert(
+                    i.to_string(),
+                    Value::Atom(AtomKind::Str(h.to_string()), EffectTag::Pure, None),
+                );
             }
-            involved_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-            fields.insert("%involved".to_string(), Value::Combo(ComboVal::new(involved_fields, false, IndexMap::new(), EffectTag::Pure, vec![])));
+            involved_fields.insert(
+                "%kind".to_string(),
+                Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None),
+            );
+            fields.insert(
+                "%involved".to_string(),
+                Value::Combo(ComboVal::new(
+                    involved_fields,
+                    false,
+                    IndexMap::new(),
+                    EffectTag::Pure,
+                    vec![],
+                )),
+            );
         }
 
         // Phase NEW: cocycle format (SPEC_06 §1.3.2)
         if let Some(degree) = self.obstruction_degree {
-            fields.insert("%degree".to_string(), Value::Atom(AtomKind::Int(BigInt::from(degree)), EffectTag::Pure, None));
-            let obs_tag = match degree { 1 => "h1_phase", 2 => "h2_sign", 3 => "h3_gerbe", 4 => "h4_sybil", _ => "unknown" };
-            fields.insert("%obstruction".to_string(), Value::Atom(AtomKind::Tag(obs_tag.to_string()), EffectTag::Pure, None));
+            fields.insert(
+                "%degree".to_string(),
+                Value::Atom(AtomKind::Int(BigInt::from(degree)), EffectTag::Pure, None),
+            );
+            let obs_tag = match degree {
+                1 => "h1_phase",
+                2 => "h2_sign",
+                3 => "h3_gerbe",
+                4 => "h4_sybil",
+                _ => "unknown",
+            };
+            fields.insert(
+                "%obstruction".to_string(),
+                Value::Atom(AtomKind::Tag(obs_tag.to_string()), EffectTag::Pure, None),
+            );
 
             // %cocycle: build from involved
             if !self.involved.is_empty() {
                 let mut cyc = IndexMap::new();
-                cyc.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
+                cyc.insert(
+                    "%kind".to_string(),
+                    Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None),
+                );
                 for (i, h) in self.involved.iter().enumerate() {
-                    cyc.insert(i.to_string(), Value::Atom(AtomKind::Str(h.to_string()), EffectTag::Pure, None));
+                    cyc.insert(
+                        i.to_string(),
+                        Value::Atom(AtomKind::Str(h.to_string()), EffectTag::Pure, None),
+                    );
                 }
                 // H²: pad to 4 positions (spec requires 4-cycle)
                 if degree == 2 && self.involved.len() == 2 {
-                    cyc.insert("2".to_string(), Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None));
-                    cyc.insert("3".to_string(), Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None));
+                    cyc.insert(
+                        "2".to_string(),
+                        Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None),
+                    );
+                    cyc.insert(
+                        "3".to_string(),
+                        Value::Atom(AtomKind::Tag("_".to_string()), EffectTag::Pure, None),
+                    );
                 }
-                fields.insert("%cocycle".to_string(), Value::Combo(ComboVal::new(cyc, false, IndexMap::new(), EffectTag::Pure, vec![])));
+                fields.insert(
+                    "%cocycle".to_string(),
+                    Value::Combo(ComboVal::new(
+                        cyc,
+                        false,
+                        IndexMap::new(),
+                        EffectTag::Pure,
+                        vec![],
+                    )),
+                );
             }
 
             // %holonomy
             if let Some(ref h) = self.holonomy {
                 let hv = match h {
-                    Holonomy::Phase(theta) => Value::Atom(AtomKind::Float(*theta), EffectTag::Pure, None),
-                    Holonomy::NegI => Value::Atom(AtomKind::Tag("neg_I".to_string()), EffectTag::Pure, None),
+                    Holonomy::Phase(theta) => {
+                        Value::Atom(AtomKind::Float(*theta), EffectTag::Pure, None)
+                    }
+                    Holonomy::NegI => {
+                        Value::Atom(AtomKind::Tag("neg_I".to_string()), EffectTag::Pure, None)
+                    }
                 };
                 fields.insert("%holonomy".to_string(), hv);
             }
 
             // %branches: H²
             if degree == 2 {
-                fields.insert("%branches".to_string(), Value::Atom(AtomKind::Int(2u8.into()), EffectTag::Pure, None));
+                fields.insert(
+                    "%branches".to_string(),
+                    Value::Atom(AtomKind::Int(2u8.into()), EffectTag::Pure, None),
+                );
             }
         }
 
-        Value::Combo(ComboVal::new(fields, true, IndexMap::new(), EffectTag::Pure, vec![]))
+        Value::Combo(ComboVal::new(
+            fields,
+            true,
+            IndexMap::new(),
+            EffectTag::Pure,
+            vec![],
+        ))
     }
 }
 
@@ -1294,7 +1468,16 @@ impl BottomCause {
 
 impl From<BottomCause> for Value {
     fn from(cause: BottomCause) -> Self {
-        Value::Bottom(Box::new(BottomDetail { cause, path: None, message: None, expected: None, found: None, involved: vec![], obstruction_degree: None, holonomy: None }))
+        Value::Bottom(Box::new(BottomDetail {
+            cause,
+            path: None,
+            message: None,
+            expected: None,
+            found: None,
+            involved: vec![],
+            obstruction_degree: None,
+            holonomy: None,
+        }))
     }
 }
 
@@ -1306,10 +1489,7 @@ impl From<BottomCause> for Value {
 /// unconditional `get_field("0")`, which silently drops tuples and slot-0 combos.
 pub fn whole_argument(arg: Value) -> Value {
     match &arg {
-        Value::Combo(c) if c.contains_key("%arg") => c
-            .get_field("0")
-            .cloned()
-            .unwrap_or(arg),
+        Value::Combo(c) if c.contains_key("%arg") => c.get_field("0").cloned().unwrap_or(arg),
         _ => arg,
     }
 }
@@ -1394,10 +1574,15 @@ impl BlurDetail {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum HashAlgorithm { Sha256 }
+pub enum HashAlgorithm {
+    Sha256,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum CaidVersion { V1, V2 }
+pub enum CaidVersion {
+    V1,
+    V2,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MasaRef {
@@ -1429,7 +1614,11 @@ impl fmt::Display for ContentHash {
         let digest_hex = hex::encode(&self.digest);
         match self.version {
             CaidVersion::V1 => write!(f, "hash:{}:v1:{}", algo, digest_hex),
-            CaidVersion::V2 => write!(f, "hash:{}:v2:{}:{}:{}", algo, self.masa_ref, self.lattice_sketch, digest_hex),
+            CaidVersion::V2 => write!(
+                f,
+                "hash:{}:v2:{}:{}:{}",
+                algo, self.masa_ref, self.lattice_sketch, digest_hex
+            ),
         }
     }
 }
@@ -1461,9 +1650,15 @@ impl ContentHash {
             }),
             "v2" => {
                 if parts.len() < 6 {
-                    return Err(anyhow::anyhow!("Invalid v2 CAID: needs 6 colon-delimited parts"));
+                    return Err(anyhow::anyhow!(
+                        "Invalid v2 CAID: needs 6 colon-delimited parts"
+                    ));
                 }
-                let masa_ref = if parts[3] == "_" { MasaRef::Top } else { MasaRef::Digest(hex::decode(parts[3])?) };
+                let masa_ref = if parts[3] == "_" {
+                    MasaRef::Top
+                } else {
+                    MasaRef::Digest(hex::decode(parts[3])?)
+                };
                 Ok(ContentHash {
                     algorithm: HashAlgorithm::Sha256,
                     version: CaidVersion::V2,
@@ -1536,7 +1731,11 @@ pub enum CommitKind {
     #[serde(other)]
     Standard,
 }
-impl Default for CommitKind { fn default() -> Self { Self::Standard } }
+impl Default for CommitKind {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AuthorityInfo {
@@ -1590,14 +1789,24 @@ impl Default for Commit {
 
 impl PartialEq for Commit {
     fn eq(&self, other: &Self) -> bool {
-        self.parent == other.parent && self.root == other.root && self.meta == other.meta
-            && self.kind == other.kind && self.refine_info == other.refine_info
+        self.parent == other.parent
+            && self.root == other.root
+            && self.meta == other.meta
+            && self.kind == other.kind
+            && self.refine_info == other.refine_info
     }
 }
 
 impl Commit {
     pub fn new(parent: Option<ContentHash>, root: ContentHash, meta: CommitMeta) -> Self {
-        Self { parent, root, meta, kind: CommitKind::Standard, refine_info: None, cache_id: default_cache_id() }
+        Self {
+            parent,
+            root,
+            meta,
+            kind: CommitKind::Standard,
+            refine_info: None,
+            cache_id: default_cache_id(),
+        }
     }
 }
 
@@ -1641,9 +1850,8 @@ impl Identity {
 
     /// Load PKCS#8 from `path`. On parse failure the file is left untouched.
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
-        let bytes = std::fs::read(path).map_err(|e| {
-            anyhow::anyhow!("identity file {}: read failed: {}", path.display(), e)
-        })?;
+        let bytes = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("identity file {}: read failed: {}", path.display(), e))?;
         Self::from_pkcs8(&bytes).map_err(|e| {
             anyhow::anyhow!(
                 "identity file {}: not a valid PKCS#8 Ed25519 key ({}); file left unchanged",
@@ -1654,8 +1862,8 @@ impl Identity {
     }
 
     pub fn from_pkcs8(bytes: &[u8]) -> anyhow::Result<Self> {
-        let key_pair = signature::Ed25519KeyPair::from_pkcs8(bytes)
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let key_pair =
+            signature::Ed25519KeyPair::from_pkcs8(bytes).map_err(|e| anyhow::anyhow!("{:?}", e))?;
         Ok(Self {
             public_key: key_pair.public_key().as_ref().to_vec(),
             private_key: bytes.to_vec(),
@@ -1848,13 +2056,9 @@ impl Value {
             Value::Code(_) | Value::Thunk { .. } => 256,
             Value::Bottom(d) => d.bits(),
             Value::Ref(_) => 64,
-            Value::Blur(bd) => {
-                128 + bd.partial.as_ref().map(|p| p.bits()).unwrap_or(0)
-            },
+            Value::Blur(bd) => 128 + bd.partial.as_ref().map(|p| p.bits()).unwrap_or(0),
             Value::Range { start, end, step } => {
-                start.bits()
-                    + end.bits()
-                    + step.as_ref().map(|s| s.bits()).unwrap_or(0)
+                start.bits() + end.bits() + step.as_ref().map(|s| s.bits()).unwrap_or(0)
             }
         }
     }
@@ -1865,8 +2069,15 @@ impl Value {
             Value::Bottom(_) => TROPICAL_INFINITY,
             Value::Atom(_, _, _) => 1,
             Value::Thunk { .. } | Value::Code(_) | Value::Ref(_) | Value::Range { .. } => 1,
-            Value::Union(branches) => branches.iter().map(|b| b.tropical_weight()).min().unwrap_or(TROPICAL_INFINITY),
-            Value::Combo(c) => c.all_fields_iter().map(|(_, v)| v.tropical_weight()).fold(0u64, |acc, w| acc.saturating_add(w)),
+            Value::Union(branches) => branches
+                .iter()
+                .map(|b| b.tropical_weight())
+                .min()
+                .unwrap_or(TROPICAL_INFINITY),
+            Value::Combo(c) => c
+                .all_fields_iter()
+                .map(|(_, v)| v.tropical_weight())
+                .fold(0u64, |acc, w| acc.saturating_add(w)),
             Value::Blur(_) => 64,
         }
     }
@@ -1890,11 +2101,15 @@ impl Value {
     pub fn contains_blur(&self) -> bool {
         match self {
             Value::Blur(_) => true,
-            Value::Combo(cv) => {
-                cv.data.values().chain(cv.types.values()).chain(cv.rules.values())
-                    .chain(cv.meta.values()).chain(cv.system.values()).chain(cv.local.values())
-                    .any(|v| v.contains_blur())
-            }
+            Value::Combo(cv) => cv
+                .data
+                .values()
+                .chain(cv.types.values())
+                .chain(cv.rules.values())
+                .chain(cv.meta.values())
+                .chain(cv.system.values())
+                .chain(cv.local.values())
+                .any(|v| v.contains_blur()),
             Value::Union(branches) => branches.iter().any(|b| b.contains_blur()),
             _ => false,
         }
@@ -2055,21 +2270,26 @@ impl Value {
 
     pub fn is_morphism(&self) -> bool {
         if let Value::Combo(ref c) = self {
-            if c.contains_key("%morphism") || c.contains_key("%rules") || c.contains_key("%builtin") {
+            if c.contains_key("%morphism") || c.contains_key("%rules") || c.contains_key("%builtin")
+            {
                 return true;
             }
         }
         match self.collapse() {
-            Value::Combo(c) => c.contains_key("%morphism") || c.contains_key("%rules") || c.contains_key("%builtin"),
+            Value::Combo(c) => {
+                c.contains_key("%morphism")
+                    || c.contains_key("%rules")
+                    || c.contains_key("%builtin")
+            }
             _ => false,
         }
     }
     pub fn effect(&self) -> EffectTag {
-        match self { 
-            Value::Combo(c) => c.effect, 
+        match self {
+            Value::Combo(c) => c.effect,
             Value::Atom(_, e, None) => *e,
             Value::Atom(_, e, Some(_)) => *e,
-            Value::Thunk { effect, .. } => *effect, 
+            Value::Thunk { effect, .. } => *effect,
             Value::Union(b) => b
                 .iter()
                 .fold(EffectTag::Pure, |acc, v| acc.union(v.effect())),
@@ -2081,11 +2301,18 @@ impl Value {
                 }
                 e
             }
-            _ => EffectTag::Pure 
+            _ => EffectTag::Pure,
         }
     }
-    pub fn collapse(&self) -> &Value { match self { Value::Combo(c) if c.is_pure_wrapper() => c.get_field("%val").map(|v| v.collapse()).unwrap_or(self), _ => self } }
-    
+    pub fn collapse(&self) -> &Value {
+        match self {
+            Value::Combo(c) if c.is_pure_wrapper() => {
+                c.get_field("%val").map(|v| v.collapse()).unwrap_or(self)
+            }
+            _ => self,
+        }
+    }
+
     pub fn collapse_with_effect(&self) -> (Value, EffectTag) {
         match self {
             Value::Combo(c) => {
@@ -2112,18 +2339,21 @@ impl Value {
             _ => (self.clone(), EffectTag::Pure),
         }
     }
-    
+
     pub fn to_string_plain(&self) -> String {
         match self {
-            Value::Atom(kind, _, _) => match kind { 
-                AtomKind::Int(i) => i.to_string(), 
+            Value::Atom(kind, _, _) => match kind {
+                AtomKind::Int(i) => i.to_string(),
                 AtomKind::Float(f) => f.to_string(),
                 AtomKind::Complex(r, i) => {
-                    if *i >= 0.0 { format!("{}+{}i", r, i) }
-                    else { format!("{}-{}i", r, i.abs()) }
-                },
+                    if *i >= 0.0 {
+                        format!("{}+{}i", r, i)
+                    } else {
+                        format!("{}-{}i", r, i.abs())
+                    }
+                }
                 AtomKind::Str(s) => s.clone(),
-                AtomKind::Tag(t) => format!("#{}", t), 
+                AtomKind::Tag(t) => format!("#{}", t),
                 AtomKind::TagStart => "#_|_".to_string(),
                 AtomKind::TagEnd => "#_".to_string(),
                 AtomKind::Top => "_".to_string(),
@@ -2134,7 +2364,14 @@ impl Value {
             Value::Top | Value::TopCaused { .. } => "_".to_string(),
             // Align with to_nlang: `#<tag>` not Debug variant name.
             Value::Bottom(d) => format!("_|_ (%cause: #{})", d.cause.as_tag()),
-            Value::Combo(c) => { if c.is_pure_wrapper() { if let Some(v) = c.get_field("%val") { return v.to_string_plain(); } } "{...}".to_string() }
+            Value::Combo(c) => {
+                if c.is_pure_wrapper() {
+                    if let Some(v) = c.get_field("%val") {
+                        return v.to_string_plain();
+                    }
+                }
+                "{...}".to_string()
+            }
             Value::Union(_) => "(...|...)".to_string(),
             Value::Blur(bd) => format!("#blur({})", bd.cause.as_str()),
             Value::Range { start, end, step } => {
@@ -2157,9 +2394,12 @@ impl Value {
                     AtomKind::Int(i) => i.to_string(),
                     AtomKind::Float(f) => f.to_string(),
                     AtomKind::Complex(r, i) => {
-                        if *i >= 0.0 { format!("{}+{}i", r, i) }
-                        else { format!("{}-{}i", r, i.abs()) }
-                    },
+                        if *i >= 0.0 {
+                            format!("{}+{}i", r, i)
+                        } else {
+                            format!("{}-{}i", r, i.abs())
+                        }
+                    }
                     AtomKind::Str(s) => format!("\"{}\"", s),
                     AtomKind::Tag(t) => format!("#{}", t),
                     AtomKind::TagStart => "#_|_".to_string(),
@@ -2167,22 +2407,34 @@ impl Value {
                     AtomKind::Bytes(b) => format!("b\"{:?}\"", b),
                     _ => format!("{:?}", kind),
                 };
-                if let Some(r) = rank { s.push_str(&format!("  ;; %rank: {}", r)); }
+                if let Some(r) = rank {
+                    s.push_str(&format!("  ;; %rank: {}", r));
+                }
                 if !effect.is_pure() {
                     s.push_str(&format!("  ;; %effect: {}", effect));
                 }
                 s
-            },
+            }
             Value::Combo(c) => {
-                let is_list = c.get_field("%kind").map(|k| k.to_string_plain() == "#list").unwrap_or(false);
+                let is_list = c
+                    .get_field("%kind")
+                    .map(|k| k.to_string_plain() == "#list")
+                    .unwrap_or(false);
                 if is_list {
                     let mut items = Vec::new();
                     let mut i = 0;
-                    while let Some(v) = c.get_field(&i.to_string()) { items.push(v.to_nlang(indent + 1)); i += 1; }
+                    while let Some(v) = c.get_field(&i.to_string()) {
+                        items.push(v.to_nlang(indent + 1));
+                        i += 1;
+                    }
                     return format!("[{}]", items.join(", "));
                 }
 
-                let mut s = if c.closed { "{{".to_string() } else { "{".to_string() };
+                let mut s = if c.closed {
+                    "{{".to_string()
+                } else {
+                    "{".to_string()
+                };
                 // Empty closed combo must re-parse (identity_persistence R8).
                 // Was `{{ }` (one brace short) — invalid n/ source.
                 if c.data.is_empty()
@@ -2200,7 +2452,8 @@ impl Value {
                 }
                 s.push('\n');
                 let fields = c.fields();
-                let mut keys: Vec<_> = fields.keys().collect(); keys.sort();
+                let mut keys: Vec<_> = fields.keys().collect();
+                keys.sort();
                 for k in keys {
                     let v = fields.get(k).unwrap();
                     // Engine anti-peel scaffolding (`_: _` / `_`→Top) is not
@@ -2212,7 +2465,8 @@ impl Value {
                     s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1)));
                 }
                 let local = c.local_fields();
-                let mut lkeys: Vec<_> = local.keys().collect(); lkeys.sort();
+                let mut lkeys: Vec<_> = local.keys().collect();
+                lkeys.sort();
                 for k in lkeys {
                     let v = local.get(k).unwrap();
                     if is_engine_scaffold_field(k, v) {
@@ -2249,7 +2503,11 @@ impl Value {
             }
             Value::Blur(bd) => {
                 let caid = bd.blur_caid().to_string();
-                format!("#blur {{ %cause: #{}, %caid: \"{}\" }}", bd.cause.as_str(), caid)
+                format!(
+                    "#blur {{ %cause: #{}, %caid: \"{}\" }}",
+                    bd.cause.as_str(),
+                    caid
+                )
             }
             // Canonical print: `a..b` / `a..b..s`, no spaces (range_eval probes).
             Value::Range { start, end, step } => {
@@ -2264,7 +2522,7 @@ impl Value {
     }
 
     pub fn content_hash_with_salt(&self, salt: &ContentHash) -> ContentHash {
-        let mut hasher = Sha256::new(); 
+        let mut hasher = Sha256::new();
         if !self.effect().is_pure() {
             hasher.update(b"HORIZON_SALT_V1");
             hasher.update(&salt.digest);
@@ -2272,7 +2530,7 @@ impl Value {
         self.hash_recursive_with_salt(&mut hasher, salt);
         ContentHash::v1(hasher.finalize().to_vec())
     }
-    
+
     pub fn content_hash(&self) -> ContentHash {
         let _bn_bytes = crate::bn_serial::serialize_bn(self);
         let digest = crate::bn_serial::content_digest(self);
@@ -2304,8 +2562,15 @@ impl Value {
 
     pub fn verify_signature(&self) -> bool {
         if let Value::Combo(c) = self {
-            if let (Some(Value::Atom(AtomKind::Str(pk_hex), _, None)), Some(Value::Atom(AtomKind::Str(sig_hex), _, None)), Some(target)) = 
-                (c.get_field("%pubkey"), c.get_field("%signature"), c.get_field("%target")) {
+            if let (
+                Some(Value::Atom(AtomKind::Str(pk_hex), _, None)),
+                Some(Value::Atom(AtomKind::Str(sig_hex), _, None)),
+                Some(target),
+            ) = (
+                c.get_field("%pubkey"),
+                c.get_field("%signature"),
+                c.get_field("%target"),
+            ) {
                 if let (Ok(pk_bytes), Ok(sig_bytes)) = (hex::decode(pk_hex), hex::decode(sig_hex)) {
                     let vk = signature::UnparsedPublicKey::new(&signature::ED25519, pk_bytes);
                     let msg = target.content_hash().to_string();
@@ -2324,30 +2589,69 @@ impl Value {
                 hasher.update([0x01]);
                 hasher.update([effect.to_serial_byte()]);
                 match kind {
-                    AtomKind::Int(i) => { hasher.update([0x01]); let (sign, bytes) = i.to_bytes_be(); hasher.update(&[if sign == num_bigint::Sign::Minus { 1 } else { 0 }]); hasher.update(&bytes); }
-                    AtomKind::Float(f) => { hasher.update([0x07]); hasher.update(f.to_bits().to_le_bytes()); }
-                    AtomKind::Complex(r, i) => { hasher.update([0x08]); hasher.update(r.to_bits().to_le_bytes()); hasher.update(i.to_bits().to_le_bytes()); }
-                    AtomKind::Str(s) => { hasher.update([0x02]); hasher.update(s.as_bytes()); }
-                    AtomKind::Tag(t) => { hasher.update([0x03]); hasher.update(t.as_bytes()); }
-                    AtomKind::TagStart => { hasher.update([0x04]); }
-                    AtomKind::TagEnd => { hasher.update([0x05]); }
-                    AtomKind::Bytes(b) => { hasher.update([0x09]); hasher.update(b); }
-                    _ => { hasher.update([0x06]); hasher.update(format!("{:?}", kind).as_bytes()); }
+                    AtomKind::Int(i) => {
+                        hasher.update([0x01]);
+                        let (sign, bytes) = i.to_bytes_be();
+                        hasher.update(&[if sign == num_bigint::Sign::Minus {
+                            1
+                        } else {
+                            0
+                        }]);
+                        hasher.update(&bytes);
+                    }
+                    AtomKind::Float(f) => {
+                        hasher.update([0x07]);
+                        hasher.update(f.to_bits().to_le_bytes());
+                    }
+                    AtomKind::Complex(r, i) => {
+                        hasher.update([0x08]);
+                        hasher.update(r.to_bits().to_le_bytes());
+                        hasher.update(i.to_bits().to_le_bytes());
+                    }
+                    AtomKind::Str(s) => {
+                        hasher.update([0x02]);
+                        hasher.update(s.as_bytes());
+                    }
+                    AtomKind::Tag(t) => {
+                        hasher.update([0x03]);
+                        hasher.update(t.as_bytes());
+                    }
+                    AtomKind::TagStart => {
+                        hasher.update([0x04]);
+                    }
+                    AtomKind::TagEnd => {
+                        hasher.update([0x05]);
+                    }
+                    AtomKind::Bytes(b) => {
+                        hasher.update([0x09]);
+                        hasher.update(b);
+                    }
+                    _ => {
+                        hasher.update([0x06]);
+                        hasher.update(format!("{:?}", kind).as_bytes());
+                    }
                 }
-                if let Some(r) = rank { hasher.update(r.to_le_bytes()); }
+                if let Some(r) = rank {
+                    hasher.update(r.to_le_bytes());
+                }
             }
             Value::Combo(c) => {
                 hasher.update([0x02]);
                 hasher.update([if c.closed { 1 } else { 0 }]);
                 hasher.update([c.effect.to_serial_byte()]);
                 let fields = c.fields();
-                let mut keys: Vec<_> = fields.keys().collect(); keys.sort();
+                let mut keys: Vec<_> = fields.keys().collect();
+                keys.sort();
                 for k in keys {
                     hasher.update(k.as_bytes());
-                    fields.get(k).unwrap().hash_recursive_with_salt(hasher, salt);
+                    fields
+                        .get(k)
+                        .unwrap()
+                        .hash_recursive_with_salt(hasher, salt);
                 }
                 let local = c.local_fields();
-                let mut lkeys: Vec<_> = local.keys().collect(); lkeys.sort();
+                let mut lkeys: Vec<_> = local.keys().collect();
+                lkeys.sort();
                 for k in lkeys {
                     hasher.update(b"local:");
                     hasher.update(k.as_bytes());
@@ -2356,22 +2660,35 @@ impl Value {
             }
             Value::Union(branches) => {
                 hasher.update([0x03]);
-                let mut digests: Vec<_> = branches.iter().map(|b| {
-                    let mut h = Sha256::new();
-                    b.hash_recursive_with_salt(&mut h, salt);
-                    h.finalize().to_vec()
-                }).collect();
+                let mut digests: Vec<_> = branches
+                    .iter()
+                    .map(|b| {
+                        let mut h = Sha256::new();
+                        b.hash_recursive_with_salt(&mut h, salt);
+                        h.finalize().to_vec()
+                    })
+                    .collect();
                 digests.sort();
-                for d in digests { hasher.update(&d); }
+                for d in digests {
+                    hasher.update(&d);
+                }
             }
-            Value::Bottom(d) => { hasher.update([0x04]); hasher.update([d.cause as u8]); }
+            Value::Bottom(d) => {
+                hasher.update([0x04]);
+                hasher.update([d.cause as u8]);
+            }
             Value::Blur(bd) => {
                 hasher.update([0xFD]);
                 hasher.update(bd.cause.as_bytes());
                 hasher.update(&bd.horizon.fuel_remaining.to_le_bytes());
                 hasher.update(&bd.horizon.salt.digest);
             }
-            Value::Thunk { expr, closure, context, effect } => {
+            Value::Thunk {
+                expr,
+                closure,
+                context,
+                effect,
+            } => {
                 // GUIDE_03 §11.3 memo key: (expr CAID, frame CAID, context CAID | #open).
                 // Must be deterministic and evaluation-independent.
                 hasher.update([0x05]);
@@ -2396,13 +2713,19 @@ impl Value {
                 }
                 hasher.update(&[effect.to_serial_byte()]);
             }
-            Value::Code(expr) => { hasher.update([0x06]); hasher.update(format!("{:?}", expr).as_bytes()); }
+            Value::Code(expr) => {
+                hasher.update([0x06]);
+                hasher.update(format!("{:?}", expr).as_bytes());
+            }
             Value::Ref(path) => {
                 hasher.update([0x07]);
                 match path.anchor {
                     PathAnchor::Bare => hasher.update([0x00]),
                     PathAnchor::Root => hasher.update([0x01]),
-                    PathAnchor::Parent(n) => { hasher.update([0x02]); hasher.update(&n.to_le_bytes()); }
+                    PathAnchor::Parent(n) => {
+                        hasher.update([0x02]);
+                        hasher.update(&n.to_le_bytes());
+                    }
                     PathAnchor::Current => hasher.update([0x03]),
                 }
                 // length-delimited: <<a.bc>> and <<ab.c>> are different geometry
@@ -2451,8 +2774,12 @@ impl Commit {
             CommitKind::Squash => 3,
         });
         if let Some(ref ri) = self.refine_info {
-            for src in &ri.source_caids { buf.extend_from_slice(&src.digest); }
-            for tgt in &ri.target_caids { buf.extend_from_slice(&tgt.digest); }
+            for src in &ri.source_caids {
+                buf.extend_from_slice(&src.digest);
+            }
+            for tgt in &ri.target_caids {
+                buf.extend_from_slice(&tgt.digest);
+            }
         }
         let meta_bytes = format!("{:?}", self.meta);
         crate::bn_serial::encode_unsigned_leb128(meta_bytes.len() as u64, &mut buf);

@@ -68,13 +68,13 @@
 //
 // i.e. the cause is `#privileged_required` and the detail names the capability.
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use std::fs;
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
@@ -176,15 +176,30 @@ fn caid_of_stored(out: &str) -> String {
 // source set on the asking side at all — the same control `discover_index`
 // used for the same reason.
 
-struct Node { child: Child, port: u16 }
-impl Drop for Node { fn drop(&mut self) { self.child.kill().ok(); self.child.wait().ok(); } }
-impl Node { fn stop(mut self) { self.child.kill().ok(); self.child.wait().ok(); } }
+struct Node {
+    child: Child,
+    port: u16,
+}
+impl Drop for Node {
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
+}
+impl Node {
+    fn stop(mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
+}
 
 fn free_port() -> u16 {
     for _ in 0..64 {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let p = l.local_addr().unwrap().port();
-        if p > 25000 { return p; }
+        if p > 25000 {
+            return p;
+        }
     }
     panic!("no free port above 25000");
 }
@@ -211,7 +226,9 @@ fn ask_raw(port: u16, payload: &str) -> String {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     s.write_all(payload.as_bytes()).unwrap();
-    if !payload.ends_with('\n') { s.write_all(b"\n").unwrap(); }
+    if !payload.ends_with('\n') {
+        s.write_all(b"\n").unwrap();
+    }
     s.flush().unwrap();
     s.shutdown(std::net::Shutdown::Write).ok();
     let mut buf = Vec::new();
@@ -437,7 +454,10 @@ fn p2_the_directory_is_still_not_a_fetch_source() {
 
     let stored = oo(
         &holder,
-        &["eval", "~%Discovery./identify_and_store {{ payload: \"p2-only-here\" }}"],
+        &[
+            "eval",
+            "~%Discovery./identify_and_store {{ payload: \"p2-only-here\" }}",
+        ],
     );
     let caid = caid_of_stored(&stored);
 
@@ -447,7 +467,10 @@ fn p2_the_directory_is_still_not_a_fetch_source() {
     // CONTROL: the holder serves it over the wire. If this fails, everything
     // below is vacuous — calibration caught an earlier version of this pin
     // passing because *nothing* worked.
-    let served = ask_raw(hnode.port, &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n"));
+    let served = ask_raw(
+        hnode.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n"),
+    );
     assert!(
         served.contains("success"),
         "control: the holder does not serve the object, so the client's failure \
@@ -484,7 +507,11 @@ fn p2_the_directory_is_still_not_a_fetch_source() {
 
     // The measurement: the client has the holder in its directory and has
     // never consented to its address.
-    let probe = write_prog(&client, "p.n", &format!("r: ~%Discovery./fetch \"{caid}\"\n"));
+    let probe = write_prog(
+        &client,
+        "p.n",
+        &format!("r: ~%Discovery./fetch \"{caid}\"\n"),
+    );
     let via_directory = observe(&client, &probe, "r", &[]);
     hnode.stop();
 
@@ -522,7 +549,10 @@ fn p4_serving_fetch_is_untouched() {
     init(&dir);
     let stored = oo(
         &dir,
-        &["eval", "~%Discovery./identify_and_store {{ payload: \"p4-served\" }}"],
+        &[
+            "eval",
+            "~%Discovery./identify_and_store {{ payload: \"p4-served\" }}",
+        ],
     );
     assert!(
         stored.contains("hash:sha256:"),

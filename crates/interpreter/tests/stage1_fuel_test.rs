@@ -6,11 +6,13 @@
 // Test: build a Thunk manually, verify fuel unchanged; then force it, verify
 // fuel decreased.
 
-use nlang_interpreter::{Ouroboros, EvalContext, Value, ComboVal, EffectTag};
-use nlang_parser::ast::{Expr, ExprKind, AtomKind, Span};
 use indexmap::IndexMap;
+use nlang_interpreter::{ComboVal, EffectTag, EvalContext, Ouroboros, Value};
+use nlang_parser::ast::{AtomKind, Expr, ExprKind, Span};
 
-fn empty_oo() -> Ouroboros { Ouroboros::new_in_memory() }
+fn empty_oo() -> Ouroboros {
+    Ouroboros::new_in_memory()
+}
 
 #[test]
 fn thunk_construction_does_not_consume_fuel() {
@@ -21,18 +23,30 @@ fn thunk_construction_does_not_consume_fuel() {
 
     // Construct a Thunk wrapping a literal int expression. No eval, no force.
     let thunk = Value::Thunk {
-        expr: Box::new(Expr::new(ExprKind::Atom(AtomKind::Int(42.into())), Span::new(0, 0))),
+        expr: Box::new(Expr::new(
+            ExprKind::Atom(AtomKind::Int(42.into())),
+            Span::new(0, 0),
+        )),
         closure: vec![],
         context: None,
         effect: EffectTag::Pure,
     };
 
     // Constructing the Thunk must not touch fuel.
-    assert_eq!(ctx.fuel, fuel_before, "Thunk construction must be free (got {} → {})", fuel_before, ctx.fuel);
+    assert_eq!(
+        ctx.fuel, fuel_before,
+        "Thunk construction must be free (got {} → {})",
+        fuel_before, ctx.fuel
+    );
 
     // Forcing it consumes fuel (eval runs).
     let _ = oo.force(thunk, &mut ctx);
-    assert!(ctx.fuel < fuel_before, "force must consume fuel (got {} → {})", fuel_before, ctx.fuel);
+    assert!(
+        ctx.fuel < fuel_before,
+        "force must consume fuel (got {} → {})",
+        fuel_before,
+        ctx.fuel
+    );
 }
 
 #[test]
@@ -49,10 +63,16 @@ fn unobserved_combo_field_thunk_construction_is_free() {
     // A thunk wrapping an arithmetic expression.
     let expr = Expr::new(
         ExprKind::Add(
-            Box::new(Expr::new(ExprKind::Atom(AtomKind::Int(1.into())), Span::new(0,0))),
-            Box::new(Expr::new(ExprKind::Atom(AtomKind::Int(2.into())), Span::new(0,0))),
+            Box::new(Expr::new(
+                ExprKind::Atom(AtomKind::Int(1.into())),
+                Span::new(0, 0),
+            )),
+            Box::new(Expr::new(
+                ExprKind::Atom(AtomKind::Int(2.into())),
+                Span::new(0, 0),
+            )),
         ),
-        Span::new(0,0),
+        Span::new(0, 0),
     );
     let thunk = Value::Thunk {
         expr: Box::new(expr),

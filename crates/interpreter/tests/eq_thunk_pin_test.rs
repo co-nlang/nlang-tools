@@ -14,8 +14,8 @@
 // (CAID/= six axes unchanged — SPEC_04 §3.1 #4 strips display only).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -90,7 +90,10 @@ fn pin_eq_forces_deep_chain() {
 
 #[test]
 fn pin_eq_forces_applied_field() {
-    assert_obs("f: (n -> n * 2)\np: { v: /f 3 }\nout: p = { v: 6 }", "#true");
+    assert_obs(
+        "f: (n -> n * 2)\np: { v: /f 3 }\nout: p = { v: 6 }",
+        "#true",
+    );
 }
 
 #[test]

@@ -29,8 +29,8 @@
 // acceptor's job); ~%Repl/%state effects.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -170,11 +170,17 @@ fn pin_blur_merge_caid_verbatim() {
 fn pin_unify_blur_bottom_both_orders() {
     // The existing unify law the spread fix leans on.
     assert_obs(
-        &format!("bot: 1 & 2\nbig: {}\nout: (big & bot).%cause", flat_chain(4000)),
+        &format!(
+            "bot: 1 & 2\nbig: {}\nout: (big & bot).%cause",
+            flat_chain(4000)
+        ),
         "#conflict",
     );
     assert_obs(
-        &format!("bot: 1 & 2\nbig: {}\nout: (bot & big).%cause", flat_chain(4000)),
+        &format!(
+            "bot: 1 & 2\nbig: {}\nout: (bot & big).%cause",
+            flat_chain(4000)
+        ),
         "#conflict",
     );
 }
@@ -189,7 +195,10 @@ fn pin_root_system_use_clean() {
 fn pin_single_source_blur_absorb_still() {
     // Blur-spread arc law survives the fold rewrite (single source).
     assert_obs(
-        &format!("big: {}\nout: ({{ b: 1, ...big }}).%cause", flat_chain(4000)),
+        &format!(
+            "big: {}\nout: ({{ b: 1, ...big }}).%cause",
+            flat_chain(4000)
+        ),
         "#fuel_exhausted",
     );
 }

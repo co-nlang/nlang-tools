@@ -34,8 +34,8 @@
 // under-declaration.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -144,7 +144,10 @@ fn pin_cocoon_shield_is_the_escape() {
     // §4.2.1: a cocoon genuinely seals io, so its actual effect IS #pure —
     // declared #pure matches, NO violation. This is the legitimate way to
     // hold io behind a pure boundary.
-    assert_obs("out: {{ %effect: #pure, v: (~%Time.now _) }}.%effect", "#pure");
+    assert_obs(
+        "out: {{ %effect: #pure, v: (~%Time.now _) }}.%effect",
+        "#pure",
+    );
 }
 
 #[test]

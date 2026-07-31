@@ -25,8 +25,8 @@
 // spread source (record current behavior only).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -252,12 +252,18 @@ fn pin_cocoon_unbox_and_target_stays_open() {
 #[test]
 fn pin_spread_privacy_regression_guard() {
     // Previous arc stays closed: external spread excludes local axis.
-    assert_obs("p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek", "_");
+    assert_obs(
+        "p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek",
+        "_",
+    );
 }
 
 #[test]
 fn pin_insider_spread_keeps_local() {
-    assert_obs("p: { ~s: 1, a: 2, c2: { ...p, rd: ~s } }\nout: p.c2.rd", "1");
+    assert_obs(
+        "p: { ~s: 1, a: 2, c2: { ...p, rd: ~s } }\nout: p.c2.rd",
+        "1",
+    );
 }
 
 #[test]

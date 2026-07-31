@@ -11,16 +11,22 @@
 // Known gap (lazy engine, GUIDE_03): open terms are collapsed at evolve time,
 // so the Ouroboros vector `v: <<_.>> |> <<_.>>` / `v.w.x.a` is not yet realizable.
 
-use nlang_interpreter::{Ouroboros, EvalContext};
-use nlang_interpreter::value::{ComboVal, EffectTag, Value, BottomCause};
-use nlang_parser::{parse_program, ast::AtomKind};
 use indexmap::IndexMap;
+use nlang_interpreter::value::{BottomCause, ComboVal, EffectTag, Value};
+use nlang_interpreter::{EvalContext, Ouroboros};
+use nlang_parser::{ast::AtomKind, parse_program};
 use num_bigint::BigInt;
 
 fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     // Stage 2: eval_observed = eval + force_recursive (the observation API).
     // eval returns pre-observation structure (thunks); eval_observed solidifies.
     oo.eval_observed(&program.fields[0].value, &mut ctx)
@@ -33,13 +39,18 @@ fn field_of(v: &Value, key: &str) -> Value {
     }
 }
 
-fn int(v: i64) -> Value { Value::Atom(AtomKind::Int(BigInt::from(v)), EffectTag::Pure, None) }
+fn int(v: i64) -> Value {
+    Value::Atom(AtomKind::Int(BigInt::from(v)), EffectTag::Pure, None)
+}
 
 // P1: pipe binds $ to the input — canonical vector first half (SPEC_07 §4.2)
 #[test]
 fn p1_pipe_binds_input() {
     let v = eval_one(r#"s: "Logic" |> { a: $ }"#);
-    assert_eq!(field_of(&v, "a"), Value::Atom(AtomKind::Str("Logic".to_string()), EffectTag::Pure, None));
+    assert_eq!(
+        field_of(&v, "a"),
+        Value::Atom(AtomKind::Str("Logic".to_string()), EffectTag::Pure, None)
+    );
 }
 
 // P1: bare combos never rebind — inner combo still sees the pipe input
@@ -105,7 +116,11 @@ fn p4_tuple_positional_input() {
 #[test]
 fn p4_tuple_sealed_against_structural_add() {
     let v = eval_one("t: (1, 2) |> { s: $.0 + $.1 }");
-    assert!(matches!(v, Value::Bottom(_)), "sealed tuple must reject new field, got {:?}", v);
+    assert!(
+        matches!(v, Value::Bottom(_)),
+        "sealed tuple must reject new field, got {:?}",
+        v
+    );
 }
 
 // P4 corollary: explicit unboxing `{ ...t }` is the canonical way to extend —
@@ -129,7 +144,12 @@ fn tuple_effect_transparent() {
     let mut ctx = EvalContext::new(root);
     let program = parse_program("t: (io_thing, 1)").unwrap();
     let v = oo.eval(&program.fields[0].value, &mut ctx);
-    assert_eq!(v.effect(), EffectTag::IO, "tuple must not shield element effects, got {:?}", v);
+    assert_eq!(
+        v.effect(),
+        EffectTag::IO,
+        "tuple must not shield element effects, got {:?}",
+        v
+    );
 }
 
 // P5: interpolation does not open a scope — ${$} is the pipe input

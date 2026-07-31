@@ -1,7 +1,7 @@
-use crate::value::{Value, MasaRef, ComboVal};
 use crate::bn_serial::serialize_bn;
-use sha2::{Sha256, Digest};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+use crate::value::{ComboVal, MasaRef, Value};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use sha2::{Digest, Sha256};
 
 const MAX_COMPONENTS: usize = 16;
 
@@ -14,34 +14,58 @@ pub fn compute_sketch_v2(value: &Value) -> String {
 
 fn extract_spectral_components(value: &Value) -> (Vec<f64>, Vec<f64>) {
     match value {
-        Value::Top | Value::TopCaused { .. } => (vec![0.0; MAX_COMPONENTS], vec![0.0; MAX_COMPONENTS]),
+        Value::Top | Value::TopCaused { .. } => {
+            (vec![0.0; MAX_COMPONENTS], vec![0.0; MAX_COMPONENTS])
+        }
         Value::Combo(cv) => {
             let mut entries: Vec<(&str, &Value)> = Vec::new();
-            for (k, v) in &cv.system  { entries.push((k, v)); }
-            for (k, v) in &cv.meta    { entries.push((k, v)); }
-            for (k, v) in &cv.types   { entries.push((k, v)); }
-            for (k, v) in &cv.rules   { entries.push((k, v)); }
-            for (k, v) in &cv.data    { entries.push((k, v)); }
-            for (k, v) in &cv.local   { entries.push((k, v)); }
-            for (k, v) in &cv.legacy_fields { entries.push((k, v)); }
-            for (k, v) in &cv.legacy_local  { entries.push((k, v)); }
+            for (k, v) in &cv.system {
+                entries.push((k, v));
+            }
+            for (k, v) in &cv.meta {
+                entries.push((k, v));
+            }
+            for (k, v) in &cv.types {
+                entries.push((k, v));
+            }
+            for (k, v) in &cv.rules {
+                entries.push((k, v));
+            }
+            for (k, v) in &cv.data {
+                entries.push((k, v));
+            }
+            for (k, v) in &cv.local {
+                entries.push((k, v));
+            }
+            for (k, v) in &cv.legacy_fields {
+                entries.push((k, v));
+            }
+            for (k, v) in &cv.legacy_local {
+                entries.push((k, v));
+            }
 
-            let mut components: Vec<(f64, f64)> = entries.iter().map(|(key, val)| {
-                (field_amplitude(val), field_phase(&cv.masa_ref, key))
-            }).collect();
+            let mut components: Vec<(f64, f64)> = entries
+                .iter()
+                .map(|(key, val)| (field_amplitude(val), field_phase(&cv.masa_ref, key)))
+                .collect();
             components.sort_by(|a, b| {
-                b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                b.0.partial_cmp(&a.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             });
             components.truncate(MAX_COMPONENTS);
-            while components.len() < MAX_COMPONENTS { components.push((0.0, 0.0)); }
+            while components.len() < MAX_COMPONENTS {
+                components.push((0.0, 0.0));
+            }
             components.into_iter().unzip()
         }
         Value::Union(branches) => {
             let mut amps: Vec<f64> = branches.iter().map(field_amplitude_value).collect();
             amps.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
             amps.truncate(MAX_COMPONENTS);
-            while amps.len() < MAX_COMPONENTS { amps.push(0.0); }
+            while amps.len() < MAX_COMPONENTS {
+                amps.push(0.0);
+            }
             let phases = vec![0.0; MAX_COMPONENTS];
             (amps, phases)
         }
@@ -62,7 +86,9 @@ fn field_amplitude(value: &Value) -> f64 {
     hi as f64 / u64::MAX as f64
 }
 
-fn field_amplitude_value(value: &Value) -> f64 { field_amplitude(value) }
+fn field_amplitude_value(value: &Value) -> f64 {
+    field_amplitude(value)
+}
 
 fn field_phase(masa_ref: &MasaRef, field_key: &str) -> f64 {
     match masa_ref {
@@ -85,7 +111,7 @@ fn encode_complex_spectrum(amplitudes: &[f64], phases: &[f64]) -> Vec<u8> {
     assert_eq!(phases.len(), MAX_COMPONENTS);
 
     let lambda_q: Vec<u64> = amplitudes.iter().map(|&v| quantize_amplitude(v)).collect();
-    let theta_q: Vec<u64>  = phases.iter().map(|&p| quantize_phase(p)).collect();
+    let theta_q: Vec<u64> = phases.iter().map(|&p| quantize_phase(p)).collect();
 
     let delta_l = delta_encode(&lambda_q);
     let delta_t = delta_encode(&theta_q);
@@ -128,7 +154,10 @@ fn leb128_encode(mut v: u64, out: &mut Vec<u8>) {
     loop {
         let byte = (v & 0x7F) as u8;
         v >>= 7;
-        if v == 0 { out.push(byte); break; }
+        if v == 0 {
+            out.push(byte);
+            break;
+        }
         out.push(byte | 0x80);
     }
 }

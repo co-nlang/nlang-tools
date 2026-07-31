@@ -24,8 +24,8 @@
 // ledgered to the 效應系統波 (REAL_05 external boundary).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -125,10 +125,7 @@ fn red_effect_read_union_distributes() {
 fn red_effect_read_unify_join() {
     // §4.1 composition: & unification joins effects (pure ∘ io = io).
     // This is the honest twin of the orphan tests/effect_taint.n.
-    assert_obs(
-        "u1: { a: 1 } & { b: ~%Time.now _ }\nout: u1.%effect",
-        "#io",
-    );
+    assert_obs("u1: { a: 1 } & { b: ~%Time.now _ }\nout: u1.%effect", "#io");
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -178,18 +175,12 @@ fn repair_pin_cocoon_shield_in_parent() {
     // ALIAS spelling of the same cocoon stayed #pure (value-side effect
     // is healthy). §4.2.1: contagion stops at the cocoon wall in BOTH
     // spellings; open-in-open nesting still propagates.
-    assert_obs(
-        "w: { k: {{ v: ~%Time.now _ }} }\nout: w.%effect",
-        "#pure",
-    );
+    assert_obs("w: { k: {{ v: ~%Time.now _ }} }\nout: w.%effect", "#pure");
     assert_obs(
         "kref: {{ v: ~%Time.now _ }}\nw3: { k: kref }\nout: w3.%effect",
         "#pure",
     );
-    assert_obs(
-        "w2: { c: { v: ~%Time.now _ } }\nout: w2.%effect",
-        "#io",
-    );
+    assert_obs("w2: { c: { v: ~%Time.now _ } }\nout: w2.%effect", "#io");
 }
 
 #[test]

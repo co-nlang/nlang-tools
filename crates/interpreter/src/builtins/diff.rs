@@ -1,10 +1,10 @@
-use std::sync::Arc;
-use std::collections::HashMap;
+use crate::builtins::query::{deep_merge_values, parse_path, set_at_path};
+use crate::value::{BottomCause, BottomDetail, ComboVal, EffectTag, Value};
+use crate::{BuiltinFn, EvalContext, Ouroboros};
 use indexmap::IndexMap;
-use crate::{Ouroboros, EvalContext, BuiltinFn};
-use crate::value::{Value, EffectTag, BottomCause, BottomDetail, ComboVal};
-use crate::builtins::query::{parse_path, set_at_path, deep_merge_values};
 use nlang_parser::ast::AtomKind;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 // ── Value equality ───────────────────────────────────────────────────────────
 
@@ -18,10 +18,16 @@ fn same_value(a: &Value, b: &Value) -> bool {
         (Value::Combo(ca), Value::Combo(cb)) => {
             let a_len = ca.all_fields_iter().count();
             let b_len = cb.all_fields_iter().count();
-            if a_len != b_len { return false; }
+            if a_len != b_len {
+                return false;
+            }
             for (key, va) in ca.all_fields_iter() {
                 match cb.get_field(&key) {
-                    Some(vb) => if !same_value(&va, vb) { return false; }
+                    Some(vb) => {
+                        if !same_value(&va, vb) {
+                            return false;
+                        }
+                    }
                     None => return false,
                 }
             }
@@ -45,12 +51,22 @@ fn missing() -> Value {
 }
 
 fn collect_diffs(a: &Value, b: &Value, prefix: &str, acc: &mut Vec<Value>) {
-    if same_value(a, b) { return; }
+    if same_value(a, b) {
+        return;
+    }
     match (a, b) {
         (Value::Combo(ca), Value::Combo(cb)) => {
             let mut keys: Vec<String> = Vec::new();
-            for (k, _) in ca.all_fields_iter() { if !keys.contains(&k) { keys.push(k.clone()); } }
-            for (k, _) in cb.all_fields_iter() { if !keys.contains(&k) { keys.push(k.clone()); } }
+            for (k, _) in ca.all_fields_iter() {
+                if !keys.contains(&k) {
+                    keys.push(k.clone());
+                }
+            }
+            for (k, _) in cb.all_fields_iter() {
+                if !keys.contains(&k) {
+                    keys.push(k.clone());
+                }
+            }
             for key in keys {
                 let va = ca.get_field(&key).cloned().unwrap_or_else(missing);
                 let vb = cb.get_field(&key).cloned().unwrap_or_else(missing);
@@ -67,16 +83,33 @@ fn collect_diffs(a: &Value, b: &Value, prefix: &str, acc: &mut Vec<Value>) {
             entry.insert("path".to_string(), str_atom(prefix));
             entry.insert("from".to_string(), a.clone());
             entry.insert("to".to_string(), b.clone());
-            acc.push(Value::Combo(ComboVal::new(entry, false, IndexMap::new(), EffectTag::Pure, vec![])));
+            acc.push(Value::Combo(ComboVal::new(
+                entry,
+                false,
+                IndexMap::new(),
+                EffectTag::Pure,
+                vec![],
+            )));
         }
     }
 }
 
 fn build_list(items: Vec<Value>) -> Value {
     let mut m = IndexMap::new();
-    m.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-    for (i, v) in items.iter().enumerate() { m.insert(i.to_string(), v.clone()); }
-    Value::Combo(ComboVal::new(m, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    m.insert(
+        "%kind".to_string(),
+        Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None),
+    );
+    for (i, v) in items.iter().enumerate() {
+        m.insert(i.to_string(), v.clone());
+    }
+    Value::Combo(ComboVal::new(
+        m,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn extract_list_items(list: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Vec<Value> {
@@ -85,10 +118,14 @@ fn extract_list_items(list: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Ve
         for i in 0u32.. {
             if let Some(v) = c.get_field(&i.to_string()) {
                 items.push(oo.force(v.clone(), ctx));
-            } else { break; }
+            } else {
+                break;
+            }
         }
         items
-    } else { vec![] }
+    } else {
+        vec![]
+    }
 }
 
 fn has_any_bottom(val: &Value) -> bool {
@@ -100,66 +137,87 @@ fn has_any_bottom(val: &Value) -> bool {
 }
 
 pub fn register_diff_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
-
     // diff.diff: {0: a, 1: b} → @list of {path, from, to}
-    m.insert("diff.diff".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        let c = match arg { Value::Combo(ref c) => c.clone(), _ => return BottomCause::Conflict.into() };
-        let a = match c.get_field("0") {
-            Some(v) => oo.force(v.clone(), ctx),
-            None => return BottomCause::Conflict.into(),
-        };
-        let b = match c.get_field("1") {
-            Some(v) => oo.force(v.clone(), ctx),
-            None => return BottomCause::Conflict.into(),
-        };
-        let mut entries = Vec::new();
-        collect_diffs(&a, &b, "", &mut entries);
-        build_list(entries)
-    }) as Arc<BuiltinFn>);
+    m.insert(
+        "diff.diff".to_string(),
+        Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+            let c = match arg {
+                Value::Combo(ref c) => c.clone(),
+                _ => return BottomCause::Conflict.into(),
+            };
+            let a = match c.get_field("0") {
+                Some(v) => oo.force(v.clone(), ctx),
+                None => return BottomCause::Conflict.into(),
+            };
+            let b = match c.get_field("1") {
+                Some(v) => oo.force(v.clone(), ctx),
+                None => return BottomCause::Conflict.into(),
+            };
+            let mut entries = Vec::new();
+            collect_diffs(&a, &b, "", &mut entries);
+            build_list(entries)
+        }) as Arc<BuiltinFn>,
+    );
 
     // diff.patch: {0: val, 1: diff_list} → patched Value
-    m.insert("diff.patch".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        let c = match arg { Value::Combo(ref c) => c.clone(), _ => return BottomCause::Conflict.into() };
-        let mut val = match c.get_field("0") {
-            Some(v) => oo.force(v.clone(), ctx),
-            None => return BottomCause::Conflict.into(),
-        };
-        let diff_list = match c.get_field("1") {
-            Some(v) => oo.force(v.clone(), ctx),
-            None => return BottomCause::Conflict.into(),
-        };
-        let entries = extract_list_items(&diff_list, oo, ctx);
-        for entry in entries {
-            let entry = oo.force(entry, ctx);
-            if let Value::Combo(ref ec) = entry {
-                let path_str = match ec.get_field("path") {
-                    Some(p) => oo.force(p.clone(), ctx).to_string_plain(),
-                    None => continue,
-                };
-                let new_val = match ec.get_field("to") {
-                    Some(v) => oo.force(v.clone(), ctx),
-                    None => continue,
-                };
-                let segments = parse_path(&path_str);
-                val = set_at_path(val, &segments, new_val);
+    m.insert(
+        "diff.patch".to_string(),
+        Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+            let c = match arg {
+                Value::Combo(ref c) => c.clone(),
+                _ => return BottomCause::Conflict.into(),
+            };
+            let mut val = match c.get_field("0") {
+                Some(v) => oo.force(v.clone(), ctx),
+                None => return BottomCause::Conflict.into(),
+            };
+            let diff_list = match c.get_field("1") {
+                Some(v) => oo.force(v.clone(), ctx),
+                None => return BottomCause::Conflict.into(),
+            };
+            let entries = extract_list_items(&diff_list, oo, ctx);
+            for entry in entries {
+                let entry = oo.force(entry, ctx);
+                if let Value::Combo(ref ec) = entry {
+                    let path_str = match ec.get_field("path") {
+                        Some(p) => oo.force(p.clone(), ctx).to_string_plain(),
+                        None => continue,
+                    };
+                    let new_val = match ec.get_field("to") {
+                        Some(v) => oo.force(v.clone(), ctx),
+                        None => continue,
+                    };
+                    let segments = parse_path(&path_str);
+                    val = set_at_path(val, &segments, new_val);
+                }
             }
-        }
-        val
-    }) as Arc<BuiltinFn>);
+            val
+        }) as Arc<BuiltinFn>,
+    );
 
     // diff.is_compatible: {0: a, 1: b} → #true / #false
-    m.insert("diff.is_compatible".to_string(), Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-        let c = match arg { Value::Combo(ref c) => c.clone(), _ => return BottomCause::Conflict.into() };
-        let a = match c.get_field("0") {
-            Some(v) => oo.force(v.clone(), ctx),
-            None => return BottomCause::Conflict.into(),
-        };
-        let b = match c.get_field("1") {
-            Some(v) => oo.force(v.clone(), ctx),
-            None => return BottomCause::Conflict.into(),
-        };
-        let merged = deep_merge_values(a, b, oo, ctx);
-        let tag = if has_any_bottom(&merged) { "false" } else { "true" };
-        Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::Pure, None)
-    }) as Arc<BuiltinFn>);
+    m.insert(
+        "diff.is_compatible".to_string(),
+        Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
+            let c = match arg {
+                Value::Combo(ref c) => c.clone(),
+                _ => return BottomCause::Conflict.into(),
+            };
+            let a = match c.get_field("0") {
+                Some(v) => oo.force(v.clone(), ctx),
+                None => return BottomCause::Conflict.into(),
+            };
+            let b = match c.get_field("1") {
+                Some(v) => oo.force(v.clone(), ctx),
+                None => return BottomCause::Conflict.into(),
+            };
+            let merged = deep_merge_values(a, b, oo, ctx);
+            let tag = if has_any_bottom(&merged) {
+                "false"
+            } else {
+                "true"
+            };
+            Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::Pure, None)
+        }) as Arc<BuiltinFn>,
+    );
 }

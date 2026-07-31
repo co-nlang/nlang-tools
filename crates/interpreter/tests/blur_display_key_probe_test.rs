@@ -27,8 +27,8 @@
 // keys (delivered arc, pinned there).
 
 use nlang_interpreter::value::{
-    canonical_display_order, BlurCause, BlurDetail, ContentHash,
-    EffectTag, HorizonParams, ObservationStrategy, Value,
+    canonical_display_order, BlurCause, BlurDetail, ContentHash, EffectTag, HorizonParams,
+    ObservationStrategy, Value,
 };
 use nlang_parser::ast::AtomKind;
 

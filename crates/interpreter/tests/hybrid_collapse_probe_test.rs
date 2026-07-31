@@ -18,8 +18,8 @@
 //   plain combos without %val (stay ⊥ in math/atomic-cmp).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -122,10 +122,7 @@ fn red_pipe_hybrid_arg_body_math() {
 
 #[test]
 fn red_apply_hybrid_arg_juxtaposition() {
-    assert_obs(
-        "dbl: (n -> n * 2)\nx: 3 & { note: \"n\" }\nout: dbl x",
-        "6",
-    );
+    assert_obs("dbl: (n -> n * 2)\nx: 3 & { note: \"n\" }\nout: dbl x", "6");
 }
 
 #[test]
@@ -178,10 +175,7 @@ fn pin_structural_literal_nav_transparent() {
     // `lit: <<1 & {name:"Bob"}>>` then `lit.name` → `_` (marker combo
     // open-miss) while v0.2.6 gave "Bob". navigate_segments now unwraps
     // the mark like a pure wrapper (SYNTAX_07 §4 #7).
-    assert_obs(
-        "lit: <<1 & { name: \"Bob\" }>>\nout: lit.name",
-        "\"Bob\"",
-    );
+    assert_obs("lit: <<1 & { name: \"Bob\" }>>\nout: lit.name", "\"Bob\"");
     // Structural of a PATH navigates too (Ref-mediated).
     assert_obs(
         "x: 1 & { name: \"Alice\" }\nst: <<x>>\nout: st.name",
@@ -218,10 +212,7 @@ fn pin_pure_wrapper_collapse() {
 
 #[test]
 fn pin_plain_combo_observe_unchanged() {
-    assert_obs(
-        "out: { name: \"Alice\" }",
-        "{\n  name: \"Alice\"\n}",
-    );
+    assert_obs("out: { name: \"Alice\" }", "{\n  name: \"Alice\"\n}");
 }
 
 #[test]

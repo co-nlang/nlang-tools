@@ -21,8 +21,8 @@
 // other flip = stop), forward-ref × spread (frozen elsewhere).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -219,12 +219,18 @@ fn pin_caid_stability_tripwire() {
 
 #[test]
 fn pin_insider_spread_keeps_local() {
-    assert_obs("p: { ~s: 1, a: 2, c2: { ...p, rd: ~s } }\nout: p.c2.rd", "1");
+    assert_obs(
+        "p: { ~s: 1, a: 2, c2: { ...p, rd: ~s } }\nout: p.c2.rd",
+        "1",
+    );
 }
 
 #[test]
 fn pin_external_spread_excludes_local() {
-    assert_obs("p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek", "_");
+    assert_obs(
+        "p: { ~s: 1, a: 2 }\nq: { ...p, peek: ~s }\nout: q.peek",
+        "_",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -37,8 +37,8 @@
 //     see the handover's CAID-stability guard (to_serial_byte legacy map).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -157,10 +157,7 @@ fn red_compose_idempotent_multi() {
 fn red_compose_display_tail() {
     // SPEC_11 §3.4 diagnostic tail must render the whole set, in the same
     // canonical order as the `.%effect` read (baseline showed #nondet).
-    let got = observe_nlang(
-        "out: { a: (~%Time.now _), b: (~%Math./random _) }",
-        "out",
-    );
+    let got = observe_nlang("out: { a: (~%Time.now _), b: (~%Math./random _) }", "out");
     assert!(
         got.contains(";; %effect: #io | #nondet"),
         "multi-tag combo carries the full set in its diagnostic tail: {got:?}"
@@ -198,10 +195,7 @@ fn pin_idempotent_single() {
 #[test]
 fn pin_unify_join_single() {
     // {a:1} & {b:io} → {io}, a bare atom (existing effect_meta green).
-    assert_obs(
-        "u: { a: 1 } & { b: (~%Time.now _) }\nout: u.%effect",
-        "#io",
-    );
+    assert_obs("u: { a: 1 } & { b: (~%Time.now _) }\nout: u.%effect", "#io");
 }
 
 #[test]

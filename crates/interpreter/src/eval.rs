@@ -1,15 +1,24 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use indexmap::IndexMap;
-use nlang_parser::ast::{Expr, ExprKind, FieldKey, Prefix, AtomKind, UnaryOp, PathAnchor};
-use crate::{Ouroboros, EvalContext, CmpOp};
-use crate::value::{Value, ComboVal, EffectTag, BottomCause, BottomDetail, ValRelation, RelOp as ValRelOp, normalize_union, primary_bottom_from_culled};
-use crate::type_constraint::{TypeConstraint, is_type_constraint_combo, get_type_constraint_name};
 use crate::observation::handle_resource_exhausted;
+use crate::type_constraint::{get_type_constraint_name, is_type_constraint_combo, TypeConstraint};
+use crate::value::{
+    normalize_union, primary_bottom_from_culled, BottomCause, BottomDetail, ComboVal, EffectTag,
+    RelOp as ValRelOp, ValRelation, Value,
+};
+use crate::{CmpOp, EvalContext, Ouroboros};
+use indexmap::IndexMap;
+use nlang_parser::ast::{AtomKind, Expr, ExprKind, FieldKey, PathAnchor, Prefix, UnaryOp};
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Debug, Clone, Copy)]
-enum MathOp { Add, Sub, Mul, Div, Rem }
+enum MathOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
 
 /// G1 #12 / G6: value-context operand (math, atomic `==`/`!=`).
 /// Pure wrappers collapse; hybrid combos peel `%val` (recursively);
@@ -121,9 +130,7 @@ fn declared_pure_meta(cv: &ComboVal, oo: &Ouroboros, ctx: &mut EvalContext) -> b
     };
     let v = oo.force(raw, ctx);
     match v.collapse() {
-        Value::Atom(AtomKind::Tag(t), _, _) => {
-            t.trim_start_matches('#') == "pure"
-        }
+        Value::Atom(AtomKind::Tag(t), _, _) => t.trim_start_matches('#') == "pure",
         _ => false,
     }
 }
@@ -406,11 +413,7 @@ impl Ouroboros {
     /// it is "binding not on this root". Re-queue those sources so evolve/
     /// observe-entry unify cannot silently consume forward spreads.
     /// Observation contexts (memo_enabled) treat Top as true no-op.
-    pub(crate) fn expand_combo_pending(
-        &self,
-        mut c: ComboVal,
-        ctx: &mut EvalContext,
-    ) -> Value {
+    pub(crate) fn expand_combo_pending(&self, mut c: ComboVal, ctx: &mut EvalContext) -> Value {
         if c.pending_spreads.is_empty() {
             return Value::Combo(c);
         }
@@ -442,21 +445,19 @@ impl Ouroboros {
                 c.effect = c.effect.union(bd.effect);
                 blur_absorb = Some(match blur_absorb.take() {
                     None => bd,
-                    Some(prev) => match self.unify_internal(
-                        Value::Blur(prev),
-                        Value::Blur(bd),
-                        ctx,
-                    ) {
-                        Value::Blur(merged) => merged,
-                        Value::Bottom(d) => return Value::Bottom(d),
-                        other => {
-                            if let Value::Blur(m) = other {
-                                m
-                            } else {
-                                return other;
+                    Some(prev) => {
+                        match self.unify_internal(Value::Blur(prev), Value::Blur(bd), ctx) {
+                            Value::Blur(merged) => merged,
+                            Value::Bottom(d) => return Value::Bottom(d),
+                            other => {
+                                if let Value::Blur(m) = other {
+                                    m
+                                } else {
+                                    return other;
+                                }
                             }
                         }
-                    },
+                    }
                 });
                 continue;
             }
@@ -655,32 +656,50 @@ impl Ouroboros {
                 // stays conservative (ledgered — predict may over-report).
                 if let ExprKind::Path(p) = &f.kind {
                     let last = p.segments.last().map(|s| s.trim_start_matches('/'));
-                    let via_effect = p.segments.iter().any(|s| s.trim_start_matches('/') == "~%Effect");
+                    let via_effect = p
+                        .segments
+                        .iter()
+                        .any(|s| s.trim_start_matches('/') == "~%Effect");
                     if last == Some("runPure") && via_effect {
                         return EffectTag::Pure;
                     }
                 }
-                self.predict_effect(f, ctx).union(self.predict_effect(arg, ctx))
+                self.predict_effect(f, ctx)
+                    .union(self.predict_effect(arg, ctx))
             }
-            ExprKind::Pipe(l, r) => self.predict_effect(l, ctx).union(self.predict_effect(r, ctx)),
+            ExprKind::Pipe(l, r) => self
+                .predict_effect(l, ctx)
+                .union(self.predict_effect(r, ctx)),
             ExprKind::Combo { fields, closed, .. } => {
                 // §4.2.1 Shield: a cocoon literal predicts its OWN tag
                 // (#pure) — contagion stops at the wall. Joining through
                 // it leaked the interior into the parent's %effect
                 // (literal/alias spelling divergence; acceptance repair).
-                if *closed { return EffectTag::Pure; }
+                if *closed {
+                    return EffectTag::Pure;
+                }
                 let mut e = EffectTag::Pure;
-                for f in fields { e = e.union(self.predict_effect(&f.value, ctx)); }
+                for f in fields {
+                    e = e.union(self.predict_effect(&f.value, ctx));
+                }
                 e
             }
-            ExprKind::Meet(a, b) | ExprKind::Join(a, b) | ExprKind::Add(a, b) | ExprKind::Sub(a, b) |
-            ExprKind::Mul(a, b) | ExprKind::Div(a, b) | ExprKind::Eq(a, b) | ExprKind::Ne(a, b) => {
-                self.predict_effect(a, ctx).union(self.predict_effect(b, ctx))
-            }
+            ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b) => self
+                .predict_effect(a, ctx)
+                .union(self.predict_effect(b, ctx)),
             ExprKind::Lens(obj, _) => self.predict_effect(obj, ctx),
             ExprKind::List(items) => {
                 let mut e = EffectTag::Pure;
-                for i in items { e = e.union(self.predict_effect(i, ctx)); }
+                for i in items {
+                    e = e.union(self.predict_effect(i, ctx));
+                }
                 e
             }
             _ => EffectTag::Pure,
@@ -704,11 +723,15 @@ impl Ouroboros {
             nodes.insert(r.right.clone());
             match r.op {
                 ValRelOp::Lt | ValRelOp::Lte => {
-                    adj.entry(r.left.clone()).or_insert(Vec::new()).push(r.right.clone());
+                    adj.entry(r.left.clone())
+                        .or_insert(Vec::new())
+                        .push(r.right.clone());
                     has_incoming.insert(r.right.clone());
                 }
                 ValRelOp::Gt | ValRelOp::Gte => {
-                    adj.entry(r.right.clone()).or_insert(Vec::new()).push(r.left.clone());
+                    adj.entry(r.right.clone())
+                        .or_insert(Vec::new())
+                        .push(r.left.clone());
                     has_incoming.insert(r.left.clone());
                 }
                 ValRelOp::Eq => eqs.push((r.left.clone(), r.right.clone())),
@@ -734,7 +757,9 @@ impl Ouroboros {
                 for v in neighbors {
                     let new_r = r + 1;
                     let cur_r = ranks.entry(v.clone()).or_insert(new_r);
-                    if new_r > *cur_r { *cur_r = new_r; }
+                    if new_r > *cur_r {
+                        *cur_r = new_r;
+                    }
                     queue.push_back((v.clone(), *cur_r));
                 }
             }
@@ -745,8 +770,14 @@ impl Ouroboros {
             changed = false;
             for (a, b) in &eqs {
                 match (ranks.get(a).copied(), ranks.get(b).copied()) {
-                    (Some(ra), None) => { ranks.insert(b.clone(), ra); changed = true; }
-                    (None, Some(rb)) => { ranks.insert(a.clone(), rb); changed = true; }
+                    (Some(ra), None) => {
+                        ranks.insert(b.clone(), ra);
+                        changed = true;
+                    }
+                    (None, Some(rb)) => {
+                        ranks.insert(a.clone(), rb);
+                        changed = true;
+                    }
                     _ => {}
                 }
             }
@@ -760,7 +791,11 @@ impl Ouroboros {
     // discards the shell and releases inner effect tags; values with no
     // numeric-keyed fields (atoms, Top — no shell to discard) contribute
     // nothing; a Bottom spread source collapses the whole container.
-    fn eval_elements(&self, items: &[Expr], ctx: &mut EvalContext) -> std::result::Result<(IndexMap<String, Value>, EffectTag), Value> {
+    fn eval_elements(
+        &self,
+        items: &[Expr],
+        ctx: &mut EvalContext,
+    ) -> std::result::Result<(IndexMap<String, Value>, EffectTag), Value> {
         let mut res = IndexMap::new();
         let mut me = EffectTag::Pure;
         let mut idx = 0usize;
@@ -769,12 +804,18 @@ impl Ouroboros {
                 let sv = self.force(self.eval(inner, ctx), ctx);
                 // both bottom representations collapse the container:
                 // runtime Value::Bottom (with cause) and the literal _|_ atom
-                if matches!(sv, Value::Bottom(_)) || matches!(sv, Value::Atom(AtomKind::Bottom, _, _)) {
+                if matches!(sv, Value::Bottom(_))
+                    || matches!(sv, Value::Atom(AtomKind::Bottom, _, _))
+                {
                     return Err(sv);
                 }
                 me = me.union(sv.effect());
                 if let Value::Combo(cv) = sv {
-                    let mut keys: Vec<usize> = cv.data.keys().filter_map(|k| k.parse::<usize>().ok()).collect();
+                    let mut keys: Vec<usize> = cv
+                        .data
+                        .keys()
+                        .filter_map(|k| k.parse::<usize>().ok())
+                        .collect();
                     keys.sort_unstable();
                     for k in keys {
                         if let Some(v) = cv.data.get(&k.to_string()) {
@@ -832,8 +873,21 @@ impl Ouroboros {
                             }
                         }
                         if lifted {
-                            res_fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                            return Value::Combo(ComboVal::new(res_fields, false, IndexMap::new(), max_e, vec![]));
+                            res_fields.insert(
+                                "%kind".to_string(),
+                                Value::Atom(
+                                    AtomKind::Tag("list".to_string()),
+                                    EffectTag::Pure,
+                                    None,
+                                ),
+                            );
+                            return Value::Combo(ComboVal::new(
+                                res_fields,
+                                false,
+                                IndexMap::new(),
+                                max_e,
+                                vec![],
+                            ));
                         }
                     }
                 }
@@ -858,7 +912,14 @@ impl Ouroboros {
 
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         if let Err(e) = ctx.check_resources(1) {
-            return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+            return handle_resource_exhausted(
+                e,
+                ctx.strategy,
+                &ctx.horizon_salt,
+                ctx.fuel,
+                None,
+                EffectTag::Pure,
+            );
         }
         match &expr.kind {
             ExprKind::Atom(kind) => match kind.clone() {
@@ -869,9 +930,20 @@ impl Ouroboros {
                 AtomKind::Bottom => BottomCause::Conflict.into(),
                 k => Value::Atom(k, EffectTag::Pure, None),
             },
-            ExprKind::Combo { fields, relations, closed } => {
+            ExprKind::Combo {
+                fields,
+                relations,
+                closed,
+            } => {
                 if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                    return handle_resource_exhausted(
+                        e,
+                        ctx.strategy,
+                        &ctx.horizon_salt,
+                        ctx.fuel,
+                        None,
+                        EffectTag::Pure,
+                    );
                 }
                 let mut rf = IndexMap::new();
                 let mut rl = IndexMap::new();
@@ -902,8 +974,12 @@ impl Ouroboros {
                         },
                         right: rt.clone(),
                     });
-                    if !rf.contains_key(&lt) { rf.insert(lt, Value::Atom(r.left.clone(), EffectTag::Pure, None)); }
-                    if !rf.contains_key(&rt) { rf.insert(rt, Value::Atom(r.right.clone(), EffectTag::Pure, None)); }
+                    if !rf.contains_key(&lt) {
+                        rf.insert(lt, Value::Atom(r.left.clone(), EffectTag::Pure, None));
+                    }
+                    if !rf.contains_key(&rt) {
+                        rf.insert(rt, Value::Atom(r.right.clone(), EffectTag::Pure, None));
+                    }
                 }
                 for f in fields {
                     match &f.key {
@@ -953,16 +1029,25 @@ impl Ouroboros {
                             if matches!(prefix, Some(Prefix::Logic)) {
                                 val = Value::Combo(ComboVal::new(
                                     IndexMap::from_iter(vec![
-                                        ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
-                                        ("%val".to_string(), val)
+                                        (
+                                            "%morphism".to_string(),
+                                            Value::Atom(
+                                                AtomKind::Tag("true".to_string()),
+                                                EffectTag::Pure,
+                                                None,
+                                            ),
+                                        ),
+                                        ("%val".to_string(), val),
                                     ]),
                                     false,
                                     IndexMap::new(),
                                     EffectTag::Pure,
-                                    vec![]
+                                    vec![],
                                 ));
                             }
-                            if !*closed { me = me.union(te); }
+                            if !*closed {
+                                me = me.union(te);
+                            }
                             let key = match prefix {
                                 Some(Prefix::Logic) => format!("/{}", name),
                                 Some(Prefix::Type) => format!("@{}", name),
@@ -979,26 +1064,45 @@ impl Ouroboros {
                         }
                         FieldKey::Quoted(name) => {
                             let te = self.predict_effect(&f.value, ctx);
-                            let thunk = Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te };
-                            if !*closed { me = me.union(te); }
+                            let thunk = Value::Thunk {
+                                expr: Box::new(f.value.clone()),
+                                closure: ctx.scopes.clone(),
+                                context: ctx.context_value.clone().map(Box::new),
+                                effect: te,
+                            };
+                            if !*closed {
+                                me = me.union(te);
+                            }
                             self.merge_field_into(&mut rf, name.trim().to_string(), thunk, ctx);
                         }
                         FieldKey::Pattern(pe) => {
                             let pk = self.eval(pe, ctx).to_string_plain().trim().to_string();
                             let te = self.predict_effect(&f.value, ctx);
                             let rb = Value::Combo(ComboVal::new(
-                                IndexMap::from_iter(vec![("%val".to_string(), Value::Thunk { expr: Box::new(f.value.clone()), closure: ctx.scopes.clone(), context: ctx.context_value.clone().map(Box::new), effect: te })]),
+                                IndexMap::from_iter(vec![(
+                                    "%val".to_string(),
+                                    Value::Thunk {
+                                        expr: Box::new(f.value.clone()),
+                                        closure: ctx.scopes.clone(),
+                                        context: ctx.context_value.clone().map(Box::new),
+                                        effect: te,
+                                    },
+                                )]),
                                 true,
                                 IndexMap::new(),
                                 te,
-                                vec![]
+                                vec![],
                             ));
                             self.merge_field_into(&mut rf, pk, rb, ctx);
                             // Repeated %morphism inserts: #true & #true = #true.
                             self.merge_field_into(
                                 &mut rf,
                                 "%morphism".to_string(),
-                                Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+                                Value::Atom(
+                                    AtomKind::Tag("true".to_string()),
+                                    EffectTag::Pure,
+                                    None,
+                                ),
                                 ctx,
                             );
                         }
@@ -1036,7 +1140,13 @@ impl Ouroboros {
                             } else if sys_reserved {
                                 me = me.union(val.effect());
                             }
-                            let mut tmp = ComboVal::new(IndexMap::new(), *closed, IndexMap::new(), EffectTag::Pure, vec![]);
+                            let mut tmp = ComboVal::new(
+                                IndexMap::new(),
+                                *closed,
+                                IndexMap::new(),
+                                EffectTag::Pure,
+                                vec![],
+                            );
                             // SPEC_09 ownership (acceptance repair): a forbidden
                             // path key must NOT materialize its intermediate
                             // nodes ({~%Math.add: 7} minting ~%Math: {add: ⊥}
@@ -1107,10 +1217,7 @@ impl Ouroboros {
                         return Value::Bottom(Box::new(BottomDetail {
                             cause: BottomCause::EffectViolation,
                             path: None,
-                            message: Some(format!(
-                                "declared #pure but observes {}",
-                                cv.effect
-                            )),
+                            message: Some(format!("declared #pure but observes {}", cv.effect)),
                             expected: None,
                             found: None,
                             involved: vec![],
@@ -1123,7 +1230,14 @@ impl Ouroboros {
             ExprKind::Path(p) => self.resolve_path(p, ctx),
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(5) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                    return handle_resource_exhausted(
+                        e,
+                        ctx.strategy,
+                        &ctx.horizon_salt,
+                        ctx.fuel,
+                        None,
+                        EffectTag::Pure,
+                    );
                 }
                 let fv = self.eval(f, ctx);
                 let av = self.eval(a, ctx);
@@ -1143,7 +1257,9 @@ impl Ouroboros {
             }
             ExprKind::Pipe(l, r) => {
                 let lv = self.eval(l, ctx);
-                if let Value::Bottom(_) = lv { return lv; }
+                if let Value::Bottom(_) = lv {
+                    return lv;
+                }
                 // G3 R2: pipe argument carries #blur into the body; do not
                 // re-mint at the pipe boundary (absorption happens in body
                 // value contexts / apply). Pass Blur through when the RHS
@@ -1155,7 +1271,9 @@ impl Ouroboros {
                     let mut out = Vec::new();
                     for b in branches {
                         let res = self.pipe_apply(b, r, ctx);
-                        if !matches!(res, Value::Bottom(_)) && !matches!(res, Value::Atom(AtomKind::Bottom, _, _)) {
+                        if !matches!(res, Value::Bottom(_))
+                            && !matches!(res, Value::Atom(AtomKind::Bottom, _, _))
+                        {
                             out.push(res);
                         }
                     }
@@ -1168,10 +1286,16 @@ impl Ouroboros {
                 // (positional destructure). Nested/non-path tuples keep `_` key.
                 let (pk, tuple_params) = match &param.kind {
                     ExprKind::Path(p) => {
-                        let last = p.segments.last().cloned().unwrap_or_else(|| "_".to_string());
+                        let last = p
+                            .segments
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| "_".to_string());
                         (
                             last.trim()
-                                .trim_start_matches(|c| c == '/' || c == '@' || c == '~' || c == '%')
+                                .trim_start_matches(|c| {
+                                    c == '/' || c == '@' || c == '~' || c == '%'
+                                })
                                 .to_string(),
                             None,
                         )
@@ -1210,7 +1334,16 @@ impl Ouroboros {
                 for (i, s) in current_scopes.iter().enumerate() {
                     closure_fields.insert(i.to_string(), Value::Combo(s.clone()));
                 }
-                rule_fields.insert("%closure".to_string(), Value::Combo(ComboVal::new(closure_fields, true, IndexMap::new(), EffectTag::Pure, vec![])));
+                rule_fields.insert(
+                    "%closure".to_string(),
+                    Value::Combo(ComboVal::new(
+                        closure_fields,
+                        true,
+                        IndexMap::new(),
+                        EffectTag::Pure,
+                        vec![],
+                    )),
+                );
                 // G5 R-P: index → param name metadata (dispatch skips % keys).
                 if let Some(names) = tuple_params {
                     let mut pf = IndexMap::new();
@@ -1232,11 +1365,29 @@ impl Ouroboros {
                     );
                 }
                 let mut rules = IndexMap::new();
-                rules.insert(pk, Value::Combo(ComboVal::new(rule_fields, true, IndexMap::new(), te, vec![])));
+                rules.insert(
+                    pk,
+                    Value::Combo(ComboVal::new(
+                        rule_fields,
+                        true,
+                        IndexMap::new(),
+                        te,
+                        vec![],
+                    )),
+                );
                 let mut fields = IndexMap::new();
-                fields.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
-                fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None));
-                fields.insert("%rules".to_string(), Value::Combo(ComboVal::new(rules, true, IndexMap::new(), te, vec![])));
+                fields.insert(
+                    "%morphism".to_string(),
+                    Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+                );
+                fields.insert(
+                    "%kind".to_string(),
+                    Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None),
+                );
+                fields.insert(
+                    "%rules".to_string(),
+                    Value::Combo(ComboVal::new(rules, true, IndexMap::new(), te, vec![])),
+                );
                 Value::Combo(ComboVal::new(fields, true, IndexMap::new(), te, vec![]))
             }
             // $ rules P1-P5 (SPEC_07 §4.2, 2026-07-05): bound only at evolution
@@ -1246,15 +1397,29 @@ impl Ouroboros {
                 Some(v) => v.clone(),
                 None => Value::Bottom(Box::new(BottomDetail {
                     cause: BottomCause::NoContext,
-                    message: Some("free `$` observed without an enclosing evolution (P3)".to_string()),
+                    message: Some(
+                        "free `$` observed without an enclosing evolution (P3)".to_string(),
+                    ),
                     ..Default::default()
                 })),
             },
-            ExprKind::Ternary { cond, then_branch, else_branch } => {
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 let cv = self.eval(cond, ctx).collapse().clone();
                 match cv {
-                    Value::Atom(AtomKind::Tag(ref t), _, _) if t.trim_start_matches('#') == "true" => self.eval(then_branch, ctx).with_effect(cv.effect()),
-                    Value::Atom(AtomKind::Tag(ref t), _, _) if t.trim_start_matches('#') == "false" => self.eval(else_branch, ctx).with_effect(cv.effect()),
+                    Value::Atom(AtomKind::Tag(ref t), _, _)
+                        if t.trim_start_matches('#') == "true" =>
+                    {
+                        self.eval(then_branch, ctx).with_effect(cv.effect())
+                    }
+                    Value::Atom(AtomKind::Tag(ref t), _, _)
+                        if t.trim_start_matches('#') == "false" =>
+                    {
+                        self.eval(else_branch, ctx).with_effect(cv.effect())
+                    }
                     Value::Bottom(d) => Value::Bottom(d),
                     _ => Value::Top,
                 }
@@ -1287,26 +1452,67 @@ impl Ouroboros {
                 let vb_complement = self.orthocomplement(vb, ctx);
                 self.unify_internal(va, vb_complement, ctx)
             }
-ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &BigInt| x + y, |x: f64, y: f64| x + y, Some(|sx: &str, sy: &str| format!("{}{}", sx, sy))),
-    ExprKind::Sub(a, b) => self.eval_math(a, b, ctx, MathOp::Sub, |x: &BigInt, y: &BigInt| x - y, |x: f64, y: f64| x - y, None::<fn(&str, &str) -> String>),
-    ExprKind::Mul(a, b) => self.eval_math(a, b, ctx, MathOp::Mul, |x: &BigInt, y: &BigInt| x * y, |x: f64, y: f64| x * y, None::<fn(&str, &str) -> String>),
-    ExprKind::Div(a, b) => self.eval_math(a, b, ctx, MathOp::Div, |x: &BigInt, y: &BigInt| if y.is_zero() { BigInt::zero() } else { x / y }, |x: f64, y: f64| x / y, None::<fn(&str, &str) -> String>),
-    ExprKind::Rem(a, b) => self.eval_math(a, b, ctx, MathOp::Rem, |x: &BigInt, y: &BigInt| if y.is_zero() { BigInt::zero() } else { x % y }, |x: f64, y: f64| x % y, None::<fn(&str, &str) -> String>),
+            ExprKind::Add(a, b) => self.eval_math(
+                a,
+                b,
+                ctx,
+                MathOp::Add,
+                |x: &BigInt, y: &BigInt| x + y,
+                |x: f64, y: f64| x + y,
+                Some(|sx: &str, sy: &str| format!("{}{}", sx, sy)),
+            ),
+            ExprKind::Sub(a, b) => self.eval_math(
+                a,
+                b,
+                ctx,
+                MathOp::Sub,
+                |x: &BigInt, y: &BigInt| x - y,
+                |x: f64, y: f64| x - y,
+                None::<fn(&str, &str) -> String>,
+            ),
+            ExprKind::Mul(a, b) => self.eval_math(
+                a,
+                b,
+                ctx,
+                MathOp::Mul,
+                |x: &BigInt, y: &BigInt| x * y,
+                |x: f64, y: f64| x * y,
+                None::<fn(&str, &str) -> String>,
+            ),
+            ExprKind::Div(a, b) => self.eval_math(
+                a,
+                b,
+                ctx,
+                MathOp::Div,
+                |x: &BigInt, y: &BigInt| if y.is_zero() { BigInt::zero() } else { x / y },
+                |x: f64, y: f64| x / y,
+                None::<fn(&str, &str) -> String>,
+            ),
+            ExprKind::Rem(a, b) => self.eval_math(
+                a,
+                b,
+                ctx,
+                MathOp::Rem,
+                |x: &BigInt, y: &BigInt| if y.is_zero() { BigInt::zero() } else { x % y },
+                |x: f64, y: f64| x % y,
+                None::<fn(&str, &str) -> String>,
+            ),
             ExprKind::Eq(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Eq),
             ExprKind::Ne(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Ne),
             ExprKind::Lt(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Lt),
             ExprKind::Gt(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Gt),
             ExprKind::Lte(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Lte),
             ExprKind::Gte(a, b) => self.eval_binary_cmp(a, b, ctx, CmpOp::Gte),
-            ExprKind::List(items) => {
-                match self.eval_elements(items, ctx) {
-                    Err(bottom) => bottom,
-                    Ok((mut res, me)) => {
-                        res.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-                        Value::Combo(ComboVal::new(res, false, IndexMap::new(), me, vec![]))
-                    }
+            ExprKind::List(items) => match self.eval_elements(items, ctx) {
+                Err(bottom) => bottom,
+                Ok((mut res, me)) => {
+                    res.insert(
+                        "%kind".to_string(),
+                        Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None),
+                    );
+                    Value::Combo(ComboVal::new(res, false, IndexMap::new(), me, vec![]))
                 }
-            }
+            },
             ExprKind::Lens(obj, key) => {
                 let ov = self.eval(obj, ctx);
                 let kv = self.eval(key, ctx);
@@ -1340,7 +1546,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 } else {
                     mark_structural_view(self.eval(e, ctx))
                 }
-            },
+            }
             ExprKind::Unary { op, expr } => {
                 let v = self.eval(expr, ctx).collapse().clone();
                 // G3 R1: unary value context absorbs #blur (do not mint #conflict).
@@ -1350,9 +1556,15 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 match op {
                     nlang_parser::ast::UnaryOp::Not => self.orthocomplement(v, ctx),
                     nlang_parser::ast::UnaryOp::Neg => match v {
-                        Value::Atom(AtomKind::Int(i), e, _) => Value::Atom(AtomKind::Int(-i), e, None),
-                        Value::Atom(AtomKind::Float(f), e, _) => Value::Atom(AtomKind::Float(-f), e, None),
-                        Value::Atom(AtomKind::Complex(r, i), e, _) => Value::Atom(AtomKind::Complex(-r, -i), e, None),
+                        Value::Atom(AtomKind::Int(i), e, _) => {
+                            Value::Atom(AtomKind::Int(-i), e, None)
+                        }
+                        Value::Atom(AtomKind::Float(f), e, _) => {
+                            Value::Atom(AtomKind::Float(-f), e, None)
+                        }
+                        Value::Atom(AtomKind::Complex(r, i), e, _) => {
+                            Value::Atom(AtomKind::Complex(-r, -i), e, None)
+                        }
                         _ => BottomCause::Conflict.into(),
                     },
                 }
@@ -1364,17 +1576,33 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             // (2026-07-06 ruling: decoupled from the cocoon analogy).
             ExprKind::Tuple(items) => {
                 if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                    return handle_resource_exhausted(
+                        e,
+                        ctx.strategy,
+                        &ctx.horizon_salt,
+                        ctx.fuel,
+                        None,
+                        EffectTag::Pure,
+                    );
                 }
                 match self.eval_elements(items, ctx) {
                     Err(bottom) => bottom,
-                    Ok((rf, me)) => Value::Combo(ComboVal::new(rf, true, IndexMap::new(), me, vec![])),
+                    Ok((rf, me)) => {
+                        Value::Combo(ComboVal::new(rf, true, IndexMap::new(), me, vec![]))
+                    }
                 }
             }
             // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
             ExprKind::Poset(relations) => {
                 if let Err(e) = ctx.check_resources(10 + (relations.len() as u64) * 2) {
-                    return handle_resource_exhausted(e, ctx.strategy, &ctx.horizon_salt, ctx.fuel, None, EffectTag::Pure);
+                    return handle_resource_exhausted(
+                        e,
+                        ctx.strategy,
+                        &ctx.horizon_salt,
+                        ctx.fuel,
+                        None,
+                        EffectTag::Pure,
+                    );
                 }
                 let mut rf = IndexMap::new();
                 let mut rv = Vec::new();
@@ -1392,8 +1620,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                         },
                         right: rt.clone(),
                     });
-                    if !rf.contains_key(&lt) { rf.insert(lt, Value::Atom(r.left.clone(), EffectTag::Pure, None)); }
-                    if !rf.contains_key(&rt) { rf.insert(rt, Value::Atom(r.right.clone(), EffectTag::Pure, None)); }
+                    if !rf.contains_key(&lt) {
+                        rf.insert(lt, Value::Atom(r.left.clone(), EffectTag::Pure, None));
+                    }
+                    if !rf.contains_key(&rt) {
+                        rf.insert(rt, Value::Atom(r.right.clone(), EffectTag::Pure, None));
+                    }
                 }
                 let ranks = self.compute_ranks(&rv);
                 for (tag_name, rank) in ranks {
@@ -1403,7 +1635,13 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                         }
                     }
                 }
-                Value::Combo(ComboVal::new(rf, false, IndexMap::new(), EffectTag::Pure, rv))
+                Value::Combo(ComboVal::new(
+                    rf,
+                    false,
+                    IndexMap::new(),
+                    EffectTag::Pure,
+                    rv,
+                ))
             }
             // Closed interval set [start, end] (SPEC_02 §3 / SYNTAX_04 §4.5).
             // Bounds evaluated at observation time (variable bounds free).
@@ -1465,15 +1703,9 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 }
                 // Stage Blur (#6).
                 match (&va, &vb) {
-                    (Value::Blur(ba), Value::Blur(bb))
-                        if ba.blur_caid() == bb.blur_caid() =>
-                    {
+                    (Value::Blur(ba), Value::Blur(bb)) if ba.blur_caid() == bb.blur_caid() => {
                         let res_e = va.effect().union(vb.effect());
-                        return Value::Atom(
-                            AtomKind::Tag("true".to_string()),
-                            res_e,
-                            None,
-                        );
+                        return Value::Atom(AtomKind::Tag("true".to_string()), res_e, None);
                     }
                     (Value::Blur(bd), _) => {
                         let mut bd = bd.clone();
@@ -1502,9 +1734,13 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             // Direction probe `<=>`: returns an order tag, never a boolean (SYNTAX_10 §2.3)
             ExprKind::Probe(a, b) => {
                 let va = self.eval(a, ctx);
-                if let Value::Bottom(_) = va { return va; }
+                if let Value::Bottom(_) = va {
+                    return va;
+                }
                 let vb = self.eval(b, ctx);
-                if let Value::Bottom(_) = vb { return vb; }
+                if let Value::Bottom(_) = vb {
+                    return vb;
+                }
                 // G3 R1: Probe is a value-context consumer — absorb #blur
                 // (measured same disease as math catch-all before this arm).
                 if let Value::Blur(bd) = &va {
@@ -1520,14 +1756,26 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 let res_e = va.effect().union(vb.effect());
                 let ca = va.collapse().clone();
                 let cb = vb.collapse().clone();
-                if ca.is_top() || cb.is_top() { return Value::Top; }
-                if let Value::Bottom(d) = ca { return Value::Bottom(d); }
-                if let Value::Bottom(d) = cb { return Value::Bottom(d); }
+                if ca.is_top() || cb.is_top() {
+                    return Value::Top;
+                }
+                if let Value::Bottom(d) = ca {
+                    return Value::Bottom(d);
+                }
+                if let Value::Bottom(d) = cb {
+                    return Value::Bottom(d);
+                }
                 let dir_tag = |o: Option<std::cmp::Ordering>| -> Value {
                     match o {
-                        Some(std::cmp::Ordering::Less) => Value::Atom(AtomKind::Tag("lt".to_string()), res_e, None),
-                        Some(std::cmp::Ordering::Greater) => Value::Atom(AtomKind::Tag("gt".to_string()), res_e, None),
-                        Some(std::cmp::Ordering::Equal) => Value::Atom(AtomKind::Tag("eq".to_string()), res_e, None),
+                        Some(std::cmp::Ordering::Less) => {
+                            Value::Atom(AtomKind::Tag("lt".to_string()), res_e, None)
+                        }
+                        Some(std::cmp::Ordering::Greater) => {
+                            Value::Atom(AtomKind::Tag("gt".to_string()), res_e, None)
+                        }
+                        Some(std::cmp::Ordering::Equal) => {
+                            Value::Atom(AtomKind::Tag("eq".to_string()), res_e, None)
+                        }
                         None => Value::Atom(AtomKind::Tag("un".to_string()), res_e, None),
                     }
                 };
@@ -1546,11 +1794,17 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                         if let (AtomKind::Str(x), AtomKind::Str(y)) = (xk, yk) {
                             return dir_tag(Some(x.cmp(y)));
                         }
-                        let x_tagish = matches!(xk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
-                        let y_tagish = matches!(yk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
+                        let x_tagish =
+                            matches!(xk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
+                        let y_tagish =
+                            matches!(yk, AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd);
                         if x_tagish && y_tagish {
-                            if xk == yk { return dir_tag(Some(std::cmp::Ordering::Equal)); }
-                            if let (Some(x), Some(y)) = (rx, ry) { return dir_tag(Some(x.cmp(y))); }
+                            if xk == yk {
+                                return dir_tag(Some(std::cmp::Ordering::Equal));
+                            }
+                            if let (Some(x), Some(y)) = (rx, ry) {
+                                return dir_tag(Some(x.cmp(y)));
+                            }
                             return dir_tag(None); // no shared order info: incomparable
                         }
                         BottomCause::Conflict.into()
@@ -1562,17 +1816,33 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         }
     }
 
-    fn eval_math<FI, FF, FS>(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: MathOp, op_i: FI, op_f: FF, op_s: Option<FS>) -> Value
-        where FI: Fn(&BigInt, &BigInt) -> BigInt, FF: Fn(f64, f64) -> f64, FS: Fn(&str, &str) -> String
+    fn eval_math<FI, FF, FS>(
+        &self,
+        a: &Expr,
+        b: &Expr,
+        ctx: &mut EvalContext,
+        op: MathOp,
+        op_i: FI,
+        op_f: FF,
+        op_s: Option<FS>,
+    ) -> Value
+    where
+        FI: Fn(&BigInt, &BigInt) -> BigInt,
+        FF: Fn(f64, f64) -> f64,
+        FS: Fn(&str, &str) -> String,
     {
         // Stage 2 (紀律 2): value-judgment point — force thunks before arithmetic.
         // `$.a + 1` inside a pipe transformer evals `$.a` to a Thunk (the field
         // is lazily stored); arithmetic needs the actual value.
         let va = self.force(self.eval(a, ctx), ctx);
         // ⊥ short-circuit first (G3 trap 2: order preserved vs Blur).
-        if let Value::Bottom(_) = va { return va; }
+        if let Value::Bottom(_) = va {
+            return va;
+        }
         let vb = self.force(self.eval(b, ctx), ctx);
-        if let Value::Bottom(_) = vb { return vb; }
+        if let Value::Bottom(_) = vb {
+            return vb;
+        }
         // G3 R1: whole-operand Blur short-circuit BEFORE Union distribute and
         // before value_context_operand — single-value `big + 1` absorbs.
         if let Value::Blur(bd) = &va {
@@ -1643,28 +1913,12 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         // branch ⊥ (union_cull law); all-⊥ → primary member verbatim.
         // Budget: same discipline as unify Union-distribution arm.
         if let Value::Union(branches) = va {
-            return self.eval_math_distribute_branches(
-                branches,
-                true,
-                vb,
-                ctx,
-                op,
-                op_i,
-                op_f,
-                op_s,
-            );
+            return self
+                .eval_math_distribute_branches(branches, true, vb, ctx, op, op_i, op_f, op_s);
         }
         if let Value::Union(branches) = vb {
-            return self.eval_math_distribute_branches(
-                branches,
-                false,
-                va,
-                ctx,
-                op,
-                op_i,
-                op_f,
-                op_s,
-            );
+            return self
+                .eval_math_distribute_branches(branches, false, va, ctx, op, op_i, op_f, op_s);
         }
 
         // G6: value-context peels hybrid %val (and pure wrappers); plain
@@ -1697,8 +1951,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 cause: BottomCause::ArithmeticOnAnchor,
                 path: None,
                 message: Some(
-                    "Arithmetic operations on order anchors (#_, #_|_) are prohibited"
-                        .to_string(),
+                    "Arithmetic operations on order anchors (#_, #_|_) are prohibited".to_string(),
                 ),
                 expected: None,
                 found: Some(if self.is_order_anchor(&ca) {
@@ -1792,7 +2045,10 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         let mut culled: Vec<BottomDetail> = Vec::new();
         // Collect without early cap so structural dedupe can free capacity
         // (same budget discipline as unify Union-distribution).
-        for b in branches.into_iter().take(max_branches.saturating_mul(2).max(2)) {
+        for b in branches
+            .into_iter()
+            .take(max_branches.saturating_mul(2).max(2))
+        {
             let b = self.force(b, ctx);
             let r = if left_is_union {
                 self.eval_math_values(b, other.clone(), ctx, op, op_i, op_f, op_s)
@@ -1816,15 +2072,29 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             other => other,
         }
     }
-    
-    fn eval_complex_math(&self, r1: f64, i1: f64, r2: f64, i2: f64, op: MathOp, effect: EffectTag) -> Value {
+
+    fn eval_complex_math(
+        &self,
+        r1: f64,
+        i1: f64,
+        r2: f64,
+        i2: f64,
+        op: MathOp,
+        effect: EffectTag,
+    ) -> Value {
         match op {
             MathOp::Add => Value::Atom(AtomKind::Complex(r1 + r2, i1 + i2), effect, None),
             MathOp::Sub => Value::Atom(AtomKind::Complex(r1 - r2, i1 - i2), effect, None),
-            MathOp::Mul => Value::Atom(AtomKind::Complex(r1 * r2 - i1 * i2, r1 * i2 + i1 * r2), effect, None),
+            MathOp::Mul => Value::Atom(
+                AtomKind::Complex(r1 * r2 - i1 * i2, r1 * i2 + i1 * r2),
+                effect,
+                None,
+            ),
             MathOp::Div => {
                 let denom = r2 * r2 + i2 * i2;
-                if denom == 0.0 { return BottomCause::NumericalError.into(); }
+                if denom == 0.0 {
+                    return BottomCause::NumericalError.into();
+                }
                 let new_r = (r1 * r2 + i1 * i2) / denom;
                 let new_i = (i1 * r2 - r1 * i2) / denom;
                 Value::Atom(AtomKind::Complex(new_r, new_i), effect, None)
@@ -1832,11 +2102,14 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             MathOp::Rem => BottomCause::Conflict.into(),
         }
     }
-    
+
     fn is_order_anchor(&self, v: &Value) -> bool {
-        matches!(v, Value::Atom(AtomKind::TagEnd, _, _) | Value::Atom(AtomKind::TagStart, _, _))
+        matches!(
+            v,
+            Value::Atom(AtomKind::TagEnd, _, _) | Value::Atom(AtomKind::TagStart, _, _)
+        )
     }
-    
+
     fn sanitize_float_result(&self, result: f64, effect: EffectTag) -> Value {
         if result.is_nan() {
             return Value::Bottom(Box::new(BottomDetail {
@@ -1846,7 +2119,8 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
                 expected: None,
                 found: None,
                 involved: vec![],
-             ..Default::default() }));
+                ..Default::default()
+            }));
         }
         if result.is_infinite() {
             if result.is_sign_positive() {
@@ -1918,18 +2192,24 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             match (&ca, &cb) {
                 (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
                     return Value::Atom(
-                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) {
-                            "true".into()
-                        } else {
-                            "false".into()
-                        }),
+                        AtomKind::Tag(
+                            if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) {
+                                "true".into()
+                            } else {
+                                "false".into()
+                            },
+                        ),
                         res_e,
                         None,
                     );
                 }
                 (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
                     return Value::Atom(
-                        AtomKind::Tag(if op_fn(*x, *y) { "true".into() } else { "false".into() }),
+                        AtomKind::Tag(if op_fn(*x, *y) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }),
                         res_e,
                         None,
                     );
@@ -1984,9 +2264,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
         let is_bot = |v: &Value| {
             matches!(v, Value::Bottom(_)) || matches!(v, Value::Atom(AtomKind::Bottom, _, _))
         };
-        let is_top = |v: &Value| {
-            v.is_top() || matches!(v, Value::Atom(AtomKind::Top, _, _))
-        };
+        let is_top = |v: &Value| v.is_top() || matches!(v, Value::Atom(AtomKind::Top, _, _));
         // If Atom(Top)/Atom(Bottom) still appear here, they are dual-spelling
         // leftovers (complement path etc.); treated as extremes — not expanded.
         let bool_tag = |b: bool| {
@@ -2125,9 +2403,7 @@ ExprKind::Add(a, b) => self.eval_math(a, b, ctx, MathOp::Add, |x: &BigInt, y: &B
             });
         }
 
-        let is_tc = |v: &Value| {
-            matches!(v, Value::Combo(c) if is_type_constraint_combo(c))
-        };
+        let is_tc = |v: &Value| matches!(v, Value::Combo(c) if is_type_constraint_combo(c));
 
         // Type-marker ≤ via subtype table (pin @int <= @num).
         if let (Value::Combo(ac), Value::Combo(bc)) = (&ca, &cb) {

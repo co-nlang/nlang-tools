@@ -26,6 +26,7 @@
 // exactly one thing. It is the only way to test what this client does when
 // the other end is from the future.
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -33,7 +34,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use std::fs;
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
@@ -88,7 +88,11 @@ fn init(dir: &Path) {
 /// Store a value and return its CAID. `--observe` prints an effect annotation
 /// after the value, so the CAID is the first quoted field and nothing else.
 fn store(dir: &Path, expr: &str) -> String {
-    write(dir, "st.n", &format!("v: ~%Discovery./identify_and_store {expr}\n"));
+    write(
+        dir,
+        "st.n",
+        &format!("v: ~%Discovery./identify_and_store {expr}\n"),
+    );
     let (out, _) = oo_split(dir, &["run", "st.n", "--observe", "v"]);
     let caid = out
         .split('"')
@@ -114,16 +118,25 @@ fn corrupt(dir: &Path, caid: &str) {
 
 // ── a real serving node ─────────────────────────────────────────────────
 
-struct Node { child: Child, port: u16, log: PathBuf }
+struct Node {
+    child: Child,
+    port: u16,
+    log: PathBuf,
+}
 impl Drop for Node {
-    fn drop(&mut self) { self.child.kill().ok(); self.child.wait().ok(); }
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
 }
 
 fn free_port() -> u16 {
     for _ in 0..64 {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let p = l.local_addr().unwrap().port();
-        if p > 24000 { return p; }
+        if p > 24000 {
+            return p;
+        }
     }
     panic!("no free port above 24000");
 }
@@ -141,16 +154,23 @@ fn serve(dir: &Path) -> Node {
     let node = Node { child, port, log };
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(100));
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() { return node; }
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return node;
+        }
     }
-    panic!("`oo node serve` never came up: {}", fs::read_to_string(&node.log).unwrap_or_default());
+    panic!(
+        "`oo node serve` never came up: {}",
+        fs::read_to_string(&node.log).unwrap_or_default()
+    );
 }
 
 fn ask_raw(port: u16, payload: &str) -> String {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     s.write_all(payload.as_bytes()).unwrap();
-    if !payload.ends_with('\n') { s.write_all(b"\n").unwrap(); }
+    if !payload.ends_with('\n') {
+        s.write_all(b"\n").unwrap();
+    }
     s.flush().unwrap();
     s.shutdown(std::net::Shutdown::Write).ok();
     let mut buf = Vec::new();
@@ -175,10 +195,15 @@ fn reason_of(reply: &str) -> Option<String> {
 // ── a peer from the future ──────────────────────────────────────────────
 
 /// Answers exactly one JSON body to every connection, then closes.
-struct Stub { port: u16, stop: Arc<AtomicBool> }
+struct Stub {
+    port: u16,
+    stop: Arc<AtomicBool>,
+}
 
 impl Drop for Stub {
-    fn drop(&mut self) { self.stop.store(true, Ordering::SeqCst); }
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
 }
 
 fn stub_peer(body: &str) -> Stub {
@@ -223,7 +248,12 @@ fn fetch_from(dir: &Path, port: u16, caid: &str) -> (String, String) {
 
 fn cause_of(observed: &str) -> String {
     match observed.split("%cause:").nth(1) {
-        Some(rest) => rest.trim().trim_end_matches(')').trim().trim_start_matches('#').to_string(),
+        Some(rest) => rest
+            .trim()
+            .trim_end_matches(')')
+            .trim()
+            .trim_start_matches('#')
+            .to_string(),
         None => format!("<no cause in {observed:?}>"),
     }
 }
@@ -242,13 +272,43 @@ const ABSENT_CAID: &str =
 /// The seven server-side cases the arc is about.
 fn seven_cases(node: &Node, held: &str, corrupt_caid: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("held + intact", ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{held}\" }}}}"))),
-        ("held but corrupt", ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{corrupt_caid}\" }}}}"))),
-        ("not held", ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{ABSENT_CAID}\" }}}}"))),
-        ("unknown op", ask_raw(node.port, "{{ %op: #nonsense, %from: \"x\" }}")),
-        ("field missing", ask_raw(node.port, "{{ %op: #fetch, %from: \"x\" }}")),
-        ("malformed line", ask_raw(node.port, "this is not a request")),
-        ("unparseable caid", ask_raw(node.port, "{{ %op: #fetch, %hash: \"not-a-caid\" }}")),
+        (
+            "held + intact",
+            ask_raw(
+                node.port,
+                &format!("{{{{ %op: #fetch, %hash: \"{held}\" }}}}"),
+            ),
+        ),
+        (
+            "held but corrupt",
+            ask_raw(
+                node.port,
+                &format!("{{{{ %op: #fetch, %hash: \"{corrupt_caid}\" }}}}"),
+            ),
+        ),
+        (
+            "not held",
+            ask_raw(
+                node.port,
+                &format!("{{{{ %op: #fetch, %hash: \"{ABSENT_CAID}\" }}}}"),
+            ),
+        ),
+        (
+            "unknown op",
+            ask_raw(node.port, "{{ %op: #nonsense, %from: \"x\" }}"),
+        ),
+        (
+            "field missing",
+            ask_raw(node.port, "{{ %op: #fetch, %from: \"x\" }}"),
+        ),
+        (
+            "malformed line",
+            ask_raw(node.port, "this is not a request"),
+        ),
+        (
+            "unparseable caid",
+            ask_raw(node.port, "{{ %op: #fetch, %hash: \"not-a-caid\" }}"),
+        ),
     ]
 }
 
@@ -267,8 +327,15 @@ fn c0_a_wellformed_request_is_still_answered() {
     init(&dir);
     let caid = store(&dir, "{ treasure: \"c0\" }");
     let node = serve(&dir);
-    let r = ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}"));
-    assert_eq!(status_of(&r), "success", "a held object was not served: {r}");
+    let r = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}"),
+    );
+    assert_eq!(
+        status_of(&r),
+        "success",
+        "a held object was not served: {r}"
+    );
     assert!(r.contains("treasure"), "the value did not come back: {r}");
 }
 
@@ -296,7 +363,10 @@ fn r2_corrupt_and_unknown_op_are_distinguishable() {
     corrupt(&dir, &bad);
     let node = serve(&dir);
 
-    let corrupt_reply = ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{bad}\" }}}}"));
+    let corrupt_reply = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{bad}\" }}}}"),
+    );
     let unknown_reply = ask_raw(node.port, "{{ %op: #nonsense, %from: \"x\" }}");
 
     let a = (status_of(&corrupt_reply), reason_of(&corrupt_reply));
@@ -343,7 +413,10 @@ fn r4_the_reason_names_which_conflict_it_is() {
     corrupt(&dir, &bad);
     let node = serve(&dir);
 
-    let corrupt_reply = ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{bad}\" }}}}"));
+    let corrupt_reply = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{bad}\" }}}}"),
+    );
     assert_eq!(status_of(&corrupt_reply), "conflict", "{corrupt_reply}");
     assert_eq!(
         reason_of(&corrupt_reply).as_deref(),
@@ -352,10 +425,18 @@ fn r4_the_reason_names_which_conflict_it_is() {
     );
 
     let missing = ask_raw(node.port, "{{ %op: #fetch, %from: \"x\" }}");
-    assert_eq!(reason_of(&missing).as_deref(), Some("missing_field"), "{missing}");
+    assert_eq!(
+        reason_of(&missing).as_deref(),
+        Some("missing_field"),
+        "{missing}"
+    );
 
     let garbage = ask_raw(node.port, "this is not a request");
-    assert_eq!(reason_of(&garbage).as_deref(), Some("malformed"), "{garbage}");
+    assert_eq!(
+        reason_of(&garbage).as_deref(),
+        Some("malformed"),
+        "{garbage}"
+    );
 }
 
 /// R5 — "I do not serve that op" is not an integrity failure.
@@ -474,7 +555,13 @@ fn p1_the_status_set_did_not_grow() {
     corrupt(&dir, &bad);
     let node = serve(&dir);
 
-    let allowed = ["success", "not_found", "conflict", "not_implemented", "rejected"];
+    let allowed = [
+        "success",
+        "not_found",
+        "conflict",
+        "not_implemented",
+        "rejected",
+    ];
     let mut unexpected = Vec::new();
     for (name, reply) in seven_cases(&node, &held, &bad) {
         let s = status_of(&reply);
@@ -496,7 +583,10 @@ fn p2_a_held_object_still_arrives() {
     init(&dir);
     let caid = store(&dir, "{ treasure: \"p2\" }");
     let node = serve(&dir);
-    let r = ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}"));
+    let r = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}"),
+    );
     assert_eq!(status_of(&r), "success", "{r}");
     assert!(r.contains("treasure"), "{r}");
 }
@@ -507,7 +597,10 @@ fn p3_not_found_is_still_not_found() {
     let dir = fresh_dir("p3");
     init(&dir);
     let node = serve(&dir);
-    let r = ask_raw(node.port, &format!("{{{{ %op: #fetch, %hash: \"{ABSENT_CAID}\" }}}}"));
+    let r = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #fetch, %hash: \"{ABSENT_CAID}\" }}}}"),
+    );
     assert_eq!(
         status_of(&r),
         "not_found",
@@ -570,7 +663,11 @@ fn p6_a_computing_payload_is_still_refused() {
         node.port,
         &format!("{{{{ %op: #advertise, %from: \"hash:sha256:v1:00\", %ad: {ad} }}}}"),
     );
-    assert_ne!(status_of(&r), "success", "a forged advertisement was accepted: {r}");
+    assert_ne!(
+        status_of(&r),
+        "success",
+        "a forged advertisement was accepted: {r}"
+    );
     assert!(
         !r.trim().is_empty(),
         "a forged advertisement was answered with silence: {r}"
