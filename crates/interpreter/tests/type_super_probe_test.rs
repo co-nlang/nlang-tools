@@ -35,8 +35,8 @@
 // tree; §2.3 lists a non-immediate ancestor); atom `%kind` inference.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -122,7 +122,10 @@ fn red_super_chain_navigable() {
 fn red_super_user_type_is_combo() {
     // A user-defined field-structure type is a @combo (§2.1: @combo =
     // 任意欄位結構). Its handler family is the structural combo.
-    assert_obs("@Box: { value: @int }\nout: (@Box).%super = @combo", "#true");
+    assert_obs(
+        "@Box: { value: @int }\nout: (@Box).%super = @combo",
+        "#true",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -187,7 +190,10 @@ fn pin_structural_membership_unchanged() {
     // The lattice type-check (SPEC_05 §5) is untouched by adding reflection.
     assert_obs("out: 1 & @int", "1");
     let got = observe_nlang("out: (\"hi\" & @int).%cause", "out");
-    assert_eq!(got, "#conflict", "wrong-type meet stays ⊥ #conflict: {got:?}");
+    assert_eq!(
+        got, "#conflict",
+        "wrong-type meet stays ⊥ #conflict: {got:?}"
+    );
 }
 
 #[test]

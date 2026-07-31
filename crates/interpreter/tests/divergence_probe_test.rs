@@ -6,10 +6,10 @@
 // Productive recursion (shrinking-argument morphism) is the load-bearing pin.
 // ⊥ display: `_|_ (%cause: #<tag>)`; bn_serial untouched.
 
-use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_interpreter::value::BottomCause;
-use nlang_parser::parse_program;
+use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use num_bigint::BigInt;
 use std::fs;
 use std::path::PathBuf;

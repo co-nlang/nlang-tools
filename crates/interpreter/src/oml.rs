@@ -1,5 +1,5 @@
-use crate::{Ouroboros, EvalContext};
 use crate::value::Value;
+use crate::{EvalContext, Ouroboros};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OMLResult {

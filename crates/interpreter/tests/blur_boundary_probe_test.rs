@@ -26,8 +26,8 @@
 // not the variable there (§4.10 case). Frozen as pins.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -201,7 +201,10 @@ fn red_eq_twin_cause_meta() {
 fn pin_eq_self_same_snapshot_true() {
     // L2-25: force memo yields the SAME snapshot — #true by determinism.
     // Green today; #6(a) makes it law instead of accident.
-    assert_obs(&format!("big: {}\nout: big = big", flat_chain(4000)), "#true");
+    assert_obs(
+        &format!("big: {}\nout: big = big", flat_chain(4000)),
+        "#true",
+    );
 }
 
 #[test]
@@ -231,7 +234,10 @@ fn pin_join_blur_first_class() {
 
 #[test]
 fn pin_combo_storage_transparent() {
-    assert_blur_fuel(&format!("big: {}\nc: {{ x: big }}\nout: c.x", flat_chain(4000)));
+    assert_blur_fuel(&format!(
+        "big: {}\nc: {{ x: big }}\nout: c.x",
+        flat_chain(4000)
+    ));
 }
 
 #[test]

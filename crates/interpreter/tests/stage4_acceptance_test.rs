@@ -6,12 +6,19 @@
 //   3. Q-tier expr → no cross-observation memo (fuel not reduced)
 //   4. Blur/Bottom/NonDet not inserted into force_memo
 
-use nlang_interpreter::{Ouroboros, Universe, EvalContext, Value};
 use nlang_interpreter::value::{ComboVal, EffectTag};
-use nlang_parser::{parse_program, ast::{Path, PathAnchor, Span, AtomKind}};
+use nlang_interpreter::{EvalContext, Ouroboros, Universe, Value};
+use nlang_parser::{
+    ast::{AtomKind, Path, PathAnchor, Span},
+    parse_program,
+};
 
 fn path_of(segments: &[&str]) -> Path {
-    Path { anchor: PathAnchor::Bare, segments: segments.iter().map(|s| s.to_string()).collect(), span: Span::default() }
+    Path {
+        anchor: PathAnchor::Bare,
+        segments: segments.iter().map(|s| s.to_string()).collect(),
+        span: Span::default(),
+    }
 }
 
 fn new_oo_and_universe(fields: &str) -> (Ouroboros, Universe) {
@@ -26,9 +33,20 @@ fn new_oo_and_universe(fields: &str) -> (Ouroboros, Universe) {
     (engine, universe)
 }
 
-fn fuel_after_observe(engine: &Ouroboros, universe: &Universe, path: &Path, initial_fuel: u64) -> (Value, u64) {
-    let root = engine.unify(Value::Combo(universe.root.clone()), Value::Combo(universe.staged.clone()));
-    let root_val = match root { Value::Combo(r) => r, _ => ComboVal::default() };
+fn fuel_after_observe(
+    engine: &Ouroboros,
+    universe: &Universe,
+    path: &Path,
+    initial_fuel: u64,
+) -> (Value, u64) {
+    let root = engine.unify(
+        Value::Combo(universe.root.clone()),
+        Value::Combo(universe.staged.clone()),
+    );
+    let root_val = match root {
+        Value::Combo(r) => r,
+        _ => ComboVal::default(),
+    };
     let mut ctx = EvalContext::new(root_val).with_fuel(initial_fuel);
     let val = engine.resolve_path(path, &mut ctx);
     let result = engine.force_recursive(val, &mut ctx);
@@ -42,11 +60,23 @@ fn stage4_memo_reduces_fuel_on_second_observe() {
     let p = path_of(&["r", "v"]);
 
     let (v1, fuel1) = fuel_after_observe(&engine, &universe, &p, 1000);
-    assert_eq!(v1, Value::Atom(AtomKind::Int(3.into()), EffectTag::Pure, None));
+    assert_eq!(
+        v1,
+        Value::Atom(AtomKind::Int(3.into()), EffectTag::Pure, None)
+    );
 
     let (v2, fuel2) = fuel_after_observe(&engine, &universe, &p, 1000);
-    assert_eq!(v1.content_hash(), v2.content_hash(), "memo hit must return same value");
-    assert!(fuel2 > fuel1, "second observe should use less fuel: fuel1={}, fuel2={}", fuel1, fuel2);
+    assert_eq!(
+        v1.content_hash(),
+        v2.content_hash(),
+        "memo hit must return same value"
+    );
+    assert!(
+        fuel2 > fuel1,
+        "second observe should use less fuel: fuel1={}, fuel2={}",
+        fuel1,
+        fuel2
+    );
 }
 
 // Probe 2: Q-tier not memo'd across observations
@@ -58,8 +88,12 @@ fn stage4_qtier_no_cross_observation_memo() {
     let (v1, fuel1) = fuel_after_observe(&engine, &universe, &p, 1000);
     let (v2, fuel2) = fuel_after_observe(&engine, &universe, &p, 1000);
     assert_eq!(v1.content_hash(), v2.content_hash(), "same value");
-    assert!((fuel1 as i64 - fuel2 as i64).abs() < 20,
-        "Q-tier should NOT memo across observations: fuel1={}, fuel2={}", fuel1, fuel2);
+    assert!(
+        (fuel1 as i64 - fuel2 as i64).abs() < 20,
+        "Q-tier should NOT memo across observations: fuel1={}, fuel2={}",
+        fuel1,
+        fuel2
+    );
 }
 
 // Probe 3: Bottom not memo'd

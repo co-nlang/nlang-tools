@@ -28,7 +28,8 @@ fn roundtrip_program(src: &str) {
     let a = once.without_spans();
     let b = twice.without_spans();
     assert_eq!(
-        a, b,
+        a,
+        b,
         "Program AST mismatch\n--- printed ---\n{printed}\nshape1: {}\nshape2: {}",
         a.shape(),
         b.shape()
@@ -171,7 +172,10 @@ fn expr_printer_idempotent() {
         let p1 = e1.to_nlang(0);
         let e2 = parse_expr_only(&p1).unwrap();
         let p2 = e2.to_nlang(0);
-        assert_eq!(p1, p2, "printer not idempotent for {src:?}: {p1:?} vs {p2:?}");
+        assert_eq!(
+            p1, p2,
+            "printer not idempotent for {src:?}: {p1:?} vs {p2:?}"
+        );
         assert_eq!(e1.without_spans(), e2.without_spans());
     }
 }
@@ -180,8 +184,8 @@ fn expr_printer_idempotent() {
 #[allow(dead_code)]
 pub fn assert_expr_roundtrip(e: &Expr) {
     let printed = e.to_nlang(0);
-    let again = parse_expr_only(&printed)
-        .unwrap_or_else(|err| panic!("re-parse {printed:?}: {err}"));
+    let again =
+        parse_expr_only(&printed).unwrap_or_else(|err| panic!("re-parse {printed:?}: {err}"));
     assert_eq!(
         e.without_spans(),
         again.without_spans(),

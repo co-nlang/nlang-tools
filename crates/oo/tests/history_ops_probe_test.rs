@@ -223,7 +223,11 @@ fn red_squash_compresses_the_range() {
     let got = oo(&d, &["squash", &c[0], "--grant", "squash"]);
     assert!(!got.contains("error"), "squash must succeed: {got:?}");
     let after = log_caids(&d);
-    assert_eq!(after.len(), 2, "range must collapse to one commit over the base");
+    assert_eq!(
+        after.len(),
+        2,
+        "range must collapse to one commit over the base"
+    );
     assert_eq!(
         after.last().map(String::as_str),
         Some(c[0].as_str()),
@@ -241,7 +245,11 @@ fn red_squash_requires_the_capability() {
         got.contains("privileged_required") || got.contains("privilege"),
         "squash without the capability must be refused: {got:?}"
     );
-    assert_eq!(head(&d), before, "a refused squash must not rewrite the chain");
+    assert_eq!(
+        head(&d),
+        before,
+        "a refused squash must not rewrite the chain"
+    );
 }
 
 #[test]
@@ -336,7 +344,10 @@ fn pin_ordinary_log_walks_the_whole_chain() {
     let d = fresh_dir();
     let c = three_commit_history(&d);
     assert_eq!(log_caids(&d).len(), 3);
-    assert_eq!(log_caids(&d).last().map(String::as_str), Some(c[0].as_str()));
+    assert_eq!(
+        log_caids(&d).last().map(String::as_str),
+        Some(c[0].as_str())
+    );
 }
 
 #[test]

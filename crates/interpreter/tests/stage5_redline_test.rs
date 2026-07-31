@@ -6,25 +6,43 @@
 // R2: no-regression — evolve of a RELATED (read) coordinate still invalidates.
 // R3: C₀ (path-free, $-free content) survives ANY evolve (permanent tier).
 
-use nlang_interpreter::{Ouroboros, Universe, EvalContext, Value};
 use nlang_interpreter::value::ComboVal;
+use nlang_interpreter::{EvalContext, Ouroboros, Universe, Value};
+use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
 use nlang_parser::parse_program;
-use nlang_parser::ast::{Path, PathAnchor, Span, AtomKind};
 
 fn path_of(segments: &[&str]) -> Path {
-    Path { anchor: PathAnchor::Bare, segments: segments.iter().map(|s| s.to_string()).collect(), span: Span::default() }
-}
-
-fn evolve_all(engine: &Ouroboros, universe: &mut Universe, src: &str) {
-    let program = parse_program(src).unwrap_or_else(|e| panic!("parse failed for {:?}: {:?}", src, e));
-    for field in &program.fields {
-        universe.evolve(engine, field).unwrap_or_else(|e| panic!("evolve failed for {:?}: {:?}", src, e));
+    Path {
+        anchor: PathAnchor::Bare,
+        segments: segments.iter().map(|s| s.to_string()).collect(),
+        span: Span::default(),
     }
 }
 
-fn fuel_after_observe(engine: &Ouroboros, universe: &Universe, path: &Path, initial_fuel: u64) -> (Value, u64) {
-    let root = engine.unify(Value::Combo(universe.root.clone()), Value::Combo(universe.staged.clone()));
-    let root_val = match root { Value::Combo(r) => r, _ => ComboVal::default() };
+fn evolve_all(engine: &Ouroboros, universe: &mut Universe, src: &str) {
+    let program =
+        parse_program(src).unwrap_or_else(|e| panic!("parse failed for {:?}: {:?}", src, e));
+    for field in &program.fields {
+        universe
+            .evolve(engine, field)
+            .unwrap_or_else(|e| panic!("evolve failed for {:?}: {:?}", src, e));
+    }
+}
+
+fn fuel_after_observe(
+    engine: &Ouroboros,
+    universe: &Universe,
+    path: &Path,
+    initial_fuel: u64,
+) -> (Value, u64) {
+    let root = engine.unify(
+        Value::Combo(universe.root.clone()),
+        Value::Combo(universe.staged.clone()),
+    );
+    let root_val = match root {
+        Value::Combo(r) => r,
+        _ => ComboVal::default(),
+    };
     let mut ctx = EvalContext::new(root_val).with_fuel(initial_fuel);
     let val = engine.resolve_path(path, &mut ctx);
     let result = engine.force_recursive(val, &mut ctx);
@@ -46,13 +64,22 @@ fn int_of(v: &Value) -> Option<i64> {
 fn stage5_r1_memo_survives_unrelated_evolve() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());
-    evolve_all(&engine, &mut universe, "r: { a: 1, b: 2 } |> { v: $.a + $.b }");
+    evolve_all(
+        &engine,
+        &mut universe,
+        "r: { a: 1, b: 2 } |> { v: $.a + $.b }",
+    );
     let p = path_of(&["r", "v"]);
 
     let (v1, cold) = fuel_after_observe(&engine, &universe, &p, 1000);
     assert_eq!(int_of(&v1), Some(3));
     let (_, warm) = fuel_after_observe(&engine, &universe, &p, 1000);
-    assert!(warm > cold, "precondition: memo hit before evolve (cold={}, warm={})", cold, warm);
+    assert!(
+        warm > cold,
+        "precondition: memo hit before evolve (cold={}, warm={})",
+        cold,
+        warm
+    );
 
     // unrelated coordinate
     evolve_all(&engine, &mut universe, "zzz_unrelated: 9");
@@ -71,13 +98,22 @@ fn stage5_r2_related_evolve_still_invalidates() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());
     // combo widening = uncontroversial monotone refinement of the read target
-    evolve_all(&engine, &mut universe, "t: { flag: { x: 1 } }\nr: { a: 5 } |> { v: { got: t.flag } }");
+    evolve_all(
+        &engine,
+        &mut universe,
+        "t: { flag: { x: 1 } }\nr: { a: 5 } |> { v: { got: t.flag } }",
+    );
     let p = path_of(&["r", "v"]);
 
     let (v1, cold) = fuel_after_observe(&engine, &universe, &p, 1000);
     let (v2, warm) = fuel_after_observe(&engine, &universe, &p, 1000);
     assert_eq!(v1.content_hash(), v2.content_hash(), "stable before evolve");
-    assert!(warm > cold, "precondition: entry cached (cold={}, warm={})", cold, warm);
+    assert!(
+        warm > cold,
+        "precondition: entry cached (cold={}, warm={})",
+        cold,
+        warm
+    );
 
     // refine the READ coordinate: flag widens {x:1} -> {x:1, y:2}
     evolve_all(&engine, &mut universe, "t: { flag: { y: 2 } }");
@@ -92,7 +128,11 @@ fn stage5_r2_related_evolve_still_invalidates() {
 fn stage5_r3_c0_survives_any_evolve() {
     let engine = Ouroboros::new_in_memory();
     let mut universe = Universe::new(None, ComboVal::default());
-    evolve_all(&engine, &mut universe, "r: { a: 1, b: 2 } |> { v: $.a + $.b }");
+    evolve_all(
+        &engine,
+        &mut universe,
+        "r: { a: 1, b: 2 } |> { v: $.a + $.b }",
+    );
     let p = path_of(&["r", "v"]);
 
     let (_, cold) = fuel_after_observe(&engine, &universe, &p, 1000);
@@ -103,6 +143,10 @@ fn stage5_r3_c0_survives_any_evolve() {
         evolve_all(&engine, &mut universe, &format!("gen_{}: {}", i, i));
     }
     let (_, after) = fuel_after_observe(&engine, &universe, &p, 1000);
-    assert!(after > cold,
-        "C0 entry (no root reads) must survive arbitrary evolves (cold={}, after={})", cold, after);
+    assert!(
+        after > cold,
+        "C0 entry (no root reads) must survive arbitrary evolves (cold={}, after={})",
+        cold,
+        after
+    );
 }

@@ -35,8 +35,8 @@
 //      stays for NON-morphism combos (pinned below).
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -204,7 +204,10 @@ fn pin_slash_noncolliding_paren_chain() {
 
 #[test] // ACTIVE pin: the corpus assert-library shape, explicit curry
 fn pin_slash_assert_eq_false_arm() {
-    assert_obs("/assert_eq: (x -> (y -> x == y))\nout: assert_eq 5 6", "#false");
+    assert_obs(
+        "/assert_eq: (x -> (y -> x == y))\nout: assert_eq 5 6",
+        "#false",
+    );
 }
 
 #[test] // ACTIVE pin: non-colliding slash def evolves clean — the G2-S

@@ -71,7 +71,9 @@ pub fn refs_of(v: &JsonValue, follow_abandoned: bool, out: &mut Vec<String>) {
 }
 
 fn is_hex64(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))
+    s.len() == 64
+        && s.bytes()
+            .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))
 }
 
 /// Mark phase: reachable digests from HEAD (R-a). Reports undecodable
@@ -218,4 +220,3 @@ pub fn format_done_report(r: &GcReport) -> String {
         r.removed, r.freed_bytes
     )
 }
-

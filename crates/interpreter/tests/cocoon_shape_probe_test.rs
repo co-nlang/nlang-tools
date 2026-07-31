@@ -32,8 +32,8 @@
 //   CAID shift from field removal = one-time legal diff, ledger).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -146,10 +146,7 @@ fn red_bottom_type_seg_passthrough() {
 fn red_blur_type_seg_absorbed() {
     // Law 2 + SPEC_08 #5: `.%type` on #blur is absorbed like any
     // ordinary segment (today: alias returns the BlurCause tag).
-    let got = observe_nlang(
-        &format!("big: {}\nout: big.%type", flat_chain(4000)),
-        "out",
-    );
+    let got = observe_nlang(&format!("big: {}\nout: big.%type", flat_chain(4000)), "out");
     assert!(
         got.starts_with("#blur"),
         "blur.%type must absorb per coordinate absorption: {got:?}"

@@ -67,7 +67,8 @@ fn pin_cli_data_conflict_is_loud() {
 
 #[test] // ACTIVE pin: non-colliding slash def end-to-end through the CLI
 fn pin_cli_slash_noncolliding_green() {
-    let (code, stdout, _stderr) = run_observe("/myadd: (x -> (y -> x + y))\nout: myadd 3 5\n", "out");
+    let (code, stdout, _stderr) =
+        run_observe("/myadd: (x -> (y -> x + y))\nout: myadd 3 5\n", "out");
     assert_eq!(code, 0);
     assert_eq!(stdout.trim(), "8");
 }

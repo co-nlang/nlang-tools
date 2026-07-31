@@ -1,12 +1,14 @@
-use nlang_interpreter::{Ouroboros, MasaRef};
-use nlang_interpreter::value::{Value, ComboVal, EffectTag, BottomCause};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{BottomCause, ComboVal, EffectTag, Value};
+use nlang_interpreter::{MasaRef, Ouroboros};
+use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
 const EPSILON_COHERENT: f64 = 0.1;
 
-fn oo() -> Ouroboros { Ouroboros::new_in_memory() }
+fn oo() -> Ouroboros {
+    Ouroboros::new_in_memory()
+}
 
 fn int_val(n: i64) -> Value {
     Value::Atom(AtomKind::Int(BigInt::from(n)), EffectTag::Pure, None)
@@ -14,19 +16,31 @@ fn int_val(n: i64) -> Value {
 
 fn top_combo(fields: &[(&str, Value)]) -> Value {
     let mut m = IndexMap::new();
-    for (k, v) in fields { m.insert(k.to_string(), v.clone()); }
-    Value::Combo(ComboVal::new(m, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    for (k, v) in fields {
+        m.insert(k.to_string(), v.clone());
+    }
+    Value::Combo(ComboVal::new(
+        m,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn masa_combo(digest: Vec<u8>, fields: &[(&str, Value)]) -> ComboVal {
     let mut m = IndexMap::new();
-    for (k, v) in fields { m.insert(k.to_string(), v.clone()); }
+    for (k, v) in fields {
+        m.insert(k.to_string(), v.clone());
+    }
     let mut cv = ComboVal::new(m, false, IndexMap::new(), EffectTag::Pure, vec![]);
     cv.masa_ref = MasaRef::Digest(digest);
     cv
 }
 
-fn masa_digest(seed: u8) -> Vec<u8> { vec![seed; 32] }
+fn masa_digest(seed: u8) -> Vec<u8> {
+    vec![seed; 32]
+}
 
 // ─── 1. phase_diff_between: identical combos ────────────────────────────────
 
@@ -40,7 +54,8 @@ fn test_phase_diff_identical_combos_is_zero() {
     let theta = nlang_interpreter::lattice_sketch::phase_diff_between(&a, &b);
     assert!(
         theta < 1e-6,
-        "identical combos should have theta ≈ 0, got {}", theta
+        "identical combos should have theta ≈ 0, got {}",
+        theta
     );
 }
 
@@ -50,17 +65,27 @@ fn test_phase_diff_identical_combos_is_zero() {
 fn test_phase_diff_different_field_keys_is_positive() {
     let digest = masa_digest(0x11);
     let fields_a: Vec<(&str, Value)> = (0..8_i64)
-        .map(|i| { let key = Box::leak(format!("a{}", i).into_boxed_str()) as &str; (key, int_val(i)) })
+        .map(|i| {
+            let key = Box::leak(format!("a{}", i).into_boxed_str()) as &str;
+            (key, int_val(i))
+        })
         .collect();
     let fields_b: Vec<(&str, Value)> = (0..8_i64)
-        .map(|i| { let key = Box::leak(format!("b{}", i).into_boxed_str()) as &str; (key, int_val(i + 100)) })
+        .map(|i| {
+            let key = Box::leak(format!("b{}", i).into_boxed_str()) as &str;
+            (key, int_val(i + 100))
+        })
         .collect();
 
     let a = masa_combo(digest.clone(), &fields_a);
     let b = masa_combo(digest.clone(), &fields_b);
 
     let theta = nlang_interpreter::lattice_sketch::phase_diff_between(&a, &b);
-    assert!(theta > 0.0, "different-key combos should have theta > 0, got {}", theta);
+    assert!(
+        theta > 0.0,
+        "different-key combos should have theta > 0, got {}",
+        theta
+    );
 }
 
 // ─── 3. Top-MASA combos: unify never H1Splits ────────────────────────────────
@@ -124,10 +149,18 @@ fn test_h1split_bottom_has_theta_and_degree() {
 
     let result = oo.unify(Value::Combo(cv_a), Value::Combo(cv_b));
     if let Value::Bottom(ref bd) = result {
-        assert!(matches!(bd.cause, BottomCause::H1Split), "cause should be H1Split");
+        assert!(
+            matches!(bd.cause, BottomCause::H1Split),
+            "cause should be H1Split"
+        );
         assert_eq!(bd.obstruction_degree, Some(1), "H1 → degree 1");
         if let Some(nlang_interpreter::value::Holonomy::Phase(theta)) = bd.holonomy {
-            assert!(theta >= EPSILON_COHERENT, "theta={} should be >= epsilon={}", theta, EPSILON_COHERENT);
+            assert!(
+                theta >= EPSILON_COHERENT,
+                "theta={} should be >= epsilon={}",
+                theta,
+                EPSILON_COHERENT
+            );
         } else {
             panic!("holonomy should be Phase(theta), got {:?}", bd.holonomy);
         }
@@ -142,7 +175,11 @@ fn test_phase_diff_empty_combo_is_zero() {
     let a = masa_combo(digest.clone(), &[]);
     let b = masa_combo(digest.clone(), &[("x", int_val(1))]);
     let theta = nlang_interpreter::lattice_sketch::phase_diff_between(&a, &b);
-    assert!(theta < 1e-9, "degenerate (empty) combo → theta = 0, got {}", theta);
+    assert!(
+        theta < 1e-9,
+        "degenerate (empty) combo → theta = 0, got {}",
+        theta
+    );
 }
 
 // ─── 7. MasaRef::Top + Digest combo: no H2 obstruction, no H1 check ──────────

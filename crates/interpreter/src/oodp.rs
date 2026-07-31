@@ -11,8 +11,8 @@
 //! any peer can invent any value. Serving, verification and every outcome must
 //! be identical whatever `%from` says (node_identity arc D3 / P1).
 
-use crate::storage::{StoreReadError, value_address_matches};
-use crate::value::{ContentHash, Value, BottomCause, ComboVal, Identity};
+use crate::storage::{value_address_matches, StoreReadError};
+use crate::value::{BottomCause, ComboVal, ContentHash, Identity, Value};
 use crate::{IntegrityKind, Ouroboros, PeerAdvert};
 use nlang_parser::ast::{AtomKind as AstAtom, Expr, ExprKind, FieldKey, Prefix};
 use nlang_parser::parse_expr_only;
@@ -202,9 +202,7 @@ pub fn parse_request(line: &str) -> Result<OodpRequest, String> {
 
     // Retired: bare CAID (v0.2.48 transition surface). Do not serve.
     if ContentHash::parse(line).is_ok() {
-        return Err(
-            "legacy bare-CAID request retired; use {{ %op: #fetch, %hash: \"…\" }}".into(),
-        );
+        return Err("legacy bare-CAID request retired; use {{ %op: #fetch, %hash: \"…\" }}".into());
     }
 
     Err(format!("unrecognized OODP request: {line}"))
@@ -380,7 +378,10 @@ pub fn serve_request(
                         let body = refuse(OodpStatus::NotFound, "not_held", source_id);
                         (body, format!("OODP Miss: {hash}"))
                     }
-                    Some(StoreReadError::CaidMismatch { requested, recomputed }) => {
+                    Some(StoreReadError::CaidMismatch {
+                        requested,
+                        recomputed,
+                    }) => {
                         let body = refuse(OodpStatus::Conflict, "caid_mismatch", source_id);
                         (
                             body,
@@ -400,7 +401,9 @@ pub fn serve_request(
                 },
             }
         }
-        OodpOp::Advertise => serve_advertise(engine, line, req.from.as_deref(), source_id, peer_host),
+        OodpOp::Advertise => {
+            serve_advertise(engine, line, req.from.as_deref(), source_id, peer_host)
+        }
         OodpOp::Discover => {
             // %from is a claim on #discover (R-c) — never branch on it.
             serve_discover(
@@ -820,12 +823,7 @@ fn serve_advertise(
     let pk_bytes = match hex::decode(public_key_hex.trim()) {
         Ok(b) if !b.is_empty() => b,
         _ => {
-            return rejected(
-                source_id,
-                "malformed",
-                from,
-                "public_key is not hex",
-            );
+            return rejected(source_id, "malformed", from, "public_key is not hex");
         }
     };
     // Same computation as Identity::node_id_caid: CAID of Bytes(pubkey).
@@ -849,20 +847,10 @@ fn serve_advertise(
     match from {
         Some(f) if f == node_id => {}
         Some(_) => {
-            return rejected(
-                source_id,
-                "identity_mismatch",
-                from,
-                "%from ≠ %ad.node_id",
-            );
+            return rejected(source_id, "identity_mismatch", from, "%from ≠ %ad.node_id");
         }
         None => {
-            return rejected(
-                source_id,
-                "identity_mismatch",
-                from,
-                "missing %from",
-            );
+            return rejected(source_id, "identity_mismatch", from, "missing %from");
         }
     }
 
@@ -930,9 +918,7 @@ fn serve_advertise(
     });
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);
-    let mut log = format!(
-        "OODP Advert: {node_id} addr={addr} services={n_services} ttl={ttl}"
-    );
+    let mut log = format!("OODP Advert: {node_id} addr={addr} services={n_services} ttl={ttl}");
     if let Some(ref op) = verified_operator_key {
         log.push_str(&format!(" affiliation={op}"));
     }
@@ -945,11 +931,7 @@ fn serve_advertise(
 
 // ── #find_node (Kademlia closest) ───────────────────────────────────────
 
-fn serve_find_node(
-    engine: &Ouroboros,
-    target: Option<&str>,
-    source_id: &str,
-) -> (String, String) {
+fn serve_find_node(engine: &Ouroboros, target: Option<&str>, source_id: &str) -> (String, String) {
     let Some(t) = target else {
         let body = refuse(OodpStatus::Conflict, "missing_field", source_id);
         return (body, "OODP #find_node missing %target".into());
@@ -976,11 +958,7 @@ fn serve_find_node(
             Err(_) => HashMap::new(),
         };
         // Ensure self_id is set for distance (may be zeros before first insert).
-        rt.closest(
-            &target_id,
-            &ads,
-            crate::routing::MAX_FIND_NODE_PEERS,
-        )
+        rt.closest(&target_id, &ads, crate::routing::MAX_FIND_NODE_PEERS)
     };
 
     let ads = engine.peer_adverts.read().ok();
@@ -1014,10 +992,7 @@ fn encode_discover_response(
     peers: &[(String /* ad_source */, String /* observed_host */)],
 ) -> String {
     let mut map = Map::new();
-    map.insert(
-        "%status".to_string(),
-        JsonValue::String("#success".into()),
-    );
+    map.insert("%status".to_string(), JsonValue::String("#success".into()));
     map.insert("%source".to_string(), JsonValue::String(source.to_string()));
     map.insert("%hops".to_string(), json!(hops));
     let peers_j: Vec<JsonValue> = peers
@@ -1189,10 +1164,7 @@ fn bump(map: &mut std::collections::BTreeMap<String, usize>, key: &str) {
 
 /// Verify each `%peers` entry independently (R-e). Body is data: `ensure_literal_body`
 /// before any evaluation (§3.5).
-pub fn process_discover_reply(
-    engine: &Ouroboros,
-    reply_body: &str,
-) -> DiscoverProcessResult {
+pub fn process_discover_reply(engine: &Ouroboros, reply_body: &str) -> DiscoverProcessResult {
     let mut result = DiscoverProcessResult::default();
 
     let Ok(envelope) = serde_json::from_str::<JsonValue>(reply_body.trim()) else {
@@ -1205,10 +1177,7 @@ pub fn process_discover_reply(
         .and_then(|v| v.as_str())
         .unwrap_or("#conflict");
     result.status = status.trim().trim_start_matches('#').to_string();
-    result.envelope_hops = envelope
-        .get("%hops")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    result.envelope_hops = envelope.get("%hops").and_then(|v| v.as_i64()).unwrap_or(0);
 
     if result.status == "not_implemented" {
         return result;
@@ -1313,7 +1282,8 @@ fn verify_relayed_entry(
     let node_id = field_as_str(&cv, "node_id").ok_or_else(|| "malformed".to_string())?;
     let public_key_hex = field_as_str(&cv, "public_key").ok_or_else(|| "malformed".to_string())?;
     let signature_hex = field_as_str(&cv, "signature").ok_or_else(|| "malformed".to_string())?;
-    let listen_port = field_as_i64(&cv, "listen_port").ok_or_else(|| "malformed".to_string())? as u16;
+    let listen_port =
+        field_as_i64(&cv, "listen_port").ok_or_else(|| "malformed".to_string())? as u16;
     let ts = field_as_i64(&cv, "ts").ok_or_else(|| "malformed".to_string())?;
     let ttl = field_as_i64(&cv, "ttl").ok_or_else(|| "malformed".to_string())?;
 
@@ -1371,15 +1341,14 @@ pub fn remote_find_node_oodp(
     target_hex: &str,
 ) -> Result<DiscoverProcessResult, BottomCause> {
     let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
-    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(
-        |e| {
+    let mut stream =
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
                 BottomCause::PeerTimeout
             } else {
                 BottomCause::Conflict
             }
-        },
-    )?;
+        })?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
         .map_err(|_| BottomCause::Conflict)?;
@@ -1388,9 +1357,7 @@ pub fn remote_find_node_oodp(
         .map_err(|_| BottomCause::Conflict)?;
 
     let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
-    let req = format!(
-        "{{{{ %op: #find_node, %from: \"{from}\", %target: \"{target_hex}\" }}}}\n"
-    );
+    let req = format!("{{{{ %op: #find_node, %from: \"{from}\", %target: \"{target_hex}\" }}}}\n");
     stream
         .write_all(req.as_bytes())
         .map_err(|_| BottomCause::Conflict)?;
@@ -1432,15 +1399,14 @@ pub fn remote_discover_oodp(
     target: &str,
 ) -> Result<DiscoverProcessResult, BottomCause> {
     let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
-    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(
-        |e| {
+    let mut stream =
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
                 BottomCause::PeerTimeout
             } else {
                 BottomCause::Conflict
             }
-        },
-    )?;
+        })?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
         .map_err(|_| BottomCause::Conflict)?;
@@ -1449,9 +1415,7 @@ pub fn remote_discover_oodp(
         .map_err(|_| BottomCause::Conflict)?;
 
     let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
-    let req = format!(
-        "{{{{ %op: #discover, %from: \"{from}\", %target: \"{target}\" }}}}\n"
-    );
+    let req = format!("{{{{ %op: #discover, %from: \"{from}\", %target: \"{target}\" }}}}\n");
     stream
         .write_all(req.as_bytes())
         .map_err(|_| BottomCause::Conflict)?;
@@ -1520,7 +1484,14 @@ pub fn signed_advert_nlang(
     capacity: i64,
     ttl: i64,
     engine: &Ouroboros,
-) -> Result<(String /* ad nlang */, String /* node_id */, String /* request line */), String> {
+) -> Result<
+    (
+        String, /* ad nlang */
+        String, /* node_id */
+        String, /* request line */
+    ),
+    String,
+> {
     let node_id = identity.node_id_caid().to_string();
     let pk = identity.public_key_hex();
     let ts = now_secs();
@@ -1583,15 +1554,14 @@ pub fn remote_fetch_oodp(
     hash: &ContentHash,
 ) -> Result<Value, BottomCause> {
     let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
-    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(
-        |e| {
+    let mut stream =
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
                 BottomCause::PeerTimeout
             } else {
                 BottomCause::Conflict
             }
-        },
-    )?;
+        })?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
         .map_err(|_| BottomCause::Conflict)?;
@@ -1679,10 +1649,13 @@ pub fn remote_fetch_oodp(
         _ => return Err(BottomCause::PeerUnknownStatus),
     }
 
-    let result_j = obj.get("%result").or_else(|| obj.get("result")).ok_or_else(|| {
-        oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
-        BottomCause::CaidMismatch
-    })?;
+    let result_j = obj
+        .get("%result")
+        .or_else(|| obj.get("result"))
+        .ok_or_else(|| {
+            oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
+            BottomCause::CaidMismatch
+        })?;
     // `#success` with no result / null
     if result_j.is_null() {
         oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
@@ -1724,21 +1697,6 @@ fn legacy_or_fail(
     Ok(val)
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #[cfg(test)]
 mod advert_debug {
     use super::*;
@@ -1773,7 +1731,9 @@ mod advert_debug {
 
         // What would server compute?
         let ad_val = eval_nlang_value(&oo, &ad).unwrap();
-        let Value::Combo(mut cv) = ad_val else { panic!() };
+        let Value::Combo(mut cv) = ad_val else {
+            panic!()
+        };
         cv.remove_field("signature");
         let body_val = Value::Combo(cv);
         let body_nlang = body_val.to_nlang(0);

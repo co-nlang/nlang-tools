@@ -144,7 +144,10 @@ fn run_observe(dir: &Path, src: &str, coord: &str) -> String {
     write(dir, "p.n", src);
     // connect_consent §5.1: this suite's programs dial tcp:// sources; grant
     // models an operator who consented (more faithful, not weaker).
-    oo(dir, &["run", "p.n", "--observe", coord, "--grant", "connect"])
+    oo(
+        dir,
+        &["run", "p.n", "--observe", coord, "--grant", "connect"],
+    )
 }
 
 /// `.oo/objects/sha256/<aa>/<rest>` for the digest of a CAID. The digest is
@@ -244,7 +247,9 @@ where
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            let Ok(clone) = stream.try_clone() else { continue };
+            let Ok(clone) = stream.try_clone() else {
+                continue;
+            };
             let mut line = String::new();
             if BufReader::new(clone).read_line(&mut line).is_err() {
                 continue;
@@ -341,9 +346,10 @@ fn tamper(path: &Path, from: &str, to: &str) {
         "tamper marker {from:?} must occur exactly once in {path:?}"
     );
     let tampered = text.replace(from, to);
-    serde_json::from_str::<serde_json::Value>(&tampered)
-        .expect("tampered object must remain decodable — otherwise this probe \
-                 measures #object_undecodable rather than #caid_mismatch");
+    serde_json::from_str::<serde_json::Value>(&tampered).expect(
+        "tampered object must remain decodable — otherwise this probe \
+                 measures #object_undecodable rather than #caid_mismatch",
+    );
     fs::write(path, tampered).unwrap();
 }
 
@@ -360,7 +366,11 @@ fn tamper(path: &Path, from: &str, to: &str) {
 /// Returns (source CAID that the shadow scan will match, commit CAIDs
 /// newest-first).
 fn shadow_universe(dir: &Path) -> (String, Vec<String>) {
-    write(dir, "a.n", "payload: { hello: \"world\" }\npid: ~%Discovery./identify_and_store payload\n");
+    write(
+        dir,
+        "a.n",
+        "payload: { hello: \"world\" }\npid: ~%Discovery./identify_and_store payload\n",
+    );
     oo(dir, &["evolve", "a.n"]);
     oo(dir, &["commit", "-m", "c1"]);
     write(dir, "b.n", "marker: \"second\"\n");
@@ -371,7 +381,11 @@ fn shadow_universe(dir: &Path) -> (String, Vec<String>) {
     // universe under test keeps exactly two commits.
     let scratch = fresh_dir();
     copy_tree(dir, &scratch);
-    write(&scratch, "c.n", "pid2: ~%Discovery./identify_and_store pid\n");
+    write(
+        &scratch,
+        "c.n",
+        "pid2: ~%Discovery./identify_and_store pid\n",
+    );
     oo(&scratch, &["evolve", "c.n"]);
     let status = oo(&scratch, &["status"]);
     let source = status
@@ -437,9 +451,8 @@ fn shadow_count(output: &str) -> Option<usize> {
 /// must not hand them to the program as the content of that address.
 #[test]
 fn red_fabricated_bytes_are_not_the_requested_identity() {
-    let liar = spawn_liar(
-        br#"{"Atom":[{"Str":"ATTACKER_CONTROLLED_NEVER_EXISTED"},0,null]}"#.to_vec(),
-    );
+    let liar =
+        spawn_liar(br#"{"Atom":[{"Str":"ATTACKER_CONTROLLED_NEVER_EXISTED"},0,null]}"#.to_vec());
     let dir = fresh_dir();
     let out = run_observe(
         &dir,
@@ -624,7 +637,10 @@ fn red_tampering_does_not_silently_shorten_the_shadow_report() {
     // LIVENESS: the untampered scan really reports both commits. Without this
     // the gate would pass on an empty shadow list, which is what a
     // literal-valued source silently produces.
-    let baseline = oo(&clean, &["refine", "-s", &source, "-t", &target, "-m", "rf", "--sign"]);
+    let baseline = oo(
+        &clean,
+        &["refine", "-s", &source, "-t", &target, "-m", "rf", "--sign"],
+    );
     assert_eq!(
         shadow_count(&baseline),
         Some(2),
@@ -634,11 +650,13 @@ fn red_tampering_does_not_silently_shorten_the_shadow_report() {
     let oldest = commits.last().unwrap();
     tamper(&object_path(&dirty, oldest), "\"c1\"", "\"cX\"");
 
-    let after = oo(&dirty, &["refine", "-s", &source, "-t", &target, "-m", "rf", "--sign"]);
+    let after = oo(
+        &dirty,
+        &["refine", "-s", &source, "-t", &target, "-m", "rf", "--sign"],
+    );
 
     assert!(
-        after.to_lowercase().contains("mismatch")
-            || after.to_lowercase().contains("truncat"),
+        after.to_lowercase().contains("mismatch") || after.to_lowercase().contains("truncat"),
         "the scan was cut short by a corrupt commit and said nothing. \
          baseline reported {:?}, this run reported {:?}:\n{after}",
         shadow_count(&baseline),
@@ -788,7 +806,10 @@ fn pin_untampered_shadow_report_is_complete() {
     let clean = fresh_dir();
     let (source, _) = shadow_universe(&clean);
     let target = store_value(&fresh_dir(), "{ hello: \"world\", extra: 1 }");
-    let out = oo(&clean, &["refine", "-s", &source, "-t", &target, "-m", "rf", "--sign"]);
+    let out = oo(
+        &clean,
+        &["refine", "-s", &source, "-t", &target, "-m", "rf", "--sign"],
+    );
     assert_eq!(
         shadow_count(&out),
         Some(2),

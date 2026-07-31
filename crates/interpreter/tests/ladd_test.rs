@@ -1,5 +1,5 @@
-use nlang_interpreter::ladd::{GBB, d_l_approx, gravitational_weight, masa_compatible};
-use nlang_interpreter::value::{ContentHash, MasaRef, HashAlgorithm, CaidVersion};
+use nlang_interpreter::ladd::{d_l_approx, gravitational_weight, masa_compatible, GBB};
+use nlang_interpreter::value::{CaidVersion, ContentHash, HashAlgorithm, MasaRef};
 
 fn dummy_caid() -> ContentHash {
     ContentHash {
@@ -12,7 +12,13 @@ fn dummy_caid() -> ContentHash {
 }
 
 fn gbb_with_sketch(sketch: &[u8], masa: MasaRef) -> GBB {
-    GBB { node_caid: dummy_caid(), mass: 0.5, sketch_bytes: sketch.to_vec(), masa_ref: masa, nerve_structure: vec![] }
+    GBB {
+        node_caid: dummy_caid(),
+        mass: 0.5,
+        sketch_bytes: sketch.to_vec(),
+        masa_ref: masa,
+        nerve_structure: vec![],
+    }
 }
 
 #[test]
@@ -64,16 +70,19 @@ fn test_masa_incompatible() {
 #[test]
 fn test_gravitational_weight_positive() {
     let q = gbb_with_sketch(&[0x00], MasaRef::Top);
-    let p = GBB { mass: 1.0, ..gbb_with_sketch(&[0x01], MasaRef::Top) };
+    let p = GBB {
+        mass: 1.0,
+        ..gbb_with_sketch(&[0x01], MasaRef::Top)
+    };
     let w = gravitational_weight(&q, &p, 1e-6);
     assert!(w > 0.0, "gravitational weight should be positive");
 }
 
 #[test]
 fn test_disc_advertise_and_find() {
-    use std::sync::Arc;
     use nlang_interpreter::*;
-    use nlang_parser::ast::{AtomKind};
+    use nlang_parser::ast::AtomKind;
+    use std::sync::Arc;
 
     let oo = Arc::new(Ouroboros::new_in_memory());
     let val = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
@@ -83,11 +92,17 @@ fn test_disc_advertise_and_find() {
     let builtins = &oo.builtin_registry;
     let advertise_fn = builtins.get("disc.advertise").unwrap();
     let result = advertise_fn(val.clone(), &oo, &mut ctx);
-    assert!(result.to_string_plain().contains("true"), "advertise should return #true");
+    assert!(
+        result.to_string_plain().contains("true"),
+        "advertise should return #true"
+    );
 
     // Check gbb_registry has an entry
     let reg = oo.gbb_registry.read().unwrap();
-    assert!(!reg.is_empty(), "gbb_registry should have entries after advertise");
+    assert!(
+        !reg.is_empty(),
+        "gbb_registry should have entries after advertise"
+    );
 }
 
 // ── Phase 16: cosine d_l_approx tests ──
@@ -109,15 +124,29 @@ fn test_d_l_approx_cosine_different() {
         nerve_structure: vec![],
     };
     let d = d_l_approx(&a, &b);
-    assert!((d - 0.5).abs() < 1e-10, "orthogonal sketches → d_L ≈ 0.5, got {}", d);
+    assert!(
+        (d - 0.5).abs() < 1e-10,
+        "orthogonal sketches → d_L ≈ 0.5, got {}",
+        d
+    );
 }
 
 #[test]
 fn test_d_l_approx_identical_still_zero() {
     let bytes = vec![42u8, 17, 255, 0, 128];
-    let a = GBB { node_caid: dummy_caid(), mass: 1.0,
-        sketch_bytes: bytes.clone(), masa_ref: MasaRef::Top, nerve_structure: vec![] };
-    let b = GBB { node_caid: dummy_caid(), mass: 1.0,
-        sketch_bytes: bytes, masa_ref: MasaRef::Top, nerve_structure: vec![] };
+    let a = GBB {
+        node_caid: dummy_caid(),
+        mass: 1.0,
+        sketch_bytes: bytes.clone(),
+        masa_ref: MasaRef::Top,
+        nerve_structure: vec![],
+    };
+    let b = GBB {
+        node_caid: dummy_caid(),
+        mass: 1.0,
+        sketch_bytes: bytes,
+        masa_ref: MasaRef::Top,
+        nerve_structure: vec![],
+    };
     assert_eq!(d_l_approx(&a, &b), 0.0, "identical sketch → d_L = 0");
 }

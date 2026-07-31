@@ -1,10 +1,15 @@
-use crate::{Ouroboros, EvalContext, Value, ComboVal, EffectTag, BottomCause, BottomDetail};
+use crate::{BottomCause, BottomDetail, ComboVal, EffectTag, EvalContext, Ouroboros, Value};
 use indexmap::IndexMap;
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
 impl Ouroboros {
-    pub fn dispatch_morphism(&self, rules: &ComboVal, arg: &Value, ctx: &mut EvalContext) -> MorphismDispatchResult {
+    pub fn dispatch_morphism(
+        &self,
+        rules: &ComboVal,
+        arg: &Value,
+        ctx: &mut EvalContext,
+    ) -> MorphismDispatchResult {
         // (pattern_key, pattern_value, unified, rule_val)
         let mut matching_branches: Vec<(String, Value, Value, Value)> = Vec::new();
 
@@ -98,19 +103,11 @@ impl Ouroboros {
                 IndexMap::from_iter(vec![
                     (
                         "%kind".to_string(),
-                        Value::Atom(
-                            AtomKind::Tag("type".to_string()),
-                            EffectTag::Pure,
-                            None,
-                        ),
+                        Value::Atom(AtomKind::Tag("type".to_string()), EffectTag::Pure, None),
                     ),
                     (
                         "%name".to_string(),
-                        Value::Atom(
-                            AtomKind::Str(type_name.to_string()),
-                            EffectTag::Pure,
-                            None,
-                        ),
+                        Value::Atom(AtomKind::Str(type_name.to_string()), EffectTag::Pure, None),
                     ),
                 ]),
                 true,
@@ -265,9 +262,13 @@ impl Ouroboros {
 
                 // Param frame = body "current" level (isomorphic to nested
                 // literal inside the holder); ^ = holder, ^^ = holder's parent.
-                call_ctx
-                    .scopes
-                    .push(ComboVal::new(arg_map, false, IndexMap::new(), EffectTag::Pure, vec![]));
+                call_ctx.scopes.push(ComboVal::new(
+                    arg_map,
+                    false,
+                    IndexMap::new(),
+                    EffectTag::Pure,
+                    vec![],
+                ));
                 call_ctx.context_value = Some(arg.clone());
 
                 let out = self.eval(expr, &mut call_ctx);

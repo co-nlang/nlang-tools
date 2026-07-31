@@ -1,7 +1,7 @@
-use nlang_interpreter::{Ouroboros, EvalContext};
-use nlang_interpreter::value::{Value, ComboVal, EffectTag};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag, Value};
+use nlang_interpreter::{EvalContext, Ouroboros};
+use nlang_parser::ast::AtomKind;
 
 fn make_int(n: i64) -> Value {
     Value::Atom(AtomKind::Int(n.into()), EffectTag::Pure, None)
@@ -10,7 +10,13 @@ fn make_int(n: i64) -> Value {
 fn make_some(val: Value) -> Value {
     let mut f = IndexMap::new();
     f.insert("%val".to_string(), val);
-    Value::Combo(ComboVal::new(f, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    Value::Combo(ComboVal::new(
+        f,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn make_none() -> Value {
@@ -20,27 +26,57 @@ fn make_none() -> Value {
 fn make_ok(val: Value) -> Value {
     let mut f = IndexMap::new();
     f.insert("%val".to_string(), val);
-    Value::Combo(ComboVal::new(f, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    Value::Combo(ComboVal::new(
+        f,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn make_err(cause: Value) -> Value {
     let mut f = IndexMap::new();
     f.insert("%cause".to_string(), cause);
-    Value::Combo(ComboVal::new(f, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    Value::Combo(ComboVal::new(
+        f,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn get_morph_builtin(name: &str) -> Value {
     let mut f = IndexMap::new();
-    f.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
-    f.insert("%builtin".to_string(), Value::Atom(AtomKind::Str(name.to_string()), EffectTag::Pure, None));
-    Value::Combo(ComboVal::new(f, true, IndexMap::new(), EffectTag::Pure, vec![]))
+    f.insert(
+        "%morphism".to_string(),
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+    );
+    f.insert(
+        "%builtin".to_string(),
+        Value::Atom(AtomKind::Str(name.to_string()), EffectTag::Pure, None),
+    );
+    Value::Combo(ComboVal::new(
+        f,
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn make_map_arg(f: Value, val: Value) -> Value {
     let mut fields = IndexMap::new();
     fields.insert("0".to_string(), f);
     fields.insert("1".to_string(), val);
-    Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 #[test]
@@ -53,7 +89,11 @@ fn option_map_some() {
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     // The result is a Combo with %val in meta (not collapsed)
     if let Value::Combo(ref c) = result {
-        assert!(c.get_field("%val").is_some(), "option.map(Some(42)) should return Some: {:?}", result);
+        assert!(
+            c.get_field("%val").is_some(),
+            "option.map(Some(42)) should return Some: {:?}",
+            result
+        );
     } else {
         panic!("Expected Combo with %val, got {:?}", result);
     }
@@ -68,8 +108,12 @@ fn option_map_none() {
     let arg = make_map_arg(Value::Top, opt);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Atom(AtomKind::Tag(t), _, _) = result.collapse() {
-        assert_eq!(t.trim_start_matches('#'), "none",
-            "option.map(#none) should return #none: {:?}", result);
+        assert_eq!(
+            t.trim_start_matches('#'),
+            "none",
+            "option.map(#none) should return #none: {:?}",
+            result
+        );
     } else {
         panic!("Expected #none tag, got {:?}", result);
     }
@@ -84,8 +128,15 @@ fn result_map_ok() {
     let arg = make_map_arg(Value::Top, res);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Combo(ref c) = result {
-        assert!(c.get_field("%val").is_some(), "result.map(Ok(99)) should return Ok: {:?}", result);
-        assert!(c.get_field("%cause").is_none(), "result.map(Ok) should not have %cause");
+        assert!(
+            c.get_field("%val").is_some(),
+            "result.map(Ok(99)) should return Ok: {:?}",
+            result
+        );
+        assert!(
+            c.get_field("%cause").is_none(),
+            "result.map(Ok) should not have %cause"
+        );
     } else {
         panic!("Expected Ok combo, got {:?}", result);
     }
@@ -101,8 +152,15 @@ fn result_map_err_passthrough() {
     let arg = make_map_arg(Value::Top, res);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Combo(ref c) = result {
-        assert!(c.get_field("%cause").is_some(), "result.map(Err) should preserve %cause: {:?}", result);
-        assert!(c.get_field("%val").is_none(), "result.map(Err) should not have %val");
+        assert!(
+            c.get_field("%cause").is_some(),
+            "result.map(Err) should preserve %cause: {:?}",
+            result
+        );
+        assert!(
+            c.get_field("%val").is_none(),
+            "result.map(Err) should not have %val"
+        );
     } else {
         panic!("Expected Err combo, got {:?}", result);
     }
@@ -118,7 +176,11 @@ fn result_map_err_maps_cause() {
     let arg = make_map_arg(Value::Top, res);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Combo(ref c) = result {
-        assert!(c.get_field("%cause").is_some(), "result.map_err(Err) should have %cause: {:?}", result);
+        assert!(
+            c.get_field("%cause").is_some(),
+            "result.map_err(Err) should have %cause: {:?}",
+            result
+        );
     } else {
         panic!("Expected Err combo, got {:?}", result);
     }
@@ -130,8 +192,10 @@ fn option_fmap_accessible_from_type() {
     let root = oo.root_with_system();
     let opt_type = root.get_field("@option").expect("@option should exist");
     if let Value::Combo(ref c) = opt_type {
-        assert!(c.get_field("%fmap").is_some(),
-            "@option should have %fmap field after Phase 15");
+        assert!(
+            c.get_field("%fmap").is_some(),
+            "@option should have %fmap field after Phase 15"
+        );
     } else {
         panic!("@option should be a Combo");
     }
@@ -148,7 +212,12 @@ fn option_and_then_some_chains() {
     let arg = make_map_arg(Value::Top, opt);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Atom(AtomKind::Int(n), _, _) = result.collapse() {
-        assert_eq!(n.to_string(), "42", "and_then Some should chain: {:?}", result);
+        assert_eq!(
+            n.to_string(),
+            "42",
+            "and_then Some should chain: {:?}",
+            result
+        );
     } else {
         panic!("Expected Int(42), got {:?}", result);
     }
@@ -163,8 +232,12 @@ fn option_and_then_none_propagates() {
     let arg = make_map_arg(Value::Top, opt);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Atom(AtomKind::Tag(t), _, _) = result.collapse() {
-        assert_eq!(t.trim_start_matches('#'), "none",
-            "and_then None should propagate #none: {:?}", result);
+        assert_eq!(
+            t.trim_start_matches('#'),
+            "none",
+            "and_then None should propagate #none: {:?}",
+            result
+        );
     } else {
         panic!("Expected #none, got {:?}", result);
     }
@@ -179,7 +252,12 @@ fn result_and_then_ok_chains() {
     let arg = make_map_arg(Value::Top, res);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Atom(AtomKind::Int(n), _, _) = result.collapse() {
-        assert_eq!(n.to_string(), "99", "result.and_then Ok should chain: {:?}", result);
+        assert_eq!(
+            n.to_string(),
+            "99",
+            "result.and_then Ok should chain: {:?}",
+            result
+        );
     } else {
         panic!("Expected Int(99), got {:?}", result);
     }
@@ -195,8 +273,11 @@ fn result_and_then_err_propagates() {
     let arg = make_map_arg(Value::Top, res);
     let result = oo.force(oo.apply_morphism(morph, arg, &mut ctx), &mut ctx);
     if let Value::Combo(ref c) = result.collapse() {
-        assert!(c.get_field("%cause").is_some(),
-            "result.and_then Err should propagate: {:?}", result);
+        assert!(
+            c.get_field("%cause").is_some(),
+            "result.and_then Err should propagate: {:?}",
+            result
+        );
     } else {
         panic!("Expected Err combo, got {:?}", result);
     }
@@ -206,21 +287,43 @@ fn result_and_then_err_propagates() {
 
 fn make_some_int(oo: &Ouroboros, n: i64) -> Value {
     let mut f = IndexMap::new();
-    f.insert("%val".to_string(), Value::Atom(AtomKind::Int(n.into()), EffectTag::Pure, None));
-    Value::Combo(ComboVal::new(f, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    f.insert(
+        "%val".to_string(),
+        Value::Atom(AtomKind::Int(n.into()), EffectTag::Pure, None),
+    );
+    Value::Combo(ComboVal::new(
+        f,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn call_builtin(name: &str, arg: Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Value {
-    let f = oo.builtin_registry.get(name).expect(&format!("builtin {} exists", name));
+    let f = oo
+        .builtin_registry
+        .get(name)
+        .expect(&format!("builtin {} exists", name));
     oo.force(f(arg.clone(), oo, ctx), ctx)
 }
 
 fn assert_is_some_int(result: &Value, expected: i64) {
     if let Value::Atom(AtomKind::Int(n), _, _) = result.collapse() {
-        assert_eq!(n.to_string(), expected.to_string(), "expected Some({})", expected);
+        assert_eq!(
+            n.to_string(),
+            expected.to_string(),
+            "expected Some({})",
+            expected
+        );
     } else if let Value::Combo(ref c) = result {
         if let Some(Value::Atom(AtomKind::Int(n), _, _)) = c.get_field("%val") {
-            assert_eq!(n.to_string(), expected.to_string(), "expected Some({})", expected);
+            assert_eq!(
+                n.to_string(),
+                expected.to_string(),
+                "expected Some({})",
+                expected
+            );
         } else {
             panic!("Expected Some({}) but got {:?}", expected, result);
         }
@@ -231,7 +334,12 @@ fn assert_is_some_int(result: &Value, expected: i64) {
 
 fn assert_is_none(result: &Value) {
     let s = result.collapse().to_string_plain();
-    assert_eq!(s.trim_start_matches('#'), "none", "expected #none but got {:?}", result);
+    assert_eq!(
+        s.trim_start_matches('#'),
+        "none",
+        "expected #none but got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -287,12 +395,27 @@ fn make_always_true_morph(oo: &Ouroboros) -> Value {
     // Since apply_morphism(Top, x) = Top, we need something better.
     // Use a morphism that has a builtin which evaluates to a constant
     let mut f = IndexMap::new();
-    f.insert("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
+    f.insert(
+        "%morphism".to_string(),
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+    );
     // A morphism with just %val that returns its argument — then wrap in tag
     // Simplest: take the existing cond.if morphism, but construct it manually
-    f.insert("0".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None));
-    f.insert("%builtin".to_string(), Value::Atom(AtomKind::Str("cond.if".to_string()), EffectTag::Pure, None));
-    Value::Combo(ComboVal::new(f, true, IndexMap::new(), EffectTag::Pure, vec![]))
+    f.insert(
+        "0".to_string(),
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+    );
+    f.insert(
+        "%builtin".to_string(),
+        Value::Atom(AtomKind::Str("cond.if".to_string()), EffectTag::Pure, None),
+    );
+    Value::Combo(ComboVal::new(
+        f,
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 #[test]

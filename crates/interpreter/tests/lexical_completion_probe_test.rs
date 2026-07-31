@@ -21,8 +21,8 @@
 // mutual/self sibling reference semantics (frozen), effect isolation.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -79,7 +79,10 @@ fn assert_obs(src: &str, expect: &str) {
 #[test]
 fn red_three_hop_chain() {
     // L2-47. Today: `_` (depth-2 wall).
-    assert_obs("c: { k: 5, d: k + 1, e: d + k, g2: e + 1 }\nout: c.g2", "12");
+    assert_obs(
+        "c: { k: 5, d: k + 1, e: d + k, g2: e + 1 }\nout: c.g2",
+        "12",
+    );
 }
 
 #[test]

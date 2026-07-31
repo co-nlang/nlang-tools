@@ -81,9 +81,7 @@ fn red_top_alias_test_fails() {
 #[test]
 fn red_blur_test_fails() {
     // Runaway recursion blurs at the horizon — undetermined, not proof.
-    let (ok, text) = run_test_cmd(
-        "/rec: x -> /rec (x + 1)\ntest_runaway: /rec 1\n",
-    );
+    let (ok, text) = run_test_cmd("/rec: x -> /rec (x + 1)\ntest_runaway: /rec 1\n");
     assert!(!ok, "blur test must fail the run: {text}");
     assert!(
         text.contains("FAIL") && text.contains("fuel_exhausted"),

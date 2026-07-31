@@ -31,8 +31,8 @@
 // spread no-op law keys off it — ledgered), W4, effect-system wave.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -135,7 +135,10 @@ fn red_container_with_caused_top_cannot_absorb() {
     // undetermined — absorbing would erase the known 9.
     assert_obs("p: { v: p.v }\nu: { v: 9 } | p\nout: u.v", "9 | _");
     assert_obs("p: { v: p.v }\nu: p | { v: 9 }\nout: u.v", "9 | _");
-    assert_obs("p: { v: p.v }\nu: { v: 9 } | p | { v: 8 }\nout: u.v", "8 | 9 | _");
+    assert_obs(
+        "p: { v: p.v }\nu: { v: 9 } | p | { v: 8 }\nout: u.v",
+        "8 | 9 | _",
+    );
 }
 
 #[test]
@@ -145,7 +148,10 @@ fn pin_container_with_blur_cannot_absorb() {
     // the caused-Top wiring reaches the identical verdict by the RULED
     // route rather than by accident.
     let got = observe_nlang(
-        &format!("big: {}\nb: {{ v: big }}\nu: {{ v: 9 }} | b\nout: u.v", flat_chain(4000)),
+        &format!(
+            "big: {}\nb: {{ v: big }}\nu: {{ v: 9 }} | b\nout: u.v",
+            flat_chain(4000)
+        ),
         "out",
     );
     assert!(

@@ -291,10 +291,7 @@ fn red_no_leaf_of_the_root_varies_between_processes() {
         "the two roots do not even have the same shape"
     );
 
-    let differing: Vec<&String> = a
-        .keys()
-        .filter(|k| a.get(*k) != b.get(*k))
-        .collect();
+    let differing: Vec<&String> = a.keys().filter(|k| a.get(*k) != b.get(*k)).collect();
     assert!(
         differing.is_empty(),
         "{} of {} leaf paths differ between two processes: {:#?}",
@@ -350,7 +347,10 @@ fn red_fresh_repository_has_no_self_appointed_architect() {
     // LIVENESS: the same refine WITH a signature is accepted today, so the
     // command, the CAIDs and the repository are all live; only the unsigned
     // form is in question.
-    let signed = oo(&repo_with(&d), &["refine", "-s", &src, "-t", &tgt, "-m", "s", "--sign"]);
+    let signed = oo(
+        &repo_with(&d),
+        &["refine", "-s", &src, "-t", &tgt, "-m", "s", "--sign"],
+    );
     assert!(
         signed.contains("Refine commit:"),
         "control: a signed refine must work: {signed}"
@@ -505,8 +505,7 @@ fn pin_commit_meta_debug_omits_absent_fields() {
     // optional field that leaks into Debug fails here whether or not anyone
     // remembered to name it.
     assert_eq!(
-        s,
-        "CommitMeta { author: Some(\"a\"), timestamp: 7, message: Some(\"m\") }",
+        s, "CommitMeta { author: Some(\"a\"), timestamp: 7, message: Some(\"m\") }",
         "CommitMeta's Debug must render exactly the three ordinary fields when \
          every optional one is absent — it is hashed into every commit digest"
     );

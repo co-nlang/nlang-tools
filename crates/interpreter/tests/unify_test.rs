@@ -1,6 +1,6 @@
-use nlang_interpreter::{Ouroboros, Value, ComboVal, BottomCause, EffectTag};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::{BottomCause, ComboVal, EffectTag, Ouroboros, Value};
+use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
 fn int_atom(v: i64) -> Value {
@@ -24,7 +24,10 @@ fn test_basic_lattice_properties() {
 
     // Bottom 傳染
     let bottom: Value = BottomCause::Conflict.into();
-    assert!(matches!(oo.unify(bottom.clone(), v1.clone()), Value::Bottom(_)));
+    assert!(matches!(
+        oo.unify(bottom.clone(), v1.clone()),
+        Value::Bottom(_)
+    ));
     assert!(matches!(oo.unify(v1.clone(), bottom), Value::Bottom(_)));
 
     // 等值合併
@@ -43,10 +46,13 @@ fn test_basic_lattice_properties() {
 fn test_atomic_isomorphic_expansion() {
     let oo = empty_ouroboros();
     let v1 = int_atom(42);
-    
+
     // { %unit: "kg" }
     let c1 = Value::Combo(ComboVal::new(
-        IndexMap::from_iter(vec![("%unit".to_string(), Value::Atom(AtomKind::Str("kg".to_string()), EffectTag::Pure, None))]),
+        IndexMap::from_iter(vec![(
+            "%unit".to_string(),
+            Value::Atom(AtomKind::Str("kg".to_string()), EffectTag::Pure, None),
+        )]),
         false,
         IndexMap::new(),
         EffectTag::Pure,
@@ -57,7 +63,10 @@ fn test_atomic_isomorphic_expansion() {
     let res = oo.unify(v1, c1);
     if let Value::Combo(cv) = res {
         assert_eq!(cv.get_field("%val").unwrap(), &int_atom(42));
-        assert_eq!(cv.get_field("%unit").unwrap(), &Value::Atom(AtomKind::Str("kg".to_string()), EffectTag::Pure, None));
+        assert_eq!(
+            cv.get_field("%unit").unwrap(),
+            &Value::Atom(AtomKind::Str("kg".to_string()), EffectTag::Pure, None)
+        );
     } else {
         panic!("Expected Combo, got {:?}", res);
     }
@@ -66,7 +75,7 @@ fn test_atomic_isomorphic_expansion() {
 #[test]
 fn test_combo_open_world() {
     let oo = empty_ouroboros();
-    
+
     // {a:1}
     let c1 = Value::Combo(ComboVal::new(
         IndexMap::from_iter(vec![("a".to_string(), int_atom(1))]),
@@ -132,18 +141,24 @@ fn test_cocoon_isolation() {
 fn test_trinity_logic_morphism() {
     // 測試三位一體同構下的態射合併
     let _oo = empty_ouroboros();
-    
+
     // f1 = { %morphism: #true, %rules: { x: _ } }
     let f1 = Value::Combo(ComboVal::new(
         IndexMap::from_iter(vec![
-            ("%morphism".to_string(), Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None)),
-            ("%rules".to_string(), Value::Combo(ComboVal::new(
-                IndexMap::from_iter(vec![("x".to_string(), Value::Top)]),
-                false,
-                IndexMap::new(),
-                EffectTag::Pure,
-                vec![],
-            ))),
+            (
+                "%morphism".to_string(),
+                Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+            ),
+            (
+                "%rules".to_string(),
+                Value::Combo(ComboVal::new(
+                    IndexMap::from_iter(vec![("x".to_string(), Value::Top)]),
+                    false,
+                    IndexMap::new(),
+                    EffectTag::Pure,
+                    vec![],
+                )),
+            ),
         ]),
         false,
         IndexMap::new(),

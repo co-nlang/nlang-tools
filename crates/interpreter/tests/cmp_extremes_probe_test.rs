@@ -10,16 +10,22 @@
 // documented §4.10 deviation (ENGINE_SYNC 求值層最小語義) — guard pins
 // no-silent-change, not full subset semantics.
 
-use nlang_interpreter::{Ouroboros, EvalContext, Value};
-use nlang_interpreter::value::{ComboVal, EffectTag};
-use nlang_parser::parse_program;
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag};
+use nlang_interpreter::{EvalContext, Ouroboros, Value};
+use nlang_parser::ast::AtomKind;
+use nlang_parser::parse_program;
 
 fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
@@ -56,11 +62,11 @@ fn only_bottom_is_subtype_of_bottom() {
 
 #[test]
 fn gte_mirrors_lte_at_extremes() {
-    assert_is_tag("r: 5 >= _|_", "true");   // ≡ _|_ <= 5
-    assert_is_tag("r: _ >= 5", "true");     // ≡ 5 <= _
+    assert_is_tag("r: 5 >= _|_", "true"); // ≡ _|_ <= 5
+    assert_is_tag("r: _ >= 5", "true"); // ≡ 5 <= _
     assert_is_tag("r: _|_ >= _|_", "true"); // ≡ _|_ <= _|_
-    assert_is_tag("r: _ >= _", "true");     // ≡ _ <= _
-    assert_is_tag("r: _|_ >= 5", "false");  // ≡ 5 <= _|_
+    assert_is_tag("r: _ >= _", "true"); // ≡ _ <= _
+    assert_is_tag("r: _|_ >= 5", "false"); // ≡ 5 <= _|_
 }
 
 // --- strict `<`/`>` at extremes ---------------------------------------------
@@ -72,7 +78,7 @@ fn strict_subset_at_extremes() {
     assert_is_tag("r: _|_ < _|_", "false");
     assert_is_tag("r: _ < _", "false");
     assert_is_tag("r: _|_ > _|_", "false");
-    assert_is_tag("r: _ > 5", "true");      // ≡ 5 < _
+    assert_is_tag("r: _ > 5", "true"); // ≡ 5 < _
 }
 
 // --- active guards: the finite side must not move ---------------------------
@@ -100,7 +106,10 @@ fn atomic_family_absorption_unchanged() {
     // ==/!= keep absorbing (SYNTAX_06 §4.1) — the fix must split families,
     // not move this one. Full coverage in bottom_spelling_probe_test.rs.
     let v = eval_one("r: _|_ == _|_");
-    assert!(matches!(v, Value::Bottom(_)), "==/!= must keep absorbing, got {v:?}");
+    assert!(
+        matches!(v, Value::Bottom(_)),
+        "==/!= must keep absorbing, got {v:?}"
+    );
     assert_is_tag("r: 1 == 1", "true");
     assert_is_tag("r: #a != #b", "true");
 }

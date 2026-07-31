@@ -1,7 +1,7 @@
-use nlang_interpreter::{Ouroboros, EvalContext};
-use nlang_interpreter::value::{Value, ComboVal, EffectTag};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag, Value};
+use nlang_interpreter::{EvalContext, Ouroboros};
+use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
 fn make_list(items: Vec<Value>) -> Value {
@@ -10,16 +10,34 @@ fn make_list(items: Vec<Value>) -> Value {
     for (i, v) in items.into_iter().enumerate() {
         fields.insert(i.to_string(), v);
     }
-    fields.insert("%kind".to_string(), Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None));
-    fields.insert("%len".to_string(), Value::Atom(AtomKind::Int(BigInt::from(len)), EffectTag::Pure, None));
-    Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    fields.insert(
+        "%kind".to_string(),
+        Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%len".to_string(),
+        Value::Atom(AtomKind::Int(BigInt::from(len)), EffectTag::Pure, None),
+    );
+    Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn make_map_arg(a: Value, b: Value) -> Value {
     let mut f = IndexMap::new();
     f.insert("0".to_string(), a);
     f.insert("1".to_string(), b);
-    Value::Combo(ComboVal::new(f, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    Value::Combo(ComboVal::new(
+        f,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 fn int_val(n: i64) -> Value {
@@ -29,7 +47,11 @@ fn int_val(n: i64) -> Value {
 fn assert_list_len(result: &Value, expected: usize) {
     let v = result.collapse();
     if let Value::Combo(ref c) = v {
-        let len = c.fields().keys().filter(|k| k.parse::<usize>().ok().map(|i| i < 1000).unwrap_or(false)).count();
+        let len = c
+            .fields()
+            .keys()
+            .filter(|k| k.parse::<usize>().ok().map(|i| i < 1000).unwrap_or(false))
+            .count();
         assert_eq!(len, expected, "expected list len {}, got {}", expected, len);
     } else {
         panic!("Expected list, got {:?}", result);
@@ -41,7 +63,10 @@ fn assert_list_item_int(result: &Value, index: usize, expected: i64) {
         if let Some(Value::Atom(AtomKind::Int(n), _, _)) = c.get_field(&index.to_string()) {
             assert_eq!(n.to_string(), expected.to_string());
         } else {
-            panic!("Expected Int({}) at index {}, got {:?}", expected, index, result);
+            panic!(
+                "Expected Int({}) at index {}, got {:?}",
+                expected, index, result
+            );
         }
     } else {
         panic!("Expected list, got {:?}", result);

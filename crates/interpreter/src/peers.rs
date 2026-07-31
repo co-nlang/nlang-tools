@@ -104,7 +104,10 @@ pub fn encode_record_line(adv: &PeerAdvert) -> String {
         JsonValue::String(adv.observed_host.clone()),
     );
     m.insert("hops".into(), json!(adv.hops));
-    m.insert("received_at".into(), json!(secs_since_epoch(adv.received_at)));
+    m.insert(
+        "received_at".into(),
+        json!(secs_since_epoch(adv.received_at)),
+    );
     m.insert("addr".into(), JsonValue::String(adv.addr.clone()));
     serde_json::to_string(&JsonValue::Object(m)).unwrap_or_else(|_| "{}".into())
 }
@@ -150,10 +153,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
             .unwrap_or("")
             .to_string();
         let hops = o.get("hops").and_then(|x| x.as_i64()).unwrap_or(0);
-        let ra = o
-            .get("received_at")
-            .and_then(|x| x.as_i64())
-            .unwrap_or(ts);
+        let ra = o.get("received_at").and_then(|x| x.as_i64()).unwrap_or(ts);
         let addr = o
             .get("addr")
             .and_then(|x| x.as_str())
@@ -169,12 +169,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         (host, hops, system_time_from_secs(ra), addr)
     } else {
         // R1 mismatch: signed half only; ordering falls back to signed `ts`.
-        (
-            String::new(),
-            0,
-            system_time_from_secs(ts),
-            String::new(),
-        )
+        (String::new(), 0, system_time_from_secs(ts), String::new())
     };
 
     Some(PeerAdvert {
@@ -203,7 +198,12 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
 pub fn load(
     base_dir: &Path,
     this_node_id: Option<&str>,
-) -> (HashMap<String, PeerAdvert>, RoutingIndex, PeerDirectoryState, LoadReport) {
+) -> (
+    HashMap<String, PeerAdvert>,
+    RoutingIndex,
+    PeerDirectoryState,
+    LoadReport,
+) {
     let path = directory_path(base_dir);
     let empty_rt = RoutingIndex::new([0u8; 20]);
     let empty_state = PeerDirectoryState::default();
@@ -290,12 +290,7 @@ pub fn load(
             "OODP Peers: loaded {records} records, skipped {skipped} damaged"
         )),
     };
-    (
-        by_id,
-        routing,
-        PeerDirectoryState { file_lines },
-        report,
-    )
+    (by_id, routing, PeerDirectoryState { file_lines }, report)
 }
 
 /// Append one accepted advert. May compact. Returns log lines for the serve console.
@@ -376,9 +371,7 @@ pub fn compact(
     fs::rename(&tmp, &path).ok()?;
     state.file_lines = sorted.len();
     let live_n = live.len();
-    Some(format!(
-        "OODP Peers: compact {bytes} bytes ({live_n} live)"
-    ))
+    Some(format!("OODP Peers: compact {bytes} bytes ({live_n} live)"))
 }
 
 /// Drop stored records whose signature does not verify, rebuild the index, and
@@ -406,10 +399,14 @@ pub fn compact(
 /// Reverted; R9 now tests the one load-specific thing that is real — a claim
 /// that expires between receipt and load.
 pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
-    let Some(base) = engine.base_dir.clone() else { return 0 };
+    let Some(base) = engine.base_dir.clone() else {
+        return 0;
+    };
     let _ = base;
     let bad: Vec<String> = {
-        let Ok(dir) = engine.peer_adverts.read() else { return 0 };
+        let Ok(dir) = engine.peer_adverts.read() else {
+            return 0;
+        };
         dir.values()
             .filter(|adv| crate::oodp::verify_stored_ad(engine, &adv.ad_source).is_err())
             .map(|adv| adv.node_id.clone())
@@ -455,11 +452,7 @@ pub fn refresh_affiliations(engine: &crate::Ouroboros) {
         return;
     };
     for adv in dir.values_mut() {
-        adv.verified_operator_key = crate::oodp::verified_operator_of_ad_source(
-            engine,
-            &adv.ad_source,
-            &adv.node_id,
-            now,
-        );
+        adv.verified_operator_key =
+            crate::oodp::verified_operator_of_ad_source(engine, &adv.ad_source, &adv.node_id, now);
     }
 }

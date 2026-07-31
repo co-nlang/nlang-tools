@@ -28,8 +28,8 @@
 // InvalidPath stays readable for stored universes, minting stops.
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -296,7 +296,10 @@ fn pin_union_commutativity_eq() {
 
 #[test]
 fn pin_union_commutativity_combo_eq() {
-    assert_obs("out: ({ a: 1 } | { b: 2 }) = ({ b: 2 } | { a: 1 })", "#true");
+    assert_obs(
+        "out: ({ a: 1 } | { b: 2 }) = ({ b: 2 } | { a: 1 })",
+        "#true",
+    );
 }
 
 #[test]

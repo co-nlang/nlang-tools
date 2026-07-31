@@ -135,7 +135,10 @@ fn red_pin_capability_is_operation_specific() {
     let d = fresh_dir();
     universe_with_committed_x(&d);
     write(&d, "b.n", "x: 42\n");
-    let got = oo(&d, &["evolve", "--grant", "effect_override", "--pin", "b.n"]);
+    let got = oo(
+        &d,
+        &["evolve", "--grant", "effect_override", "--pin", "b.n"],
+    );
     assert!(
         got.contains("privileged_required") || got.contains("privilege"),
         "effect_override must not authorize #pin (expect a privilege refusal): {got:?}"
@@ -416,10 +419,7 @@ fn pin_grant_still_refuses_effect_discharge() {
     // into a general privilege.
     let d = fresh_dir();
     write(&d, "c.n", "out: ~%Effect./runPure 42\n");
-    let got = oo(
-        &d,
-        &["run", "c.n", "--grant", "pin", "--observe", "out"],
-    );
+    let got = oo(&d, &["run", "c.n", "--grant", "pin", "--observe", "out"]);
     assert!(
         got.contains("privileged_required"),
         "granting pin must not authorize discharge: {got:?}"

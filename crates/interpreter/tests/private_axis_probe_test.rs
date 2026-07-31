@@ -26,8 +26,8 @@
 // and the dotted block MUST exempt the `~%` prefix (L2-23 guards).
 
 use nlang_interpreter::{Ouroboros, Universe};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -138,10 +138,7 @@ fn red_inward_same_combo() {
 #[test]
 fn red_inward_grandchild_lifting() {
     // Shared privacy reaches all descendants.
-    assert_obs(
-        "p: { ~s: 1, c: { d: { v: ~s + 2 } } }\nout: p.c.d.v",
-        "3",
-    );
+    assert_obs("p: { ~s: 1, c: { d: { v: ~s + 2 } } }\nout: p.c.d.v", "3");
 }
 
 // ─────────────────────────────────────────────────────────────────────────

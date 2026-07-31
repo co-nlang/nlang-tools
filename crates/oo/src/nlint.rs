@@ -8,28 +8,34 @@
 // Discipline: parser AST only — no eval, no type inference, no q/ω data.
 // Firewall: K4/K5 are "candidate sites" only; no obstruction claims at Tier 1.
 
-use std::collections::{BTreeSet, HashSet, HashMap};
-use std::path::{Path as FsPath, PathBuf};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
+use std::path::{Path as FsPath, PathBuf};
 
 // Re-export tier classification from nlang-parser (Stage 4a: shared between
 // nlint Tier 1 and engine force_memo in Stage 4b).
-pub use nlang_parser::tier::{Tier, RhsForm, classify_rhs, classify_tier, has_free_dollar, is_morphism_path};
+pub use nlang_parser::tier::{
+    classify_rhs, classify_tier, has_free_dollar, is_morphism_path, RhsForm, Tier,
+};
 
-use nlang_parser::ast::{Expr, ExprKind, Field, FieldKey, PathAnchor, Program, StringPart, Prefix};
+use nlang_parser::ast::{Expr, ExprKind, Field, FieldKey, PathAnchor, Prefix, Program, StringPart};
 
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
-    pub rule: String,          // "R1" | "R2" | "R3" | "SPEC15-*"
+    pub rule: String, // "R1" | "R2" | "R3" | "SPEC15-*"
     pub severity: Severity,
     pub loc: Loc,
-    pub tier: Option<Tier>,    // Some for R1/R2 (transformer forms); None otherwise
+    pub tier: Option<Tier>, // Some for R1/R2 (transformer forms); None otherwise
     pub demotion_reason: Option<String>,
     pub msg: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity { Info, Warn, Error }
+pub enum Severity {
+    Info,
+    Warn,
+    Error,
+}
 
 #[derive(Debug, Clone)]
 pub struct Loc {
@@ -50,7 +56,9 @@ pub struct Loc {
 /// Transformer with spread → key-set uncertain → do not fire (honest approximation).
 pub fn check_r3(lhs: &Expr, rhs: &Expr) -> Option<(String, String)> {
     // Only transformer-form RHS.
-    if !matches!(classify_rhs(rhs), RhsForm::Transformer) { return None; }
+    if !matches!(classify_rhs(rhs), RhsForm::Transformer) {
+        return None;
+    }
     // LHS must be a *sealed* literal: tuple or cocoon (closed combo).
     let lhs_keys = sealed_literal_keys(lhs)?;
     // Transformer key-set (explicit field keys only; spread → None → bail).
@@ -63,9 +71,20 @@ pub fn check_r3(lhs: &Expr, rhs: &Expr) -> Option<(String, String)> {
         let msg = format!(
             "static `_|_ #missing_key`: sealed LHS does not contain key(s) [{}]; \
              use morphism evolution or `{{ ...t }}` explicit unbox (SYNTAX_12 §4 #7)",
-            extra.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            extra
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
-        let demotion = format!("R3 sealed-keyed: transformer adds [{}] to sealed LHS", extra.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+        let demotion = format!(
+            "R3 sealed-keyed: transformer adds [{}] to sealed LHS",
+            extra
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         Some((msg, demotion))
     }
 }
@@ -78,7 +97,11 @@ fn sealed_literal_keys(lhs: &Expr) -> Option<HashSet<String>> {
             let keys: HashSet<String> = (0..items.len()).map(|i| i.to_string()).collect();
             Some(keys)
         }
-        ExprKind::Combo { fields, closed: true, .. } => {
+        ExprKind::Combo {
+            fields,
+            closed: true,
+            ..
+        } => {
             // Cocoon: sealed. Keys = explicit named/path keys.
             Some(combo_field_keys(fields))
         }
@@ -96,9 +119,15 @@ fn transformer_keys(rhs: &Expr) -> Option<HashSet<String>> {
             let mut has_spread = false;
             for f in fields {
                 match &f.key {
-                    FieldKey::Named { name, .. } => { keys.insert(name.clone()); }
-                    FieldKey::Quoted(s) => { keys.insert(s.clone()); }
-                    FieldKey::Path(p) => { keys.insert(p.to_key()); }
+                    FieldKey::Named { name, .. } => {
+                        keys.insert(name.clone());
+                    }
+                    FieldKey::Quoted(s) => {
+                        keys.insert(s.clone());
+                    }
+                    FieldKey::Path(p) => {
+                        keys.insert(p.to_key());
+                    }
                     FieldKey::Pattern(_) => {
                         // pattern key — not a plain key; treat as uncertain
                         has_spread = true;
@@ -106,13 +135,19 @@ fn transformer_keys(rhs: &Expr) -> Option<HashSet<String>> {
                 }
                 // detect spread-as-field (`...x` is parsed as FieldKey::Quoted("...") with a Spread value)
                 if let FieldKey::Quoted(s) = &f.key {
-                    if s == "..." { has_spread = true; }
+                    if s == "..." {
+                        has_spread = true;
+                    }
                 }
                 if let ExprKind::Spread(_) = &f.value.kind {
                     has_spread = true;
                 }
             }
-            if has_spread { None } else { Some(keys) }
+            if has_spread {
+                None
+            } else {
+                Some(keys)
+            }
         }
         _ => None,
     }
@@ -123,12 +158,20 @@ fn combo_field_keys(fields: &[Field]) -> HashSet<String> {
     let mut keys = HashSet::new();
     for f in fields {
         match &f.key {
-            FieldKey::Named { name, .. } => { keys.insert(name.clone()); }
-            FieldKey::Quoted(s) => {
-                if s != "..." { keys.insert(s.clone()); }
+            FieldKey::Named { name, .. } => {
+                keys.insert(name.clone());
             }
-            FieldKey::Path(p) => { keys.insert(p.to_key()); }
-            FieldKey::Pattern(e) => { keys.insert(e.to_nlang(0)); }
+            FieldKey::Quoted(s) => {
+                if s != "..." {
+                    keys.insert(s.clone());
+                }
+            }
+            FieldKey::Path(p) => {
+                keys.insert(p.to_key());
+            }
+            FieldKey::Pattern(e) => {
+                keys.insert(e.to_nlang(0));
+            }
         }
     }
     keys
@@ -168,8 +211,8 @@ pub struct GraphReport {
 
 #[derive(Debug, Clone)]
 pub struct CliqueWitness {
-    pub contexts: Vec<usize>,        // context indices
-    pub shared_coords: Vec<String>,  // coordinates shared by all members
+    pub contexts: Vec<usize>,       // context indices
+    pub shared_coords: Vec<String>, // coordinates shared by all members
 }
 
 pub fn build_context_graph(program: &Program, file: &str) -> GraphReport {
@@ -184,7 +227,12 @@ pub fn build_context_graph(program: &Program, file: &str) -> GraphReport {
     }
 
     // Build incidence.
-    let coord_index: HashMap<String, usize> = coord_set.iter().cloned().enumerate().map(|(i, c)| (c, i)).collect();
+    let coord_index: HashMap<String, usize> = coord_set
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(i, c)| (c, i))
+        .collect();
     let n_coords = coord_set.len();
     let mut incidence: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); contexts.len()];
     let mut coord_to_contexts: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n_coords];
@@ -206,9 +254,12 @@ pub fn build_context_graph(program: &Program, file: &str) -> GraphReport {
     for k in 0..n_coords {
         let cs: Vec<usize> = coord_to_contexts[k].iter().copied().collect();
         for i in 0..cs.len() {
-            for j in (i+1)..cs.len() {
-                let a = cs[i]; let b = cs[j];
-                if adj[a].insert(b) { edges += 1; }
+            for j in (i + 1)..cs.len() {
+                let a = cs[i];
+                let b = cs[j];
+                if adj[a].insert(b) {
+                    edges += 1;
+                }
                 adj[b].insert(a);
             }
         }
@@ -223,10 +274,14 @@ pub fn build_context_graph(program: &Program, file: &str) -> GraphReport {
     let mut k5: HashSet<BTreeSet<usize>> = HashSet::new();
     for mc in &max_cliques {
         if mc.len() >= 4 {
-            for combo in combinations(mc, 4) { k4.insert(combo); }
+            for combo in combinations(mc, 4) {
+                k4.insert(combo);
+            }
         }
         if mc.len() >= 5 {
-            for combo in combinations(mc, 5) { k5.insert(combo); }
+            for combo in combinations(mc, 5) {
+                k5.insert(combo);
+            }
         }
     }
     // Also: a 5-clique contains 4-cliques, but those are already covered above
@@ -234,11 +289,19 @@ pub fn build_context_graph(program: &Program, file: &str) -> GraphReport {
     // To be safe, also expand 4-subsets out of every 5-clique we just recorded:
     let k5_owned: Vec<BTreeSet<usize>> = k5.iter().cloned().collect();
     for mc in &k5_owned {
-        for combo in combinations(&mc.iter().copied().collect::<Vec<_>>(), 4) { k4.insert(combo); }
+        for combo in combinations(&mc.iter().copied().collect::<Vec<_>>(), 4) {
+            k4.insert(combo);
+        }
     }
 
-    let k4_witnesses: Vec<CliqueWitness> = k4.into_iter().map(|set| witness_of(&set, &contexts, &coord_index)).collect();
-    let k5_witnesses: Vec<CliqueWitness> = k5.into_iter().map(|set| witness_of(&set, &contexts, &coord_index)).collect();
+    let k4_witnesses: Vec<CliqueWitness> = k4
+        .into_iter()
+        .map(|set| witness_of(&set, &contexts, &coord_index))
+        .collect();
+    let k5_witnesses: Vec<CliqueWitness> = k5
+        .into_iter()
+        .map(|set| witness_of(&set, &contexts, &coord_index))
+        .collect();
 
     let omega = max_cliques.iter().map(|c| c.len()).max().unwrap_or(0);
 
@@ -275,7 +338,11 @@ pub fn build_context_graph(program: &Program, file: &str) -> GraphReport {
     }
 }
 
-fn witness_of(set: &BTreeSet<usize>, contexts: &[ContextNode], coord_index: &HashMap<String, usize>) -> CliqueWitness {
+fn witness_of(
+    set: &BTreeSet<usize>,
+    contexts: &[ContextNode],
+    coord_index: &HashMap<String, usize>,
+) -> CliqueWitness {
     let ctxs: Vec<usize> = set.iter().copied().collect();
     // shared coords = intersection of each member's coord set.
     let mut shared: BTreeSet<String> = BTreeSet::new();
@@ -315,8 +382,14 @@ fn collect_contexts(
         ExprKind::Combo { fields, .. } => {
             // Register this combo as a context.
             // Coordinates = local field keys (the over-approximation handover §3 flags).
-            let own_coords: BTreeSet<String> = fields.iter().map(|f| field_key_local_str(&f.key)).filter(|s| s != "...").collect();
-            for c in &own_coords { coord_set.insert(c.clone()); }
+            let own_coords: BTreeSet<String> = fields
+                .iter()
+                .map(|f| field_key_local_str(&f.key))
+                .filter(|s| s != "...")
+                .collect();
+            for c in &own_coords {
+                coord_set.insert(c.clone());
+            }
             let ctx = ContextNode {
                 coord_path: prefix.clone().unwrap_or_else(|| "<local>".to_string()),
                 approx_local_key: true, // Tier 1 always uses local-key identity
@@ -337,7 +410,9 @@ fn collect_contexts(
         }
         // Non-combo composite forms: recurse with prefix=None (can't extend path through them).
         ExprKind::List(items) | ExprKind::Tuple(items) => {
-            for i in items { collect_contexts(i, &None, file, contexts, coord_set); }
+            for i in items {
+                collect_contexts(i, &None, file, contexts, coord_set);
+            }
         }
         ExprKind::Apply(f, a) => {
             collect_contexts(f, &None, file, contexts, coord_set);
@@ -351,30 +426,49 @@ fn collect_contexts(
             collect_contexts(param, &None, file, contexts, coord_set);
             collect_contexts(body, &None, file, contexts, coord_set);
         }
-        ExprKind::Meet(a, b) | ExprKind::Join(a, b) | ExprKind::Diff(a, b)
-        | ExprKind::Add(a, b) | ExprKind::Sub(a, b) | ExprKind::Mul(a, b)
-        | ExprKind::Div(a, b) | ExprKind::Rem(a, b)
-        | ExprKind::Eq(a, b) | ExprKind::Ne(a, b) | ExprKind::Lt(a, b)
-        | ExprKind::Gt(a, b) | ExprKind::Lte(a, b) | ExprKind::Gte(a, b)
-        | ExprKind::LatticeEq(a, b) | ExprKind::Probe(a, b)
-        | ExprKind::TypeAnnotation(a, b) | ExprKind::Lens(a, b) => {
+        ExprKind::Meet(a, b)
+        | ExprKind::Join(a, b)
+        | ExprKind::Diff(a, b)
+        | ExprKind::Add(a, b)
+        | ExprKind::Sub(a, b)
+        | ExprKind::Mul(a, b)
+        | ExprKind::Div(a, b)
+        | ExprKind::Rem(a, b)
+        | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
+        | ExprKind::Lt(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Lte(a, b)
+        | ExprKind::Gte(a, b)
+        | ExprKind::LatticeEq(a, b)
+        | ExprKind::Probe(a, b)
+        | ExprKind::TypeAnnotation(a, b)
+        | ExprKind::Lens(a, b) => {
             collect_contexts(a, &None, file, contexts, coord_set);
             collect_contexts(b, &None, file, contexts, coord_set);
         }
-        ExprKind::Ternary { cond, then_branch, else_branch } => {
+        ExprKind::Ternary {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             collect_contexts(cond, &None, file, contexts, coord_set);
             collect_contexts(then_branch, &None, file, contexts, coord_set);
             collect_contexts(else_branch, &None, file, contexts, coord_set);
         }
         ExprKind::Unary { expr: e, .. }
-        | ExprKind::AnonSet(e) | ExprKind::Spread(e) | ExprKind::Structural(e)
+        | ExprKind::AnonSet(e)
+        | ExprKind::Spread(e)
+        | ExprKind::Structural(e)
         | ExprKind::Complement(e) => {
             collect_contexts(e, &None, file, contexts, coord_set);
         }
         ExprKind::Range { start, end, step } => {
             collect_contexts(start, &None, file, contexts, coord_set);
             collect_contexts(end, &None, file, contexts, coord_set);
-            if let Some(s) = step { collect_contexts(s, &None, file, contexts, coord_set); }
+            if let Some(s) = step {
+                collect_contexts(s, &None, file, contexts, coord_set);
+            }
         }
         ExprKind::Interpolated(parts) => {
             for p in parts {
@@ -391,7 +485,13 @@ fn collect_contexts(
 fn field_key_prefix_str(key: &FieldKey) -> Option<String> {
     match key {
         FieldKey::Named { name, .. } => Some(name.clone()),
-        FieldKey::Quoted(s) => if s == "..." { None } else { Some(s.clone()) },
+        FieldKey::Quoted(s) => {
+            if s == "..." {
+                None
+            } else {
+                Some(s.clone())
+            }
+        }
         FieldKey::Path(p) => Some(p.to_key()),
         FieldKey::Pattern(e) => Some(e.to_nlang(0)),
     }
@@ -444,7 +544,8 @@ fn bron_kerbosch_inner(
         let candidates: Vec<usize> = p.difference(&neighbors).copied().collect();
         for v in candidates {
             let nv: BTreeSet<usize> = adj[v].iter().copied().collect();
-            let mut new_r = r.clone(); new_r.insert(v);
+            let mut new_r = r.clone();
+            new_r.insert(v);
             let mut new_p: BTreeSet<usize> = p.intersection(&nv).copied().collect();
             let mut new_x: BTreeSet<usize> = x.intersection(&nv).copied().collect();
             bron_kerbosch_inner(adj, &mut new_r, &mut new_p, &mut new_x, out);
@@ -456,7 +557,9 @@ fn bron_kerbosch_inner(
 
 fn combinations(items: &[usize], k: usize) -> Vec<BTreeSet<usize>> {
     let n = items.len();
-    if k > n { return vec![]; }
+    if k > n {
+        return vec![];
+    }
     let mut out = Vec::new();
     let mut idx: Vec<usize> = (0..k).collect();
     loop {
@@ -468,12 +571,16 @@ fn combinations(items: &[usize], k: usize) -> Vec<BTreeSet<usize>> {
             let ii = i as usize;
             if idx[ii] < n - k + ii {
                 idx[ii] += 1;
-                for j in (ii+1)..k { idx[j] = idx[j-1] + 1; }
+                for j in (ii + 1)..k {
+                    idx[j] = idx[j - 1] + 1;
+                }
                 break;
             }
             i -= 1;
         }
-        if i < 0 { break; }
+        if i < 0 {
+            break;
+        }
     }
     out
 }
@@ -487,10 +594,14 @@ fn count_components(adj: &[BTreeSet<usize>]) -> usize {
             comps += 1;
             let mut stack = vec![s];
             while let Some(u) = stack.pop() {
-                if visited[u] { continue; }
+                if visited[u] {
+                    continue;
+                }
                 visited[u] = true;
                 for &v in adj[u].iter() {
-                    if !visited[v] { stack.push(v); }
+                    if !visited[v] {
+                        stack.push(v);
+                    }
                 }
             }
         }
@@ -514,11 +625,25 @@ pub fn analyze_file(path: &FsPath) -> FileReport {
     let file = path.to_string_lossy().to_string();
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) => return FileReport { file, diagnostics: vec![], graph: empty_graph(), parse_error: Some(format!("read error: {}", e)) },
+        Err(e) => {
+            return FileReport {
+                file,
+                diagnostics: vec![],
+                graph: empty_graph(),
+                parse_error: Some(format!("read error: {}", e)),
+            }
+        }
     };
     let program = match nlang_parser::parse_program(&content) {
         Ok(p) => p,
-        Err(e) => return FileReport { file, diagnostics: vec![], graph: empty_graph(), parse_error: Some(format!("parse error: {}", e)) },
+        Err(e) => {
+            return FileReport {
+                file,
+                diagnostics: vec![],
+                graph: empty_graph(),
+                parse_error: Some(format!("parse error: {}", e)),
+            }
+        }
     };
     let mut diags = Vec::new();
     walk_pipes(&program, &file, &mut diags);
@@ -533,7 +658,10 @@ pub fn analyze_file(path: &FsPath) -> FileReport {
             diags.push(Diagnostic {
                 rule: format!("SPEC15-{:?}", v_kind(&v)),
                 severity: Severity::Warn,
-                loc: Loc { file: file.clone(), span: (v.line(), v.line()) },
+                loc: Loc {
+                    file: file.clone(),
+                    span: (v.line(), v.line()),
+                },
                 tier: None,
                 demotion_reason: None,
                 msg: v.message(),
@@ -541,7 +669,12 @@ pub fn analyze_file(path: &FsPath) -> FileReport {
         }
     }
     let graph = build_context_graph(&program, &file);
-    FileReport { file, diagnostics: diags, graph, parse_error: None }
+    FileReport {
+        file,
+        diagnostics: diags,
+        graph,
+        parse_error: None,
+    }
 }
 
 fn v_kind(v: &crate::static_analyzer::StaticViolation) -> &'static str {
@@ -557,9 +690,17 @@ fn v_kind(v: &crate::static_analyzer::StaticViolation) -> &'static str {
 
 fn empty_graph() -> GraphReport {
     GraphReport {
-        contexts: vec![], coordinates: BTreeSet::new(), incidence: vec![], coord_to_contexts: vec![],
-        edges: 0, omega: 0, k4_witnesses: vec![], k5_witnesses: vec![],
-        components: 0, degree_dist: HashMap::new(), approximations: vec![],
+        contexts: vec![],
+        coordinates: BTreeSet::new(),
+        incidence: vec![],
+        coord_to_contexts: vec![],
+        edges: 0,
+        omega: 0,
+        k4_witnesses: vec![],
+        k5_witnesses: vec![],
+        components: 0,
+        degree_dist: HashMap::new(),
+        approximations: vec![],
     }
 }
 
@@ -897,8 +1038,8 @@ fn walk_r6_expr(expr: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
 /// Builtin type-constraint names (engine TypeConstraint::from_name non-Unknown).
 /// Duplicated here so nlint stays engine-free (handover: nlint.rs only).
 const BUILTIN_TYPE_NAMES: &[&str] = &[
-    "any", "num", "complex", "float", "int", "str", "bool", "list", "combo",
-    "morphism", "option", "result",
+    "any", "num", "complex", "float", "int", "str", "bool", "list", "combo", "morphism", "option",
+    "result",
 ];
 
 fn is_builtin_type_name(name: &str) -> bool {
@@ -1199,7 +1340,10 @@ fn maybe_flag_use(
     // (Conservative: any ~% already returned; lone ~foo may be private field.)
 
     let is_type = raw.starts_with('@');
-    let bare = raw.trim_start_matches('@').trim_start_matches('/').trim_start_matches('~');
+    let bare = raw
+        .trim_start_matches('@')
+        .trim_start_matches('/')
+        .trim_start_matches('~');
     if bare.is_empty() {
         return;
     }
@@ -1263,37 +1407,72 @@ fn walk_pipes_expr(expr: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
         ExprKind::Combo { fields, .. } => {
             for f in fields {
                 walk_pipes_expr(&f.value, file, diags);
-                if let FieldKey::Pattern(e) = &f.key { walk_pipes_expr(e, file, diags); }
+                if let FieldKey::Pattern(e) = &f.key {
+                    walk_pipes_expr(e, file, diags);
+                }
             }
         }
-        ExprKind::Apply(f, a) => { walk_pipes_expr(f, file, diags); walk_pipes_expr(a, file, diags); }
-        ExprKind::Morphism { param, body } => { walk_pipes_expr(param, file, diags); walk_pipes_expr(body, file, diags); }
-        ExprKind::Meet(a, b) | ExprKind::Join(a, b) | ExprKind::Diff(a, b)
-        | ExprKind::Add(a, b) | ExprKind::Sub(a, b) | ExprKind::Mul(a, b)
-        | ExprKind::Div(a, b) | ExprKind::Rem(a, b)
-        | ExprKind::Eq(a, b) | ExprKind::Ne(a, b) | ExprKind::Lt(a, b)
-        | ExprKind::Gt(a, b) | ExprKind::Lte(a, b) | ExprKind::Gte(a, b)
-        | ExprKind::LatticeEq(a, b) | ExprKind::Probe(a, b)
-        | ExprKind::TypeAnnotation(a, b) | ExprKind::Lens(a, b) => {
-            walk_pipes_expr(a, file, diags); walk_pipes_expr(b, file, diags);
+        ExprKind::Apply(f, a) => {
+            walk_pipes_expr(f, file, diags);
+            walk_pipes_expr(a, file, diags);
         }
-        ExprKind::Ternary { cond, then_branch, else_branch } => {
+        ExprKind::Morphism { param, body } => {
+            walk_pipes_expr(param, file, diags);
+            walk_pipes_expr(body, file, diags);
+        }
+        ExprKind::Meet(a, b)
+        | ExprKind::Join(a, b)
+        | ExprKind::Diff(a, b)
+        | ExprKind::Add(a, b)
+        | ExprKind::Sub(a, b)
+        | ExprKind::Mul(a, b)
+        | ExprKind::Div(a, b)
+        | ExprKind::Rem(a, b)
+        | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
+        | ExprKind::Lt(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Lte(a, b)
+        | ExprKind::Gte(a, b)
+        | ExprKind::LatticeEq(a, b)
+        | ExprKind::Probe(a, b)
+        | ExprKind::TypeAnnotation(a, b)
+        | ExprKind::Lens(a, b) => {
+            walk_pipes_expr(a, file, diags);
+            walk_pipes_expr(b, file, diags);
+        }
+        ExprKind::Ternary {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             walk_pipes_expr(cond, file, diags);
             walk_pipes_expr(then_branch, file, diags);
             walk_pipes_expr(else_branch, file, diags);
         }
         ExprKind::Unary { expr: e, .. }
-        | ExprKind::AnonSet(e) | ExprKind::Spread(e) | ExprKind::Structural(e)
+        | ExprKind::AnonSet(e)
+        | ExprKind::Spread(e)
+        | ExprKind::Structural(e)
         | ExprKind::Complement(e) => walk_pipes_expr(e, file, diags),
         ExprKind::List(items) | ExprKind::Tuple(items) => {
-            for i in items { walk_pipes_expr(i, file, diags); }
+            for i in items {
+                walk_pipes_expr(i, file, diags);
+            }
         }
         ExprKind::Range { start, end, step } => {
-            walk_pipes_expr(start, file, diags); walk_pipes_expr(end, file, diags);
-            if let Some(s) = step { walk_pipes_expr(s, file, diags); }
+            walk_pipes_expr(start, file, diags);
+            walk_pipes_expr(end, file, diags);
+            if let Some(s) = step {
+                walk_pipes_expr(s, file, diags);
+            }
         }
         ExprKind::Interpolated(parts) => {
-            for p in parts { if let StringPart::Interpolated(e) = p { walk_pipes_expr(e, file, diags); } }
+            for p in parts {
+                if let StringPart::Interpolated(e) = p {
+                    walk_pipes_expr(e, file, diags);
+                }
+            }
         }
         ExprKind::Path(_) | ExprKind::Atom(_) | ExprKind::Poset(_) | ExprKind::Context => {}
     }
@@ -1301,7 +1480,10 @@ fn walk_pipes_expr(expr: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
 
 fn visit_pipe(lhs: &Expr, rhs: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
     let form = classify_rhs(rhs);
-    let loc = Loc { file: file.to_string(), span: (rhs.span.start, rhs.span.end) };
+    let loc = Loc {
+        file: file.to_string(),
+        span: (rhs.span.start, rhs.span.end),
+    };
 
     // R3 (sealed × keyed) — applies to transformer-form RHS only.
     if matches!(form, RhsForm::Transformer) {
@@ -1327,7 +1509,8 @@ fn visit_pipe(lhs: &Expr, rhs: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
             loc: loc.clone(),
             tier: Some(Tier::C),
             demotion_reason: None,
-            msg: "rerun-safe: atomic collapse is a constant refinement (idempotent nucleus)".to_string(),
+            msg: "rerun-safe: atomic collapse is a constant refinement (idempotent nucleus)"
+                .to_string(),
         });
         diags.push(Diagnostic {
             rule: "R2".to_string(),
@@ -1350,7 +1533,8 @@ fn visit_pipe(lhs: &Expr, rhs: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
             loc: loc.clone(),
             tier: Some(Tier::U),
             demotion_reason: None,
-            msg: "tier U: RHS form not statically classifiable (treat as Q for scheduling)".to_string(),
+            msg: "tier U: RHS form not statically classifiable (treat as Q for scheduling)"
+                .to_string(),
         });
         return;
     }
@@ -1370,7 +1554,11 @@ fn visit_pipe(lhs: &Expr, rhs: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
             });
         }
         // R2: tier classification — info for M, warn for Q.
-        let sev = match tier { Tier::C | Tier::M => Severity::Info, Tier::Q => Severity::Warn, Tier::U => Severity::Info };
+        let sev = match tier {
+            Tier::C | Tier::M => Severity::Info,
+            Tier::Q => Severity::Warn,
+            Tier::U => Severity::Info,
+        };
         diags.push(Diagnostic {
             rule: "R2".to_string(),
             severity: sev,
@@ -1379,8 +1567,14 @@ fn visit_pipe(lhs: &Expr, rhs: &Expr, file: &str, diags: &mut Vec<Diagnostic>) {
             demotion_reason: demotion.clone(),
             msg: match tier {
                 Tier::C => "tier C: $-free constant refinement".to_string(),
-                Tier::M => "tier M: positive fragment (monotone + shrinking; idempotence not guaranteed)".to_string(),
-                Tier::Q => format!("tier Q: outside positive fragment — {}", demotion.as_deref().unwrap_or("")),
+                Tier::M => {
+                    "tier M: positive fragment (monotone + shrinking; idempotence not guaranteed)"
+                        .to_string()
+                }
+                Tier::Q => format!(
+                    "tier Q: outside positive fragment — {}",
+                    demotion.as_deref().unwrap_or("")
+                ),
                 Tier::U => "tier U: RHS form unknown".to_string(),
             },
         });
@@ -1423,7 +1617,8 @@ pub fn report_to_json(reports: &[FileReport]) -> serde_json::Value {
         agg_components += r.graph.components;
         all_approx.extend(r.graph.approximations.clone());
     }
-    all_approx.sort(); all_approx.dedup();
+    all_approx.sort();
+    all_approx.dedup();
 
     diagnostics = serde_json::Value::Array(all_diagnostics);
 
@@ -1489,9 +1684,28 @@ pub fn report_to_human(reports: &[FileReport]) -> String {
         s.push_str(&format!("=== {} ===\n", r.file));
         for d in &r.diagnostics {
             total_diags += 1;
-            let sev = match d.severity { Severity::Info => { total_infos += 1; "INFO" } Severity::Warn => { total_warns += 1; "WARN" } Severity::Error => { total_errors += 1; "ERROR" } };
-            let tier = d.tier.map(|t| format!("[tier {}]", t.as_str())).unwrap_or_default();
-            s.push_str(&format!("  {} {} {} ({}..{}): {}\n", sev, d.rule, tier, d.loc.span.0, d.loc.span.1, d.msg));
+            let sev = match d.severity {
+                Severity::Info => {
+                    total_infos += 1;
+                    "INFO"
+                }
+                Severity::Warn => {
+                    total_warns += 1;
+                    "WARN"
+                }
+                Severity::Error => {
+                    total_errors += 1;
+                    "ERROR"
+                }
+            };
+            let tier = d
+                .tier
+                .map(|t| format!("[tier {}]", t.as_str()))
+                .unwrap_or_default();
+            s.push_str(&format!(
+                "  {} {} {} ({}..{}): {}\n",
+                sev, d.rule, tier, d.loc.span.0, d.loc.span.1, d.msg
+            ));
             if let Some(reason) = &d.demotion_reason {
                 s.push_str(&format!("      demotion: {}\n", reason));
             }
@@ -1500,38 +1714,70 @@ pub fn report_to_human(reports: &[FileReport]) -> String {
         agg_omega = agg_omega.max(g.omega);
         agg_k4 += g.k4_witnesses.len();
         agg_k5 += g.k5_witnesses.len();
-        s.push_str(&format!("  graph: {} contexts, {} coords, {} edges, ω(G)={}, K4={}, K5={}, components={}\n",
-            g.contexts.len(), g.coordinates.len(), g.edges, g.omega,
-            g.k4_witnesses.len(), g.k5_witnesses.len(), g.components));
+        s.push_str(&format!(
+            "  graph: {} contexts, {} coords, {} edges, ω(G)={}, K4={}, K5={}, components={}\n",
+            g.contexts.len(),
+            g.coordinates.len(),
+            g.edges,
+            g.omega,
+            g.k4_witnesses.len(),
+            g.k5_witnesses.len(),
+            g.components
+        ));
         let fmt_witness = |w: &CliqueWitness| -> String {
-            let members: Vec<String> = w.contexts.iter().map(|&i| {
-                let c = &g.contexts[i];
-                format!("{}@{}..{}", c.coord_path, c.span.0, c.span.1)
-            }).collect();
-            format!("    • {{{}}} share [{}]\n", members.join(", "), w.shared_coords.join(", "))
+            let members: Vec<String> = w
+                .contexts
+                .iter()
+                .map(|&i| {
+                    let c = &g.contexts[i];
+                    format!("{}@{}..{}", c.coord_path, c.span.0, c.span.1)
+                })
+                .collect();
+            format!(
+                "    • {{{}}} share [{}]\n",
+                members.join(", "),
+                w.shared_coords.join(", ")
+            )
         };
         if !g.k4_witnesses.is_empty() {
             s.push_str("  K4 candidate sites (no obstruction claims at Tier 1):\n");
-            for w in &g.k4_witnesses { s.push_str(&fmt_witness(w)); }
+            for w in &g.k4_witnesses {
+                s.push_str(&fmt_witness(w));
+            }
         }
         if !g.k5_witnesses.is_empty() {
             s.push_str("  K5 candidate sites (no obstruction claims at Tier 1):\n");
-            for w in &g.k5_witnesses { s.push_str(&fmt_witness(w)); }
+            for w in &g.k5_witnesses {
+                s.push_str(&fmt_witness(w));
+            }
         }
         if !g.approximations.is_empty() {
-            s.push_str(&format!("  approximations: {}\n", g.approximations.join(", ")));
+            s.push_str(&format!(
+                "  approximations: {}\n",
+                g.approximations.join(", ")
+            ));
         }
         s.push('\n');
     }
     s.push_str("--- summary ---\n");
-    s.push_str(&format!("diagnostics: {} ({} error, {} warn, {} info)\n", total_diags, total_errors, total_warns, total_infos));
-    s.push_str(&format!("max ω(G) across files: {} | K4 sites: {} | K5 sites: {}\n", agg_omega, agg_k4, agg_k5));
+    s.push_str(&format!(
+        "diagnostics: {} ({} error, {} warn, {} info)\n",
+        total_diags, total_errors, total_warns, total_infos
+    ));
+    s.push_str(&format!(
+        "max ω(G) across files: {} | K4 sites: {} | K5 sites: {}\n",
+        agg_omega, agg_k4, agg_k5
+    ));
     s.push_str("graph facts only; no obstruction claims at Tier 1\n");
     s
 }
 
 pub fn has_r3_error(reports: &[FileReport]) -> bool {
-    reports.iter().any(|r| r.diagnostics.iter().any(|d| d.rule == "R3" && d.severity == Severity::Error))
+    reports.iter().any(|r| {
+        r.diagnostics
+            .iter()
+            .any(|d| d.rule == "R3" && d.severity == Severity::Error)
+    })
 }
 
 pub fn has_any_diagnostic(reports: &[FileReport]) -> bool {
@@ -1555,11 +1801,20 @@ pub fn run_cli(path: &FsPath, json: bool) -> i32 {
     }
     if json {
         let j = report_to_json(&reports);
-        println!("{}", serde_json::to_string_pretty(&j).unwrap_or_else(|_| "{}".to_string()));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&j).unwrap_or_else(|_| "{}".to_string())
+        );
     } else {
         print!("{}", report_to_human(&reports));
     }
-    if has_r3_error(&reports) { 2 } else if has_any_diagnostic(&reports) { 1 } else { 0 }
+    if has_r3_error(&reports) {
+        2
+    } else if has_any_diagnostic(&reports) {
+        1
+    } else {
+        0
+    }
 }
 
 fn collect_n_files(dir: &FsPath, out: &mut Vec<PathBuf>) {

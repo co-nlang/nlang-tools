@@ -149,12 +149,19 @@ fn repo(tag: &str, ident: &Path) -> PathBuf {
     fs::write(d.join("s.n"), SRC).unwrap();
     oo(&d, ident, &["evolve", "s.n"]);
     let r = oo(&d, ident, &["commit", "-m", "x"]);
-    assert!(r.has("Commit successful"), "repo() failed to commit: {}", r.out);
+    assert!(
+        r.has("Commit successful"),
+        "repo() failed to commit: {}",
+        r.out
+    );
     d
 }
 
 fn caid(seed: char) -> String {
-    format!("hash:sha256:v1:{}", std::iter::repeat(seed).take(64).collect::<String>())
+    format!(
+        "hash:sha256:v1:{}",
+        std::iter::repeat(seed).take(64).collect::<String>()
+    )
 }
 
 fn object_path(dir: &Path, c: &str) -> PathBuf {
@@ -170,11 +177,15 @@ fn object_path(dir: &Path, c: &str) -> PathBuf {
 /// succeeded, the commit CAID it printed.
 fn refine_signed(dir: &Path, ident: &Path, s: char, t: char, msg: &str) -> (Run, Option<String>) {
     let (sc, tc) = (caid(s), caid(t));
-    let r = oo(dir, ident, &["refine", "-s", &sc, "-t", &tc, "--sign", "-m", msg]);
-    let commit = r
-        .out
-        .lines()
-        .find_map(|l| l.strip_prefix("Refine commit: ").map(|x| x.trim().to_string()));
+    let r = oo(
+        dir,
+        ident,
+        &["refine", "-s", &sc, "-t", &tc, "--sign", "-m", msg],
+    );
+    let commit = r.out.lines().find_map(|l| {
+        l.strip_prefix("Refine commit: ")
+            .map(|x| x.trim().to_string())
+    });
     (r, commit)
 }
 
@@ -333,7 +344,11 @@ fn red_a_provisioned_whitelist_can_finally_verify() {
     let (r0, c0) = refine_signed(&d, &ident, 'a', 'b', "learn");
     let c0 = c0.unwrap_or_else(|| panic!("bootstrap refine did not run: {}", r0.out));
     let mine = signer_of(&d, &c0);
-    assert!(r0.has("unverified"), "empty-whitelist refine should be unverified: {}", r0.out);
+    assert!(
+        r0.has("unverified"),
+        "empty-whitelist refine should be unverified: {}",
+        r0.out
+    );
 
     // (i) My own key, provisioned out of band.
     provision(&d, &[&mine]);
@@ -374,7 +389,11 @@ fn red_sign_refine_is_off_the_language_surface() {
 
     // CONTROL 1: the system root is alive.
     let fuel = oo(&d, &ident, &["eval", "~%Config.fuel"]);
-    assert!(fuel.has("10000"), "control: ~%Config.fuel broke: {}", fuel.out);
+    assert!(
+        fuel.has("10000"),
+        "control: ~%Config.fuel broke: {}",
+        fuel.out
+    );
 
     // CONTROL 2: `~%Official` is still mounted. It becomes an EMPTY module,
     // which is the honest cold-start shape: the spec names the trust root
@@ -433,7 +452,10 @@ fn red_identity_file_is_unreadable_from_the_language_layer() {
     let ctl = oo(
         &d,
         &ident,
-        &["eval", &format!("~%Io./read_file(\"{}\")", sibling.display())],
+        &[
+            "eval",
+            &format!("~%Io./read_file(\"{}\")", sibling.display()),
+        ],
     );
     assert!(
         !ctl.has("_|_"),
@@ -601,7 +623,11 @@ fn pin_empty_whitelist_signed_refine_stays_unverified() {
     let ident = ident_path("p2");
     let d = repo("p2", &ident);
     let (r, c) = refine_signed(&d, &ident, 'a', 'b', "u");
-    assert!(c.is_some(), "empty-whitelist signed refine was refused: {}", r.out);
+    assert!(
+        c.is_some(),
+        "empty-whitelist signed refine was refused: {}",
+        r.out
+    );
     assert!(
         r.has("unverified"),
         "a signature with no whitelist to check it against is not verified: {}",
@@ -622,7 +648,11 @@ fn pin_empty_whitelist_unsigned_refine_is_accepted() {
         "bootstrap refine must not require a signature: {}",
         r.out
     );
-    assert!(r.has("unverified"), "and must be recorded unverified: {}", r.out);
+    assert!(
+        r.has("unverified"),
+        "and must be recorded unverified: {}",
+        r.out
+    );
 }
 
 /// P4 — the v0.2.42 store boundary is untouched by anything here.
@@ -633,7 +663,11 @@ fn pin_store_boundary_still_refuses_dot_oo() {
     fs::write(d.join("plain.txt"), b"ok").unwrap();
 
     let ctl = oo(&d, &ident, &["eval", r#"~%Io./read_file("plain.txt")"#]);
-    assert!(!ctl.has("_|_"), "control: an ordinary file must be readable: {}", ctl.out);
+    assert!(
+        !ctl.has("_|_"),
+        "control: an ordinary file must be readable: {}",
+        ctl.out
+    );
 
     let got = oo(&d, &ident, &["eval", r#"~%Io./read_file(".oo/HEAD")"#]);
     assert!(
@@ -658,7 +692,11 @@ fn pin_ordinary_work_does_not_mint_an_identity() {
     oo(&d, &ident, &["status"]);
     oo(&d, &ident, &["evolve", "s.n"]);
     let c = oo(&d, &ident, &["commit", "-m", "x"]);
-    assert!(c.has("Commit successful"), "harness: commit failed: {}", c.out);
+    assert!(
+        c.has("Commit successful"),
+        "harness: commit failed: {}",
+        c.out
+    );
     oo(&d, &ident, &["log"]);
 
     assert!(
@@ -762,7 +800,11 @@ fn pin_existing_identity_parent_keeps_its_mode() {
 fn pin_engine_module_still_resolves() {
     let ident = ident_path("p6");
     let d = repo("p6", &ident);
-    let got = oo(&d, &ident, &["eval", "~%Engine./check_oml { a: @int, b: @int }"]);
+    let got = oo(
+        &d,
+        &ident,
+        &["eval", "~%Engine./check_oml { a: @int, b: @int }"],
+    );
     assert!(
         !got.has("missing_key"),
         "~%Engine regressed alongside ~%Official: {}",

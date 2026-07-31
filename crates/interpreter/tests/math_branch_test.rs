@@ -1,7 +1,7 @@
-use nlang_interpreter::*;
-use nlang_interpreter::value::{Value, ComboVal, EffectTag};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag, Value};
+use nlang_interpreter::*;
+use nlang_parser::ast::AtomKind;
 
 #[test]
 fn eml_branch_0_principal() {
@@ -10,10 +10,25 @@ fn eml_branch_0_principal() {
     let builtins = &oo.builtin_registry;
     let eml_fn = builtins.get("math.eml").unwrap();
     let mut fields = IndexMap::new();
-    fields.insert("0".to_string(), Value::Atom(AtomKind::Int(0.into()), EffectTag::Pure, None));
-    fields.insert("1".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
-    fields.insert("%branch".to_string(), Value::Atom(AtomKind::Int(0.into()), EffectTag::Pure, None));
-    let arg = Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    fields.insert(
+        "0".to_string(),
+        Value::Atom(AtomKind::Int(0.into()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "1".to_string(),
+        Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%branch".to_string(),
+        Value::Atom(AtomKind::Int(0.into()), EffectTag::Pure, None),
+    );
+    let arg = Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = eml_fn(arg, &oo, &mut ctx);
     if let Value::Atom(AtomKind::Complex(r, i), _, _) = result {
         assert!((r - 1.0).abs() < 1e-10);
@@ -30,10 +45,25 @@ fn eml_branch_1_shifts_imag() {
     let builtins = &oo.builtin_registry;
     let eml_fn = builtins.get("math.eml").unwrap();
     let mut fields = IndexMap::new();
-    fields.insert("0".to_string(), Value::Atom(AtomKind::Int(0.into()), EffectTag::Pure, None));
-    fields.insert("1".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
-    fields.insert("%branch".to_string(), Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None));
-    let arg = Value::Combo(ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    fields.insert(
+        "0".to_string(),
+        Value::Atom(AtomKind::Int(0.into()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "1".to_string(),
+        Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%branch".to_string(),
+        Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None),
+    );
+    let arg = Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = eml_fn(arg, &oo, &mut ctx);
     let two_pi = 2.0 * std::f64::consts::PI;
     if let Value::Atom(AtomKind::Complex(r, i), _, _) = result {

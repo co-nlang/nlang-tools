@@ -26,11 +26,17 @@ pub fn d_l_approx(a: &GBB, b: &GBB) -> f64 {
         return 1.0;
     }
     let min_len = a.sketch_bytes.len().min(b.sketch_bytes.len());
-    let av: Vec<f64> = a.sketch_bytes[..min_len].iter().map(|&x| x as i8 as f64).collect();
-    let bv: Vec<f64> = b.sketch_bytes[..min_len].iter().map(|&x| x as i8 as f64).collect();
-    let dot: f64   = av.iter().zip(bv.iter()).map(|(x, y)| x * y).sum();
-    let na: f64    = av.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let nb: f64    = bv.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let av: Vec<f64> = a.sketch_bytes[..min_len]
+        .iter()
+        .map(|&x| x as i8 as f64)
+        .collect();
+    let bv: Vec<f64> = b.sketch_bytes[..min_len]
+        .iter()
+        .map(|&x| x as i8 as f64)
+        .collect();
+    let dot: f64 = av.iter().zip(bv.iter()).map(|(x, y)| x * y).sum();
+    let na: f64 = av.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let nb: f64 = bv.iter().map(|x| x * x).sum::<f64>().sqrt();
     if na == 0.0 || nb == 0.0 {
         return if na == nb { 0.0 } else { 1.0 };
     }
@@ -57,17 +63,28 @@ pub fn nerve_overlap(query: &GBB, peer: &GBB) -> bool {
     if query.nerve_structure.is_empty() || peer.nerve_structure.is_empty() {
         return true;
     }
-    let query_masas: HashSet<&str> =
-        query.nerve_structure.iter().map(|e| e.masa_caid.as_str()).collect();
-    let query_keys: HashSet<&str> = query.nerve_structure.iter()
+    let query_masas: HashSet<&str> = query
+        .nerve_structure
+        .iter()
+        .map(|e| e.masa_caid.as_str())
+        .collect();
+    let query_keys: HashSet<&str> = query
+        .nerve_structure
+        .iter()
         .flat_map(|e| e.field_keys.iter().map(|k| k.as_str()))
         .collect();
 
     peer.nerve_structure.iter().any(|pe| {
         query_masas.contains(pe.masa_caid.as_str())
-        || pe.overlapping_masa_caids.iter().any(|m| query_masas.contains(m.as_str()))
-        || (!query_keys.is_empty()
-            && !pe.field_keys.is_empty()
-            && pe.field_keys.iter().any(|k| query_keys.contains(k.as_str())))
+            || pe
+                .overlapping_masa_caids
+                .iter()
+                .any(|m| query_masas.contains(m.as_str()))
+            || (!query_keys.is_empty()
+                && !pe.field_keys.is_empty()
+                && pe
+                    .field_keys
+                    .iter()
+                    .any(|k| query_keys.contains(k.as_str())))
     })
 }

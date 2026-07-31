@@ -14,17 +14,23 @@
 //
 // Guards are active and pin known-green behavior — MUST stay green.
 
-use nlang_interpreter::{Ouroboros, EvalContext, Value};
-use nlang_interpreter::value::{ComboVal, EffectTag};
-use nlang_parser::parse_program;
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag};
+use nlang_interpreter::{EvalContext, Ouroboros, Value};
+use nlang_parser::ast::AtomKind;
+use nlang_parser::parse_program;
 use num_bigint::BigInt;
 
 fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
@@ -54,7 +60,10 @@ fn assert_str(src: &str, expect: &str) {
 
 fn assert_bottom(src: &str) {
     let v = eval_one(src);
-    assert!(matches!(v, Value::Bottom(_)), "{src:?} must be _|_, got {v:?}");
+    assert!(
+        matches!(v, Value::Bottom(_)),
+        "{src:?} must be _|_, got {v:?}"
+    );
 }
 
 /// Range value with the given canonical plain print (e.g. "6..#_").
@@ -105,7 +114,7 @@ fn e1_real05_l1_05_membership_through_marker() {
 }
 
 #[test] // ACTIVE both-sides pin (E1): green today (⊥ via wrong reason —
-// @int&Range is ⊥ pre-fix), must stay ⊥ post-fix for the RIGHT reason
+        // @int&Range is ⊥ pre-fix), must stay ⊥ post-fix for the RIGHT reason
 fn e1_marker_refined_range_rejects_nonmember() {
     assert_bottom("a: 5 & (@int & 6..)");
 }
@@ -132,7 +141,7 @@ fn e2_range_key_constant_rule() {
 }
 
 #[test] // ACTIVE both-sides pin (E2): green today ("no %code" ⊥ for EVERY arg —
-// wrong reason), must stay ⊥ post-fix because 3 ∉ [4,⊤] (right reason)
+        // wrong reason), must stay ⊥ post-fix because 3 ∉ [4,⊤] (right reason)
 fn e2_range_key_rejects_nonmember() {
     assert_bottom(r#"r: { @{ 4.. }: "A" } 3"#);
 }
@@ -153,8 +162,14 @@ fn e2_incomparable_patterns_stay_multiple() {
 
 #[test]
 fn e2_overlap_edges_single_arm() {
-    assert_str(r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B" } 9"#, "A");
-    assert_str(r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B" } 1"#, "B");
+    assert_str(
+        r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B" } 9"#,
+        "A",
+    );
+    assert_str(
+        r#"r: { @{ @int & 4.. }: "A", @{ @int & ..6 }: "B" } 1"#,
+        "B",
+    );
 }
 
 // BOTH-SIDES pin (b): 4..6 ⊂ 4.. and 4..6 ⊂ ..6 → "C" alone, not A|B|C.
@@ -177,7 +192,7 @@ fn e3_meet_not_range_membership_negation() {
 }
 
 #[test] // ACTIVE both-sides pin (E3): green today (!(range) is absorbing ⊥ —
-// wrong reason), must stay ⊥ post-fix because 0 ∈ [⊥,0] closed (right reason)
+        // wrong reason), must stay ⊥ post-fix because 0 ∈ [⊥,0] closed (right reason)
 fn e3_closed_end_excluded() {
     assert_bottom("a: 0 & !(..0)");
 }
@@ -249,7 +264,10 @@ fn guard_standalone_not_range_stays_bottom_not_silent() {
 fn guard_dispatch_atom_keys_unchanged() {
     // dispatch on plain atom keys must be untouched by the E2 rework
     let v = eval_one(r#"r: { 1: "one", 2: "two" } 3"#);
-    assert!(matches!(v, Value::Bottom(_)), "no-match must stay ⊥, got {v:?}");
+    assert!(
+        matches!(v, Value::Bottom(_)),
+        "no-match must stay ⊥, got {v:?}"
+    );
 }
 
 #[test]

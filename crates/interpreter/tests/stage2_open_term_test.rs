@@ -3,10 +3,10 @@
 //   (b) observing `w.x` → _|_ #no_context (collapse moved from evolve to observe)
 //   (c) commit → reload preserves thunk behavior
 
-use nlang_interpreter::{Ouroboros, Universe, EvalContext, Value, ComboVal, EffectTag};
-use nlang_parser::parse_program;
-use nlang_parser::ast::{FieldKey, AtomKind};
 use indexmap::IndexMap;
+use nlang_interpreter::{ComboVal, EffectTag, EvalContext, Ouroboros, Universe, Value};
+use nlang_parser::ast::{AtomKind, FieldKey};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 
@@ -70,8 +70,11 @@ fn observe_open_term_collapses_no_context() {
     let obs = universe.observe(&engine, &path);
     match obs {
         Value::Bottom(d) => assert_eq!(
-            d.cause, nlang_interpreter::value::BottomCause::NoContext,
-            "w.x should collapse to #no_context at observe time, got {:?}", d),
+            d.cause,
+            nlang_interpreter::value::BottomCause::NoContext,
+            "w.x should collapse to #no_context at observe time, got {:?}",
+            d
+        ),
         other => panic!("expected _|_ #no_context, got {:?}", other),
     }
 }
@@ -114,8 +117,14 @@ fn commit_reload_preserves_thunk_behavior() {
     let obs = universe2.observe(&engine2, &path);
     match obs {
         Value::Bottom(d) => assert_eq!(
-            d.cause, nlang_interpreter::value::BottomCause::NoContext,
-            "after reload, w.x should still be #no_context (thunk survived), got {:?}", d),
-        other => panic!("after commit→reload, w.x should be _|_ #no_context, got {:?}", other),
+            d.cause,
+            nlang_interpreter::value::BottomCause::NoContext,
+            "after reload, w.x should still be #no_context (thunk survived), got {:?}",
+            d
+        ),
+        other => panic!(
+            "after commit→reload, w.x should be _|_ #no_context, got {:?}",
+            other
+        ),
     }
 }

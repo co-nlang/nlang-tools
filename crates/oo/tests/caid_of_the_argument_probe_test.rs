@@ -20,10 +20,10 @@
 // residue, which is why R2 and R3 are here: they are the shapes a careless
 // unwrap would break.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::fs;
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
@@ -88,10 +88,17 @@ fn identify(dir: &Path, expr: &str) -> String {
 /// the object and returns the address it was written under, so this is the
 /// store's own opinion and not another call to the function under test.
 fn store_address(dir: &Path, expr: &str) -> String {
-    write(dir, "st.n", &format!("v: ~%Discovery./identify_and_store {expr}\n"));
+    write(
+        dir,
+        "st.n",
+        &format!("v: ~%Discovery./identify_and_store {expr}\n"),
+    );
     let out = oo(dir, &["run", "st.n", "--observe", "v"]);
     let c = first_string(&out);
-    assert!(c.starts_with("hash:sha256:"), "store_address({expr}) gave {c:?}");
+    assert!(
+        c.starts_with("hash:sha256:"),
+        "store_address({expr}) gave {c:?}"
+    );
     c
 }
 
@@ -194,7 +201,10 @@ fn r2_a_tuple_is_still_its_own_value() {
     let a = store_address(&dir, "(1, 2)");
     assert_eq!(i, a, "the tuple's own CAID");
     let one = store_address(&dir, "1");
-    assert_ne!(i, one, "identify unwrapped a tuple down to its first element");
+    assert_ne!(
+        i, one,
+        "identify unwrapped a tuple down to its first element"
+    );
 }
 
 /// R3 — a combo that happens to have slot 0 is still itself.
@@ -204,7 +214,10 @@ fn r3_a_combo_with_slot_zero_is_still_itself() {
     init(&dir);
     let i = identify(&dir, "{{ 0: 5 }}");
     let a = store_address(&dir, "{{ 0: 5 }}");
-    assert_eq!(i, a, "a combo shaped like an argument pack is still a value");
+    assert_eq!(
+        i, a,
+        "a combo shaped like an argument pack is still a value"
+    );
     let five = store_address(&dir, "5");
     assert_ne!(i, five, "identify unwrapped a value that was never wrapped");
 }
@@ -297,10 +310,7 @@ fn r7_storing_a_slot_zero_combo_stores_the_combo() {
 fn p1_multi_argument_builtins_are_unchanged() {
     let dir = fresh_dir("p1");
     init(&dir);
-    for (expr, want) in [
-        ("~%Math./add 1 2", "3"),
-        ("~%Math./add (1, 2)", "3"),
-    ] {
+    for (expr, want) in [("~%Math./add 1 2", "3"), ("~%Math./add (1, 2)", "3")] {
         let got = oo(&dir, &["eval", expr]);
         assert!(got.contains(want), "{expr} gave {got:?}, wanted {want}");
     }
@@ -311,11 +321,7 @@ fn p1_multi_argument_builtins_are_unchanged() {
 fn p2_the_marker_never_reaches_a_user_visible_value() {
     let dir = fresh_dir("p2");
     init(&dir);
-    write(
-        &dir,
-        "m.n",
-        "f: /id { 1: $ }\nout: f { a: 1, b: [2, 3] }\n",
-    );
+    write(&dir, "m.n", "f: /id { 1: $ }\nout: f { a: 1, b: [2, 3] }\n");
     let got = oo(&dir, &["run", "m.n", "--observe", "out"]);
     assert!(
         !got.contains("%arg") && !got.contains("arg:"),
@@ -332,7 +338,10 @@ fn p3_store_round_trip_is_unchanged() {
     let b = store_address(&dir, "{ stable: \"p3\", n: [1, 2, 3] }");
     assert_eq!(a, b, "the same value got two addresses");
     let c = oo(&dir, &["inspect", &a]);
-    assert!(c.contains("stable"), "the stored value did not read back: {c}");
+    assert!(
+        c.contains("stable"),
+        "the stored value did not read back: {c}"
+    );
 }
 
 /// P4 — the whole-argument iterators over *operands* are unaffected.

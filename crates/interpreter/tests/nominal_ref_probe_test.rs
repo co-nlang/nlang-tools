@@ -12,8 +12,8 @@
 // name as an opaque marker BEFORE scope/root lookup.
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use num_bigint::BigInt;
 use std::fs;
 use std::path::PathBuf;
@@ -65,8 +65,8 @@ fn assert_obs_int(src: &str, path: &str, expect: i64) {
 
 fn assert_obs_bottom(src: &str, path: &str) {
     match run_observe(src, path) {
-        Err(_) => {}                    // evolution conflict — counts as ⊥
-        Ok(Value::Bottom(_)) => {}      // observed ⊥
+        Err(_) => {}               // evolution conflict — counts as ⊥
+        Ok(Value::Bottom(_)) => {} // observed ⊥
         Ok(other) => panic!("{src:?} :: {path} must be _|_, got {other:?}"),
     }
 }
@@ -146,10 +146,7 @@ fn e4_recursive_type_enforces_and_terminates() {
 // RED LINE (E4): Union of type refs — distribution must survive the
 // new resolution path (arm-order class, 5th time's the charm)
 fn e4_union_of_typerefs_enforces() {
-    assert_obs_bottom(
-        "@Neg: ..0\n@Pos: 1..\nx: 0.5 & (@Neg | @Pos)",
-        "x",
-    );
+    assert_obs_bottom("@Neg: ..0\n@Pos: 1..\nx: 0.5 & (@Neg | @Pos)", "x");
 }
 
 // ─────────────────────────────────────────────────────────────────────────

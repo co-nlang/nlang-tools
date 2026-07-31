@@ -1,8 +1,8 @@
-use crate::value::{Value, ContentHash, HashAlgorithm, Commit, CaidVersion};
-use std::fs;
-use std::path::{Path, PathBuf};
+use crate::value::{CaidVersion, Commit, ContentHash, HashAlgorithm, Value};
 use anyhow::Result;
 use sha2::Digest;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Distinct CAS read outcomes (SPEC_08 / REAL_03 §8; cas_integrity arc).
 /// Callers must not collapse these into one "not found" string.
@@ -188,12 +188,11 @@ impl ObjectStore {
 
     pub fn get_value(&self, hash: &ContentHash) -> Result<Value> {
         let content = self.read_object_raw(hash)?;
-        let value: Value = serde_json::from_str(&content).map_err(|e| {
-            StoreReadError::ObjectUndecodable {
+        let value: Value =
+            serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
-            }
-        })?;
+            })?;
         let recomputed = value.content_hash();
         if !value_address_matches(hash, &recomputed) {
             return Err(StoreReadError::CaidMismatch {
@@ -214,12 +213,11 @@ impl ObjectStore {
 
     pub fn get_commit(&self, hash: &ContentHash) -> Result<Commit> {
         let content = self.read_object_raw(hash)?;
-        let commit: Commit = serde_json::from_str(&content).map_err(|e| {
-            StoreReadError::ObjectUndecodable {
+        let commit: Commit =
+            serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
-            }
-        })?;
+            })?;
         let recomputed = commit.content_hash();
         if !commit_address_matches(hash, &recomputed) {
             return Err(StoreReadError::CaidMismatch {
@@ -233,14 +231,20 @@ impl ObjectStore {
 
     pub fn get_head(&self, base_dir: &Path) -> Result<Option<ContentHash>> {
         let head_path = base_dir.join(".oo").join("HEAD");
-        if !head_path.exists() { return Ok(None); }
+        if !head_path.exists() {
+            return Ok(None);
+        }
         let s = fs::read_to_string(head_path)?;
-        ContentHash::parse(&s.trim()).map(Some).map_err(|e| anyhow::anyhow!("{:?}", e))
+        ContentHash::parse(&s.trim())
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
     }
 
     pub fn set_head(&self, base_dir: &Path, hash: &ContentHash) -> Result<()> {
         let oo_dir = base_dir.join(".oo");
-        if !oo_dir.exists() { fs::create_dir_all(&oo_dir)?; }
+        if !oo_dir.exists() {
+            fs::create_dir_all(&oo_dir)?;
+        }
         let head_path = oo_dir.join("HEAD");
         fs::write(head_path, hash.to_string())?;
         Ok(())
@@ -248,7 +252,10 @@ impl ObjectStore {
 
     pub fn get_horizon_salt(&self) -> ContentHash {
         let mut hasher = sha2::Sha256::new();
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         hasher.update(now.to_le_bytes());
         ContentHash::v1(sha2::Digest::finalize(hasher).to_vec())
     }
@@ -256,7 +263,9 @@ impl ObjectStore {
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
         let path = self.hash_to_path(hash);
         if !path.exists() {
-            if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(&path, content)?;
         }
         Ok(())
@@ -308,7 +317,9 @@ impl ObjectStore {
     }
 
     fn hash_to_path(&self, hash: &ContentHash) -> PathBuf {
-        let algo_dir = match hash.algorithm { HashAlgorithm::Sha256 => "sha256" };
+        let algo_dir = match hash.algorithm {
+            HashAlgorithm::Sha256 => "sha256",
+        };
         let hex = hex::encode(&hash.digest);
         self.root.join(algo_dir).join(&hex[0..2]).join(&hex[2..])
     }

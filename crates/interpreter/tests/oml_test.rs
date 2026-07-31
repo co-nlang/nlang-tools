@@ -1,9 +1,9 @@
+use indexmap::IndexMap;
+use nlang_interpreter::oml::{verify_oml, verify_subspace, OMLResult};
+use nlang_interpreter::value::{BottomCause, ComboVal, EffectTag, Value};
 use nlang_interpreter::*;
-use nlang_interpreter::value::{Value, ComboVal, EffectTag, BottomCause};
-use nlang_interpreter::oml::{OMLResult, verify_oml, verify_subspace};
 use nlang_parser::ast::AtomKind;
 use std::sync::Arc;
-use indexmap::IndexMap;
 
 fn setup() -> (Arc<Ouroboros>, EvalContext) {
     let oo = Arc::new(Ouroboros::new_in_memory());
@@ -11,7 +11,9 @@ fn setup() -> (Arc<Ouroboros>, EvalContext) {
     (oo, ctx)
 }
 
-fn tag(name: &str) -> Value { Value::Atom(AtomKind::Tag(name.to_string()), EffectTag::Pure, None) }
+fn tag(name: &str) -> Value {
+    Value::Atom(AtomKind::Tag(name.to_string()), EffectTag::Pure, None)
+}
 
 #[test]
 fn test_oml_vacuous_not_subspace() {
@@ -43,8 +45,8 @@ fn test_oml_nondistrib_flag_set() {
     // With valid matching, no nondistrib event should occur yet
     // We just verify the flag exists and can be toggled
     ctx.had_nondistrib_event = false; // reset
-    // Force a nondistrib event artificially for testing
-    // Actually let's just verify the mechanism works
+                                      // Force a nondistrib event artificially for testing
+                                      // Actually let's just verify the mechanism works
     let a = tag("true");
     let b = tag("false");
     let c = tag("maybe");
@@ -52,7 +54,10 @@ fn test_oml_nondistrib_flag_set() {
     let _ = oo.unify_internal(a, union_bc, &mut ctx);
     // #true & #false = Bottom → should trigger nondistrib
     // But it's Conflict not H1Split/H2Split, so flag stays false
-    assert!(!ctx.had_nondistrib_event, "Conflict Bottom should not set nondistrib flag");
+    assert!(
+        !ctx.had_nondistrib_event,
+        "Conflict Bottom should not set nondistrib flag"
+    );
 }
 
 #[test]
@@ -61,7 +66,11 @@ fn test_involution_true() {
     let v = tag("true");
     let not_v = oo.orthocomplement(v.clone(), &mut ctx);
     let not_not_v = oo.orthocomplement(not_v, &mut ctx);
-    assert_eq!(not_not_v.content_hash(), v.content_hash(), "!!#true = #true");
+    assert_eq!(
+        not_not_v.content_hash(),
+        v.content_hash(),
+        "!!#true = #true"
+    );
 }
 
 #[test]
@@ -70,7 +79,11 @@ fn test_involution_false() {
     let v = tag("false");
     let not_v = oo.orthocomplement(v.clone(), &mut ctx);
     let not_not_v = oo.orthocomplement(not_v, &mut ctx);
-    assert_eq!(not_not_v.content_hash(), v.content_hash(), "!!#false = #false");
+    assert_eq!(
+        not_not_v.content_hash(),
+        v.content_hash(),
+        "!!#false = #false"
+    );
 }
 
 #[test]
@@ -86,7 +99,11 @@ fn test_de_morgan_union() {
     let not_b = oo.orthocomplement(b, &mut ctx);
     let expected = oo.unify_internal(not_a, not_b, &mut ctx); // = !A & !B
 
-    assert_eq!(not_union.content_hash(), expected.content_hash(), "!(A|B) = !A & !B");
+    assert_eq!(
+        not_union.content_hash(),
+        expected.content_hash(),
+        "!(A|B) = !A & !B"
+    );
 }
 
 #[test]
@@ -100,11 +117,20 @@ fn test_de_morgan_meet() {
         ("x".to_string(), tag("true")),
         ("y".to_string(), tag("false")),
     ]);
-    let a = Value::Combo(ComboVal::new(a_data, false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let a = Value::Combo(ComboVal::new(
+        a_data,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let not_a = oo.orthocomplement(a.clone(), &mut ctx);
     match not_a {
         Value::Union(bs) => assert!(bs.len() >= 2, "distinct complements kept: {:?}", bs),
-        other => panic!("!(open Combo) with two distinct field complements should be Union, got: {:?}", other),
+        other => panic!(
+            "!(open Combo) with two distinct field complements should be Union, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -112,30 +138,53 @@ fn test_de_morgan_meet() {
 fn test_check_oml_builtin() {
     let (oo, mut ctx) = setup();
     let builtin = oo.builtin_registry.get("engine.check_oml").unwrap();
-    let arg = Value::Combo(ComboVal::new(IndexMap::from_iter(vec![
-        ("a".to_string(), tag("true")),
-        ("b".to_string(), Value::Union(vec![tag("true"), tag("false")])),
-    ]), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let arg = Value::Combo(ComboVal::new(
+        IndexMap::from_iter(vec![
+            ("a".to_string(), tag("true")),
+            (
+                "b".to_string(),
+                Value::Union(vec![tag("true"), tag("false")]),
+            ),
+        ]),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     let result = builtin(arg, &oo, &mut ctx);
     let s = result.to_string_plain();
-    assert!(s.contains("oml_valid") || s.contains("Valid"), "check_oml(#true, #true|#false) should report Valid, got: {}", s);
+    assert!(
+        s.contains("oml_valid") || s.contains("Valid"),
+        "check_oml(#true, #true|#false) should report Valid, got: {}",
+        s
+    );
 }
 
 #[test]
 fn test_oml_valid_bottom_in_union() {
     let (oo, mut ctx) = setup();
-    // ⊥ ⊑ A is the same as A ⊓ ⊥ = ⊥ ≠ ⊥? 
+    // ⊥ ⊑ A is the same as A ⊓ ⊥ = ⊥ ≠ ⊥?
     // Actually ⊥ is the minimum element, so ⊥ ⊑ anything
     // But unify(⊥, A) = ⊥, and ⊥.content_hash() == ⊥.content_hash()
     // So ⊥ ⊑ A should be TRUE → not Vacuous
     let a = Value::Bottom(Box::new(nlang_interpreter::value::BottomDetail {
-        cause: BottomCause::Conflict, path: None, message: None,
-        expected: None, found: None, involved: vec![], obstruction_degree: None, holonomy: None,
+        cause: BottomCause::Conflict,
+        path: None,
+        message: None,
+        expected: None,
+        found: None,
+        involved: vec![],
+        obstruction_degree: None,
+        holonomy: None,
     }));
     let b = tag("true");
     let result = verify_oml(a, b, &oo, &mut ctx);
-    assert!(result == OMLResult::Valid || result == OMLResult::Vacuous || result == OMLResult::Approximate,
-        "Bottom OML should be valid or vacuous");
+    assert!(
+        result == OMLResult::Valid
+            || result == OMLResult::Vacuous
+            || result == OMLResult::Approximate,
+        "Bottom OML should be valid or vacuous"
+    );
 }
 
 #[test]

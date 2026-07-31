@@ -86,10 +86,7 @@ fn gen_atom(rng: &mut Rng) -> AtomKind {
         2 => AtomKind::Complex(0.0, 1.0),
         3 => AtomKind::Complex(0.0, -1.0),
         4 => AtomKind::Complex(rng.gen_range(0, 5) as f64, rng.gen_range(1, 5) as f64),
-        5 => AtomKind::Str(
-            rng.pick(&["a", "hi", "x1", "kebab-ok"])
-                .to_string(),
-        ),
+        5 => AtomKind::Str(rng.pick(&["a", "hi", "x1", "kebab-ok"]).to_string()),
         6 => AtomKind::Tag(rng.pick(&["ok", "draft", "a", "b"]).to_string()),
         7 => AtomKind::Top,
         8 => AtomKind::Bottom,
@@ -102,7 +99,18 @@ fn gen_atom(rng: &mut Rng) -> AtomKind {
 fn gen_ident(rng: &mut Rng) -> String {
     // Avoid pure `i` / leading pure-numeric; include i-prefix idents (the bug class).
     rng.pick(&[
-        "a", "b", "x", "xs", "io", "input", "i2", "i-1", "max-retry", "f", "g", "val",
+        "a",
+        "b",
+        "x",
+        "xs",
+        "io",
+        "input",
+        "i2",
+        "i-1",
+        "max-retry",
+        "f",
+        "g",
+        "val",
     ])
     .to_string()
 }
@@ -123,23 +131,56 @@ fn gen_expr(rng: &mut Rng, depth: usize) -> Expr {
         3 => path_anchored(PathAnchor::Root, &[&gen_ident(rng)]),
         4 => path_anchored(PathAnchor::Parent(0), &[&gen_ident(rng)]),
         5 => path_anchored(PathAnchor::Parent(1), &[&gen_ident(rng)]),
-        6 => bin(ExprKind::Add, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        7 => bin(ExprKind::Sub, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        8 => bin(ExprKind::Mul, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        9 => bin(ExprKind::Meet, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        10 => bin(ExprKind::Join, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        11 => bin(ExprKind::Eq, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        12 => bin(ExprKind::Lt, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        13 => bin(ExprKind::LatticeEq, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
-        14 => bin(ExprKind::Pipe, gen_expr(rng, depth - 1), gen_expr(rng, depth - 1)),
+        6 => bin(
+            ExprKind::Add,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        7 => bin(
+            ExprKind::Sub,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        8 => bin(
+            ExprKind::Mul,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        9 => bin(
+            ExprKind::Meet,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        10 => bin(
+            ExprKind::Join,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        11 => bin(
+            ExprKind::Eq,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        12 => bin(
+            ExprKind::Lt,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        13 => bin(
+            ExprKind::LatticeEq,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
+        14 => bin(
+            ExprKind::Pipe,
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1),
+        ),
         15 => {
             let n = rng.gen_range(0, 4);
             let mut items: Vec<_> = (0..n).map(|_| gen_expr(rng, depth - 1)).collect();
             if n > 0 && rng.chance(1, 3) {
-                items[0] = Expr::new(
-                    ExprKind::Spread(Box::new(path(&[&gen_ident(rng)]))),
-                    sp(),
-                );
+                items[0] = Expr::new(ExprKind::Spread(Box::new(path(&[&gen_ident(rng)]))), sp());
             }
             Expr::new(ExprKind::List(items), sp())
         }
@@ -174,7 +215,9 @@ fn gen_expr(rng: &mut Rng, depth: usize) -> Expr {
         ),
         22 => Expr::new(
             ExprKind::Range {
-                start: Box::new(atom(AtomKind::Int((rng.gen_range(0, 10) as i64 - 3).into()))),
+                start: Box::new(atom(AtomKind::Int(
+                    (rng.gen_range(0, 10) as i64 - 3).into(),
+                ))),
                 end: Box::new(atom(AtomKind::Int((rng.gen_range(0, 20) as i64).into()))),
                 step: if rng.chance(1, 2) {
                     Some(Box::new(atom(AtomKind::Int(1.into()))))
@@ -296,7 +339,8 @@ fn roundtrip_check(e: &Expr, seed_note: &str) {
     let mut b = again;
     normalize(&mut b);
     assert_eq!(
-        expected, b,
+        expected,
+        b,
         "[{seed_note}] AST mismatch\n  printed: {printed:?}\n  shape1:  {}\n  shape2:  {}",
         expected.shape(),
         b.shape()

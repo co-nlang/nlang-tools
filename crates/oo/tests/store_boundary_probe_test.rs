@@ -441,7 +441,10 @@ fn red_a4_head_rewrite_no_longer_rolls_back_history() {
     // (c) front door, granted: still works. Without this the test would also
     // pass if the arc simply broke rollback.
     let ok = oo(&d, &["rollback", &c[0], "--grant", "rollback"]);
-    assert!(!ok.contains("error"), "granted rollback must succeed: {ok:?}");
+    assert!(
+        !ok.contains("error"),
+        "granted rollback must succeed: {ok:?}"
+    );
     assert_eq!(
         log_caids(&d)[0],
         c[0],

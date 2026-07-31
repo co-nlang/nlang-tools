@@ -8,7 +8,10 @@ pub enum AuthVerifyResult {
     Invalid(String),
 }
 
-pub fn compute_refine_payload(source_caids: &[ContentHash], target_caids: &[ContentHash]) -> Vec<u8> {
+pub fn compute_refine_payload(
+    source_caids: &[ContentHash],
+    target_caids: &[ContentHash],
+) -> Vec<u8> {
     let mut srcs: Vec<String> = source_caids.iter().map(|c| c.to_string()).collect();
     let mut tgts: Vec<String> = target_caids.iter().map(|c| c.to_string()).collect();
     srcs.sort();
@@ -45,10 +48,12 @@ pub fn verify_refine_authority(
     };
 
     let pk_bytes = match hex::decode(&auth.signer_pubkey_hex) {
-        Ok(b) => b, Err(e) => return AuthVerifyResult::Invalid(format!("bad pubkey hex: {}", e)),
+        Ok(b) => b,
+        Err(e) => return AuthVerifyResult::Invalid(format!("bad pubkey hex: {}", e)),
     };
     let sig_bytes = match hex::decode(&auth.signature_hex) {
-        Ok(b) => b, Err(e) => return AuthVerifyResult::Invalid(format!("bad signature hex: {}", e)),
+        Ok(b) => b,
+        Err(e) => return AuthVerifyResult::Invalid(format!("bad signature hex: {}", e)),
     };
 
     // Membership: a non-empty whitelist that does not contain the signer is

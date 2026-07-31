@@ -238,7 +238,13 @@ fn red_commit_of_discharged_content_requires_the_capability() {
     // PAIR: the same commit, authorised, must go through.
     let granted = oo(
         &d,
-        &["commit", "-m", "authorised", "--grant", "effect_override:io"],
+        &[
+            "commit",
+            "-m",
+            "authorised",
+            "--grant",
+            "effect_override:io",
+        ],
     );
     assert!(
         granted.has("Commit successful"),
@@ -265,7 +271,13 @@ fn red_privileged_commit_is_marked_and_ordinary_commits_are_not() {
     let d = repo_with_discharge("r2");
     let granted = oo(
         &d,
-        &["commit", "-m", "authorised", "--grant", "effect_override:io"],
+        &[
+            "commit",
+            "-m",
+            "authorised",
+            "--grant",
+            "effect_override:io",
+        ],
     );
     assert!(granted.has("Commit successful"), "harness: {}", granted.out);
     let privileged = object_json(&d, &head_commit(&d));
@@ -297,7 +309,13 @@ fn red_oo_log_shows_the_privileged_effect_marker() {
     let d = repo_with_discharge("r3");
     let granted = oo(
         &d,
-        &["commit", "-m", "authorised", "--grant", "effect_override:io"],
+        &[
+            "commit",
+            "-m",
+            "authorised",
+            "--grant",
+            "effect_override:io",
+        ],
     );
     assert!(granted.has("Commit successful"), "harness: {}", granted.out);
 
@@ -564,7 +582,13 @@ fn pin_a_grant_without_a_discharge_marks_nothing() {
     );
     let c = oo(
         &d,
-        &["commit", "-m", "granted but pure", "--grant", "effect_override:io"],
+        &[
+            "commit",
+            "-m",
+            "granted but pure",
+            "--grant",
+            "effect_override:io",
+        ],
     );
     assert!(c.has("Commit successful"), "harness: commit: {}", c.out);
 
@@ -588,7 +612,13 @@ fn pin_commit_capability_must_cover_the_discharged_tags() {
 
     let wrong = oo(
         &d,
-        &["commit", "-m", "wrong tag", "--grant", "effect_override:nondet"],
+        &[
+            "commit",
+            "-m",
+            "wrong tag",
+            "--grant",
+            "effect_override:nondet",
+        ],
     );
     assert!(
         !wrong.ok,

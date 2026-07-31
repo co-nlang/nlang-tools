@@ -9,10 +9,10 @@
 // those, evolve snapshotted <<_.>> to the pristine system root (A-case
 // semantics) and full observation of v crashed with a stack overflow.
 
+use nlang_interpreter::value::{BlurCause, BottomCause};
 use nlang_interpreter::{Ouroboros, Universe, Value};
-use nlang_interpreter::value::{BottomCause, BlurCause};
-use nlang_parser::parse_program;
 use nlang_parser::ast::AtomKind;
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 
@@ -57,16 +57,21 @@ fn path_of(segments: &[&str]) -> nlang_parser::ast::Path {
 
 fn contains_horizon(v: &Value) -> bool {
     match v {
-        Value::Blur(bd) => matches!(bd.cause,
-            BlurCause::FuelExhausted | BlurCause::StackOverflow),
-        Value::Bottom(d) => matches!(d.cause,
-            BottomCause::FuelExhausted | BottomCause::Divergent),
+        Value::Blur(bd) => matches!(
+            bd.cause,
+            BlurCause::FuelExhausted | BlurCause::StackOverflow
+        ),
+        Value::Bottom(d) => matches!(d.cause, BottomCause::FuelExhausted | BottomCause::Divergent),
         // walk by reference: all_fields_iter() yields OWNED clones, which on a
         // horizon-deep nested chain is O(depth x total_size) memory — the
         // helper OOMs on a value the engine produced just fine.
-        Value::Combo(cv) => cv.data.values()
-            .chain(cv.types.values()).chain(cv.rules.values())
-            .chain(cv.meta.values()).chain(cv.system.values())
+        Value::Combo(cv) => cv
+            .data
+            .values()
+            .chain(cv.types.values())
+            .chain(cv.rules.values())
+            .chain(cv.meta.values())
+            .chain(cv.system.values())
             .chain(cv.local.values())
             .any(contains_horizon),
         Value::Union(items) => items.iter().any(contains_horizon),
@@ -84,7 +89,8 @@ fn probe_evolve_stores_live_ref_not_snapshot() {
         Some(Value::Ref(_)) => {}
         other => panic!(
             "v must be stored as a live Ref (C-case), not an evolve-time snapshot; got {:?}",
-            other.map(|v| format!("{:?}", v).chars().take(80).collect::<String>())),
+            other.map(|v| format!("{:?}", v).chars().take(80).collect::<String>())
+        ),
     }
 }
 

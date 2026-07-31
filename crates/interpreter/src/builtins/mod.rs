@@ -1,35 +1,35 @@
-mod math;
-mod cond;
-mod string;
-mod list;
-mod disc;
-mod reflection;
-mod engine;
-mod time;
 mod bytes;
-mod regex;
-mod json;
-mod io;
-mod env;
-mod process;
-mod path;
-mod query;
-mod diff;
-mod set;
-mod stat;
+mod cond;
 mod csv;
-mod url;
-mod toml;
+mod diff;
+mod disc;
+mod engine;
+mod env;
 /// Language → store trust boundary (SPEC_08 §6.3).
 pub mod fs_guard;
+mod io;
+mod json;
+mod list;
+mod math;
+mod path;
+mod process;
+mod query;
+mod reflection;
+mod regex;
+mod set;
+mod stat;
+mod string;
+mod time;
+mod toml;
+mod url;
 
+use crate::BuiltinFn;
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::BuiltinFn;
 
 pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     let mut m = HashMap::new();
-    
+
     math::register_math_builtins(&mut m);
     math::register_complex_builtins(&mut m);
     cond::register_cond_builtins(&mut m);
@@ -53,6 +53,6 @@ pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     csv::register_csv_builtins(&mut m);
     url::register_url_builtins(&mut m);
     toml::register_toml_builtins(&mut m);
-    
+
     m
 }

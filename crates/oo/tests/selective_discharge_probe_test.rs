@@ -221,7 +221,10 @@ fn pin_bare_privileged_pure_arg_returns_value() {
 fn pin_no_capability_refuses_even_pure_arg() {
     // arc-4 invariant: the capability is the gate, not the argument.
     let got = run_cli(PURE_ARG, &[]);
-    assert!(is_refused(&got), "no capability ⟹ ⊥ even for a pure arg: {got:?}");
+    assert!(
+        is_refused(&got),
+        "no capability ⟹ ⊥ even for a pure arg: {got:?}"
+    );
 }
 
 #[test]

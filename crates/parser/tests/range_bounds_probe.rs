@@ -15,7 +15,9 @@
 use nlang_parser::parse_expr_only;
 
 fn shape(src: &str) -> String {
-    parse_expr_only(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}")).shape()
+    parse_expr_only(src)
+        .unwrap_or_else(|e| panic!("parse {src:?}: {e}"))
+        .shape()
 }
 
 #[test]

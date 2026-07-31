@@ -21,8 +21,8 @@
 // mirroring the single-combo open-world miss (`({a:1}).b` = `_`, pinned).
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -118,10 +118,7 @@ fn red_union_nav_partial_field_keeps_top_branch() {
 #[test]
 fn red_union_nav_multi_segment() {
     // 5 | 5 → 5 through two segments
-    assert_obs(
-        "out: ({ p: { q: 5 } } | { p: { q: 5 }, r: 1 }).p.q",
-        "5",
-    );
+    assert_obs("out: ({ p: { q: 5 } } | { p: { q: 5 }, r: 1 }).p.q", "5");
 }
 
 #[test]

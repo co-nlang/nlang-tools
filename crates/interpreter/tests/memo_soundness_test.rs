@@ -7,18 +7,27 @@
 //      the cheap sound alternative is exact-results-only memoization)
 //   2. #nondet operands must bypass the memo entirely (GUIDE_03 §2A.3)
 
-use nlang_interpreter::{Ouroboros, EvalContext};
-use nlang_interpreter::value::{ComboVal, EffectTag, Value};
-use nlang_parser::ast::AtomKind;
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag, Value};
+use nlang_interpreter::{EvalContext, Ouroboros};
+use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
 fn big_combo(tag: &str, n: usize) -> Value {
     let mut f = IndexMap::new();
     for i in 0..n {
-        f.insert(format!("{}_{}", tag, i), Value::Atom(AtomKind::Int(BigInt::from(i as i64)), EffectTag::Pure, None));
+        f.insert(
+            format!("{}_{}", tag, i),
+            Value::Atom(AtomKind::Int(BigInt::from(i as i64)), EffectTag::Pure, None),
+        );
     }
-    Value::Combo(ComboVal::new(f, false, IndexMap::new(), EffectTag::Pure, vec![]))
+    Value::Combo(ComboVal::new(
+        f,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
 }
 
 #[test]
@@ -30,7 +39,13 @@ fn blur_partial_is_not_memoized() {
     let oo = Ouroboros::new_in_memory();
 
     // combo with an expensive thunked field (quoted key => Thunk)
-    let chain = format!("{{ {} }}", (0..50).map(|i| format!("f{}: {}", i, i)).collect::<Vec<_>>().join(", "));
+    let chain = format!(
+        "{{ {} }}",
+        (0..50)
+            .map(|i| format!("f{}: {}", i, i))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let program = nlang_parser::parse_program(&format!("r: {{ \"k\": {} }}", chain)).unwrap();
     let mut build_ctx = EvalContext::new(ComboVal::default());
     // NOTE: use eval (structural), NOT eval_observed — this test needs the
@@ -38,8 +53,11 @@ fn blur_partial_is_not_memoized() {
     // solidify the thunk away. The structural/observation API split (Stage 2)
     // is exactly what makes this distinction expressible.
     let a = oo.eval(&program.fields[0].value, &mut build_ctx);
-    assert!(matches!(&a, Value::Combo(cv) if matches!(cv.data.get("k"), Some(Value::Thunk{..}))),
-        "fixture must hold a thunked field, got {:?}", kind_of(&a));
+    assert!(
+        matches!(&a, Value::Combo(cv) if matches!(cv.data.get("k"), Some(Value::Thunk{..}))),
+        "fixture must hold a thunked field, got {:?}",
+        kind_of(&a)
+    );
     let b = big_combo("b", 2);
 
     // 1. starved unify: force(k) blurs mid-combo-eval; the merged combo embeds
@@ -63,7 +81,9 @@ fn blur_partial_is_not_memoized() {
             let mut obs_ctx = EvalContext::new(ComboVal::default());
             let k = oo.force_recursive(k_raw, &mut obs_ctx);
             match &k {
-                Value::Combo(kc) => assert_eq!(kc.data.len(), 50, "k must be the exact 50-field combo"),
+                Value::Combo(kc) => {
+                    assert_eq!(kc.data.len(), 50, "k must be the exact 50-field combo")
+                }
                 other => panic!("k must be a combo after force, got {:?}", kind_of(other)),
             }
         }
@@ -76,7 +96,10 @@ fn nondet_operand_bypasses_memo() {
     let oo = Ouroboros::new_in_memory();
     let mut nd = ComboVal::default();
     nd.effect = EffectTag::NonDet;
-    nd.insert_field("x", Value::Atom(AtomKind::Int(BigInt::from(1)), EffectTag::Pure, None));
+    nd.insert_field(
+        "x",
+        Value::Atom(AtomKind::Int(BigInt::from(1)), EffectTag::Pure, None),
+    );
     let nd = Value::Combo(nd);
     let pure = big_combo("p", 3);
 
@@ -85,7 +108,11 @@ fn nondet_operand_bypasses_memo() {
     let _ = oo.unify(nd.clone(), pure.clone());
     let _ = oo.unify(nd.clone(), pure.clone());
     let memo_len = oo.unify_memo.read().unwrap().len();
-    assert_eq!(memo_len, 0, "nondet operand must bypass memo, found {} entries", memo_len);
+    assert_eq!(
+        memo_len, 0,
+        "nondet operand must bypass memo, found {} entries",
+        memo_len
+    );
 }
 
 fn kind_of(v: &Value) -> &'static str {

@@ -51,6 +51,7 @@
 // so the attacker must be **early**, not merely rich. That is a race
 // condition, not a defence, and R3 pins the policy rather than the safety.
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -58,7 +59,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::fs;
 
 use nlang_interpreter::value::Identity;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -136,7 +136,11 @@ fn object_count(dir: &Path) -> usize {
         if let Ok(rd) = fs::read_dir(p) {
             for e in rd.flatten() {
                 let path = e.path();
-                if path.is_dir() { walk(&path, n); } else { *n += 1; }
+                if path.is_dir() {
+                    walk(&path, n);
+                } else {
+                    *n += 1;
+                }
             }
         }
     }
@@ -146,7 +150,10 @@ fn object_count(dir: &Path) -> usize {
 }
 
 fn now_secs() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 // ── ids and distance, probe side ────────────────────────────────────────
@@ -183,7 +190,9 @@ fn routing_id_of_caid(caid: &str) -> [u8; ID_BYTES] {
 
 fn xor(a: &[u8; ID_BYTES], b: &[u8; ID_BYTES]) -> [u8; ID_BYTES] {
     let mut o = [0u8; ID_BYTES];
-    for i in 0..ID_BYTES { o[i] = a[i] ^ b[i]; }
+    for i in 0..ID_BYTES {
+        o[i] = a[i] ^ b[i];
+    }
     o
 }
 
@@ -193,7 +202,12 @@ fn bucket_index(self_id: &[u8; ID_BYTES], peer: &[u8; ID_BYTES]) -> usize {
     let x = xor(self_id, peer);
     let mut n = 0;
     for b in x.iter() {
-        if *b == 0 { n += 8; } else { n += b.leading_zeros() as usize; break; }
+        if *b == 0 {
+            n += 8;
+        } else {
+            n += b.leading_zeros() as usize;
+            break;
+        }
     }
     n.min(ID_BYTES * 8)
 }
@@ -217,9 +231,12 @@ fn mint_peer(rng: &ring::rand::SystemRandom, listen_port: u16) -> SynthPeer {
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(rng).unwrap();
     let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
     let pk = key_pair.public_key().as_ref().to_vec();
-    let node_id = Identity { public_key: pk.clone(), private_key: Vec::new() }
-        .node_id_caid()
-        .to_string();
+    let node_id = Identity {
+        public_key: pk.clone(),
+        private_key: Vec::new(),
+    }
+    .node_id_caid()
+    .to_string();
     SynthPeer {
         public_key_hex: hex::encode(&pk),
         id: routing_id(&pk),
@@ -231,7 +248,11 @@ fn mint_peer(rng: &ring::rand::SystemRandom, listen_port: u16) -> SynthPeer {
 
 impl SynthPeer {
     fn body(&self, services: &[String], ts: i64, ttl: i64) -> String {
-        let svc = services.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", ");
+        let svc = services
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "{{{{ node_id: \"{}\", public_key: \"{}\", services: [{svc}], \
              listen_port: {}, capacity: 10, ts: {ts}, ttl: 15 }}}}",
@@ -243,7 +264,11 @@ impl SynthPeer {
     fn signed_advert(&self, caid_dir: &Path) -> String {
         let body = self.body(&[], now_secs(), 15);
         let caid = caid_of(caid_dir, &body);
-        let sig = hex::encode(self.key_pair.sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes()).as_ref());
+        let sig = hex::encode(
+            self.key_pair
+                .sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes())
+                .as_ref(),
+        );
         let inner = body.trim_start_matches("{{").trim_end_matches("}}").trim();
         format!("{{{{ {inner}, signature: \"{sig}\" }}}}")
     }
@@ -259,14 +284,23 @@ impl SynthPeer {
 
 // ── running node ────────────────────────────────────────────────────────
 
-struct Node { child: Child, port: u16, log: PathBuf }
+struct Node {
+    child: Child,
+    port: u16,
+    log: PathBuf,
+}
 
 impl Drop for Node {
-    fn drop(&mut self) { self.child.kill().ok(); self.child.wait().ok(); }
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+    }
 }
 
 impl Node {
-    fn log(&self) -> String { fs::read_to_string(&self.log).unwrap_or_default() }
+    fn log(&self) -> String {
+        fs::read_to_string(&self.log).unwrap_or_default()
+    }
 }
 
 /// Ports above 21000 — earlier arcs leave stray listeners in the 19000s.
@@ -274,7 +308,9 @@ fn free_port() -> u16 {
     for _ in 0..64 {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let p = l.local_addr().unwrap().port();
-        if p > 21000 { return p; }
+        if p > 21000 {
+            return p;
+        }
     }
     panic!("no free port above 21000");
 }
@@ -295,7 +331,9 @@ fn serve(dir: &Path) -> Node {
         if node.child.try_wait().unwrap().is_some() {
             panic!("`oo node serve` exited: {}", node.log());
         }
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() { return node; }
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return node;
+        }
     }
     panic!("`oo node serve` never came up: {}", node.log());
 }
@@ -304,7 +342,9 @@ fn ask_raw(port: u16, payload: &str) -> String {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     s.write_all(payload.as_bytes()).unwrap();
-    if !payload.ends_with('\n') { s.write_all(b"\n").unwrap(); }
+    if !payload.ends_with('\n') {
+        s.write_all(b"\n").unwrap();
+    }
     s.flush().unwrap();
     s.shutdown(std::net::Shutdown::Write).ok();
     let mut buf = Vec::new();
@@ -328,8 +368,12 @@ fn find_node_request(from: &str, target_hex: &str) -> String {
 
 /// `%ad` sources out of a `%peers` array.
 fn peer_ads(reply: &str) -> Vec<String> {
-    let Ok(j) = serde_json::from_str::<serde_json::Value>(reply.trim()) else { return vec![] };
-    let Some(arr) = j.get("%peers").and_then(|v| v.as_array()) else { return vec![] };
+    let Ok(j) = serde_json::from_str::<serde_json::Value>(reply.trim()) else {
+        return vec![];
+    };
+    let Some(arr) = j.get("%peers").and_then(|v| v.as_array()) else {
+        return vec![];
+    };
     arr.iter()
         .filter_map(|e| e.get("%ad").and_then(|v| v.as_str()).map(str::to_string))
         .collect()
@@ -338,13 +382,22 @@ fn peer_ads(reply: &str) -> Vec<String> {
 /// `node_id` field out of an advertisement source.
 fn ad_node_id(ad: &str) -> String {
     let needle = "node_id: \"";
-    let i = ad.find(needle).unwrap_or_else(|| panic!("no node_id in {ad}"));
-    ad[i + needle.len()..].split('"').next().unwrap().to_string()
+    let i = ad
+        .find(needle)
+        .unwrap_or_else(|| panic!("no node_id in {ad}"));
+    ad[i + needle.len()..]
+        .split('"')
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 /// The routing ids named by a `#find_node` answer, in the order returned.
 fn answer_ids(reply: &str) -> Vec<[u8; ID_BYTES]> {
-    peer_ads(reply).iter().map(|a| routing_id_of_caid(&ad_node_id(a))).collect()
+    peer_ads(reply)
+        .iter()
+        .map(|a| routing_id_of_caid(&ad_node_id(a)))
+        .collect()
 }
 
 /// `oo node routing` → (bucket occupancies, total, dropped_full).
@@ -397,7 +450,9 @@ fn routing_dump(
     let mut saw_any = false;
 
     for line in log.lines() {
-        let Some(rest) = line.trim().strip_prefix("OODP Routing: ") else { continue };
+        let Some(rest) = line.trim().strip_prefix("OODP Routing: ") else {
+            continue;
+        };
         saw_any = true;
         if let Some(b) = rest.strip_prefix("bucket ") {
             // `<i> full, incumbent kept, dropped <node_id>`
@@ -406,12 +461,20 @@ fn routing_dump(
             dropped += 1;
         } else if rest.starts_with('+') {
             // `+<node_id> bucket=<i> occupancy=<n>/<k>`
-            let b = rest.split("bucket=").nth(1)
+            let b = rest
+                .split("bucket=")
+                .nth(1)
                 .unwrap_or_else(|| panic!("no bucket= in {rest:?}"));
             let idx: usize = b.split_whitespace().next().unwrap().parse().unwrap();
-            let occ: usize = rest.split("occupancy=").nth(1)
+            let occ: usize = rest
+                .split("occupancy=")
+                .nth(1)
                 .unwrap_or_else(|| panic!("no occupancy= in {rest:?}"))
-                .split('/').next().unwrap().parse().unwrap();
+                .split('/')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
             // The engine reports occupancy AFTER the insert, so it is also a
             // running check that the log and the table agree.
             let e = buckets.entry(idx).or_default();
@@ -436,7 +499,9 @@ fn routing_dump(
 /// This node's own routing id, from `oo node id`.
 fn self_id(dir: &Path) -> [u8; ID_BYTES] {
     let out = oo(dir, &["node", "id"]);
-    let caid = out.lines().find(|l| l.starts_with("hash:"))
+    let caid = out
+        .lines()
+        .find(|l| l.starts_with("hash:"))
         .unwrap_or_else(|| panic!("`oo node id` printed no CAID: {out:?}"));
     routing_id_of_caid(caid.trim())
 }
@@ -449,17 +514,20 @@ fn self_id(dir: &Path) -> [u8; ID_BYTES] {
 /// This is the *specification* restated, not a copy of the implementation —
 /// R2 and R3 exist to check that the implementation agrees with it, and R5
 /// uses it only so that "the correct answer" is well defined.
-fn simulate_table<'a>(
-    self_id: &[u8; ID_BYTES],
-    offered: &'a [SynthPeer],
-) -> Vec<&'a SynthPeer> {
+fn simulate_table<'a>(self_id: &[u8; ID_BYTES], offered: &'a [SynthPeer]) -> Vec<&'a SynthPeer> {
     let mut buckets: std::collections::BTreeMap<usize, Vec<&SynthPeer>> = Default::default();
     for p in offered {
         let b = bucket_index(self_id, &p.id);
-        if b >= ID_BYTES * 8 { continue; } // self — never stored (§3.5)
+        if b >= ID_BYTES * 8 {
+            continue;
+        } // self — never stored (§3.5)
         let slot = buckets.entry(b).or_default();
-        if slot.iter().any(|q| q.node_id == p.node_id) { continue; } // refresh
-        if slot.len() < K { slot.push(p); }
+        if slot.iter().any(|q| q.node_id == p.node_id) {
+            continue;
+        } // refresh
+        if slot.len() < K {
+            slot.push(p);
+        }
     }
     buckets.into_values().flatten().collect()
 }
@@ -561,7 +629,12 @@ fn fixture(tag: &str, n: usize) -> Fixture {
         );
     }
     let _ = dir; // the server's workspace; probes observe it through its log
-    Fixture { caid_dir, node, self_id: sid, peers }
+    Fixture {
+        caid_dir,
+        node,
+        self_id: sid,
+        peers,
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -580,7 +653,9 @@ fn r1_bucket_index_is_the_leading_zero_count() {
     for p in &f.peers {
         let b = bucket_index(&f.self_id, &p.id);
         let e = expected.entry(b).or_default();
-        if *e < K { *e += 1; }
+        if *e < K {
+            *e += 1;
+        }
     }
     assert!(
         expected.len() >= MIN_BUCKETS_COVERED,
@@ -601,13 +676,21 @@ fn r1_bucket_index_is_the_leading_zero_count() {
 #[test]
 fn r2_a_bucket_holds_exactly_k() {
     let f = fixture("r2", 220);
-    let offered_b0 = f.peers.iter().filter(|p| bucket_index(&f.self_id, &p.id) == 0).count();
+    let offered_b0 = f
+        .peers
+        .iter()
+        .filter(|p| bucket_index(&f.self_id, &p.id) == 0)
+        .count();
     assert!(
         offered_b0 > K + 30,
         "HARNESS: only {offered_b0} candidates for bucket 0, need well over {K}"
     );
     let (buckets, _, dropped) = routing_dump(&f.node, f.peers.len());
-    assert_eq!(buckets.get(&0), Some(&K), "bucket 0 does not hold exactly {K}");
+    assert_eq!(
+        buckets.get(&0),
+        Some(&K),
+        "bucket 0 does not hold exactly {K}"
+    );
     assert_eq!(
         dropped,
         f.peers.len() - buckets.values().sum::<usize>(),
@@ -625,9 +708,16 @@ fn r2_a_bucket_holds_exactly_k() {
 #[test]
 fn r3_incumbent_first_keeps_the_early_ones() {
     let f = fixture("r3", 220);
-    let b0: Vec<&SynthPeer> = f.peers.iter()
-        .filter(|p| bucket_index(&f.self_id, &p.id) == 0).collect();
-    assert!(b0.len() > K + 10, "HARNESS: too few bucket-0 candidates: {}", b0.len());
+    let b0: Vec<&SynthPeer> = f
+        .peers
+        .iter()
+        .filter(|p| bucket_index(&f.self_id, &p.id) == 0)
+        .collect();
+    assert!(
+        b0.len() > K + 10,
+        "HARNESS: too few bucket-0 candidates: {}",
+        b0.len()
+    );
 
     let present = |p: &SynthPeer| {
         let r = ask_raw(f.node.port, &find_node_request("x", &hex::encode(p.id)));
@@ -662,7 +752,10 @@ fn r4_readvertising_refreshes_rather_than_competes() {
 
     let (after, total_after, dropped_after) = routing_dump(&f.node, f.peers.len());
     assert_eq!(before, after, "re-advertising changed bucket occupancy");
-    assert_eq!(total_before, total_after, "re-advertising changed the total");
+    assert_eq!(
+        total_before, total_after,
+        "re-advertising changed the total"
+    );
     assert_eq!(
         dropped_before, dropped_after,
         "a re-advertisement was counted as a peer that did not fit"
@@ -684,12 +777,18 @@ fn r4_readvertising_refreshes_rather_than_competes() {
 fn r5_closest_equals_brute_force_at_every_depth() {
     let f = fixture("r5", 220);
     let held = simulate_table(&f.self_id, &f.peers);
-    assert!(held.len() > K, "HARNESS: table too small to discriminate: {}", held.len());
+    assert!(
+        held.len() > K,
+        "HARNESS: table too small to discriminate: {}",
+        held.len()
+    );
 
     let mut targets: Vec<[u8; ID_BYTES]> = Vec::new();
     // Shallow: random.
     let rng = ring::rand::SystemRandom::new();
-    for i in 0..10 { targets.push(mint_peer(&rng, 21000 + i).id); }
+    for i in 0..10 {
+        targets.push(mint_peer(&rng, 21000 + i).id);
+    }
     // Deep: a held peer's id with progressively higher bits flipped, so the
     // target sits at distance 2^b from a peer the table certainly has.
     for b in [0usize, 1, 3, 7, 15, 31, 63, 100, 140, 159] {
@@ -701,7 +800,10 @@ fn r5_closest_equals_brute_force_at_every_depth() {
     let mut worst_rank_disagreement = 0usize;
     for t in &targets {
         let expect = brute_force_closest(t, &held, MAX_FIND_NODE_PEERS);
-        let got = answer_ids(&ask_raw(f.node.port, &find_node_request("x", &hex::encode(t))));
+        let got = answer_ids(&ask_raw(
+            f.node.port,
+            &find_node_request("x", &hex::encode(t)),
+        ));
         assert_eq!(
             got.len(),
             expect.len(),
@@ -709,7 +811,9 @@ fn r5_closest_equals_brute_force_at_every_depth() {
             hex::encode(t)
         );
         for (i, (g, e)) in got.iter().zip(expect.iter()).enumerate() {
-            if g != e { worst_rank_disagreement = worst_rank_disagreement.max(i + 1); }
+            if g != e {
+                worst_rank_disagreement = worst_rank_disagreement.max(i + 1);
+            }
         }
         assert_eq!(
             got,
@@ -795,12 +899,12 @@ fn r8_target_is_an_id_not_a_caid() {
         "LIVENESS: a well-formed target was not answered"
     );
     for bad in [
-        f.peers[0].node_id.clone(),          // a CAID
-        good.to_uppercase(),                 // uppercase
-        good[..38].to_string(),              // too short
-        format!("{good}00"),                 // too long
-        "zz".repeat(20),                     // not hex
-        String::new(),                       // absent
+        f.peers[0].node_id.clone(), // a CAID
+        good.to_uppercase(),        // uppercase
+        good[..38].to_string(),     // too short
+        format!("{good}00"),        // too long
+        "zz".repeat(20),            // not hex
+        String::new(),              // absent
     ] {
         assert_eq!(
             status_of(&ask_raw(f.node.port, &find_node_request("x", &bad))),
@@ -832,9 +936,18 @@ fn r9_the_table_learns_only_from_signed_advertisements() {
     }
 
     let (after, total_after, _) = routing_dump(&f.node, f.peers.len());
-    assert_eq!(total_before, total_after, "the table grew from an unsigned %from");
-    assert_eq!(before, after, "bucket occupancy changed from an unsigned %from");
-    let r = ask_raw(f.node.port, &find_node_request("x", &hex::encode(stranger.id)));
+    assert_eq!(
+        total_before, total_after,
+        "the table grew from an unsigned %from"
+    );
+    assert_eq!(
+        before, after,
+        "bucket occupancy changed from an unsigned %from"
+    );
+    let r = ask_raw(
+        f.node.port,
+        &find_node_request("x", &hex::encode(stranger.id)),
+    );
     assert!(
         !answer_ids(&r).iter().any(|id| *id == stranger.id),
         "a node that only ever *asked* is now being advertised to others: {r}"
@@ -901,11 +1014,27 @@ fn r11_a_relayed_body_that_computes_is_refused_before_it_runs() {
     .to_string();
 
     let relay = spawn_relayer(reply);
-    let out = oo(&dir, &["node", "find-node", "--to", &relay.addr(),
-                         "--target", &hex::encode(good_peer.id)]);
+    let out = oo(
+        &dir,
+        &[
+            "node",
+            "find-node",
+            "--to",
+            &relay.addr(),
+            "--target",
+            &hex::encode(good_peer.id),
+        ],
+    );
 
-    assert!(!loot.exists(), "a relayed body was EVALUATED: {} exists\n{out}", loot.display());
-    assert!(!relay.asked().is_empty(), "LIVENESS: the client never connected: {out}");
+    assert!(
+        !loot.exists(),
+        "a relayed body was EVALUATED: {} exists\n{out}",
+        loot.display()
+    );
+    assert!(
+        !relay.asked().is_empty(),
+        "LIVENESS: the client never connected: {out}"
+    );
     assert!(
         out.contains(&good_peer.node_id),
         "LIVENESS: the good record in the same reply was not accepted, so the \
@@ -922,19 +1051,41 @@ fn r11_a_relayed_body_that_computes_is_refused_before_it_runs() {
 #[test]
 fn r12_both_budgets_are_kept() {
     let f = fixture("r12", 220);
-    let r = ask_raw(f.node.port, &find_node_request("x", &hex::encode(f.peers[0].id)));
+    let r = ask_raw(
+        f.node.port,
+        &find_node_request("x", &hex::encode(f.peers[0].id)),
+    );
     let n = answer_ids(&r).len();
-    assert!(n > 0, "LIVENESS: 220 advertisements landed and none came back: {r}");
-    assert!(n <= MAX_FIND_NODE_PEERS, "answer carries {n} peers, cap is {MAX_FIND_NODE_PEERS}");
-    assert!(r.len() <= MAX_REPLY_BYTES, "answer is {} bytes, budget is {MAX_REPLY_BYTES}", r.len());
+    assert!(
+        n > 0,
+        "LIVENESS: 220 advertisements landed and none came back: {r}"
+    );
+    assert!(
+        n <= MAX_FIND_NODE_PEERS,
+        "answer carries {n} peers, cap is {MAX_FIND_NODE_PEERS}"
+    );
+    assert!(
+        r.len() <= MAX_REPLY_BYTES,
+        "answer is {} bytes, budget is {MAX_REPLY_BYTES}",
+        r.len()
+    );
 
     // …and the client refuses an oversized reply by name rather than
     // processing a truncated prefix.
     let dir = fresh_dir("r12-client");
     init(&dir);
     let flood = spawn_flooder(MAX_REPLY_BYTES * 4);
-    let out = oo(&dir, &["node", "find-node", "--to", &flood.addr(),
-                         "--target", &"a".repeat(40)]);
+    let out = oo(
+        &dir,
+        &[
+            "node",
+            "find-node",
+            "--to",
+            &flood.addr(),
+            "--target",
+            &"a".repeat(40),
+        ],
+    );
     assert!(
         out.contains("oversize"),
         "an oversized reply was not named — a truncated prefix must never be \
@@ -944,11 +1095,18 @@ fn r12_both_budgets_are_kept() {
 
 // ── fake peers for the client-side reds ─────────────────────────────────
 
-struct Relayer { port: u16, asked: Arc<Mutex<Vec<String>>> }
+struct Relayer {
+    port: u16,
+    asked: Arc<Mutex<Vec<String>>>,
+}
 
 impl Relayer {
-    fn addr(&self) -> String { format!("127.0.0.1:{}", self.port) }
-    fn asked(&self) -> Vec<String> { self.asked.lock().unwrap().clone() }
+    fn addr(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+    fn asked(&self) -> Vec<String> {
+        self.asked.lock().unwrap().clone()
+    }
 }
 
 fn spawn_relayer(reply: String) -> Relayer {
@@ -989,10 +1147,15 @@ fn spawn_flooder(total: usize) -> Relayer {
             let _ = std::io::BufRead::read_line(&mut std::io::BufReader::new(c), &mut line);
             log.lock().unwrap().push(line.trim().to_string());
             let _ = s.write_all(br##"{"%status":"#success","%source":"x","%hops":1,"%peers":["##);
-            let chunk = format!(r#"{{"%ad":"{}","%observed_host":"1.2.3.4"}},"#, "A".repeat(4096));
+            let chunk = format!(
+                r#"{{"%ad":"{}","%observed_host":"1.2.3.4"}},"#,
+                "A".repeat(4096)
+            );
             let mut sent = 0usize;
             while sent < total {
-                if s.write_all(chunk.as_bytes()).is_err() { break; }
+                if s.write_all(chunk.as_bytes()).is_err() {
+                    break;
+                }
                 sent += chunk.len();
             }
             let _ = s.shutdown(std::net::Shutdown::Write);
@@ -1019,15 +1182,26 @@ fn p1_discover_untouched() {
     let p = mint_peer(&rng, 21777);
     let body = p.body(&[target.clone()], now_secs(), 15);
     let caid = caid_of(&caid_dir, &body);
-    let sig = hex::encode(p.key_pair.sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes()).as_ref());
+    let sig = hex::encode(
+        p.key_pair
+            .sign(format!("{ADVERT_DOMAIN}{caid}").as_bytes())
+            .as_ref(),
+    );
     let inner = body.trim_start_matches("{{").trim_end_matches("}}").trim();
     let ad = format!("{{{{ {inner}, signature: \"{sig}\" }}}}");
-    let r = ask_raw(node.port, &format!(
-        "{{{{ %op: #advertise, %from: \"{}\", %ad: {ad} }}}}\n", p.node_id));
+    let r = ask_raw(
+        node.port,
+        &format!(
+            "{{{{ %op: #advertise, %from: \"{}\", %ad: {ad} }}}}\n",
+            p.node_id
+        ),
+    );
     assert_eq!(status_of(&r), "success", "{r}");
 
-    let d = ask_raw(node.port, &format!(
-        "{{{{ %op: #discover, %from: \"x\", %target: \"{target}\" }}}}\n"));
+    let d = ask_raw(
+        node.port,
+        &format!("{{{{ %op: #discover, %from: \"x\", %target: \"{target}\" }}}}\n"),
+    );
     assert_eq!(status_of(&d), "success", "{d}");
     assert!(
         peer_ads(&d).iter().any(|a| ad_node_id(a) == p.node_id),
@@ -1050,16 +1224,26 @@ fn p2_advertise_ladder_intact() {
     let r = ask_raw(node.port, &p.advertise_request(&caid_dir));
     assert_eq!(status_of(&r), "success", "a valid advertisement: {r}");
 
-    let r = ask_raw(node.port, &format!(
-        "{{{{ %op: #advertise, %from: \"hash:sha256:v1:someone-else\", %ad: {} }}}}\n",
-        p.signed_advert(&caid_dir)));
+    let r = ask_raw(
+        node.port,
+        &format!(
+            "{{{{ %op: #advertise, %from: \"hash:sha256:v1:someone-else\", %ad: {} }}}}\n",
+            p.signed_advert(&caid_dir)
+        ),
+    );
     assert_eq!(status_of(&r), "rejected", "{r}");
-    assert_eq!(field_of(&r, "%reason").unwrap_or_default(), "identity_mismatch", "{r}");
+    assert_eq!(
+        field_of(&r, "%reason").unwrap_or_default(),
+        "identity_mismatch",
+        "{r}"
+    );
 
     let loot = dir.join("p2-must-not-exist.txt");
     let bomb = format!(
         "{{{{ %op: #advertise, %from: \"{}\", %ad: ~%Io./write_file(\"{}\", \"x\") }}}}\n",
-        p.node_id, loot.display());
+        p.node_id,
+        loot.display()
+    );
     let r = ask_raw(node.port, &bomb);
     assert_eq!(status_of(&r), "rejected", "{r}");
     assert!(!loot.exists(), "the v0.2.50 repair regressed");
@@ -1074,19 +1258,30 @@ fn p2_advertise_ladder_intact() {
 fn p3_the_table_never_reaches_the_root() {
     let src = "world: {\n  greet: \"hello\"\n  n: 7\n}\n";
     let root_digest = |dir: &Path| -> String {
-        let c = oo(dir, &["log"]).lines()
+        let c = oo(dir, &["log"])
+            .lines()
             .find_map(|l| l.strip_prefix("commit ").map(|s| s.trim().to_string()))
             .unwrap_or_default();
         assert!(c.starts_with("hash:sha256:"), "no HEAD commit in {dir:?}");
         let d = c.rsplit(':').next().unwrap().to_string();
-        let p = dir.join(".oo").join("objects").join("sha256").join(&d[..2]).join(&d[2..]);
+        let p = dir
+            .join(".oo")
+            .join("objects")
+            .join("sha256")
+            .join(&d[..2])
+            .join(&d[2..]);
         let commit: serde_json::Value =
             serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
         let dg = commit["root"]["digest"].clone();
-        let hex = if let Some(s) = dg.as_str() { s.to_string() }
-            else if let Some(a) = dg.as_array() {
-                a.iter().map(|b| format!("{:02x}", b.as_u64().unwrap())).collect()
-            } else { panic!("no usable root digest: {}", commit["root"]) };
+        let hex = if let Some(s) = dg.as_str() {
+            s.to_string()
+        } else if let Some(a) = dg.as_array() {
+            a.iter()
+                .map(|b| format!("{:02x}", b.as_u64().unwrap()))
+                .collect()
+        } else {
+            panic!("no usable root digest: {}", commit["root"])
+        };
         assert_eq!(hex.len(), 64, "root digest is not 64 hex: {hex:?}");
         hex
     };
@@ -1133,11 +1328,18 @@ fn p4_nothing_persisted() {
     let rng = ring::rand::SystemRandom::new();
     for i in 0..30 {
         let p = mint_peer(&rng, 21900 + i);
-        assert_eq!(status_of(&ask_raw(node.port, &p.advertise_request(&caid_dir))), "success");
+        assert_eq!(
+            status_of(&ask_raw(node.port, &p.advertise_request(&caid_dir))),
+            "success"
+        );
     }
     ask_raw(node.port, &find_node_request("x", &"b".repeat(40)));
 
-    assert_eq!(object_count(&dir), before, "the node wrote objects while routing");
+    assert_eq!(
+        object_count(&dir),
+        before,
+        "the node wrote objects while routing"
+    );
 
     // ACCEPTOR REPAIR of this pin. It used to name one path — `.oo/routing/`,
     // the blueprint REAL_02 §5.1 sketches — and the delivery persisted the
@@ -1166,12 +1368,18 @@ fn p4_nothing_persisted() {
 fn p5_fetch_untouched() {
     let dir = fresh_dir("p5-srv");
     init(&dir);
-    write(&dir, "i.n", "id: ~%Discovery./identify_and_store { p5: 1 }\n");
+    write(
+        &dir,
+        "i.n",
+        "id: ~%Discovery./identify_and_store { p5: 1 }\n",
+    );
     let caid = first_string(&oo(&dir, &["run", "i.n", "--observe", "id"]));
     let node = serve(&dir);
     for from in ["", "hash:sha256:v1:whoever", "not-a-caid"] {
-        let r = ask_raw(node.port, &format!(
-            "{{{{ %op: #fetch, %from: \"{from}\", %hash: \"{caid}\" }}}}\n"));
+        let r = ask_raw(
+            node.port,
+            &format!("{{{{ %op: #fetch, %from: \"{from}\", %hash: \"{caid}\" }}}}\n"),
+        );
         assert_eq!(status_of(&r), "success", "%from={from:?}: {r}");
     }
 }

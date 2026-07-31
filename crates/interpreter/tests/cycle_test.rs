@@ -1,13 +1,21 @@
-use nlang_interpreter::{Ouroboros, Value, EvalContext, ComboVal, BottomCause, EffectTag, ObservationStrategy};
-use nlang_parser::parse_program;
 use indexmap::IndexMap;
+use nlang_interpreter::{
+    BottomCause, ComboVal, EffectTag, EvalContext, ObservationStrategy, Ouroboros, Value,
+};
+use nlang_parser::parse_program;
 
 #[test]
 fn test_static_cycle() {
     let input = "x: { a: b, b: a }";
     let program = parse_program(input).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
 
     let res = oo.eval_observed(&program.fields[0].value, &mut ctx);
     if let Value::Combo(cv) = res {
@@ -24,25 +32,40 @@ fn test_fuel_exhausted_strict_mode() {
     let input = "x: 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1";
     let program = parse_program(input).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]))
-        .with_fuel(2)
-        .with_strategy(ObservationStrategy::Strict);
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+    .with_fuel(2)
+    .with_strategy(ObservationStrategy::Strict);
 
     let res = oo.eval_observed(&program.fields[0].value, &mut ctx);
     match res {
         Value::Bottom(d) => {
             assert_eq!(d.cause, BottomCause::FuelExhausted);
         }
-        other => panic!("Expected Bottom(FuelExhausted) in strict mode, got {:?}", other),
+        other => panic!(
+            "Expected Bottom(FuelExhausted) in strict mode, got {:?}",
+            other
+        ),
     }
 }
 
 #[test]
 fn test_fuel_exhausted_blur_mode() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]))
-        .with_fuel(1)
-        .with_strategy(ObservationStrategy::Blur);
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+    .with_fuel(1)
+    .with_strategy(ObservationStrategy::Blur);
 
     let input = "x: 1 + 2";
     let program = parse_program(input).unwrap();
@@ -60,7 +83,9 @@ fn test_fuel_exhausted_blur_mode() {
         Value::Combo(cv) => {
             // Legacy combo-shaped #blur (if any residual path).
             let kind = cv.get_field("%kind");
-            assert!(kind.map(|k| k.to_string_plain().trim_start_matches('#') == "blur").unwrap_or(false));
+            assert!(kind
+                .map(|k| k.to_string_plain().trim_start_matches('#') == "blur")
+                .unwrap_or(false));
         }
         Value::Bottom(_) => {
             // Acceptable if computation was very cheap relative to fuel=1.

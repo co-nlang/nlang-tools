@@ -197,7 +197,10 @@ fn tamper(dir: &Path, caid: &str, from: &str, to: &str) {
     let p = object_path(dir, caid);
     let s = fs::read_to_string(&p).unwrap();
     let s2 = s.replacen(from, to, 1);
-    assert_ne!(s, s2, "tamper precondition: {from:?} must occur in the object");
+    assert_ne!(
+        s, s2,
+        "tamper precondition: {from:?} must occur in the object"
+    );
     fs::write(&p, s2).unwrap();
 }
 
@@ -232,10 +235,16 @@ fn red_tampered_object_is_refused_not_returned() {
     let d = fresh_dir();
     seeded(&d);
     let caid = save(&d, r#"{a: 1, b: "two"}"#);
-    assert!(caid.starts_with("hash:sha256:v2:"), "save must return a v2 CAID: {caid:?}");
+    assert!(
+        caid.starts_with("hash:sha256:v2:"),
+        "save must return a v2 CAID: {caid:?}"
+    );
 
     let before = oo(&d, &["inspect", &caid]);
-    assert!(before.contains("\"two\""), "control: the true value must read back: {before:?}");
+    assert!(
+        before.contains("\"two\""),
+        "control: the true value must read back: {before:?}"
+    );
 
     tamper(&d, &caid, "\"two\"", "\"XXX\"");
     let after = oo(&d, &["inspect", &caid]);
@@ -261,7 +270,10 @@ fn red_tampered_commit_object_is_refused() {
     oo(&d, &["commit", "-m", "second"]);
 
     let before = oo(&d, &["log"]);
-    assert!(before.contains("second"), "control: the log must read: {before:?}");
+    assert!(
+        before.contains("second"),
+        "control: the log must read: {before:?}"
+    );
 
     let head = fs::read_to_string(d.join(".oo").join("HEAD")).unwrap();
     tamper(&d, head.trim(), "second", "forged");
@@ -293,10 +305,7 @@ fn red_corruption_absence_and_validity_are_three_outcomes() {
     let doomed = save(&d, r#"{k: "doomed"}"#);
     tamper(&d, &doomed, "\"doomed\"", "\"edited\"");
 
-    let absent = format!(
-        "hash:sha256:v1:{}",
-        "0".repeat(64)
-    );
+    let absent = format!("hash:sha256:v1:{}", "0".repeat(64));
 
     let a = oo(&d, &["inspect", &good]);
     let b = oo(&d, &["inspect", &doomed]);
@@ -338,12 +347,26 @@ fn red_forged_sketch_in_the_requested_caid_is_refused() {
     let caid = save(&d, r#"{a: 1, b: "two"}"#);
 
     let parts: Vec<&str> = caid.split(':').collect();
-    assert_eq!(parts.len(), 6, "v2 CAID shape: hash:algo:ver:masa:sketch:digest — {caid:?}");
+    assert_eq!(
+        parts.len(),
+        6,
+        "v2 CAID shape: hash:algo:ver:masa:sketch:digest — {caid:?}"
+    );
     let sketch = parts[4];
     let flipped: String = sketch
         .chars()
         .enumerate()
-        .map(|(i, c)| if i == 0 { if c == 'A' { 'B' } else { 'A' } } else { c })
+        .map(|(i, c)| {
+            if i == 0 {
+                if c == 'A' {
+                    'B'
+                } else {
+                    'A'
+                }
+            } else {
+                c
+            }
+        })
         .collect();
     let forged = format!(
         "{}:{}:{}:{}:{}:{}",
@@ -352,7 +375,10 @@ fn red_forged_sketch_in_the_requested_caid_is_refused() {
     assert_ne!(forged, caid, "the forged CAID must actually differ");
 
     let honest = oo(&d, &["inspect", &caid]);
-    assert!(honest.contains("\"two\""), "control: the honest CAID must resolve: {honest:?}");
+    assert!(
+        honest.contains("\"two\""),
+        "control: the honest CAID must resolve: {honest:?}"
+    );
 
     let got = oo(&d, &["inspect", &forged]);
     assert!(
@@ -438,11 +464,7 @@ fn red_a_run_does_not_force_a_recursive_type() {
     // object); green only when the loop is gone.
     let d = fresh_dir();
     seeded(&d);
-    write(
-        &d,
-        "t.n",
-        "@Tree: { v: @int, next: @Tree | () }\nout: 1\n",
-    );
+    write(&d, "t.n", "@Tree: { v: @int, next: @Tree | () }\nout: 1\n");
     let before = objects(&d);
     let before_max = before
         .iter()

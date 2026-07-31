@@ -165,7 +165,8 @@ fn resolve_path_for_boundary(raw: &str) -> PathBuf {
 }
 
 fn path_has_dot_oo_component(path: &Path) -> bool {
-    path.components().any(|c| matches!(c, Component::Normal(s) if s == ".oo"))
+    path.components()
+        .any(|c| matches!(c, Component::Normal(s) if s == ".oo"))
 }
 
 /// ⊥ `#store_boundary` with the offending path in the message.

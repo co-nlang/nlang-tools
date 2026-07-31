@@ -10,8 +10,8 @@
 // sort stays). Range coalescing (1..3 | 2..5) is a NON-goal.
 
 use nlang_interpreter::{Ouroboros, Universe, Value};
-use nlang_parser::parse_program;
 use nlang_parser::ast::{Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -96,7 +96,7 @@ fn union_string_self_dedupes() {
 }
 
 #[test]
-          // (today `1..5 | 1..5`; NOT range coalescing — see pin below)
+// (today `1..5 | 1..5`; NOT range coalescing — see pin below)
 fn union_identical_range_dedupes() {
     assert_obs("out: (1..5) | (1..5)", "1..5");
 }

@@ -1,13 +1,17 @@
 // ENGINE_SYNC regression tests: n.pest vs SPEC_14 (2026-07-05 finalization pass)
+use nlang_parser::ast::{AtomKind, ExprKind, RelOp};
 use nlang_parser::{parse_expr_only, parse_program};
-use nlang_parser::ast::{ExprKind, AtomKind, RelOp};
 
 // #1: & (L10) binds tighter than cmp (L11) — anti-C declaration (SPEC_14 §2.3)
 #[test]
 fn meet_tighter_than_cmp() {
     let e = parse_expr_only("a < b & c").unwrap();
     match e.kind {
-        ExprKind::Lt(_, r) => assert!(matches!(r.kind, ExprKind::Meet(_, _)), "rhs should be (b & c), got {:?}", r.kind),
+        ExprKind::Lt(_, r) => assert!(
+            matches!(r.kind, ExprKind::Meet(_, _)),
+            "rhs should be (b & c), got {:?}",
+            r.kind
+        ),
         other => panic!("expected Lt at top, got {:?}", other),
     }
 }
@@ -15,17 +19,32 @@ fn meet_tighter_than_cmp() {
 // #2: cmp_op gains `=` (lattice equality) and `<=>` (direction probe)
 #[test]
 fn lattice_eq_and_probe() {
-    assert!(matches!(parse_expr_only("a = b").unwrap().kind, ExprKind::LatticeEq(_, _)));
-    assert!(matches!(parse_expr_only("a <=> b").unwrap().kind, ExprKind::Probe(_, _)));
+    assert!(matches!(
+        parse_expr_only("a = b").unwrap().kind,
+        ExprKind::LatticeEq(_, _)
+    ));
+    assert!(matches!(
+        parse_expr_only("a <=> b").unwrap().kind,
+        ExprKind::Probe(_, _)
+    ));
     // == stays the atomic family
-    assert!(matches!(parse_expr_only("a == b").unwrap().kind, ExprKind::Eq(_, _)));
+    assert!(matches!(
+        parse_expr_only("a == b").unwrap().kind,
+        ExprKind::Eq(_, _)
+    ));
 }
 
 // #3: structural brackets are double angles
 #[test]
 fn structural_double_angle() {
-    assert!(matches!(parse_expr_only("<<x>>").unwrap().kind, ExprKind::Structural(_)));
-    assert!(matches!(parse_expr_only("<<_.>> |> <<_.>>").unwrap().kind, ExprKind::Pipe(_, _)));
+    assert!(matches!(
+        parse_expr_only("<<x>>").unwrap().kind,
+        ExprKind::Structural(_)
+    ));
+    assert!(matches!(
+        parse_expr_only("<<_.>> |> <<_.>>").unwrap().kind,
+        ExprKind::Pipe(_, _)
+    ));
 }
 
 // #4: structured prefixes — legal stacks parse as keys, illegal stacks don't
@@ -48,9 +67,15 @@ fn tuples() {
         ExprKind::Tuple(items) => assert_eq!(items.len(), 1),
         other => panic!("expected 1-Tuple, got {:?}", other),
     }
-    assert!(matches!(parse_expr_only("(1)").unwrap().kind, ExprKind::Atom(AtomKind::Int(_))));
+    assert!(matches!(
+        parse_expr_only("(1)").unwrap().kind,
+        ExprKind::Atom(AtomKind::Int(_))
+    ));
     // list accepts ; separator and trailing separator
-    assert!(matches!(parse_expr_only("[1; 2; 3,]").unwrap().kind, ExprKind::List(_)));
+    assert!(matches!(
+        parse_expr_only("[1; 2; 3,]").unwrap().kind,
+        ExprKind::List(_)
+    ));
 }
 
 // #6: infix logic L7 — `a /f b` desugars to /f applied to both operands
@@ -67,7 +92,10 @@ fn infix_logic() {
         other => panic!("expected Apply, got {:?}", other),
     }
     // `a / b` (spaced) stays division
-    assert!(matches!(parse_expr_only("a / b").unwrap().kind, ExprKind::Div(_, _)));
+    assert!(matches!(
+        parse_expr_only("a / b").unwrap().kind,
+        ExprKind::Div(_, _)
+    ));
 }
 
 // #7: ternary branches are pipe-level — bare chained ternary is illegal
@@ -76,7 +104,10 @@ fn ternary_branches() {
     assert!(parse_expr_only("a ? b : (c ? d : e)").is_ok());
     // parse_expr_only tolerates trailing input, so test rejection at program level
     let r = parse_program("k: a ? b : c ? d : e");
-    assert!(r.is_err(), "bare chained ternary should be rejected (SYNTAX_12 §4.1)");
+    assert!(
+        r.is_err(),
+        "bare chained ternary should be rejected (SYNTAX_12 §4.1)"
+    );
 }
 
 // #9: multiline string escape for """
@@ -88,14 +119,23 @@ fn multiline_escape() {
 // #10: interpolated strings are not field keys (tag keys are)
 #[test]
 fn field_key_rules() {
-    assert!(parse_program("`k${i}`: 1").is_err(), "interp key must be rejected");
-    assert!(parse_program("#adult: \"Adult\"").is_ok(), "tag key is canonical");
+    assert!(
+        parse_program("`k${i}`: 1").is_err(),
+        "interp key must be rejected"
+    );
+    assert!(
+        parse_program("#adult: \"Adult\"").is_ok(),
+        "tag key is canonical"
+    );
 }
 
 // #12/#13: poset literal #{} with order chains; = allowed in chains
 #[test]
 fn poset_literal() {
-    match parse_expr_only("#{ #draft <= #review < #publish }").unwrap().kind {
+    match parse_expr_only("#{ #draft <= #review < #publish }")
+        .unwrap()
+        .kind
+    {
         ExprKind::Poset(rels) => {
             assert_eq!(rels.len(), 2);
             assert_eq!(rels[0].op, RelOp::Lte);
@@ -110,27 +150,63 @@ fn poset_literal() {
     // multi-chain with anchors
     assert!(parse_expr_only("#{ #_|_ < #init, #a < #c, #b < #c }").is_ok());
     // bare order chain in a combo is no longer legal
-    assert!(parse_expr_only("{ #a < #b }").is_err(), "bare order chain in {{}} must be rejected");
+    assert!(
+        parse_expr_only("{ #a < #b }").is_err(),
+        "bare order chain in {{}} must be rejected"
+    );
 }
 
 // pinned edge cases from the SYNTAX finalization (ENGINE_SYNC test vector list)
 #[test]
 fn pinned_edge_cases() {
     // a-1 is ONE kebab-case ident; a -1 is subtraction; f (-1) is application
-    assert!(matches!(parse_expr_only("a-1").unwrap().kind, ExprKind::Path(_)));
-    assert!(matches!(parse_expr_only("a -1").unwrap().kind, ExprKind::Sub(_, _)));
-    assert!(matches!(parse_expr_only("f (-1)").unwrap().kind, ExprKind::Apply(_, _)));
+    assert!(matches!(
+        parse_expr_only("a-1").unwrap().kind,
+        ExprKind::Path(_)
+    ));
+    assert!(matches!(
+        parse_expr_only("a -1").unwrap().kind,
+        ExprKind::Sub(_, _)
+    ));
+    assert!(matches!(
+        parse_expr_only("f (-1)").unwrap().kind,
+        ExprKind::Apply(_, _)
+    ));
     // 2+3i atomic vs spaced addition
-    assert!(matches!(parse_expr_only("2+3i").unwrap().kind, ExprKind::Atom(AtomKind::Complex(_, _))));
-    assert!(matches!(parse_expr_only("2 + 3i").unwrap().kind, ExprKind::Add(_, _)));
+    assert!(matches!(
+        parse_expr_only("2+3i").unwrap().kind,
+        ExprKind::Atom(AtomKind::Complex(_, _))
+    ));
+    assert!(matches!(
+        parse_expr_only("2 + 3i").unwrap().kind,
+        ExprKind::Add(_, _)
+    ));
     // i-leading identifiers are idents, not complex-then-apply (complex_lit
     // trailing guard, 2026-07-06); bare i / -i stay the imaginary unit
-    assert!(matches!(parse_expr_only("io").unwrap().kind, ExprKind::Path(_)));
-    assert!(matches!(parse_expr_only("input").unwrap().kind, ExprKind::Path(_)));
-    assert!(matches!(parse_expr_only("i-1").unwrap().kind, ExprKind::Path(_)));   // kebab ident
-    assert!(matches!(parse_expr_only("i2").unwrap().kind, ExprKind::Path(_)));
-    assert!(matches!(parse_expr_only("i").unwrap().kind, ExprKind::Atom(AtomKind::Complex(_, _))));
-    assert!(matches!(parse_expr_only("i - 1").unwrap().kind, ExprKind::Sub(_, _))); // spaced: complex minus int
+    assert!(matches!(
+        parse_expr_only("io").unwrap().kind,
+        ExprKind::Path(_)
+    ));
+    assert!(matches!(
+        parse_expr_only("input").unwrap().kind,
+        ExprKind::Path(_)
+    ));
+    assert!(matches!(
+        parse_expr_only("i-1").unwrap().kind,
+        ExprKind::Path(_)
+    )); // kebab ident
+    assert!(matches!(
+        parse_expr_only("i2").unwrap().kind,
+        ExprKind::Path(_)
+    ));
+    assert!(matches!(
+        parse_expr_only("i").unwrap().kind,
+        ExprKind::Atom(AtomKind::Complex(_, _))
+    ));
+    assert!(matches!(
+        parse_expr_only("i - 1").unwrap().kind,
+        ExprKind::Sub(_, _)
+    )); // spaced: complex minus int
 }
 
 // #17: element-position spread builds a real Spread node (the "..." literal
@@ -139,13 +215,20 @@ fn pinned_edge_cases() {
 fn spread_node_in_element_position() {
     match parse_expr_only("[...xs, 1]").unwrap().kind {
         ExprKind::List(items) => {
-            assert!(matches!(items[0].kind, ExprKind::Spread(_)), "first element must be Spread, got {:?}", items[0].kind);
+            assert!(
+                matches!(items[0].kind, ExprKind::Spread(_)),
+                "first element must be Spread, got {:?}",
+                items[0].kind
+            );
             assert_eq!(items.len(), 2);
         }
         other => panic!("expected List, got {:?}", other),
     }
     // bare expr untouched
-    assert!(matches!(parse_expr_only("[xs, 1]").unwrap().kind, ExprKind::List(_)));
+    assert!(matches!(
+        parse_expr_only("[xs, 1]").unwrap().kind,
+        ExprKind::List(_)
+    ));
 }
 
 // deep nesting must not blow the stack (test_enum_auto_number.n shape, regression)

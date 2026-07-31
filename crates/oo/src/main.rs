@@ -1,12 +1,12 @@
+use clap::{Parser, Subcommand};
 use nlang_interpreter::{
-    Ouroboros, Universe, Value, ContentHash, CommitMeta, EffectTag, Privilege,
+    CommitMeta, ContentHash, EffectTag, Ouroboros, Privilege, Universe, Value,
 };
 use nlang_parser::ast::{AtomKind, FieldKey};
 use nlang_parser::parse_program;
-use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::io::{stdin, stdout, Write};
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(author, version = env!("OO_VERSION"), about, long_about = None)]
@@ -44,10 +44,19 @@ enum Commands {
         #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
         grants: Vec<String>,
     },
-    Test { #[arg(long)] static_only: bool, #[arg(short, long)] pattern: Option<String>, files: Vec<PathBuf> },
-    Repl, Status, Log,
+    Test {
+        #[arg(long)]
+        static_only: bool,
+        #[arg(short, long)]
+        pattern: Option<String>,
+        files: Vec<PathBuf>,
+    },
+    Repl,
+    Status,
+    Log,
     Commit {
-        #[arg(short, long)] message: Option<String>,
+        #[arg(short, long)]
+        message: Option<String>,
         /// ACCEPTANCE REPAIR: a pin-pending commit APPLIES the privileged
         /// overwrite, so the capability must be presented here too — the
         /// staged intent file is not authority (SPEC_08 §6.1.2).
@@ -67,7 +76,11 @@ enum Commands {
         #[arg(short, long)]
         message: Option<String>,
     },
-    Fmt { file: PathBuf, #[arg(short, long)] write: bool },
+    Fmt {
+        file: PathBuf,
+        #[arg(short, long)]
+        write: bool,
+    },
     /// Universe node (REAL_01 §1.2 宇宙節點) — serve / later id, discover.
     Node {
         #[command(subcommand)]
@@ -254,12 +267,23 @@ fn main_on_large_stack() -> anyhow::Result<()> {
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
-        Commands::Commit { message, grants, privileged } => {
-            run_commit(message, grants, privileged)
-        }
-        Commands::Refine { source, target, sign, message } => run_refine(source, target, sign, message),
+        Commands::Commit {
+            message,
+            grants,
+            privileged,
+        } => run_commit(message, grants, privileged),
+        Commands::Refine {
+            source,
+            target,
+            sign,
+            message,
+        } => run_refine(source, target, sign, message),
         Commands::Repl => run_repl(),
-        Commands::Test { static_only, pattern, files } => run_test(static_only, pattern, files),
+        Commands::Test {
+            static_only,
+            pattern,
+            files,
+        } => run_test(static_only, pattern, files),
         Commands::Eval {
             expr,
             privileged,
@@ -307,7 +331,8 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
 
     for file in files {
         let input = fs::read_to_string(&file)?;
-        let program = parse_program(&input).map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
+        let program = parse_program(&input)
+            .map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
         for f in &program.fields {
             if let Err(e) = universe.evolve(&engine, &f) {
                 anyhow::bail!("Evolution Conflict in {:?}: {:?} at {:?}", file, e, f.key);
@@ -320,8 +345,8 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
 }
 
 fn run_serve(port: u16) -> anyhow::Result<()> {
-    use std::io::{BufRead, BufReader};
     use nlang_interpreter::oodp;
+    use std::io::{BufRead, BufReader};
     let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))?;
     let current_dir = std::env::current_dir()?;
     let engine = Ouroboros::init(&current_dir)?;
@@ -349,8 +374,7 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
                 if reader.read_line(&mut request).is_ok() {
                     let line = request.trim();
                     println!("OODP Request: {}", line);
-                    let (body, log) =
-                        oodp::serve_request(&engine, line, &source_id, &peer_host);
+                    let (body, log) = oodp::serve_request(&engine, line, &source_id, &peer_host);
                     let _ = stream.write_all(body.as_bytes());
                     let _ = stream.flush();
                     println!("{}", log);
@@ -405,8 +429,8 @@ fn run_node_affiliate(ttl_secs: Option<i64>) -> anyhow::Result<()> {
         );
     }
     let expires = now + ttl;
-    let claim = mint_affiliation_claim(&operator, &node_id, expires)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let claim =
+        mint_affiliation_claim(&operator, &node_id, expires).map_err(|e| anyhow::anyhow!("{e}"))?;
     let path = affiliation_claim_path(&node_key_path);
     claim
         .write_file(&path)
@@ -478,28 +502,18 @@ fn run_node_peers() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_node_advertise(
-    to: String,
-    services: Vec<String>,
-    listen_port: u16,
-) -> anyhow::Result<()> {
+fn run_node_advertise(to: String, services: Vec<String>, listen_port: u16) -> anyhow::Result<()> {
+    use nlang_interpreter::oodp;
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;
-    use nlang_interpreter::oodp;
 
     let cur = std::env::current_dir()?;
     let engine = Ouroboros::init(&cur)?;
     let identity = engine.node_identity()?;
-    let (_ad, _nid, req) = oodp::signed_advert_nlang(
-        &identity,
-        &services,
-        listen_port,
-        10,
-        15,
-        &engine,
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (_ad, _nid, req) =
+        oodp::signed_advert_nlang(&identity, &services, listen_port, 10, 15, &engine)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let addr: std::net::SocketAddr = to
         .parse()
@@ -626,7 +640,10 @@ fn run_status() -> anyhow::Result<()> {
     if universe.is_dirty {
         println!("Staged changes:");
         println!("{}", Value::Combo(universe.staged.clone()).to_nlang(0));
-        println!("Total Logical Entropy: {} bits", Value::Combo(universe.staged).bits());
+        println!(
+            "Total Logical Entropy: {} bits",
+            Value::Combo(universe.staged).bits()
+        );
     } else {
         println!("Universe is static (no staged changes).");
     }
@@ -637,7 +654,9 @@ fn run_log() -> anyhow::Result<()> {
     let engine = Ouroboros::init(&std::env::current_dir()?)?;
     let _universe = load_universe(&engine, &std::env::current_dir()?)?;
     // Surface CAS integrity failures distinctly (tampered commit chain).
-    let history = engine.log().map_err(|e| format_store_read_error(e, "HEAD chain"))?;
+    let history = engine
+        .log()
+        .map_err(|e| format_store_read_error(e, "HEAD chain"))?;
     for (hash, meta, kind) in history {
         println!("commit {}", hash);
         // SPEC_08 §6.2 audit markers as bare machine lines. Messages always
@@ -751,10 +770,7 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
     // surface. The message now states what was compressed.
     let squashed = universe.commits_after(&engine, &base).unwrap_or(0);
     let meta = CommitMeta {
-        message: Some(format!(
-            "compressed {squashed} commit(s) onto {}",
-            &caid
-        )),
+        message: Some(format!("compressed {squashed} commit(s) onto {}", &caid)),
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as u64,
@@ -775,7 +791,9 @@ fn run_commit(
     let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     let mut universe = load_universe(&engine, &std::env::current_dir()?)?;
-    if !universe.is_dirty { anyhow::bail!("Nothing to commit"); }
+    if !universe.is_dirty {
+        anyhow::bail!("Nothing to commit");
+    }
     // ACCEPTANCE REPAIR (privilege escalation, 2026-07-26): the commit is where
     // the privileged overwrite is APPLIED, so the capability must be presented
     // HERE, through the trusted channel — not inferred from `.oo/pin_pending`.
@@ -817,7 +835,9 @@ fn run_commit(
     }
     let meta = CommitMeta {
         message,
-        timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64,
         author: Some("oo-cli".to_string()),
         abandoned: None,
         privileged_effect: None, // set by Universe::commit from effect_pending
@@ -839,21 +859,21 @@ fn run_refine(
 
     let source_caids: Vec<ContentHash> = sources
         .iter()
-        .map(|s| ContentHash::parse(s)
-            .map_err(|e| anyhow::anyhow!("Invalid source CAID '{}': {}", s, e)))
+        .map(|s| {
+            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid source CAID '{}': {}", s, e))
+        })
         .collect::<anyhow::Result<_>>()?;
 
     let target_caids: Vec<ContentHash> = targets
         .iter()
-        .map(|s| ContentHash::parse(s)
-            .map_err(|e| anyhow::anyhow!("Invalid target CAID '{}': {}", s, e)))
+        .map(|s| {
+            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid target CAID '{}': {}", s, e))
+        })
         .collect::<anyhow::Result<_>>()?;
 
     let authority = if sign {
-        let payload = nlang_interpreter::authority::compute_refine_payload(
-            &source_caids,
-            &target_caids,
-        );
+        let payload =
+            nlang_interpreter::authority::compute_refine_payload(&source_caids, &target_caids);
         // Sole engine consumer of the private key (identity_persistence).
         let identity = engine
             .identity()
@@ -918,7 +938,7 @@ fn run_repl() -> anyhow::Result<()> {
         stdout().flush()?;
         let mut input = String::new();
         let bytes_read = stdin().read_line(&mut input)?;
-        
+
         // If 0 bytes read, it's EOF
         if bytes_read == 0 {
             println!("\nGoodbye!");
@@ -926,8 +946,12 @@ fn run_repl() -> anyhow::Result<()> {
         }
 
         let input = input.trim();
-        if input == "exit" { break; }
-        if input.is_empty() { continue; }
+        if input == "exit" {
+            break;
+        }
+        if input.is_empty() {
+            continue;
+        }
 
         match parse_program(input) {
             Ok(program) => {
@@ -938,7 +962,11 @@ fn run_repl() -> anyhow::Result<()> {
                         // 嘗試觀測剛剛進化的欄位
                         let path = match &f.key {
                             FieldKey::Named { name, .. } | FieldKey::Quoted(name) => {
-                                nlang_parser::ast::Path { anchor: nlang_parser::ast::PathAnchor::Bare, segments: vec![name.clone()], span: nlang_parser::ast::Span::default() }
+                                nlang_parser::ast::Path {
+                                    anchor: nlang_parser::ast::PathAnchor::Bare,
+                                    segments: vec![name.clone()],
+                                    span: nlang_parser::ast::Span::default(),
+                                }
                             }
                             _ => continue,
                         };
@@ -1027,9 +1055,7 @@ fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Resul
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.gc {
-        anyhow::bail!(
-            "#privileged_required: gc requires --grant gc (privilege.gc capability)"
-        );
+        anyhow::bail!("#privileged_required: gc requires --grant gc (privilege.gc capability)");
     }
 
     let report = nlang_interpreter::gc::run_gc(&engine.store, &cur, dry_run)
@@ -1078,7 +1104,8 @@ fn run_one_shot(
 
     for file in files {
         let input = fs::read_to_string(&file)?;
-        let program = parse_program(&input).map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
+        let program = parse_program(&input)
+            .map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
         for f in &program.fields {
             if let Err(e) = universe.evolve(&engine, &f) {
                 anyhow::bail!("Evolution Conflict in {:?}: {:?} at {:?}", file, e, f.key);
@@ -1102,7 +1129,11 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     let mut program = parse_program(&input).map_err(|e| anyhow::anyhow!("Parse Error: {}", e))?;
     program.canonicalize();
     let formatted = program.to_nlang();
-    if write { fs::write(file, formatted)?; } else { println!("{}", formatted); }
+    if write {
+        fs::write(file, formatted)?;
+    } else {
+        println!("{}", formatted);
+    }
     Ok(())
 }
 
@@ -1194,8 +1225,7 @@ fn run_identity() -> anyhow::Result<()> {
 
 fn run_inspect(caid_str: String) -> anyhow::Result<()> {
     let cur = std::env::current_dir()?;
-    let engine = Ouroboros::init(&cur)
-        .unwrap_or_else(|_| Ouroboros::new_in_memory());
+    let engine = Ouroboros::init(&cur).unwrap_or_else(|_| Ouroboros::new_in_memory());
 
     let hash = ContentHash::parse(&caid_str)
         .map_err(|_| anyhow::anyhow!("Invalid CAID format: {}", caid_str))?;
@@ -1240,14 +1270,21 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
 }
 
 fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {
-    let mut u = match Universe::load(engine, path) { Ok(u) => u, Err(_) => Universe::new(None, engine.root_with_system()), };
+    let mut u = match Universe::load(engine, path) {
+        Ok(u) => u,
+        Err(_) => Universe::new(None, engine.root_with_system()),
+    };
     let _ = u.load_staged(path);
     Ok(u)
 }
 
 fn parse_path_only(s: &str) -> anyhow::Result<nlang_parser::ast::Path> {
     let expr = nlang_parser::parse_expr_only(s).map_err(|e| anyhow::anyhow!("{}", e))?;
-    if let nlang_parser::ast::ExprKind::Path(p) = expr.kind { Ok(p) } else { Err(anyhow::anyhow!("Not a path")) }
+    if let nlang_parser::ast::ExprKind::Path(p) = expr.kind {
+        Ok(p)
+    } else {
+        Err(anyhow::anyhow!("Not a path"))
+    }
 }
 
 fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> anyhow::Result<()> {
@@ -1259,12 +1296,12 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
             all_files.push(f);
         }
     }
-    
+
     let engine = Ouroboros::init(&std::env::current_dir()?)?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
-    
+
     for file in all_files {
         let input = fs::read_to_string(&file)?;
         let program = match parse_program(&input) {
@@ -1275,12 +1312,20 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
                 continue;
             }
         };
-        
+
         let mut universe = Universe::new(None, engine.root_with_system());
-        
+
         let mut evolve_failed = false;
         for f in &program.fields {
-            println!("Evolving field: {}", match &f.key { FieldKey::Named { name, .. } => name.clone(), FieldKey::Quoted(q) => q.clone(), FieldKey::Path(p) => p.to_key(), _ => "unknown".to_string() });
+            println!(
+                "Evolving field: {}",
+                match &f.key {
+                    FieldKey::Named { name, .. } => name.clone(),
+                    FieldKey::Quoted(q) => q.clone(),
+                    FieldKey::Path(p) => p.to_key(),
+                    _ => "unknown".to_string(),
+                }
+            );
             if let Err(e) = universe.evolve(&engine, f) {
                 println!("FAIL: {:?} (Evolution error: {:?})", file, e);
                 failed += 1;
@@ -1288,14 +1333,18 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
                 break;
             }
         }
-        if evolve_failed { continue; }
-        
+        if evolve_failed {
+            continue;
+        }
+
         let mut has_test = false;
         for f in &program.fields {
             let name = match &f.key {
                 FieldKey::Named { name, .. } => name.clone(),
                 FieldKey::Quoted(q) => q.clone(),
-                FieldKey::Path(p) if p.anchor == nlang_parser::ast::PathAnchor::Bare && p.segments.len() == 1 => {
+                FieldKey::Path(p)
+                    if p.anchor == nlang_parser::ast::PathAnchor::Bare && p.segments.len() == 1 =>
+                {
                     p.segments[0].clone()
                 }
                 _ => continue,
@@ -1303,23 +1352,23 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
             if !name.starts_with("test_") {
                 continue;
             }
-            
+
             if let Some(ref pat) = pattern {
                 if !name.contains(pat) {
                     continue;
                 }
             }
             has_test = true;
-            
+
             if static_only {
                 println!("PASS (static): {:?} - {}", file, name);
                 passed += 1;
                 continue;
             }
-            
+
             let path = parse_path_only(&name)?;
             let result = universe.observe(&engine, &path);
-            
+
             // SPEC_16 §2.2 (ruling B): PASS = definite fact decided by this
             // observation. FAIL = ⊥ / #false / #fail / Top (undetermined —
             // vacuous truth forbidden) / #blur (horizon undetermined).
@@ -1364,7 +1413,10 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
         }
     }
 
-    println!("\nTest Summary: {} passed, {} failed, {} skipped files without tests", passed, failed, skipped);
+    println!(
+        "\nTest Summary: {} passed, {} failed, {} skipped files without tests",
+        passed, failed, skipped
+    );
     if failed > 0 {
         std::process::exit(1);
     }

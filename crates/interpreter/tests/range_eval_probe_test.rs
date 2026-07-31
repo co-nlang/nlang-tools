@@ -11,17 +11,23 @@
 // Canonical print: `a..b` / `a..b..s`, no spaces.
 // No-regression side: list_p25 (`~%List./range` half-open), absorption/cmp suites.
 
-use nlang_interpreter::{Ouroboros, Universe, EvalContext, Value};
-use nlang_interpreter::value::{ComboVal, EffectTag};
-use nlang_parser::parse_program;
-use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
 use indexmap::IndexMap;
+use nlang_interpreter::value::{ComboVal, EffectTag};
+use nlang_interpreter::{EvalContext, Ouroboros, Universe, Value};
+use nlang_parser::ast::{AtomKind, Path, PathAnchor, Span};
+use nlang_parser::parse_program;
 use num_bigint::BigInt;
 
 fn eval_one(src: &str) -> Value {
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(ComboVal::new(IndexMap::new(), false, IndexMap::new(), EffectTag::Pure, vec![]));
+    let mut ctx = EvalContext::new(ComboVal::new(
+        IndexMap::new(),
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ));
     oo.eval_observed(&program.fields[0].value, &mut ctx)
 }
 
@@ -35,12 +41,18 @@ fn assert_int(src: &str, expect: i64) {
 
 fn assert_bottom(src: &str) {
     let v = eval_one(src);
-    assert!(matches!(v, Value::Bottom(_)), "{src:?} must be _|_, got {v:?}");
+    assert!(
+        matches!(v, Value::Bottom(_)),
+        "{src:?} must be _|_, got {v:?}"
+    );
 }
 
 fn assert_prints(src: &str, expect: &str) {
     let v = eval_one(src);
-    assert!(!matches!(v, Value::Bottom(_)), "{src:?} must not be _|_ (got {v:?})");
+    assert!(
+        !matches!(v, Value::Bottom(_)),
+        "{src:?} must not be _|_ (got {v:?})"
+    );
     assert_eq!(v.to_nlang(0), expect, "{src:?} canonical print");
 }
 
@@ -60,7 +72,7 @@ fn range_membership_meet() {
     assert_int("r: 5 & 1..10", 5);
     assert_bottom("r: 12 & 1..10");
     assert_int("r: 150 & 0..150", 150); // closed-closed: endpoint belongs
-    assert_int("r: 5 & 1..#_", 5);      // anchor upper = +∞
+    assert_int("r: 5 & 1..#_", 5); // anchor upper = +∞
     assert_bottom("r: 0 & 1..#_");
 }
 
@@ -76,8 +88,8 @@ fn range_step_membership() {
 #[test]
 fn range_intersection() {
     assert_prints("r: 1..10 & 5..20", "5..10");
-    assert_int("r: 3..5 & 5..8", 5);    // singleton collapses to the atom
-    assert_bottom("r: 1..3 & 7..9");    // empty intersection
+    assert_int("r: 3..5 & 5..8", 5); // singleton collapses to the atom
+    assert_bottom("r: 1..3 & 7..9"); // empty intersection
 }
 
 // --- declare-range-then-refine (monotone evolution) --------------------------
@@ -89,9 +101,17 @@ fn evolve_can_refine_from_range() {
     let p1 = parse_program("t: { n: 1..10 }").unwrap();
     universe.evolve(&engine, &p1.fields[0]).unwrap();
     let p2 = parse_program("t: { n: 5 }").unwrap();
-    universe.evolve(&engine, &p2.fields[0])
-        .unwrap_or_else(|e| panic!("refining n from 1..10 to 5 is monotone and must succeed, got {:?}", e));
-    let path = Path { anchor: PathAnchor::Bare, segments: vec!["t".into(), "n".into()], span: Span::default() };
+    universe.evolve(&engine, &p2.fields[0]).unwrap_or_else(|e| {
+        panic!(
+            "refining n from 1..10 to 5 is monotone and must succeed, got {:?}",
+            e
+        )
+    });
+    let path = Path {
+        anchor: PathAnchor::Bare,
+        segments: vec!["t".into(), "n".into()],
+        span: Span::default(),
+    };
     let obs = universe.observe(&engine, &path);
     match &obs {
         Value::Atom(AtomKind::Int(n), _, _) => assert_eq!(n, &BigInt::from(5)),
@@ -109,10 +129,21 @@ fn range_variable_bound_resolves_at_observation() {
         let p = parse_program(src).unwrap();
         universe.evolve(&engine, &p.fields[0]).unwrap();
     }
-    let path = Path { anchor: PathAnchor::Bare, segments: vec!["x".into()], span: Span::default() };
+    let path = Path {
+        anchor: PathAnchor::Bare,
+        segments: vec!["x".into()],
+        span: Span::default(),
+    };
     let obs = universe.observe(&engine, &path);
-    assert!(!matches!(obs, Value::Bottom(_)), "x: 1..y with y=10 must not be _|_, got {obs:?}");
-    assert_eq!(obs.to_nlang(0), "1..10", "bounds resolve against the observed universe");
+    assert!(
+        !matches!(obs, Value::Bottom(_)),
+        "x: 1..y with y=10 must not be _|_, got {obs:?}"
+    );
+    assert_eq!(
+        obs.to_nlang(0),
+        "1..10",
+        "bounds resolve against the observed universe"
+    );
 }
 
 // --- Union distributes over Range meet (SPEC_07 §4) ---------------------------
@@ -126,7 +157,10 @@ fn union_distributes_over_range_meet() {
     assert_int("r: (1 | 7) & 1..3", 1);
     assert_int("r: 1..3 & (1 | 7)", 1);
     let v = eval_one("r: (1 | 2) & 1..3"); // both branches survive
-    assert!(!matches!(v, Value::Bottom(_)), "(1|2) & 1..3 must keep the superposition, got {v:?}");
+    assert!(
+        !matches!(v, Value::Bottom(_)),
+        "(1|2) & 1..3 must keep the superposition, got {v:?}"
+    );
 }
 
 // --- @{ e } transparency -----------------------------------------------------
@@ -137,6 +171,9 @@ fn anon_set_is_transparent() {
     assert_prints("r: @{ 1..10 }", "1..10");
     let a = eval_one("r: @{ 1 | 2 }");
     let b = eval_one("r: 1 | 2");
-    assert_eq!(a.content_hash(), b.content_hash(),
-        "@{{ 1 | 2 }} must be the same object as 1 | 2, got {a:?} vs {b:?}");
+    assert_eq!(
+        a.content_hash(),
+        b.content_hash(),
+        "@{{ 1 | 2 }} must be the same object as 1 | 2, got {a:?} vs {b:?}"
+    );
 }

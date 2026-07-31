@@ -1,9 +1,12 @@
-use crate::value::{Value, ComboVal, ContentHash, BottomCause, CommitKind, RefineInfo, Commit, default_cache_id, AuthorityInfo, EffectTag};
-use crate::Ouroboros;
+use crate::value::{
+    default_cache_id, AuthorityInfo, BottomCause, ComboVal, Commit, CommitKind, ContentHash,
+    EffectTag, RefineInfo, Value,
+};
 use crate::EvalContext;
-use nlang_parser::ast::{Path, PathAnchor, Field, FieldKey, Prefix, Expr, ExprKind, AtomKind};
-use indexmap::IndexMap;
+use crate::Ouroboros;
 use anyhow::Result;
+use indexmap::IndexMap;
+use nlang_parser::ast::{AtomKind, Expr, ExprKind, Field, FieldKey, Path, PathAnchor, Prefix};
 
 /// Coordinate names a field key will occupy in staged (prefixed + bare).
 fn field_coords(key: &FieldKey) -> Vec<String> {
@@ -145,9 +148,7 @@ fn is_literal_top(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Atom(AtomKind::Top) => true,
         ExprKind::Path(p) => {
-            p.anchor == PathAnchor::Bare
-                && p.segments.len() == 1
-                && p.segments[0].trim() == "_"
+            p.anchor == PathAnchor::Bare && p.segments.len() == 1 && p.segments[0].trim() == "_"
         }
         _ => false,
     }
@@ -245,9 +246,26 @@ impl Universe {
     }
     pub fn load(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<Self> {
         engine.clear_force_memo();
-        let head = engine.store.get_head(base_dir)?; match head { Some(h) => { let commit = engine.store.get_commit(&h)?; let root_val = engine.store.get_value(&commit.root)?; if let Value::Combo(root) = root_val { Ok(Self::new(Some(h), root)) } else { Err(anyhow::anyhow!("Invalid root")) } } None => Ok(Self::new(None, engine.root_with_system())), } }
-    
-    pub fn evolve(&mut self, engine: &Ouroboros, field: &Field) -> std::result::Result<(), BottomCause> {
+        let head = engine.store.get_head(base_dir)?;
+        match head {
+            Some(h) => {
+                let commit = engine.store.get_commit(&h)?;
+                let root_val = engine.store.get_value(&commit.root)?;
+                if let Value::Combo(root) = root_val {
+                    Ok(Self::new(Some(h), root))
+                } else {
+                    Err(anyhow::anyhow!("Invalid root"))
+                }
+            }
+            None => Ok(Self::new(None, engine.root_with_system())),
+        }
+    }
+
+    pub fn evolve(
+        &mut self,
+        engine: &Ouroboros,
+        field: &Field,
+    ) -> std::result::Result<(), BottomCause> {
         // SPEC_09 ownership: user LHS on `~%` is illegal (except root
         // ~%Config.<bare> horizon family). Loud at evolve boundary — same
         // family as G2-S Evolution Conflict (CLI exit 1).
@@ -315,7 +333,13 @@ impl Universe {
                 if is_p {
                     evolved_coords.push(trimmed);
                 } else {
-                    let p = match prefix { Some(Prefix::Logic) => "/", Some(Prefix::Type) => "@", Some(Prefix::Meta) => "%", Some(Prefix::System) => "~%", _ => "" };
+                    let p = match prefix {
+                        Some(Prefix::Logic) => "/",
+                        Some(Prefix::Type) => "@",
+                        Some(Prefix::Meta) => "%",
+                        Some(Prefix::System) => "~%",
+                        _ => "",
+                    };
                     let stored = format!("{}{}", p, trimmed);
                     // Stage 5 acceptance fix: dependency recording uses stored
                     // (prefixed) names, so invalidate by BOTH forms.
@@ -323,7 +347,9 @@ impl Universe {
                     evolved_coords.push(trimmed);
                 }
             }
-            FieldKey::Quoted(name) => { evolved_coords.push(name.trim().to_string()); }
+            FieldKey::Quoted(name) => {
+                evolved_coords.push(name.trim().to_string());
+            }
             FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
                 evolved_coords.push(p.segments[0].trim().to_string());
             }
@@ -371,7 +397,10 @@ impl Universe {
                     _ => Err(BottomCause::Conflict),
                 };
             }
-            _ => { self.is_dirty = true; return Ok(()); }
+            _ => {
+                self.is_dirty = true;
+                return Ok(());
+            }
         };
 
         // G2-S: root coordinates evolve monotonically. If the incoming value
@@ -384,7 +413,10 @@ impl Universe {
         // alone never reaches here with pin_mode (CLI two-step gate).
         if !(self.pin_mode && engine.privilege.pin) {
             for c in &evolved_coords {
-                if let Some(root_val) = self.root.get_field(c).cloned()
+                if let Some(root_val) = self
+                    .root
+                    .get_field(c)
+                    .cloned()
                     .or_else(|| self.root.get_local_field(c).cloned())
                 {
                     if let Value::Bottom(d) = engine.unify(root_val, val.clone()) {
@@ -401,12 +433,20 @@ impl Universe {
                 if is_p {
                     rl.insert(trimmed, val);
                 } else {
-                    let p = match prefix { Some(Prefix::Logic) => "/", Some(Prefix::Type) => "@", Some(Prefix::Meta) => "%", Some(Prefix::System) => "~%", _ => "" };
+                    let p = match prefix {
+                        Some(Prefix::Logic) => "/",
+                        Some(Prefix::Type) => "@",
+                        Some(Prefix::Meta) => "%",
+                        Some(Prefix::System) => "~%",
+                        _ => "",
+                    };
                     let stored = format!("{}{}", p, trimmed);
                     rf.insert(stored, val);
                 }
             }
-            FieldKey::Quoted(name) => { rf.insert(name.trim().to_string(), val); }
+            FieldKey::Quoted(name) => {
+                rf.insert(name.trim().to_string(), val);
+            }
             FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
                 rf.insert(p.segments[0].trim().to_string(), val);
             }
@@ -447,15 +487,21 @@ impl Universe {
         }
         let res = engine.unify(Value::Combo(self.staged.clone()), Value::Combo(incoming));
         match res {
-            Value::Combo(m) => { self.staged = m; self.is_dirty = true; Ok(()) }
+            Value::Combo(m) => {
+                self.staged = m;
+                self.is_dirty = true;
+                Ok(())
+            }
             Value::Bottom(d) => Err(d.cause),
-            _ => Err(BottomCause::Conflict)
+            _ => Err(BottomCause::Conflict),
         }
     }
 
     pub fn save_staged(&self, _engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
         let staged_path = base_dir.join(".oo").join("staged");
-        if !staged_path.parent().unwrap().exists() { std::fs::create_dir_all(staged_path.parent().unwrap())?; }
+        if !staged_path.parent().unwrap().exists() {
+            std::fs::create_dir_all(staged_path.parent().unwrap())?;
+        }
         let json = serde_json::to_string(&self.staged)?;
         std::fs::write(&staged_path, json)?;
         // Pin audit intent lives beside staged, never inside values (CAID).
@@ -503,17 +549,20 @@ impl Universe {
                 .map(|v| v.into_iter().collect())
                 .unwrap_or_default();
         }
-        self.effect_pending = std::fs::read_to_string(
-            base_dir.join(".oo").join("effect_pending"),
-        )
-        .ok()
-        .and_then(|s| s.trim().parse::<u8>().ok())
-        .map(crate::value::EffectTag::from_bits)
-        .filter(|t| !t.is_pure());
+        self.effect_pending = std::fs::read_to_string(base_dir.join(".oo").join("effect_pending"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(crate::value::EffectTag::from_bits)
+            .filter(|t| !t.is_pure());
         Ok(())
     }
 
-    pub fn commit(&mut self, engine: &Ouroboros, base_dir: &std::path::Path, meta: crate::value::CommitMeta) -> Result<ContentHash> {
+    pub fn commit(
+        &mut self,
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        meta: crate::value::CommitMeta,
+    ) -> Result<ContentHash> {
         engine.clear_force_memo();
         let (new_root, kind) = if self.pin_pending {
             // ACCEPTANCE REPAIR: replace ONLY the pinned coordinates; everything
@@ -529,7 +578,10 @@ impl Universe {
                 None => return Err(anyhow::anyhow!("Commit failed")),
             }
         } else {
-            match engine.unify(Value::Combo(self.root.clone()), Value::Combo(self.staged.clone())) {
+            match engine.unify(
+                Value::Combo(self.root.clone()),
+                Value::Combo(self.staged.clone()),
+            ) {
                 Value::Combo(m) => (m, CommitKind::Standard),
                 _ => return Err(anyhow::anyhow!("Commit failed")),
             }
@@ -562,11 +614,17 @@ impl Universe {
         self.pin_coords.clear();
         self.effect_pending = None;
         let staged_path = base_dir.join(".oo").join("staged");
-        if staged_path.exists() { let _ = std::fs::remove_file(staged_path); }
+        if staged_path.exists() {
+            let _ = std::fs::remove_file(staged_path);
+        }
         let pin_path = base_dir.join(".oo").join("pin_pending");
-        if pin_path.exists() { let _ = std::fs::remove_file(pin_path); }
+        if pin_path.exists() {
+            let _ = std::fs::remove_file(pin_path);
+        }
         let effect_path = base_dir.join(".oo").join("effect_pending");
-        if effect_path.exists() { let _ = std::fs::remove_file(effect_path); }
+        if effect_path.exists() {
+            let _ = std::fs::remove_file(effect_path);
+        }
         Self::clear_abandoned_file(base_dir);
         Ok(commit_hash)
     }
@@ -709,20 +767,15 @@ impl Universe {
         if !found {
             // Also accept base existing when HEAD's full ancestry reaches it;
             // if base is not on the chain, refuse.
-            return Err(anyhow::anyhow!(
-                "squash base is not an ancestor of HEAD"
-            ));
+            return Err(anyhow::anyhow!("squash base is not an ancestor of HEAD"));
         }
         // Confirm base object exists.
         let _ = engine.store.get_commit(base)?;
         // New commit: parent=base, root unchanged from HEAD, kind Squash.
         // Intentionally does NOT copy abandoned meta from intermediates —
         // those edges leave with the range (R2: Squash marker is the fact).
-        let mut commit = crate::value::Commit::new(
-            Some(base.clone()),
-            head_commit.root.clone(),
-            meta,
-        );
+        let mut commit =
+            crate::value::Commit::new(Some(base.clone()), head_commit.root.clone(), meta);
         commit.kind = CommitKind::Squash;
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
@@ -753,8 +806,7 @@ impl Universe {
             // Strip Config from staged so unify does not re-meet overrides.
             staged_for_obs.insert_field("~%Config", Value::Top);
         }
-        let current =
-            engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
+        let current = engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
         if let Value::Combo(r) = current {
             let mut ctx = EvalContext::new(r.clone());
             ctx.privilege = engine.privilege;
@@ -767,27 +819,37 @@ impl Universe {
                         ctx.fuel = f;
                     }
                 }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_branches").cloned() {
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
+                    cfg.get_field("max_branches").cloned()
+                {
                     if let Some(v) = n.to_u64() {
                         ctx.max_branches = v as usize;
                     }
                 }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_unification_depth").cloned() {
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
+                    cfg.get_field("max_unification_depth").cloned()
+                {
                     if let Some(v) = n.to_u64() {
                         ctx.max_unification_depth = v as usize;
                     }
                 }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_lifting_depth").cloned() {
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
+                    cfg.get_field("max_lifting_depth").cloned()
+                {
                     if let Some(v) = n.to_u64() {
                         ctx.max_lifting_depth = v as usize;
                     }
                 }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_pattern_nodes").cloned() {
+                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
+                    cfg.get_field("max_pattern_nodes").cloned()
+                {
                     if let Some(v) = n.to_u64() {
                         ctx.max_pattern_nodes = v as usize;
                     }
                 }
-                if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("strategy").cloned() {
+                if let Some(Value::Atom(AtomKind::Tag(s), _, _)) =
+                    cfg.get_field("strategy").cloned()
+                {
                     use crate::value::ObservationStrategy;
                     ctx.strategy = match s.trim_start_matches('#') {
                         "strict" => ObservationStrategy::Strict,
@@ -820,14 +882,14 @@ impl Universe {
             } else {
                 match &forced {
                     Value::Combo(c) if crate::value::is_structural_view(c) => {
-                        crate::value::strip_local_axis(crate::value::unwrap_structural_view(
-                            forced,
-                        ))
+                        crate::value::strip_local_axis(crate::value::unwrap_structural_view(forced))
                     }
                     _ => crate::value::project_value_context(forced),
                 }
             }
-        } else { BottomCause::Conflict.into() }
+        } else {
+            BottomCause::Conflict.into()
+        }
     }
 
     /// Create a #refine Commit with geometric monotonicity verification.
@@ -863,7 +925,9 @@ impl Universe {
                         Ok(v) => Ok(Some(v)),
                         Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
                             // Not held locally — opaque, REAL_03 §9.1.
-                            Some(crate::storage::StoreReadError::NotFound { .. }) | None => Ok(None),
+                            Some(crate::storage::StoreReadError::NotFound { .. }) | None => {
+                                Ok(None)
+                            }
                             // Present and lying, or present and undecodable:
                             // the check cannot be performed, and pretending it
                             // passed is the fail-open this arc exists to close.
@@ -877,7 +941,9 @@ impl Universe {
                 if let (Some(src_val), Some(tgt_val)) = (load(src)?, load(tgt)?) {
                     let meet = engine.unify(tgt_val.clone(), src_val.clone());
                     if meet.content_hash() != tgt_val.content_hash() {
-                        return Err(anyhow::anyhow!("new ⋢ old: refinement fails geometric monotonicity"));
+                        return Err(anyhow::anyhow!(
+                            "new ⋢ old: refinement fails geometric monotonicity"
+                        ));
                     }
                 }
             }
@@ -885,7 +951,10 @@ impl Universe {
 
         // Step 1b: authority verification
         let payload = crate::authority::compute_refine_payload(&source_caids, &target_caids);
-        let architect_reg = engine.architect_registry.read().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let architect_reg = engine
+            .architect_registry
+            .read()
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
         // Epoch judgment: exempt only in genesis state (no HEAD) or before any architect registered
         let bootstrap_exempt = self.head.is_none() || architect_reg.is_empty();
         let authority_status = match crate::authority::verify_refine_authority(
@@ -923,7 +992,9 @@ impl Universe {
             let mut current = self.head.clone();
             let mut depth = 0;
             while let Some(ref ch) = current.clone() {
-                if depth >= SHADOW_SCAN_DEPTH { break; }
+                if depth >= SHADOW_SCAN_DEPTH {
+                    break;
+                }
                 depth += 1;
                 let commit = match engine.store.get_commit(ch) {
                     Ok(c) => c,
@@ -987,18 +1058,24 @@ impl Universe {
 
         // Step 1d: cycle detection — reject if source→target would close a refine cycle
         {
-            let map = engine.refine_map.read().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            let map = engine
+                .refine_map
+                .read()
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
             for src in &source_caids {
                 let src_str = src.to_string();
                 for tgt in &target_caids {
-                    if src == tgt { continue; }
+                    if src == tgt {
+                        continue;
+                    }
                     let mut stack = vec![tgt.to_string()];
                     let mut seen = std::collections::HashSet::new();
                     while let Some(current) = stack.pop() {
                         if current == src_str {
                             return Err(anyhow::anyhow!(
                                 "refine cycle detected: {} → {} would create a cycle",
-                                src_str, tgt
+                                src_str,
+                                tgt
                             ));
                         }
                         if seen.insert(current.clone()) {
@@ -1035,7 +1112,10 @@ impl Universe {
         self.head = Some(commit_hash.clone());
 
         // Step 3: update RefineMap
-        let mut map = engine.refine_map.write().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let mut map = engine
+            .refine_map
+            .write()
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
         for src in &source_caids {
             let targets: Vec<String> = target_caids.iter().map(|t| t.to_string()).collect();
             map.entry(src.to_string()).or_default().extend(targets);
