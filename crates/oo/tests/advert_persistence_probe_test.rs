@@ -534,7 +534,24 @@ fn advertise_n(node: &Node, caid_dir: &Path, n: usize, base_port: u16) -> Vec<Sy
 }
 
 /// Records as the loader sees them: file order, last-wins per `node_id`, then
-/// sorted by `received_at` then `node_id` — the order `peers::load` replays.
+/// sorted by `received_at` then `admission_seq` — the order `peers::load`
+/// replays.
+///
+/// ACCEPTANCE REPAIR (seat_order arc, 2026-07-31). The secondary key used to be
+/// `node_id`, because that is what the loader used. The seat_order arc replaced
+/// it with a receiver-local monotonic `admission_seq`, for the reason recorded
+/// in REAL_02 §4.2.6.3: `received_at` has one-second resolution, so a burst
+/// ties, and breaking that tie by `node_id` is a **victim-independent** hash
+/// order — one grind buys a seat on every node that heard the burst.
+///
+/// That change reaches this suite because the routing index and the automatic
+/// source set are replayed from the same ordering. This probe modelled the old
+/// rule and so disagreed with the engine whenever a burst tied: measured **3
+/// failures in 8 runs** at acceptance, while the delivery's own run of this
+/// suite happened to be one of the green ones. Modelling `admission_seq` is
+/// enough — it is unique per record for anything this engine wrote, so the
+/// third key (the receiver-local mix) is unreachable here and is deliberately
+/// not modelled.
 ///
 /// ACCEPTANCE REPAIR. The first version of R5 compared the reloaded answer
 /// against the closest 20 of everything advertised. That is not what the
@@ -552,7 +569,7 @@ fn advertise_n(node: &Node, caid_dir: &Path, n: usize, base_port: u16) -> Vec<Sy
 /// self_id = zeros, and that is the failure it exists for.
 fn directory_replay_order(dir: &Path) -> Vec<(String, String)> {
     let text = fs::read_to_string(peers_path(dir)).expect("durable directory missing");
-    let mut by_id: std::collections::HashMap<String, (i64, String)> = Default::default();
+    let mut by_id: std::collections::HashMap<String, (i64, u64, String)> = Default::default();
     for line in text.lines().skip(1) {
         if line.trim().is_empty() {
             continue;
@@ -567,14 +584,15 @@ fn directory_replay_order(dir: &Path) -> Vec<(String, String)> {
             continue;
         };
         let ra = v.get("received_at").and_then(|x| x.as_i64()).unwrap_or(0);
-        by_id.insert(nid.to_string(), (ra, pk.to_string()));
+        let seq = v.get("admission_seq").and_then(|x| x.as_u64()).unwrap_or(0);
+        by_id.insert(nid.to_string(), (ra, seq, pk.to_string()));
     }
-    let mut rows: Vec<(i64, String, String)> = by_id
+    let mut rows: Vec<(i64, u64, String, String)> = by_id
         .into_iter()
-        .map(|(nid, (ra, pk))| (ra, nid, pk))
+        .map(|(nid, (ra, seq, pk))| (ra, seq, nid, pk))
         .collect();
     rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    rows.into_iter().map(|(_, nid, pk)| (nid, pk)).collect()
+    rows.into_iter().map(|(_, _, nid, pk)| (nid, pk)).collect()
 }
 
 /// Replay k-bucket insertion and return the ids that survive.
