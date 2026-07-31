@@ -334,10 +334,10 @@ git diff --check: pass
 The nine ignored reds were each run independently and all exited non-zero at
 the intended provenance/merge assertion. The aggregate ignored run was
 `0 passed, 9 failed, 0 ignored, 2 filtered out`; no setup or empty-directory
-failure was the reason for a red. Existing pin suites and the full workspace
-were rerun after this document was written. Conformance and genesis are
-acceptance measurements, not specification edits; they remain outside the
-delivery implementation scope.
+failure was the reason for a red. Existing pin suites were rerun after this
+document was written, and the full workspace was rerun after the order commit;
+both remained green. Conformance and genesis are acceptance measurements, not
+specification edits; they remain outside the delivery implementation scope.
 
 ### Required post-opening commands
 
