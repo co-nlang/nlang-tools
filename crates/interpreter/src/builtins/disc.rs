@@ -247,6 +247,10 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         Err(false) => {}
                     }
 
+                    // Drop automatic slots that are no longer exact-ad eligible
+                    // (expired claim, replaced by relayed ad, copy-cleared, …).
+                    oo.revalidate_automatic_remotes();
+
                     let peers_copy = if let Ok(peers) = oo.peers.read() {
                         peers
                             .iter()
@@ -287,6 +291,32 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 }
                             }
                         }
+                    }
+                    // Automatic admission class (separate cap domain from manual peers).
+                    let auto_copy: Vec<(String, String)> =
+                        if let Ok(auto) = oo.automatic_remotes.read() {
+                            auto.iter()
+                                .map(|(nid, ar)| (nid.clone(), ar.addr.clone()))
+                                .collect()
+                        } else {
+                            vec![]
+                        };
+                    for (node_id, addr) in auto_copy {
+                        match oo.remote_fetch(&addr, &hash) {
+                            Ok(val) => return observe(val),
+                            Err(BottomCause::CaidMismatch) => saw_mismatch = true,
+                            Err(BottomCause::MissingKey) => saw_peer_not_found = true,
+                            Err(
+                                e @ (BottomCause::PeerNotImplemented
+                                | BottomCause::PeerUnknownStatus
+                                | BottomCause::PeerRefused
+                                | BottomCause::PeerTimeout),
+                            ) => {
+                                peer_protocol = Some(e);
+                            }
+                            Err(_) => {}
+                        }
+                        let _ = node_id; // source label reserved for future diagnostics
                     }
 
                     if results.is_empty() {
@@ -516,6 +546,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             _ => {}
                         },
                     }
+                    oo.revalidate_automatic_remotes();
                     let peers_copy: Vec<_> = oo
                         .peers
                         .read()
@@ -558,6 +589,18 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 Err(BottomCause::CaidMismatch) => saw_mismatch = true,
                                 Err(_) => {}
                             },
+                        }
+                    }
+                    let auto_copy: Vec<String> = oo
+                        .automatic_remotes
+                        .read()
+                        .map(|a| a.values().map(|ar| ar.addr.clone()).collect())
+                        .unwrap_or_default();
+                    for addr in auto_copy {
+                        match oo.remote_fetch(&addr, &hash) {
+                            Ok(val) => return val.solidify_effects(),
+                            Err(BottomCause::CaidMismatch) => saw_mismatch = true,
+                            Err(_) => {}
                         }
                     }
                     // If every source lied and none verified, surface #caid_mismatch

@@ -307,6 +307,23 @@ pub enum Peer {
     Remote(String), // TCP address
 }
 
+/// Hard cap on **automatic** remote fetch sources (automatic_admission arc).
+/// Derived from the measured ~5 s silent-source budget (3 × ≈15 s), not from
+/// discovery's 8 or Kademlia's K=20. Manual `connect` remotes and local stores
+/// do not consume these slots.
+pub const AUTOMATIC_REMOTE_CAP: usize = 3;
+
+/// One process-local automatic remote source, tied to an exact signed
+/// advertisement. Not durable; reconstructed from eligible peer-directory
+/// records on engine init.
+#[derive(Debug, Clone)]
+pub struct AutomaticRemote {
+    /// `host:port` for [`Peer::Remote`] / `remote_fetch` (no `tcp://` prefix).
+    pub addr: String,
+    /// Exact signed advertisement identity that justified admission.
+    pub ad_source: String,
+}
+
 /// How this receiver learned a verified signed advertisement.
 ///
 /// Receiver-local observation only — not trust, correctness, ranking, or
@@ -426,6 +443,10 @@ pub struct Ouroboros {
     pub force_memo_rev: RwLock<HashMap<String, HashSet<ForceMemoKey>>>,
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
+    /// Automatic remote fetch sources (admission class). Keyed by `node_id`,
+    /// insertion-ordered (incumbent-first). Cap: [`AUTOMATIC_REMOTE_CAP`].
+    /// Separate from manual [`Self::peers`]; does not persist.
+    pub automatic_remotes: RwLock<IndexMap<String, AutomaticRemote>>,
     /// Wire peer directory (accepted `#advertise` records). Keyed by `node_id`.
     /// Shared with the Kademlia index (routing) — one store, two views.
     pub peer_adverts: RwLock<HashMap<String, PeerAdvert>>,
@@ -449,8 +470,8 @@ pub struct Ouroboros {
     pub refine_map: RwLock<HashMap<String, Vec<String>>>,
     pub gbb_registry: RwLock<HashMap<String, crate::ladd::GBB>>,
     pub architect_registry: RwLock<std::collections::HashSet<String>>,
-    /// Affiliation trust roots from `.oo/discovery.n` (discovery_trust arc).
-    /// Assertion layer only — not consumed for admission in this arc.
+    /// Affiliation trust roots from `.oo/discovery.n` (discovery_trust).
+    /// Consumed by automatic admission as consent roots only.
     pub affiliation_roots: std::collections::BTreeSet<String>,
     /// SPEC_08 §6 capability lattice. Default NONE; set only via trusted
     /// channel (`set_privilege` / CLI `--privileged`/`--grant`). Never from
@@ -536,6 +557,7 @@ impl Ouroboros {
             force_memo_rev: RwLock::new(HashMap::new()),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
+            automatic_remotes: RwLock::new(IndexMap::new()),
             peer_adverts: RwLock::new(HashMap::new()),
             routing: RwLock::new(crate::routing::RoutingIndex::new([0u8; 20])),
             peer_dir_state: RwLock::new(crate::peers::PeerDirectoryState::default()),
@@ -591,6 +613,7 @@ impl Ouroboros {
             force_memo_rev: RwLock::new(HashMap::new()),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
+            automatic_remotes: RwLock::new(IndexMap::new()),
             peer_adverts: RwLock::new(peer_adverts),
             routing: RwLock::new(routing),
             peer_dir_state: RwLock::new(peer_dir_state),
@@ -624,6 +647,9 @@ impl Ouroboros {
                 r.records, r.skipped, unverifiable
             ));
         }
+        // Reconstruct automatic remote sources from eligible durable records
+        // (no dial — first contact remains the fetch scan).
+        oo.reconstruct_automatic_remotes();
         Ok(oo)
     }
 
@@ -769,7 +795,126 @@ impl Ouroboros {
                 }
             }
         }
+        // Admission is process-local and never dials (lazy until fetch).
+        self.consider_automatic_admission(&advert);
         logs
+    }
+
+    /// Whether this exact advertisement is eligible for automatic remote
+    /// admission under the current roots and clock. Does not dial.
+    pub fn eligible_for_automatic_admission(&self, advert: &PeerAdvert) -> bool {
+        if advert.provenance != ObservationProvenance::Direct {
+            return false;
+        }
+        if advert.observed_host.is_empty() || advert.listen_port == 0 {
+            return false;
+        }
+        // Signature / identity / literal / TTL / freshness ladder.
+        if crate::oodp::verify_stored_ad(self, &advert.ad_source).is_err() {
+            return false;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let Some(op) = crate::oodp::verified_operator_of_ad_source(
+            self,
+            &advert.ad_source,
+            &advert.node_id,
+            now,
+        ) else {
+            return false;
+        };
+        self.affiliation_roots.contains(&op)
+    }
+
+    fn automatic_source_addr(advert: &PeerAdvert) -> String {
+        if !advert.addr.is_empty() {
+            advert.addr.clone()
+        } else {
+            format!("{}:{}", advert.observed_host, advert.listen_port)
+        }
+    }
+
+    /// Insert, refresh, or drop the automatic source for `advert`'s `node_id`.
+    /// Cap is automatic-only; overflow never evicts incumbents. No network I/O.
+    pub fn consider_automatic_admission(&self, advert: &PeerAdvert) {
+        let node_id = advert.node_id.clone();
+        if !self.eligible_for_automatic_admission(advert) {
+            if let Ok(mut auto) = self.automatic_remotes.write() {
+                auto.shift_remove(&node_id);
+            }
+            return;
+        }
+        let entry = AutomaticRemote {
+            addr: Self::automatic_source_addr(advert),
+            ad_source: advert.ad_source.clone(),
+        };
+        let Ok(mut auto) = self.automatic_remotes.write() else {
+            return;
+        };
+        if auto.contains_key(&node_id) {
+            // Same node, still eligible: refresh address / exact-ad identity.
+            auto.insert(node_id, entry);
+            return;
+        }
+        if auto.len() >= AUTOMATIC_REMOTE_CAP {
+            // Incumbent-first: free slots only; no eviction by capacity/freshness.
+            return;
+        }
+        auto.insert(node_id, entry);
+    }
+
+    /// Rebuild automatic remotes from the live peer directory after load.
+    /// Incumbent order follows `received_at` then `node_id`. Does not dial.
+    pub fn reconstruct_automatic_remotes(&self) {
+        if let Ok(mut auto) = self.automatic_remotes.write() {
+            auto.clear();
+        }
+        let mut sorted: Vec<PeerAdvert> = if let Ok(dir) = self.peer_adverts.read() {
+            dir.values().cloned().collect()
+        } else {
+            return;
+        };
+        sorted.sort_by(|a, b| {
+            a.received_at
+                .cmp(&b.received_at)
+                .then_with(|| a.node_id.cmp(&b.node_id))
+        });
+        for adv in &sorted {
+            self.consider_automatic_admission(adv);
+        }
+    }
+
+    /// Drop automatic sources that no longer match an eligible exact ad.
+    /// Called before unnamed fetch scans. Does not backfill free slots.
+    pub fn revalidate_automatic_remotes(&self) {
+        let snapshot: Vec<(String, AutomaticRemote)> =
+            if let Ok(auto) = self.automatic_remotes.read() {
+                auto.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                return;
+            };
+        for (node_id, auto) in snapshot {
+            let still = if let Ok(dir) = self.peer_adverts.read() {
+                match dir.get(&node_id) {
+                    Some(adv)
+                        if adv.ad_source == auto.ad_source
+                            && self.eligible_for_automatic_admission(adv) =>
+                    {
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            };
+            if !still {
+                if let Ok(mut map) = self.automatic_remotes.write() {
+                    map.shift_remove(&node_id);
+                }
+            }
+        }
     }
 
     /// Record a REAL_03 §6.6 integrity incident (never silently drop a verdict).
