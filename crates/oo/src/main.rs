@@ -605,6 +605,8 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
             ad_source: p.ad_source.clone(),
             received_at: std::time::SystemTime::now(),
             verified_operator_key: p.verified_operator_key.clone(),
+            // Receiver-local: learned via #discover, even if envelope hops is 0.
+            provenance: nlang_interpreter::ObservationProvenance::Relayed,
         });
     }
     Ok(())

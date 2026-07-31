@@ -6,7 +6,7 @@
 //! mismatch). See `docs/advert_persistence_handover.md`.
 
 use crate::routing::{self, RoutingIndex};
-use crate::PeerAdvert;
+use crate::{ObservationProvenance, PeerAdvert};
 use serde_json::{json, Map, Value as JsonValue};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -109,6 +109,11 @@ pub fn encode_record_line(adv: &PeerAdvert) -> String {
         json!(secs_since_epoch(adv.received_at)),
     );
     m.insert("addr".into(), JsonValue::String(adv.addr.clone()));
+    // Receiver-local observation provenance (not signed; optional on load).
+    m.insert(
+        "provenance".into(),
+        JsonValue::String(adv.provenance.as_str().to_string()),
+    );
     serde_json::to_string(&JsonValue::Object(m)).unwrap_or_else(|_| "{}".into())
 }
 
@@ -146,7 +151,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
     let ts = o.get("ts").and_then(|x| x.as_i64()).unwrap_or(0);
     let ttl = o.get("ttl").and_then(|x| x.as_i64()).unwrap_or(0);
 
-    let (observed_host, hops, received_at, addr) = if restore_asserted {
+    let (observed_host, hops, received_at, addr, provenance) = if restore_asserted {
         let host = o
             .get("observed_host")
             .and_then(|x| x.as_str())
@@ -166,10 +171,23 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
                     format!("{host}:{listen_port}")
                 }
             });
-        (host, hops, system_time_from_secs(ra), addr)
+        // Missing or unrecognised key → unknown (never promote to direct).
+        let provenance = o
+            .get("provenance")
+            .and_then(|x| x.as_str())
+            .map(ObservationProvenance::parse)
+            .unwrap_or(ObservationProvenance::Unknown);
+        (host, hops, system_time_from_secs(ra), addr, provenance)
     } else {
-        // R1 mismatch: signed half only; ordering falls back to signed `ts`.
-        (String::new(), 0, system_time_from_secs(ts), String::new())
+        // Owner mismatch / copy: signed half only; clear observer half including
+        // provenance. Ordering falls back to signed `ts`.
+        (
+            String::new(),
+            0,
+            system_time_from_secs(ts),
+            String::new(),
+            ObservationProvenance::Unknown,
+        )
     };
 
     Some(PeerAdvert {
@@ -187,6 +205,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         received_at,
         // Derived at load / accept — never read from the durable line.
         verified_operator_key: None,
+        provenance,
     })
 }
 
