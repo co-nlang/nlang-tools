@@ -5,8 +5,9 @@
 // The controls are live at opening. The reds are deliberately ignored until
 // the admission delivery. Delivery may remove only #[ignore]; it may not alter
 // fixtures, assertions, or controls. This file consumes the released
-// direct/relayed/unknown provenance and affiliation-root facts, but does not
-// choose a hard-cap number or overflow policy.
+// direct/relayed/unknown provenance and affiliation-root facts. The decided
+// cap is three automatic remote sources, automatic-only, incumbent-first with
+// no capacity eviction.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -17,6 +18,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use indexmap::IndexMap;
+use nlang_interpreter::value::{BottomCause, ComboVal, EffectTag, Privilege, Value};
+use nlang_interpreter::{oodp, Ouroboros};
+use nlang_parser::ast::AtomKind;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -96,6 +101,16 @@ fn caid_of(dir: &Path, expr: &str) -> String {
 
 fn digest_of(caid: &str) -> &str {
     caid.rsplit(':').next().unwrap()
+}
+
+fn neighbouring_caid(caid: &str) -> String {
+    let digest = digest_of(caid);
+    let first = if digest.starts_with('a') { 'b' } else { 'a' };
+    format!(
+        "{}:{first}{}",
+        caid.rsplit_once(':').unwrap().0,
+        &digest[1..]
+    )
 }
 
 fn object_path(dir: &Path, caid: &str) -> PathBuf {
@@ -217,13 +232,26 @@ fn signed_advert(
     listen_port: u16,
     expires: i64,
 ) -> String {
+    signed_advert_with_capacity(caid_dir, node, operator, service, listen_port, expires, 10)
+}
+
+fn signed_advert_with_capacity(
+    caid_dir: &Path,
+    node: &NodeKey,
+    operator: &OperatorKey,
+    service: &str,
+    listen_port: u16,
+    expires: i64,
+    capacity: i64,
+) -> String {
     let ts = now_secs();
     let body = format!(
-        "{{{{ node_id: \"{}\", public_key: \"{}\", services: [\"{}\"], listen_port: {}, capacity: 10, ts: {}, ttl: 15{} }}}}",
+        "{{{{ node_id: \"{}\", public_key: \"{}\", services: [\"{}\"], listen_port: {}, capacity: {}, ts: {}, ttl: 15{} }}}}",
         node.node_id,
         node.public_key_hex,
         service,
         listen_port,
+        capacity,
         ts,
         affiliation_block(operator, &node.node_id, expires)
     );
@@ -510,6 +538,74 @@ fn fetch_named(dir: &Path, name: &str, addr: &str, caid: &str) -> String {
         ],
     );
     output
+}
+
+fn text_atom(text: &str) -> Value {
+    Value::Atom(AtomKind::Str(text.to_string()), EffectTag::Pure, None)
+}
+
+fn pair_arg(first: &str, second: &str) -> Value {
+    let mut fields = IndexMap::new();
+    fields.insert("0".to_string(), text_atom(first));
+    fields.insert("1".to_string(), text_atom(second));
+    Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+}
+
+fn call_disc_connect(engine: &mut Ouroboros, name: &str, path: &str, remote: bool) {
+    if remote {
+        engine.grant_privilege(Privilege {
+            connect: true,
+            ..Privilege::NONE
+        });
+    }
+    let arg = pair_arg(name, path);
+    let mut ctx = engine.eval_context();
+    let result =
+        (engine.builtin_registry.get("disc.connect").unwrap().clone())(arg, engine, &mut ctx);
+    let rendered = result.to_string_plain();
+    assert!(
+        rendered == "true" || rendered == "#true",
+        "in-process disc.connect failed for {name} -> {path}: {result:?}"
+    );
+}
+
+fn fetch_arg(name: Option<&str>, caid: &str) -> Value {
+    let mut fields = IndexMap::new();
+    match name {
+        Some(name) => {
+            fields.insert("0".to_string(), text_atom(name));
+            fields.insert("1".to_string(), text_atom(caid));
+        }
+        None => {
+            fields.insert("0".to_string(), text_atom(caid));
+        }
+    }
+    Value::Combo(ComboVal::new(
+        fields,
+        false,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+}
+
+fn in_process_fetch(engine: &Ouroboros, name: Option<&str>, caid: &str) -> Value {
+    let arg = fetch_arg(name, caid);
+    let mut ctx = engine.eval_context();
+    (engine.builtin_registry.get("disc.fetch").unwrap().clone())(arg, engine, &mut ctx)
+}
+
+struct CapCandidate {
+    label: &'static str,
+    node: NodeKey,
+    fake: FakePeer,
+    ad: String,
 }
 
 struct Fixture {
@@ -843,5 +939,147 @@ fn r8_newer_relayed_ad_does_not_inherit_old_direct() {
     );
 }
 
-// No cap number, cap domain, or full-cap overflow behavior is encoded here.
-// Those reds become satisfiable only after the user chooses those policies.
+#[test]
+#[ignore]
+fn r9_automatic_remote_cap_is_three_and_incumbent_first() {
+    let receiver_dir = fresh_dir("r9-receiver");
+    init(&receiver_dir);
+
+    let vault = fresh_dir("r9-vault");
+    init(&vault);
+    let decoy_caid = store(&vault, "{ automatic_cap: \"REAL_DECOY\" }");
+    let decoy_payload = fs::read(object_path(&vault, &decoy_caid)).unwrap();
+    let requested_caid = neighbouring_caid(&decoy_caid);
+    assert_ne!(requested_caid, decoy_caid);
+
+    let mut engine = Ouroboros::new_in_memory();
+    let local_dir = fresh_dir("r9-local-source");
+    call_disc_connect(
+        &mut engine,
+        "manual-local",
+        &local_dir.to_string_lossy(),
+        false,
+    );
+
+    let manual_peer = spawn_peer(decoy_payload.clone());
+    call_disc_connect(&mut engine, "manual-remote", &manual_peer.addr(), true);
+
+    let candidates = [
+        ("U", false, 1_i64),
+        ("E0", true, 1_i64),
+        ("E1", true, 2_i64),
+        ("E2", true, 3_i64),
+        ("E3", true, 1_000_000_i64),
+        ("E4", true, 2_000_000_i64),
+    ];
+    let mut cap_candidates = Vec::new();
+    let mut rooted_operator_keys = Vec::new();
+
+    for (label, rooted, capacity) in candidates {
+        let source_dir = fresh_dir(&format!("r9-{label}-source"));
+        let node = node_key(&source_dir);
+        let operator = operator_key();
+        if rooted {
+            rooted_operator_keys.push(operator.public_key_hex.clone());
+        }
+        let fake = spawn_peer(decoy_payload.clone());
+        let ad = signed_advert_with_capacity(
+            &receiver_dir,
+            &node,
+            &operator,
+            &requested_caid,
+            fake.port,
+            now_secs() + 3600,
+            capacity,
+        );
+        cap_candidates.push(CapCandidate {
+            label,
+            node,
+            fake,
+            ad,
+        });
+    }
+    engine.affiliation_roots.extend(rooted_operator_keys);
+
+    let source_id = engine.node_id().unwrap().to_string();
+    for candidate in &cap_candidates {
+        let (reply, log) = oodp::serve_request(
+            &engine,
+            &advert_request(&candidate.node.node_id, &candidate.ad),
+            &source_id,
+            "127.0.0.1",
+        );
+        assert_eq!(
+            status_of(&reply),
+            "success",
+            "direct cap fixture {} was not accepted: {reply}; {log}",
+            candidate.label
+        );
+    }
+
+    assert!(
+        manual_peer.asked().is_empty(),
+        "manual source was contacted during admission"
+    );
+    for candidate in &cap_candidates {
+        assert!(
+            candidate.fake.asked().is_empty(),
+            "automatic source {} was contacted during admission",
+            candidate.label
+        );
+    }
+
+    let mismatch = in_process_fetch(&engine, None, &requested_caid);
+    assert!(
+        matches!(
+            &mismatch,
+            Value::Bottom(detail) if detail.cause == BottomCause::CaidMismatch
+        ),
+        "cap fetch did not exhaust verified wrong-content sources: {mismatch:?}"
+    );
+    assert!(
+        manual_peer
+            .asked()
+            .iter()
+            .any(|asked| asked == &requested_caid),
+        "manual remote source was not usable above the automatic cap: {:?}",
+        manual_peer.asked()
+    );
+
+    let expected = [
+        ("U", false),
+        ("E0", true),
+        ("E1", true),
+        ("E2", true),
+        ("E3", false),
+        ("E4", false),
+    ];
+    for (candidate, (label, should_be_contacted)) in cap_candidates.iter().zip(expected) {
+        let contacted = candidate
+            .fake
+            .asked()
+            .iter()
+            .any(|asked| asked == &requested_caid);
+        assert_eq!(
+            contacted,
+            should_be_contacted,
+            "automatic source {label} contact mismatch; asked: {:?}",
+            candidate.fake.asked()
+        );
+    }
+
+    let manual_result = in_process_fetch(&engine, Some("manual-remote"), &decoy_caid);
+    assert!(
+        !matches!(manual_result, Value::Bottom(_)),
+        "manual source stopped working above the automatic cap: {manual_result:?}"
+    );
+    assert!(
+        manual_peer.asked().iter().any(|asked| asked == &decoy_caid),
+        "manual source was not contacted for its held object: {:?}",
+        manual_peer.asked()
+    );
+}
+
+// The cap is now explicit: three automatic remote sources, automatic-only
+// accounting, incumbent-first/no-eviction. No backfill or restart ordering is
+// asserted by this opening red.

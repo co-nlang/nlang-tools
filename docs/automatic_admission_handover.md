@@ -171,7 +171,12 @@ Opening reds cover:
   a stale automatic source;
 - `r8_newer_relayed_ad_does_not_inherit_old_direct`: exact-ad identity prevents
   a newer relayed advertisement for the same node from inheriting an old direct
-  observation or source slot.
+  observation or source slot;
+- `r9_automatic_remote_cap_is_three_incumbent_first`: one unrooted candidate,
+  three rooted low-capacity incumbents, and two rooted high-capacity late
+  candidates establish that the automatic-only cap is exactly three and that
+  late capacity does not evict the incumbents; manual and local sources remain
+  outside that cap.
 
 The existing `connect_consent`, `peer_fetch_verification`, `advert_persistence`,
 `direct_observation_provenance`, `affiliation_claim`, `discovery_trust`, and
@@ -179,21 +184,39 @@ Kademlia suites remain the regression owners for manual connect, local sources,
 fetch verification, persistence, provenance, claim/root semantics, and routing.
 The opening probe does not duplicate or weaken those suites.
 
-### Cap policy deliberately not invented here
+### Cap policy — decided 2026-07-31
 
-The probe contains no numerical hard-cap assertion yet. Three choices must be
-made before a cap red can be made satisfiable and before model #3 may deliver
-it:
+The three cap choices are now explicit and are part of this arc's acceptance
+contract:
 
-1. **number** — chosen from the measured time budget, not from `8` or `20`;
-2. **domain** — automatic remote sources only (recommended), or the mixed
-   manual/automatic `peers` map;
-3. **overflow** — recommended incumbent-first/no-eviction, or an explicitly
-   chosen eviction/replacement rule.
+1. **number: 3 automatic remote-source slots** — the measured cost of one
+   silent source is about 5.05 seconds, so three sequential automatic sources
+   bound the measured worst case at about 15.1 seconds. This number is derived
+   from the time budget, not from discovery's `8` or Kademlia's `K = 20`.
+2. **domain: automatic remote sources only** — a slot is consumed only by a
+   source admitted from the current exact signed advertisement after direct
+   provenance, the existing signature/identity/literal/freshness/TTL ladder,
+   a currently valid affiliation claim, and a loaded affiliation root all
+   succeed. Manual `connect` remotes and local sources do not consume these
+   slots. The durable advertisement directory is not the capped collection.
+3. **overflow: incumbent-first, no eviction** — the first eligible candidates
+   observed or reconstructed occupy free slots. Later eligible candidates are
+   not admitted while all three slots are occupied; `capacity`, freshness, or
+   another preference does not evict an incumbent. An incumbent that becomes
+   invalid, expired, revoked, or is replaced by an ineligible exact
+   advertisement may be removed by revalidation. Automatic backfill after such
+   removal and restart tie-breaking are separate questions and are not pinned
+   by the opening cap red.
 
-The opening order may add a cap calibration fixture, but it must not encode one
-of these values by accident. Until the choice is made, a cap test that passes
-because no source was admitted is not a test.
+The implementation must represent the automatic admission class explicitly (or
+with a sidecar); `peers.len()`, `peer_adverts.len()`, the discovery response cap,
+and the Kademlia bucket cap are not substitutes for this domain. Admission
+remains lazy with respect to the network: filling a slot must not dial its
+source.
+
+The acceptor-owned probe now contains a cap calibration red. It must establish
+live manual/local and automatic fixtures before asserting that exactly the
+incumbent set, rather than merely fewer than three sources, is active.
 
 ## 6. Scope gates
 
