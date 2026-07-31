@@ -183,6 +183,27 @@ enum NodeCmd {
     },
     /// List known peers and any verified affiliation operator key.
     Peers,
+    /// Manage workspace affiliation trust roots (`.oo/discovery.n`).
+    Trust {
+        #[command(subcommand)]
+        action: TrustCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum TrustCmd {
+    /// List affiliation roots (sorted hex keys). Missing file = empty, no write.
+    List,
+    /// Add an operator public key (64 lowercase hex).
+    Add {
+        #[arg(value_name = "OPERATOR_KEY")]
+        operator_key: String,
+    },
+    /// Remove an operator public key.
+    Remove {
+        #[arg(value_name = "OPERATOR_KEY")]
+        operator_key: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -225,6 +246,11 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             NodeCmd::FindNode { to, target } => run_node_find_node(to, target),
             NodeCmd::Affiliate { ttl_secs } => run_node_affiliate(ttl_secs),
             NodeCmd::Peers => run_node_peers(),
+            NodeCmd::Trust { action } => match action {
+                TrustCmd::List => run_node_trust_list(),
+                TrustCmd::Add { operator_key } => run_node_trust_add(operator_key),
+                TrustCmd::Remove { operator_key } => run_node_trust_remove(operator_key),
+            },
         },
         Commands::Status => run_status(),
         Commands::Log => run_log(),
@@ -392,6 +418,40 @@ fn run_node_affiliate(ttl_secs: Option<i64>) -> anyhow::Result<()> {
     println!("signature: {}", claim.signature);
     println!("expires: {}", claim.expires);
     println!("path: {}", path.display());
+    Ok(())
+}
+
+fn run_node_trust_list() -> anyhow::Result<()> {
+    use nlang_interpreter::discovery_config::DiscoveryConfig;
+    let cur = std::env::current_dir()?;
+    // Load via the same path as init; do not create the file.
+    let cfg = DiscoveryConfig::load(&cur)?;
+    for k in &cfg.affiliation_roots {
+        println!("{k}");
+    }
+    Ok(())
+}
+
+fn run_node_trust_add(operator_key: String) -> anyhow::Result<()> {
+    use nlang_interpreter::discovery_config::{validate_operator_key, DiscoveryConfig};
+    // Validate before any write so a bad key never manufactures the file.
+    validate_operator_key(&operator_key)?;
+    let cur = std::env::current_dir()?;
+    let mut cfg = DiscoveryConfig::load(&cur)?;
+    let _ = cfg.add(&operator_key)?;
+    cfg.write(&cur)?;
+    println!("added {operator_key}");
+    Ok(())
+}
+
+fn run_node_trust_remove(operator_key: String) -> anyhow::Result<()> {
+    use nlang_interpreter::discovery_config::{validate_operator_key, DiscoveryConfig};
+    validate_operator_key(&operator_key)?;
+    let cur = std::env::current_dir()?;
+    let mut cfg = DiscoveryConfig::load(&cur)?;
+    let _ = cfg.remove(&operator_key)?;
+    cfg.write(&cur)?;
+    println!("removed {operator_key}");
     Ok(())
 }
 

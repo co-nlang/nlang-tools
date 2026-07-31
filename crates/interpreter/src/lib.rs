@@ -12,6 +12,7 @@ pub mod bn_serial;
 pub mod lattice_sketch;
 pub mod storage;
 pub mod complement;
+pub mod discovery_config;
 pub mod builtins;
 pub mod unify;
 pub mod eval;
@@ -372,6 +373,9 @@ pub struct Ouroboros {
     pub refine_map: RwLock<HashMap<String, Vec<String>>>,
     pub gbb_registry: RwLock<HashMap<String, crate::ladd::GBB>>,
     pub architect_registry: RwLock<std::collections::HashSet<String>>,
+    /// Affiliation trust roots from `.oo/discovery.n` (discovery_trust arc).
+    /// Assertion layer only — not consumed for admission in this arc.
+    pub affiliation_roots: std::collections::BTreeSet<String>,
     /// SPEC_08 §6 capability lattice. Default NONE; set only via trusted
     /// channel (`set_privilege` / CLI `--privileged`/`--grant`). Never from
     /// in-program n/ code.
@@ -451,6 +455,7 @@ impl Ouroboros {
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(std::collections::HashSet::new()),
+            affiliation_roots: std::collections::BTreeSet::new(),
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
             privileged_discharge_tags: std::sync::atomic::AtomicU8::new(0),
@@ -466,6 +471,8 @@ impl Ouroboros {
         let architects = store
             .load_architects(base_dir)
             .unwrap_or_else(|_| std::collections::HashSet::new());
+        // discovery_trust: load affiliation roots loudly (not fail-soft).
+        let discovery = crate::discovery_config::DiscoveryConfig::load(base_dir)?;
         // Durable peer directory (advert_persistence): load signed records;
         // restore observations only when the file's owner matches this node.
         // Do not mint a node key here (node_identity P5).
@@ -507,6 +514,7 @@ impl Ouroboros {
             refine_map: RwLock::new(HashMap::new()),
             gbb_registry: RwLock::new(HashMap::new()),
             architect_registry: RwLock::new(architects),
+            affiliation_roots: discovery.affiliation_roots,
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
             privileged_discharge_tags: std::sync::atomic::AtomicU8::new(0),
