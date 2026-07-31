@@ -601,6 +601,20 @@ fn in_process_fetch(engine: &Ouroboros, name: Option<&str>, caid: &str) -> Value
     (engine.builtin_registry.get("disc.fetch").unwrap().clone())(arg, engine, &mut ctx)
 }
 
+/// An eligible source admitted alongside the subject of an absence assertion,
+/// so that "the subject was not dialled" is a differential rather than a
+/// statement that nothing is ever dialled. See [`Fixture::admit_control`].
+struct ControlSource {
+    node_id: String,
+    peer: FakePeer,
+}
+
+impl ControlSource {
+    fn asked(&self) -> Vec<String> {
+        self.peer.asked()
+    }
+}
+
 struct CapCandidate {
     label: &'static str,
     node: NodeKey,
@@ -609,9 +623,14 @@ struct CapCandidate {
 }
 
 struct Fixture {
+    tag: String,
     receiver_dir: PathBuf,
     node: NodeKey,
     operator: OperatorKey,
+    /// `None` when the fixture is rooted (then `operator` *is* the root).
+    /// `Some` when it is not, so a control source can still be minted under
+    /// the root this workspace actually trusts. See [`Fixture::admit_control`].
+    root_operator: Option<OperatorKey>,
     object_caid: String,
     payload: Vec<u8>,
     fake: FakePeer,
@@ -620,6 +639,86 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// The operator whose key is in this receiver's `affiliation_roots`.
+    fn root_op(&self) -> &OperatorKey {
+        self.root_operator.as_ref().unwrap_or(&self.operator)
+    }
+
+    /// A well-formed CAID that **no** source can satisfy, so a fetch scan
+    /// visits every admitted remote instead of stopping at the first that
+    /// answers.
+    ///
+    /// Needed because the fetch ladder returns on the first success, and the
+    /// automatic-remote map is reconstructed by iterating `peer_adverts`,
+    /// which is a `HashMap` — so the visit order is arbitrary. Asserting "the
+    /// control was dialled" after a *successful* fetch is therefore a coin
+    /// flip whenever two sources are eligible: measured 4 passes and 1 failure
+    /// in 5 runs of `r3` before this was introduced. (A gate that flakes
+    /// teaches its reader to re-run rather than look.)
+    fn unsatisfiable_caid(&self) -> String {
+        let (head, digest) = self.object_caid.rsplit_once(':').unwrap();
+        let mut chars: Vec<char> = digest.chars().collect();
+        let last = chars.len() - 1;
+        chars[last] = if chars[last] == 'a' { 'b' } else { 'a' };
+        format!("{head}:{}", chars.into_iter().collect::<String>())
+    }
+
+    /// ACCEPTANCE REPAIR (2026-07-31) — admit a second source that **is**
+    /// eligible, in this same run, and return its fake peer.
+    ///
+    /// Every red from r3 onward asserts an ABSENCE: "this record did not
+    /// become an automatic source". At the opening baseline no record ever
+    /// became one, so **six of the nine reds passed before a line of the
+    /// delivery existed** — verified by rebuilding the pre-delivery tree
+    /// (`9db92bf`) and running `--ignored`: r3–r8 green, only r1/r2/r9 red.
+    /// An engine that admits nothing at all satisfies them.
+    ///
+    /// `c0`/`c1` were written to be that guard, and the section comment above
+    /// them says so, but they are **separate tests with their own fixtures**.
+    /// A control in another process cannot show that the mechanism was live
+    /// for THIS fixture, with THESE keys, at THIS moment. Standing rule, now
+    /// applied for the third time: a red that asserts an absence must assert
+    /// a presence in the same run.
+    ///
+    /// The control deliberately serves bytes that are **not** the object, so
+    /// the `LIVE_PAYLOAD` assertions keep their meaning — it shows the source
+    /// scan ran and reached an admitted remote without supplying fetch
+    /// content. The fetch ladder treats its answer as a CAID mismatch and
+    /// keeps scanning, which is exactly the path the subject would take if it
+    /// had been admitted.
+    fn admit_control(&mut self) -> ControlSource {
+        let dir = fresh_dir(&format!("{}-control", self.tag));
+        let node = node_key(&dir);
+        let peer = spawn_peer(b"CONTROL_SOURCE_NOT_THE_OBJECT".to_vec());
+        let ad = signed_advert(
+            &self.receiver_dir,
+            &node,
+            self.root_op(),
+            &self.object_caid,
+            peer.port,
+            now_secs() + 3600,
+        );
+        let started = self.receiver.is_none();
+        if started {
+            self.receiver = Some(serve(&self.receiver_dir));
+        }
+        let port = self.receiver.as_ref().unwrap().port;
+        let reply = ask_raw(port, &advert_request(&node.node_id, &ad));
+        assert_eq!(
+            status_of(&reply),
+            "success",
+            "control advert was not accepted, so the absence assertions below \
+             would prove nothing: {reply}"
+        );
+        if started {
+            self.stop_receiver();
+        }
+        ControlSource {
+            node_id: node.node_id.clone(),
+            peer,
+        }
+    }
+
     fn direct(&mut self) {
         let receiver = serve(&self.receiver_dir);
         let reply = ask_raw(receiver.port, &advert_request(&self.node.node_id, &self.ad));
@@ -656,11 +755,15 @@ fn fixture(tag: &str, rooted: bool, expires: i64) -> Fixture {
     let source_dir = fresh_dir(&format!("{tag}-source"));
     let node = node_key(&source_dir);
     let operator = operator_key();
-    let root_key = if rooted {
-        operator.public_key_hex.clone()
-    } else {
-        operator_key().public_key_hex
-    };
+    // ACCEPTANCE REPAIR: when the fixture is deliberately unrooted, the root
+    // operator used to be minted and thrown away. It is retained now so that
+    // `admit_control` can still mint a source this workspace actually trusts.
+    let root_operator = if rooted { None } else { Some(operator_key()) };
+    let root_key = root_operator
+        .as_ref()
+        .unwrap_or(&operator)
+        .public_key_hex
+        .clone();
 
     let receiver_dir = fresh_dir(&format!("{tag}-receiver"));
     write_roots(&receiver_dir, &[&root_key]);
@@ -675,9 +778,11 @@ fn fixture(tag: &str, rooted: bool, expires: i64) -> Fixture {
     );
 
     Fixture {
+        tag: tag.to_string(),
         receiver_dir,
         node,
         operator,
+        root_operator,
         object_caid,
         payload,
         fake,
@@ -809,14 +914,46 @@ fn r2_same_owner_restart_reconstructs_eligibility() {
 #[test]
 fn r3_copy_clears_direct_observation_for_admission() {
     let mut fixture = fixture("r3", true, now_secs() + 3600);
+    let control = fixture.admit_control();
     fixture.direct();
     fixture.stop_receiver();
 
+    // The ORIGINAL workspace admits, so the scan demonstrably reaches an
+    // automatic remote here. Without this the assertion about the copy holds
+    // in an engine that admits nothing anywhere. The probe CAID is deliberately
+    // unsatisfiable so the scan visits both eligible sources rather than
+    // stopping at whichever the HashMap happened to reconstruct first.
+    let unreachable = fixture.unsatisfiable_caid();
+    let _ = fetch_unnamed(&fixture.receiver_dir, &unreachable);
+    assert!(
+        !control.asked().is_empty(),
+        "the original workspace never dialled its own eligible source, so the \
+         copy dialling nothing proves nothing"
+    );
+    assert!(
+        !fixture.fake.asked().is_empty(),
+        "the original workspace never dialled the subject either, so this \
+         fixture shows nothing about what the copy stops doing"
+    );
+
+    // Both sources are legitimately dialled by the ORIGINAL workspace above,
+    // so the copy is judged on the delta, not on emptiness. (The original
+    // assertion here was `fake.asked().is_empty()`, which only held because
+    // nothing was ever dialled anywhere.)
     let copy = fresh_dir("r3-copy");
     copy_tree(&fixture.receiver_dir, &copy);
+    let control_before = control.asked().len();
+    let subject_before = fixture.fake.asked().len();
     let output = fetch_unnamed(&copy, &fixture.object_caid);
-    assert!(
-        fixture.fake.asked().is_empty(),
+    assert_eq!(
+        control.asked().len(),
+        control_before,
+        "copied workspace dialled an eligible source from the original \
+         observer half"
+    );
+    assert_eq!(
+        fixture.fake.asked().len(),
+        subject_before,
         "copied workspace dialled a source from the original observer half"
     );
     assert!(
@@ -827,12 +964,18 @@ fn r3_copy_clears_direct_observation_for_admission() {
 
 #[test]
 fn r4_relayed_zero_hops_is_not_admitted() {
-    let fixture = fixture("r4", true, now_secs() + 3600);
+    let mut fixture = fixture("r4", true, now_secs() + 3600);
+    let control = fixture.admit_control();
     let _relayer = fixture.relay(0, &fixture.ad);
     let record = latest_record(&fixture.receiver_dir, &fixture.node.node_id);
     assert_eq!(provenance_of(&record).as_deref(), Some("relayed"));
 
     let output = fetch_unnamed(&fixture.receiver_dir, &fixture.object_caid);
+    assert!(
+        !control.asked().is_empty(),
+        "the eligible control source was never dialled, so the absence below \
+         only says that nothing is ever admitted"
+    );
     assert!(
         fixture.fake.asked().is_empty(),
         "relayed %hops:0 record became an automatic source"
@@ -846,12 +989,18 @@ fn r4_relayed_zero_hops_is_not_admitted() {
 #[test]
 fn r5_unknown_legacy_record_is_not_admitted() {
     let mut fixture = fixture("r5", true, now_secs() + 3600);
+    let control = fixture.admit_control();
     fixture.direct();
     fixture.stop_receiver();
     rewrite_provenance(&fixture.receiver_dir, &fixture.node.node_id, None);
     assert!(provenance_of(&latest_record(&fixture.receiver_dir, &fixture.node.node_id)).is_none());
 
     let output = fetch_unnamed(&fixture.receiver_dir, &fixture.object_caid);
+    assert!(
+        !control.asked().is_empty(),
+        "the eligible control source was never dialled, so the absence below \
+         only says that nothing is ever admitted"
+    );
     assert!(
         fixture.fake.asked().is_empty(),
         "legacy record defaulted to an automatic direct source"
@@ -865,10 +1014,18 @@ fn r5_unknown_legacy_record_is_not_admitted() {
 #[test]
 fn r6_unrooted_claim_is_not_admitted() {
     let mut fixture = fixture("r6", false, now_secs() + 3600);
+    // The control is signed by the operator this workspace *does* root, so
+    // the only difference between it and the subject is rootedness.
+    let control = fixture.admit_control();
     fixture.direct();
     fixture.stop_receiver();
 
     let output = fetch_unnamed(&fixture.receiver_dir, &fixture.object_caid);
+    assert!(
+        !control.asked().is_empty(),
+        "the rooted control source was never dialled, so the absence below \
+         only says that nothing is ever admitted"
+    );
     assert!(
         fixture.fake.asked().is_empty(),
         "unrooted affiliation claim became an automatic source"
@@ -882,10 +1039,17 @@ fn r6_unrooted_claim_is_not_admitted() {
 #[test]
 fn r7_expired_claim_is_not_admitted() {
     let mut fixture = fixture("r7", true, now_secs() - 1);
+    // Same root, same everything, but the control's claim is live.
+    let control = fixture.admit_control();
     fixture.direct();
     fixture.stop_receiver();
 
     let output = fetch_unnamed(&fixture.receiver_dir, &fixture.object_caid);
+    assert!(
+        !control.asked().is_empty(),
+        "the live-claim control source was never dialled, so the absence \
+         below only says that nothing is ever admitted"
+    );
     assert!(
         fixture.fake.asked().is_empty(),
         "expired affiliation claim left an automatic source behind"
@@ -899,6 +1063,7 @@ fn r7_expired_claim_is_not_admitted() {
 #[test]
 fn r8_newer_relayed_ad_does_not_inherit_old_direct() {
     let mut fixture = fixture("r8", true, now_secs() + 3600);
+    let control = fixture.admit_control();
     fixture.direct();
     fixture.stop_receiver();
     assert!(fixture.fake.asked().is_empty());
@@ -921,6 +1086,11 @@ fn r8_newer_relayed_ad_does_not_inherit_old_direct() {
     assert_eq!(provenance_of(&record).as_deref(), Some("relayed"));
 
     let output = fetch_unnamed(&fixture.receiver_dir, &fixture.object_caid);
+    assert!(
+        !control.asked().is_empty(),
+        "the eligible control source was never dialled, so the absence below \
+         only says that nothing is ever admitted"
+    );
     assert!(
         fixture.fake.asked().is_empty() && newer_peer.asked().is_empty(),
         "a newer relayed ad inherited or created an automatic source"
