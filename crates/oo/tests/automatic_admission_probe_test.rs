@@ -759,7 +759,6 @@ fn c1_relay_and_legacy_records_are_live() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-#[ignore]
 fn r1_direct_rooted_admission_inserts_without_eager_dial() {
     let mut fixture = fixture("r1", true, now_secs() + 3600);
     fixture.direct();
@@ -786,7 +785,6 @@ fn r1_direct_rooted_admission_inserts_without_eager_dial() {
 }
 
 #[test]
-#[ignore]
 fn r2_same_owner_restart_reconstructs_eligibility() {
     let mut fixture = fixture("r2", true, now_secs() + 3600);
     fixture.direct();
@@ -809,7 +807,6 @@ fn r2_same_owner_restart_reconstructs_eligibility() {
 }
 
 #[test]
-#[ignore]
 fn r3_copy_clears_direct_observation_for_admission() {
     let mut fixture = fixture("r3", true, now_secs() + 3600);
     fixture.direct();
@@ -829,7 +826,6 @@ fn r3_copy_clears_direct_observation_for_admission() {
 }
 
 #[test]
-#[ignore]
 fn r4_relayed_zero_hops_is_not_admitted() {
     let fixture = fixture("r4", true, now_secs() + 3600);
     let _relayer = fixture.relay(0, &fixture.ad);
@@ -848,7 +844,6 @@ fn r4_relayed_zero_hops_is_not_admitted() {
 }
 
 #[test]
-#[ignore]
 fn r5_unknown_legacy_record_is_not_admitted() {
     let mut fixture = fixture("r5", true, now_secs() + 3600);
     fixture.direct();
@@ -868,7 +863,6 @@ fn r5_unknown_legacy_record_is_not_admitted() {
 }
 
 #[test]
-#[ignore]
 fn r6_unrooted_claim_is_not_admitted() {
     let mut fixture = fixture("r6", false, now_secs() + 3600);
     fixture.direct();
@@ -886,7 +880,6 @@ fn r6_unrooted_claim_is_not_admitted() {
 }
 
 #[test]
-#[ignore]
 fn r7_expired_claim_is_not_admitted() {
     let mut fixture = fixture("r7", true, now_secs() - 1);
     fixture.direct();
@@ -904,7 +897,6 @@ fn r7_expired_claim_is_not_admitted() {
 }
 
 #[test]
-#[ignore]
 fn r8_newer_relayed_ad_does_not_inherit_old_direct() {
     let mut fixture = fixture("r8", true, now_secs() + 3600);
     fixture.direct();
@@ -940,7 +932,6 @@ fn r8_newer_relayed_ad_does_not_inherit_old_direct() {
 }
 
 #[test]
-#[ignore]
 fn r9_automatic_remote_cap_is_three_and_incumbent_first() {
     let receiver_dir = fresh_dir("r9-receiver");
     init(&receiver_dir);

@@ -245,7 +245,51 @@ Out of scope:
 ## 7. Delivery and acceptance boundary
 
 The acceptor owns this probe. Model #3 may implement the engine only after the
-cap policy is explicit. A delivery diff that changes this file beyond removing
-`#[ignore]` is rejected. Acceptance reruns the owner suite, full workspace,
-conformance, genesis, and the unchanged provenance/trust/consent/fetch owners.
-No version bump or tag belongs to this opening arc.
+cap policy is explicit. A delivery diff that changes this **probe** beyond
+removing `#[ignore]` is rejected. Acceptance reruns the owner suite, full
+workspace, conformance, genesis, and the unchanged
+provenance/trust/consent/fetch owners. No version bump or tag belongs to this
+opening arc.
+
+---
+
+## 8. Delivery record
+
+**Delivered** against open `bc3b773` / cap policy `9db92bf`.
+
+### What landed
+
+* Process-local `automatic_remotes` map (`IndexMap<node_id, AutomaticRemote>`),
+  separate from manual `peers`. Cap **`AUTOMATIC_REMOTE_CAP = 3`**.
+* Eligibility (all required): exact-ad provenance `direct`; non-empty observed
+  host + listen port; `verify_stored_ad` ladder; affiliation claim valid *now*;
+  operator key in loaded `affiliation_roots`.
+* On `record_peer_advert`: consider admit / refresh / drop. Overflow never
+  evicts incumbents. Ineligible current ad removes any automatic slot for that
+  `node_id` (no stale source).
+* On `Ouroboros::init` after peer verify: `reconstruct_automatic_remotes`
+  (ordered by `received_at`, no dial).
+* Unnamed fetch revalidates then scans automatic remotes after manual peers.
+* Probe: nine `#[ignore]` attributes removed only. No wire/body/format change.
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| `automatic_admission_probe_test` | **11/11** (2 controls + 9 reds) |
+| `direct_observation_provenance_probe_test` | **11/11** |
+| `advert_persistence` / wire / discover / affiliation / trust / connect / peer-fetch / local_gc / kademlia | all green (prior pin rerun) |
+| full workspace | **1743 passed / 0 failed / 3 ignored**, 179 result blocks |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| `cargo fmt --all -- --check` | pass |
+| `git diff --check` | pass |
+
+Opening with live controls was effectively 1734/0/12 on the post-probe tree;
+nine ignored reds move into the pass column (1734 + 9 = 1743; 12 − 9 = 3).
+
+### Out of scope (unchanged)
+
+No durable source-map persistence, no runtime root reload, no backfill after
+slot free, no ranking by capacity, no automatic dial on receipt. Manual
+`./connect` remains the explicit consent path outside the automatic cap.
