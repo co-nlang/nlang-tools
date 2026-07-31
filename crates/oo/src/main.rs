@@ -607,6 +607,7 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
             verified_operator_key: p.verified_operator_key.clone(),
             // Receiver-local: learned via #discover, even if envelope hops is 0.
             provenance: nlang_interpreter::ObservationProvenance::Relayed,
+            admission_seq: 0, // assigned in record_peer_advert
         });
     }
     Ok(())

@@ -398,6 +398,10 @@ pub struct PeerAdvert {
     pub verified_operator_key: Option<String>,
     /// Receiver-local how-this-ad-was-learned (not on the wire / not signed).
     pub provenance: ObservationProvenance,
+    /// Receiver-local monotonic admission order (seat_order / REAL_02 §4.2.6.3).
+    /// Durable optional key; `0` means absent/legacy. Totals arrival order when
+    /// `received_at` only has one-second resolution.
+    pub admission_seq: u64,
 }
 
 /// Force-memo key (Stage 5): (expr CAID, frame CAID, context CAID | #open).
@@ -739,6 +743,27 @@ impl Ouroboros {
         Ok(self.node_identity()?.node_id_caid())
     }
 
+    /// Node id if already loaded or present on disk — **never mints**.
+    /// Used by seat rebuild / verify paths that must not create identity.
+    pub fn node_id_if_present(&self) -> Option<String> {
+        if let Ok(cell) = self.node_identity_cell.read() {
+            if let Some(ref id) = *cell {
+                return Some(id.node_id_caid().to_string());
+            }
+        }
+        if !self.identity_persist {
+            return None;
+        }
+        let base = self.base_dir.as_ref()?;
+        let path = crate::value::Identity::node_key_path(base).ok()?;
+        if !path.exists() {
+            return None;
+        }
+        crate::value::Identity::load(&path)
+            .ok()
+            .map(|id| id.node_id_caid().to_string())
+    }
+
     /// Record an accepted OODP advertisement and update the Kademlia index.
     /// Appends to `.oo/peers/directory` when this engine has a workspace.
     /// Returns log lines (routing insert / full-drop + peers append/compact).
@@ -748,7 +773,7 @@ impl Ouroboros {
     /// does not replace the live record and is not durable-appended. A
     /// **different** signed advertisement for the same `node_id` replaces
     /// under the existing last-wins policy and keeps its own provenance.
-    pub fn record_peer_advert(&self, advert: PeerAdvert) -> Vec<String> {
+    pub fn record_peer_advert(&self, mut advert: PeerAdvert) -> Vec<String> {
         let node_id = advert.node_id.clone();
         let pk_hex = advert.public_key_hex.clone();
 
@@ -765,6 +790,13 @@ impl Ouroboros {
         };
         if !accept {
             return Vec::new();
+        }
+
+        // Total arrival order for seat rebuild (additive durable field).
+        if advert.admission_seq == 0 {
+            if let Ok(mut st) = self.peer_dir_state.write() {
+                advert.admission_seq = st.alloc_admission_seq();
+            }
         }
 
         if let Ok(mut dir) = self.peer_adverts.write() {
@@ -866,7 +898,8 @@ impl Ouroboros {
     }
 
     /// Rebuild automatic remotes from the live peer directory after load.
-    /// Incumbent order follows `received_at` then `node_id`. Does not dial.
+    /// Incumbent order is total arrival order (`admission_seq` / §4.2.6.3),
+    /// not raw `node_id`. Does not dial.
     pub fn reconstruct_automatic_remotes(&self) {
         if let Ok(mut auto) = self.automatic_remotes.write() {
             auto.clear();
@@ -876,11 +909,9 @@ impl Ouroboros {
         } else {
             return;
         };
-        sorted.sort_by(|a, b| {
-            a.received_at
-                .cmp(&b.received_at)
-                .then_with(|| a.node_id.cmp(&b.node_id))
-        });
+        // Never mint: ordinary eval/run must not create node identity.
+        let self_id = self.node_id_if_present();
+        sorted.sort_by(|a, b| crate::peers::cmp_admission_order(a, b, self_id.as_deref()));
         for adv in &sorted {
             self.consider_automatic_admission(adv);
         }
