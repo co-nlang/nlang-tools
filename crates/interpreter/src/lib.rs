@@ -307,6 +307,51 @@ pub enum Peer {
     Remote(String), // TCP address
 }
 
+/// How this receiver learned a verified signed advertisement.
+///
+/// Receiver-local observation only — not trust, correctness, ranking, or
+/// address safety. Bound to the exact signed advertisement identity
+/// (`ad_source`), not merely to `node_id` or `%hops`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationProvenance {
+    /// Accepted a valid `#advertise` on a connection whose peer host was observed here.
+    Direct,
+    /// Learned the signed advertisement through a `#discover` response (relay assertions).
+    Relayed,
+    /// Absent, legacy, or cleared (e.g. copied workspace / owner mismatch).
+    Unknown,
+}
+
+impl ObservationProvenance {
+    /// Durable spelling (`direct` / `relayed` / `unknown`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Relayed => "relayed",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Parse a durable spelling; unknown tokens and absence map to [`Unknown`].
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "direct" => Self::Direct,
+            "relayed" => Self::Relayed,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Merge rank: higher rank wins for the same exact advertisement.
+    /// Direct > Relayed > Unknown. Equal rank allows same-class last-wins.
+    fn rank(self) -> u8 {
+        match self {
+            Self::Direct => 2,
+            Self::Relayed => 1,
+            Self::Unknown => 0,
+        }
+    }
+}
+
 /// An accepted OODP `#advertise` record (wire advertise / discover index).
 /// Written on verify; searched by `#discover`. Still **not** a fetch source
 /// (discover_index §5 — consent arc later).
@@ -334,6 +379,8 @@ pub struct PeerAdvert {
     /// Derived affiliation operator public key (64 hex), if a claim verified.
     /// **Never persisted** — rebuilt from `ad_source` (affiliation_claim / #3c-a).
     pub verified_operator_key: Option<String>,
+    /// Receiver-local how-this-ad-was-learned (not on the wire / not signed).
+    pub provenance: ObservationProvenance,
 }
 
 /// Force-memo key (Stage 5): (expr CAID, frame CAID, context CAID | #open).
@@ -669,9 +716,31 @@ impl Ouroboros {
     /// Record an accepted OODP advertisement and update the Kademlia index.
     /// Appends to `.oo/peers/directory` when this engine has a workspace.
     /// Returns log lines (routing insert / full-drop + peers append/compact).
+    ///
+    /// For the **same** exact signed advertisement (`ad_source`), provenance
+    /// merge precedence is Direct > Relayed > Unknown. A lower-ranked arrival
+    /// does not replace the live record and is not durable-appended. A
+    /// **different** signed advertisement for the same `node_id` replaces
+    /// under the existing last-wins policy and keeps its own provenance.
     pub fn record_peer_advert(&self, advert: PeerAdvert) -> Vec<String> {
         let node_id = advert.node_id.clone();
         let pk_hex = advert.public_key_hex.clone();
+
+        // Exact-ad provenance merge before insert / durable append.
+        let accept = if let Ok(dir) = self.peer_adverts.read() {
+            match dir.get(&node_id) {
+                Some(existing) if existing.ad_source == advert.ad_source => {
+                    advert.provenance.rank() >= existing.provenance.rank()
+                }
+                _ => true,
+            }
+        } else {
+            true
+        };
+        if !accept {
+            return Vec::new();
+        }
+
         if let Ok(mut dir) = self.peer_adverts.write() {
             dir.insert(node_id.clone(), advert.clone());
         }

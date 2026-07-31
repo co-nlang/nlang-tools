@@ -551,7 +551,6 @@ fn c1_restart_and_copy_still_discriminate_the_observer_half() {
 
 /// R1 — a direct #advertise receipt is marked direct in durable local state.
 #[test]
-#[ignore]
 fn r1_direct_receipt_records_direct_provenance() {
     let source = fresh_dir("r1-source");
     let receiver = fresh_dir("r1-receiver");
@@ -574,7 +573,6 @@ fn r1_direct_receipt_records_direct_provenance() {
 /// R2 — a #discover receipt is explicitly relayed, even though this process
 /// opened a TCP connection to the relayer.
 #[test]
-#[ignore]
 fn r2_relayed_receipt_records_relayed_provenance() {
     let source = fresh_dir("r2-source");
     let relay = fresh_dir("r2-relay");
@@ -599,7 +597,6 @@ fn r2_relayed_receipt_records_relayed_provenance() {
 /// R3 — for one exact signed advertisement, direct wins over relayed in both
 /// arrival orders. The relayer's host must not replace the direct observation.
 #[test]
-#[ignore]
 fn r3_direct_is_authoritative_for_the_same_signed_advertisement() {
     let source = fresh_dir("r3-source");
     let direct_first = fresh_dir("r3-direct-first");
@@ -641,7 +638,6 @@ fn r3_direct_is_authoritative_for_the_same_signed_advertisement() {
 /// R4 — a newer signed advertisement from the same node does not inherit the
 /// direct status of an older one. Provenance follows the exact ad identity.
 #[test]
-#[ignore]
 fn r4_a_different_signed_ad_does_not_inherit_direct_provenance() {
     let source = fresh_dir("r4-source");
     let receiver = fresh_dir("r4-receiver");
@@ -670,7 +666,6 @@ fn r4_a_different_signed_ad_does_not_inherit_direct_provenance() {
 /// R5 — a second relay carrying the exact signed body remains relayed. The
 /// claimed hop count never upgrades a relay assertion to a local observation.
 #[test]
-#[ignore]
 fn r5_a_forwarded_relayed_observation_stays_relayed() {
     let source = fresh_dir("r5-source");
     let receiver = fresh_dir("r5-receiver");
@@ -697,7 +692,6 @@ fn r5_a_forwarded_relayed_observation_stays_relayed() {
 /// R6 — `%hops: 0` and `%hops: 1` are both relay assertions. Neither is a
 /// shortcut to direct provenance.
 #[test]
-#[ignore]
 fn r6_zero_and_one_claimed_hops_are_both_relayed() {
     let source = fresh_dir("r6-source");
     let zero = fresh_dir("r6-zero");
@@ -733,7 +727,6 @@ fn r6_zero_and_one_claimed_hops_are_both_relayed() {
 /// with a post-restart relay so a loader that silently defaults to relayed or
 /// unknown cannot pass by merely preserving bytes on disk.
 #[test]
-#[ignore]
 fn r7_restart_preserves_direct_and_relayed_provenance() {
     let source = fresh_dir("r7-source");
     let direct = fresh_dir("r7-direct");
@@ -784,7 +777,6 @@ fn r7_restart_preserves_direct_and_relayed_provenance() {
 /// observation. A later relay may populate relayed provenance, but cannot make
 /// the copied record direct.
 #[test]
-#[ignore]
 fn r8_copy_clears_local_provenance_before_a_later_relay() {
     let source = fresh_dir("r8-source");
     let original = fresh_dir("r8-original");
@@ -820,7 +812,6 @@ fn r8_copy_clears_local_provenance_before_a_later_relay() {
 /// R9 — a legacy line without the optional field is unknown, never direct. A
 /// same-ad relayed update must therefore replace its old host after reload.
 #[test]
-#[ignore]
 fn r9_legacy_missing_provenance_is_conservative() {
     let source = fresh_dir("r9-source");
     let receiver = fresh_dir("r9-receiver");

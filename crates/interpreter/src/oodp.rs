@@ -915,6 +915,7 @@ fn serve_advertise(
         ad_source,
         received_at: SystemTime::now(),
         verified_operator_key: verified_operator_key.clone(),
+        provenance: crate::ObservationProvenance::Direct,
     });
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);

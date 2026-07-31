@@ -426,3 +426,53 @@ or probe was edited.
 * Automatic admission and its hard cap remain the next separate arc.
 
 None of these ledger items authorises expanding this order.
+
+---
+
+## 13. Delivery record
+
+**Delivered** against order open `558a1ea` / verification rerun `230e095`.
+
+### What landed
+
+* `ObservationProvenance::{Direct, Relayed, Unknown}` on `PeerAdvert` — receiver-local
+  only; not trust, ranking, or dial safety.
+* Exact-ad merge in `record_peer_advert`: same `ad_source` uses Direct > Relayed >
+  Unknown; lower-ranked arrivals neither replace the live map nor durable-append.
+  A different signed advertisement for the same `node_id` replaces under last-wins
+  and keeps its own provenance (does not inherit direct).
+* Direct path (`serve_advertise` / `#advertise`) labels `Direct`.
+* Discover CLI path labels `Relayed` even when envelope hops is 0 or the TCP
+  peer is the relayer.
+* Durable `.oo/peers/directory` encodes optional `provenance`; missing key and
+  owner-mismatch/copy clear to `unknown` with the rest of the observer half.
+* Probe: removed nine `#[ignore]` attributes only. `disc.rs` untouched.
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| `direct_observation_provenance_probe_test` | **11/11** (2 controls + 9 reds) |
+| `advert_persistence_probe_test` | **19/19** |
+| `advertise_wire_probe_test` | **19/19** |
+| `discover_index_probe_test` | **17/17** |
+| `affiliation_claim_probe_test` | **20/20** |
+| `discovery_trust_probe_test` | **20/20** |
+| `connect_consent_probe_test` | **9/9** |
+| `local_gc_probe_test` | **17/17** |
+| `kademlia_table_probe_test` | **17/17** |
+| `peer_fetch_verification_probe_test` | **12/12** |
+| full workspace | **1732 passed / 0 failed / 3 ignored**, 178 result blocks |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| `cargo fmt --all -- --check` | pass |
+| `git diff --check` | pass |
+
+Opening was 1723/0/12 with nine ignored reds; delivery moves those nine into
+the pass column (1723 + 9 = 1732; 12 − 9 = 3 ignored remain elsewhere).
+
+### Out of scope (unchanged)
+
+No admission, dial, source-map insertion, ranking, wire/body change, `.oo/format`
+bump, or new top-level durable path. Next arc remains automatic admission + hard
+cap, consuming this direct-observation state.
