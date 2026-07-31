@@ -473,6 +473,36 @@ Suggested delivery commit message:
 Add workspace-local affiliation trust roots
 ```
 
+### Delivery record (delivery side)
+
+**Built**
+
+- `crates/interpreter/src/discovery_config.rs`: `DiscoveryConfig` with
+  `BTreeSet` roots; `load` / `write` / `validate_operator_key`.
+- Closed parse via `parse_program` (data only — no eval). Rejects unknown
+  fields, non-string members, short/uppercase keys, unreadable paths.
+- Absence / empty list → empty set; present-but-bad → named error containing
+  `discovery.n`.
+- Canonical write: sorted keys, temp file + rename under `.oo/`.
+- `Ouroboros.affiliation_roots` loaded on `init` (`?`); empty for in-memory.
+- CLI: `oo node trust list|add|remove` — no `--grant`; no network side effects.
+
+**Not built (ruling F)**
+
+No peer admission, dial, directory change, advert policy, or identity mint.
+
+**Numbers**
+
+| Suite | Result |
+| --- | --- |
+| discovery_trust | **18/18** |
+| workspace | **1719 / 0 / 3** |
+| conf | **143/143** |
+| genesis | **11/11** |
+
+Existing durable allow-list probes **untouched** (trust file absent in those
+workflows). Spec/CHANGELOG not edited.
+
 ---
 
 ## 10. Acceptance plan (acceptor, after delivery)

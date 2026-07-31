@@ -404,7 +404,6 @@ fn p5_other_authority_lists_remain_separate() {
 // ── red gate: ignored at baseline, delivery removes only #[ignore] ─────────
 
 #[test]
-#[ignore = "delivery gate: expose an empty workspace-local trust set"]
 fn red_list_surface_exists_and_missing_means_empty_without_creation() {
     let d = fresh_dir("r1");
     init(&d);
@@ -429,7 +428,6 @@ fn red_list_surface_exists_and_missing_means_empty_without_creation() {
 }
 
 #[test]
-#[ignore = "delivery gate: add and list one canonical affiliation root"]
 fn red_add_persists_the_reserved_literal_config() {
     let d = fresh_dir("r2");
     init(&d);
@@ -452,7 +450,6 @@ fn red_add_persists_the_reserved_literal_config() {
 }
 
 #[test]
-#[ignore = "delivery gate: roots are a sorted removable set"]
 fn red_add_remove_round_trip_is_exact_and_sorted() {
     let d = fresh_dir("r3");
     init(&d);
@@ -478,7 +475,6 @@ fn red_add_remove_round_trip_is_exact_and_sorted() {
 }
 
 #[test]
-#[ignore = "delivery gate: malformed configuration is named, never silently empty"]
 fn red_malformed_config_is_a_loud_named_error() {
     let d = fresh_dir("r4");
     init(&d);
@@ -502,7 +498,6 @@ fn red_malformed_config_is_a_loud_named_error() {
 }
 
 #[test]
-#[ignore = "delivery gate: impossible Ed25519 names are rejected"]
 fn red_short_key_is_a_loud_named_error() {
     let d = fresh_dir("r5");
     init(&d);
@@ -521,7 +516,6 @@ fn red_short_key_is_a_loud_named_error() {
 }
 
 #[test]
-#[ignore = "delivery gate: public-key spelling has one canonical form"]
 fn red_uppercase_key_is_rejected_not_silently_normalized() {
     let d = fresh_dir("r6");
     init(&d);
@@ -541,7 +535,6 @@ fn red_uppercase_key_is_rejected_not_silently_normalized() {
 }
 
 #[test]
-#[ignore = "delivery gate: closed data shape catches misspelled policy"]
 fn red_unknown_field_is_not_silently_ignored() {
     let d = fresh_dir("r7");
     init(&d);
@@ -560,7 +553,6 @@ fn red_unknown_field_is_not_silently_ignored() {
 }
 
 #[test]
-#[ignore = "delivery gate: a node trust decision cannot leak to sibling workspaces"]
 fn red_roots_are_workspace_local_even_under_one_home() {
     let a = fresh_dir("r8-a");
     let b = fresh_dir("r8-b");
@@ -601,7 +593,6 @@ fn red_roots_are_workspace_local_even_under_one_home() {
 }
 
 #[test]
-#[ignore = "delivery gate: trust management is configuration only, not identity or admission"]
 fn red_trust_management_mints_no_keys_and_admits_no_peers() {
     let d = fresh_dir("r9");
     init(&d);
@@ -643,7 +634,6 @@ fn red_trust_management_mints_no_keys_and_admits_no_peers() {
 }
 
 #[test]
-#[ignore = "delivery gate: CLI validation refuses bad input without manufacturing a file"]
 fn red_invalid_cli_key_is_rejected_before_any_write() {
     let d = fresh_dir("r10");
     init(&d);
@@ -664,7 +654,6 @@ fn red_invalid_cli_key_is_rejected_before_any_write() {
 }
 
 #[test]
-#[ignore = "delivery gate: unreadable configuration is distinct from absence"]
 fn red_config_path_that_cannot_be_read_as_a_file_is_loud() {
     let d = fresh_dir("r11");
     init(&d);
