@@ -507,7 +507,6 @@ fn c2_under_the_cap_everyone_seats() {
 /// arrive. This is a construction, not a draw: it is red every run, with no
 /// fixture to redraw and no probability to quote.
 #[test]
-#[ignore]
 fn r1_same_second_arrivals_keep_arrival_order() {
     let f = seats("r1", CANDIDATES);
     let mut order = f.by_node_id();
@@ -556,7 +555,6 @@ fn r1_same_second_arrivals_keep_arrival_order() {
 /// *announced* — otherwise a run where compaction never triggered would pass
 /// while testing nothing.
 #[test]
-#[ignore]
 fn r2_arrival_order_survives_compaction() {
     let f = seats("r2", CANDIDATES);
     let mut order = f.by_node_id();

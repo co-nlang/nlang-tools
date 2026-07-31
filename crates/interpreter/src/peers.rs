@@ -2,12 +2,14 @@
 //!
 //! On-disk: `.oo/peers/directory` — append-only lines, header names the owning
 //! `node_id`. The Kademlia bucket index is **not** stored; it is rebuilt on
-//! load from records ordered by `received_at` (or signed `ts` on identity
-//! mismatch). See `docs/advert_persistence_handover.md`.
+//! load from records ordered by admission order (or signed `ts` on identity
+//! mismatch). See `docs/advert_persistence_handover.md` and
+//! `docs/seat_order_handover.md`.
 
 use crate::routing::{self, RoutingIndex};
 use crate::{ObservationProvenance, PeerAdvert};
 use serde_json::{json, Map, Value as JsonValue};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -29,11 +31,56 @@ pub struct LoadReport {
     pub log_line: Option<String>,
 }
 
-/// In-process handle: tracks data-line count for the 2× compaction gate.
+/// In-process handle: tracks data-line count for the 2× compaction gate and
+/// the next receiver-local admission sequence number.
 #[derive(Debug, Default)]
 pub struct PeerDirectoryState {
     /// Number of data lines currently in the file (not the live map size).
     pub file_lines: usize,
+    /// Next `admission_seq` to assign (1-based; 0 is reserved for legacy/absent).
+    pub next_admission_seq: u64,
+}
+
+impl PeerDirectoryState {
+    /// Allocate a new monotonic admission sequence (never zero).
+    pub fn alloc_admission_seq(&mut self) -> u64 {
+        if self.next_admission_seq == 0 {
+            self.next_admission_seq = 1;
+        }
+        let n = self.next_admission_seq;
+        self.next_admission_seq = self.next_admission_seq.saturating_add(1);
+        n
+    }
+}
+
+/// Total arrival order for seat rebuild and compaction (REAL_02 §4.2.6.3).
+///
+/// Primary: `received_at` (coarse). Secondary: `admission_seq` (total within a
+/// second for post-seat_order records). Tertiary: XOR of peer id against this
+/// receiver's id — **not** raw `node_id` ascending (victim-independent grind).
+pub fn cmp_admission_order(a: &PeerAdvert, b: &PeerAdvert, self_node_id: Option<&str>) -> Ordering {
+    a.received_at
+        .cmp(&b.received_at)
+        .then_with(|| a.admission_seq.cmp(&b.admission_seq))
+        .then_with(|| {
+            let ka = local_seat_rank(self_node_id, &a.node_id);
+            let kb = local_seat_rank(self_node_id, &b.node_id);
+            ka.cmp(&kb)
+        })
+}
+
+/// Victim-local rank for a residual tie. Mixes the peer's id with this node's
+/// so grinding costs one victim rather than every listener.
+fn local_seat_rank(self_node_id: Option<&str>, peer_node_id: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"oodp-seat-order:v1:");
+    if let Some(s) = self_node_id {
+        h.update(s.as_bytes());
+    }
+    h.update(b"|");
+    h.update(peer_node_id.as_bytes());
+    h.finalize().into()
 }
 
 pub fn directory_path(base_dir: &Path) -> PathBuf {
@@ -114,6 +161,8 @@ pub fn encode_record_line(adv: &PeerAdvert) -> String {
         "provenance".into(),
         JsonValue::String(adv.provenance.as_str().to_string()),
     );
+    // Receiver-local total arrival order (additive; absent on v0.9.0 lines).
+    m.insert("admission_seq".into(), json!(adv.admission_seq));
     serde_json::to_string(&JsonValue::Object(m)).unwrap_or_else(|_| "{}".into())
 }
 
@@ -151,7 +200,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
     let ts = o.get("ts").and_then(|x| x.as_i64()).unwrap_or(0);
     let ttl = o.get("ttl").and_then(|x| x.as_i64()).unwrap_or(0);
 
-    let (observed_host, hops, received_at, addr, provenance) = if restore_asserted {
+    let (observed_host, hops, received_at, addr, provenance, admission_seq) = if restore_asserted {
         let host = o
             .get("observed_host")
             .and_then(|x| x.as_str())
@@ -177,16 +226,26 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
             .and_then(|x| x.as_str())
             .map(ObservationProvenance::parse)
             .unwrap_or(ObservationProvenance::Unknown);
-        (host, hops, system_time_from_secs(ra), addr, provenance)
+        // Missing admission_seq → 0 (legacy v0.9.0 shape).
+        let admission_seq = o.get("admission_seq").and_then(|x| x.as_u64()).unwrap_or(0);
+        (
+            host,
+            hops,
+            system_time_from_secs(ra),
+            addr,
+            provenance,
+            admission_seq,
+        )
     } else {
-        // Owner mismatch / copy: signed half only; clear observer half including
-        // provenance. Ordering falls back to signed `ts`.
+        // Owner mismatch / copy: signed half only; clear observer half
+        // including provenance and admission sequence.
         (
             String::new(),
             0,
             system_time_from_secs(ts),
             String::new(),
             ObservationProvenance::Unknown,
+            0,
         )
     };
 
@@ -206,6 +265,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         // Derived at load / accept — never read from the durable line.
         verified_operator_key: None,
         provenance,
+        admission_seq,
     })
 }
 
@@ -252,6 +312,7 @@ pub fn load(
     let mut order: Vec<String> = Vec::new();
     let mut skipped = 0usize;
     let mut file_lines = 0usize;
+    let mut max_admission_seq = 0u64;
 
     for line in lines {
         if line.trim().is_empty() {
@@ -260,6 +321,7 @@ pub fn load(
         file_lines += 1;
         match decode_record_line(line, restore_asserted) {
             Some(adv) => {
+                max_admission_seq = max_admission_seq.max(adv.admission_seq);
                 let nid = adv.node_id.clone();
                 if !by_id.contains_key(&nid) {
                     order.push(nid.clone());
@@ -270,13 +332,9 @@ pub fn load(
         }
     }
 
-    // Sort live records by received_at (then node_id) for incumbent-first replay.
+    // Sort live records by total admission order for incumbent-first replay.
     let mut sorted: Vec<PeerAdvert> = by_id.values().cloned().collect();
-    sorted.sort_by(|a, b| {
-        a.received_at
-            .cmp(&b.received_at)
-            .then_with(|| a.node_id.cmp(&b.node_id))
-    });
+    sorted.sort_by(|a, b| cmp_admission_order(a, b, this_node_id));
 
     let routing = if let Some(self_caid) = this_node_id {
         // Seed with real self id and insert in time order.
@@ -309,7 +367,16 @@ pub fn load(
             "OODP Peers: loaded {records} records, skipped {skipped} damaged"
         )),
     };
-    (by_id, routing, PeerDirectoryState { file_lines }, report)
+    let next_admission_seq = max_admission_seq.saturating_add(1).max(1);
+    (
+        by_id,
+        routing,
+        PeerDirectoryState {
+            file_lines,
+            next_admission_seq,
+        },
+        report,
+    )
 }
 
 /// Append one accepted advert. May compact. Returns log lines for the serve console.
@@ -358,7 +425,7 @@ pub fn append(
     logs
 }
 
-/// Rewrite the file with only the live set (received_at order).
+/// Rewrite the file with only the live set (total admission order).
 pub fn compact(
     base_dir: &Path,
     owner_node_id: &str,
@@ -371,11 +438,7 @@ pub fn compact(
     }
 
     let mut sorted: Vec<&PeerAdvert> = live.values().collect();
-    sorted.sort_by(|a, b| {
-        a.received_at
-            .cmp(&b.received_at)
-            .then_with(|| a.node_id.cmp(&b.node_id))
-    });
+    sorted.sort_by(|a, b| cmp_admission_order(a, b, Some(owner_node_id)));
 
     let mut body = String::new();
     body.push_str(&header_line(owner_node_id));
@@ -441,12 +504,10 @@ pub fn verify_loaded(engine: &crate::Ouroboros) -> usize {
     // Rebuild the index over what survived, in the same replay order.
     if let (Ok(dir), Ok(mut rt)) = (engine.peer_adverts.read(), engine.routing.write()) {
         let self_id = rt.self_id();
+        // Never mint: ordinary load paths must not create node identity (P5).
+        let self_caid = engine.node_id_if_present();
         let mut sorted: Vec<&PeerAdvert> = dir.values().collect();
-        sorted.sort_by(|a, b| {
-            a.received_at
-                .cmp(&b.received_at)
-                .then_with(|| a.node_id.cmp(&b.node_id))
-        });
+        sorted.sort_by(|a, b| cmp_admission_order(a, b, self_caid.as_deref()));
         let mut fresh = RoutingIndex::new(self_id);
         for adv in sorted {
             if let Some(rid) = routing::routing_id_from_pubkey_hex(&adv.public_key_hex) {

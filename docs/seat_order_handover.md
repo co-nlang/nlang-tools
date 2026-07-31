@@ -181,3 +181,49 @@ never triggered fails rather than passing empty.
 * `local_gc` leaves `nlang-gc-r5-*` fixtures behind in the temp directory.
 * `to_nlang` prints unforced Thunks as Rust `Debug`; `reader.read_line` is
   unbounded; `free_port()` is TOCTOU; `routing_id_from_digest` zero-pads.
+
+---
+
+## 8. Delivery record
+
+**Delivered** against open `d8035a7` / baseline `87d5d25` (v0.9.0).
+
+### What landed
+
+* Additive durable field `admission_seq` (u64, optional on load; missing → 0).
+  Assigned monotonically in `record_peer_advert` via `PeerDirectoryState`;
+  never reuses 0 (legacy/absent only).
+* Rebuild / compact / load replay sort by total admission order:
+  `received_at`, then `admission_seq`, then a **receiver-local** SHA-256 mix of
+  this node's id with the peer id — not raw ascending `node_id`.
+* `.oo/format` unchanged; v0.9.0 directories (no `admission_seq`) still load and
+  seat (P4).
+* Seat rebuild paths use `node_id_if_present` so ordinary work does not mint a
+  node key (discovery_trust P2/P4 pins).
+
+### Grind cost (if residual tie remains)
+
+A residual same-second / same-seq tie is broken with
+`SHA-256("oodp-seat-order:v1:" ‖ self_node_id ‖ "|" ‖ peer_node_id)`. The rank
+is different for every receiver, so grinding for a seat costs **one victim at
+a time** (same pricing shape as SPEC_15 §7.1's XOR bucket), not every node
+that heard the burst. With a live `admission_seq` the residual path is not
+reached for post-delivery records.
+
+### Numbers
+
+| Suite | Result |
+| --- | --- |
+| `seat_order_probe_test` | **9/9** (3× stability rerun green) |
+| `automatic_admission` | **11/11** |
+| `advert_persistence` | **19/19** |
+| `direct_observation_provenance` | **11/11** |
+| `discovery_trust` | **20/20** |
+| `connect_consent` | **9/9** |
+| full workspace | **1752 passed / 0 failed / 3 ignored**, 180 blocks |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| fmt / `git diff --check` | pass |
+
+Opening was 1750/0/5 with two ignored reds; those two move into the pass
+column (1750 + 2 = 1752; 5 − 2 = 3).

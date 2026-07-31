@@ -916,6 +916,7 @@ fn serve_advertise(
         received_at: SystemTime::now(),
         verified_operator_key: verified_operator_key.clone(),
         provenance: crate::ObservationProvenance::Direct,
+        admission_seq: 0, // assigned in record_peer_advert
     });
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);
