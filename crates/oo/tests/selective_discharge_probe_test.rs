@@ -59,14 +59,7 @@ static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// Writes `src` into a fresh temp dir, runs `oo run a.n <args…> --observe out`,
 /// returns trimmed stdout+stderr.
 fn run_cli(src: &str, args: &[&str]) -> String {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!(
-        "nlang-seldis-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&dir).ok();
-    fs::create_dir_all(&dir).unwrap();
+    let dir = nlang_interpreter::ScratchDir::new("seldis");
     let p: PathBuf = dir.join("a.n");
     fs::write(&p, src).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_oo"));

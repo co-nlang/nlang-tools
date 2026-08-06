@@ -3,9 +3,6 @@ name = "nlang-interpreter"
 version = "0.2.2"
 edition = "2021"
 
-[dev-dependencies]
-tempfile = "3.3"
-
 [[test]]
 name = "list_p25_test"
 path = "tests/list_p25_test.rs"
@@ -139,6 +136,7 @@ name = "toml_p47_test"
 path = "tests/toml_p47_test.rs"
 
 [dependencies]
+tempfile = "3.3"
 regex = "1"
 nlang-parser = { path = "../parser" }
 thiserror = "1.0"

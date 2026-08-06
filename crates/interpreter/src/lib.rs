@@ -24,6 +24,7 @@ pub mod oml;
 pub mod oodp;
 pub mod peers;
 pub mod routing;
+pub mod scratch;
 pub mod storage;
 pub mod type_constraint;
 pub mod unify;
@@ -31,6 +32,7 @@ pub mod value;
 use crate::builtins::create_default_builtins;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{handle_resource_exhausted, ObservationState};
+pub use crate::scratch::ScratchDir;
 pub use crate::storage::{value_address_matches, ObjectStore, StoreReadError};
 use crate::type_constraint::{
     get_type_constraint_name, is_type_constraint_combo, is_user_field_type_combo, TypeConstraint,
@@ -441,6 +443,8 @@ pub struct IntegrityIncident {
 pub struct Ouroboros {
     pub store: ObjectStore,
     pub base_dir: Option<PathBuf>,
+    /// Owns the temp tree for [`Self::new_in_memory`]. Drop removes its `.oo/`.
+    _ephemeral_root: Option<tempfile::TempDir>,
     pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), Value>>,
     pub force_memo: RwLock<HashMap<ForceMemoKey, MemoEntry>>,
     /// Reverse index: coord → memo keys that read this coord.
@@ -544,11 +548,8 @@ impl Ouroboros {
     }
 
     pub fn new_in_memory() -> Self {
-        use ring::rand::SecureRandom;
-        let mut bytes = [0u8; 8];
-        ring::rand::SystemRandom::new().fill(&mut bytes).unwrap();
-        let dir = std::env::temp_dir().join(format!("nlang-test-{}", hex::encode(bytes)));
-        let store = ObjectStore::init(&dir).unwrap();
+        let ephemeral = crate::scratch::ephemeral_store_root().expect("ephemeral store root");
+        let store = ObjectStore::init(ephemeral.path()).unwrap();
         let builtins = create_default_builtins();
         // Ephemeral identity only — never read/write the operator path.
         let identity = crate::value::Identity::new_random();
@@ -556,6 +557,7 @@ impl Ouroboros {
         Self {
             store,
             base_dir: None,
+            _ephemeral_root: Some(ephemeral),
             unify_memo: RwLock::new(HashMap::new()),
             force_memo: RwLock::new(HashMap::new()),
             force_memo_rev: RwLock::new(HashMap::new()),
@@ -612,6 +614,7 @@ impl Ouroboros {
         let oo = Self {
             store,
             base_dir: Some(base_dir.to_path_buf()),
+            _ephemeral_root: None,
             unify_memo: RwLock::new(HashMap::new()),
             force_memo: RwLock::new(HashMap::new()),
             force_memo_rev: RwLock::new(HashMap::new()),

@@ -101,17 +101,8 @@ const HUNG: &str = "<HARNESS: engine had to be killed>";
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-advert-{}-{}-{}",
-        tag,
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("advert-{tag}"))
 }
 
 fn oo_cmd(dir: &Path) -> Command {
@@ -429,8 +420,8 @@ fn field_of(reply: &str, key: &str) -> Option<String> {
 
 /// A pair of workspaces: `a` serves, `b` advertises to it.
 struct Pair {
-    a: PathBuf,
-    b: PathBuf,
+    a: nlang_interpreter::ScratchDir,
+    b: nlang_interpreter::ScratchDir,
 }
 
 fn pair(tag: &str) -> Pair {

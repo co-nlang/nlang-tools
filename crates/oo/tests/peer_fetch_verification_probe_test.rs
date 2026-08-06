@@ -101,16 +101,8 @@ const ZERO_CAID: &str =
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir() -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-peerfetch-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir() -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new("peerfetch")
 }
 
 fn oo_raw(dir: &Path, args: &[&str]) -> (String, String) {
@@ -678,7 +670,7 @@ fn red_one_honest_peer_among_liars_is_found_every_time() {
     let caid = store_value(&vault, "{ marker: \"HONEST_VALUE_R6\" }");
     let bytes = fs::read(object_path(&vault, &caid)).unwrap();
 
-    let honest = spawn_honest(vault.clone());
+    let honest = spawn_honest(vault.path().to_path_buf());
     let liar_a = spawn_liar(br#"{"Atom":[{"Str":"LIAR_A_R6"},0,null]}"#.to_vec());
     // A liar holding a genuine-but-different object, so the sweep cannot be
     // rescued by "only well-formed values survive".
@@ -736,7 +728,7 @@ fn red_one_honest_peer_among_liars_is_found_every_time() {
 fn pin_honest_tcp_peer_still_serves() {
     let vault = fresh_dir();
     let caid = store_value(&vault, "{ marker: \"PIN1_HONEST\" }");
-    let honest = spawn_honest(vault.clone());
+    let honest = spawn_honest(vault.path().to_path_buf());
     let dir = fresh_dir();
     let out = run_observe(
         &dir,
@@ -772,7 +764,7 @@ fn pin_local_store_fetch_still_works() {
 fn pin_absence_from_an_honest_peer_stays_absence() {
     let vault = fresh_dir();
     store_value(&vault, "{ marker: \"PIN3_PRESENT\" }");
-    let honest = spawn_honest(vault.clone());
+    let honest = spawn_honest(vault.path().to_path_buf());
     let dir = fresh_dir();
     let out = run_observe(
         &dir,

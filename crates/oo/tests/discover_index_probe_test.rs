@@ -111,17 +111,8 @@ const MAX_DISCOVER_PEERS: usize = 8;
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-discover-{}-{}-{}",
-        tag,
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("discover-{tag}"))
 }
 
 fn oo_cmd(dir: &Path) -> Command {
@@ -598,9 +589,9 @@ fn oo_discover(dir: &Path, to: &str, target: &str) -> String {
 
 /// A: advertises. B: the index that answers. C: the querier.
 struct Trio {
-    a: PathBuf,
-    b: PathBuf,
-    c: PathBuf,
+    a: nlang_interpreter::ScratchDir,
+    b: nlang_interpreter::ScratchDir,
+    c: nlang_interpreter::ScratchDir,
 }
 
 fn trio(tag: &str) -> Trio {

@@ -129,16 +129,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
-fn fresh_dir() -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-cas-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir() -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new("cas")
 }
 
 fn oo(dir: &Path, args: &[&str]) -> String {

@@ -29,16 +29,8 @@ static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 const ADVERT_DOMAIN: &str = "oodp-advert:v1:";
 const AFFILIATION_DOMAIN: &str = "oodp-affiliation:v1:";
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!(
-        "nlang-automatic-admission-{tag}-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&dir).ok();
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("automatic-admission-{tag}"))
 }
 
 fn oo_cmd(dir: &Path) -> Command {
@@ -624,7 +616,7 @@ struct CapCandidate {
 
 struct Fixture {
     tag: String,
-    receiver_dir: PathBuf,
+    receiver_dir: nlang_interpreter::ScratchDir,
     node: NodeKey,
     operator: OperatorKey,
     /// `None` when the fixture is rooted (then `operator` *is* the root).

@@ -14,24 +14,20 @@ use nlang_interpreter::{Ouroboros, Universe, Value};
 use nlang_parser::ast::AtomKind;
 use nlang_parser::parse_program;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
-fn tmp_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!("nlang-stage3-probe-{}-{}", tag, std::process::id()));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn tmp_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("stage3-probe-{tag}"))
 }
 
-fn build_universe(dir: &PathBuf) -> (Ouroboros, Universe) {
+fn build_universe(dir: &Path) -> (Ouroboros, Universe) {
     build_universe_with(dir, true)
 }
 
 // minimal=false: stdlib-heavy root (realistic); minimal=true: bare root — the
 // self-referential horizon probe uses this because each deref cycle deep-copies
 // the whole root (memory scales root-size × horizon-depth; see remediation).
-fn build_universe_with(dir: &PathBuf, minimal: bool) -> (Ouroboros, Universe) {
+fn build_universe_with(dir: &Path, minimal: bool) -> (Ouroboros, Universe) {
     let engine = Ouroboros::init(dir).unwrap();
     let root = if minimal {
         nlang_interpreter::value::ComboVal::default()

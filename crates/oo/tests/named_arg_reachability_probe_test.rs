@@ -57,14 +57,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 fn run_cli(src: &str) -> String {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!(
-        "nlang-namedarg-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&dir).ok();
-    fs::create_dir_all(&dir).unwrap();
+    let dir = nlang_interpreter::ScratchDir::new("namedarg");
     let p: PathBuf = dir.join("a.n");
     fs::write(&p, src).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_oo"))
