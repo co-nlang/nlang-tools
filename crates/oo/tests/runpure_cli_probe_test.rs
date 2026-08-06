@@ -26,14 +26,7 @@ static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// Writes `content` into a fresh temp dir, runs `oo run a.n --observe out`
 /// (optionally with `--privileged`), returns trimmed stdout+stderr.
 fn run_cli(content: &str, privileged: bool) -> String {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!(
-        "nlang-runpurecli-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&dir).ok();
-    fs::create_dir_all(&dir).unwrap();
+    let dir = nlang_interpreter::ScratchDir::new("runpurecli");
     let p: PathBuf = dir.join("a.n");
     fs::write(&p, content).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_oo"));

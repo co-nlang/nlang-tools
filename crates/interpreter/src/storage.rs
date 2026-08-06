@@ -2,7 +2,42 @@ use crate::value::{CaidVersion, Commit, ContentHash, HashAlgorithm, Value};
 use anyhow::Result;
 use sha2::Digest;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// Write `contents` so a concurrent reader never sees a truncated (or briefly
+/// absent) target. Same-directory temp + `fsync` + `rename`. The temp is
+/// removed on any failure; success leaves no sidecar under the parent.
+///
+/// Atomicity of `rename` holds only within one filesystem — the temp is
+/// created in the target's parent for that reason (atomic_writes arc).
+pub fn atomic_write(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
+    let contents = contents.as_ref();
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+
+    // Prefix avoids the letters "tmp" so a leaked file cannot pass for an
+    // object shard name under P1's leftover scan — and leading-dot keeps it
+    // out of casual directory listings.
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".partial-")
+        .tempfile_in(parent)
+        .map_err(|e| anyhow::anyhow!("atomic_write temp create {}: {e}", parent.display()))?;
+    tmp.write_all(contents)
+        .map_err(|e| anyhow::anyhow!("atomic_write write {}: {e}", path.display()))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| anyhow::anyhow!("atomic_write fsync {}: {e}", path.display()))?;
+
+    // persist = rename over the target; on failure the TempPath still deletes
+    // the temp when dropped, so nothing is left for a directory walk to find.
+    tmp.persist(path)
+        .map_err(|e| anyhow::anyhow!("atomic_write install {}: {}", path.display(), e.error))?;
+    Ok(())
+}
 
 /// Distinct CAS read outcomes (SPEC_08 / REAL_03 §8; cas_integrity arc).
 /// Callers must not collapse these into one "not found" string.
@@ -99,7 +134,7 @@ impl ObjectStore {
             }
         } else {
             // Every existing store is version 1; announce rather than refuse.
-            fs::write(&path, format!("{STORE_FORMAT_VERSION}\n"))?;
+            atomic_write(&path, format!("{STORE_FORMAT_VERSION}\n"))?;
         }
         Ok(())
     }
@@ -246,7 +281,7 @@ impl ObjectStore {
             fs::create_dir_all(&oo_dir)?;
         }
         let head_path = oo_dir.join("HEAD");
-        fs::write(head_path, hash.to_string())?;
+        atomic_write(&head_path, hash.to_string())?;
         Ok(())
     }
 
@@ -262,12 +297,17 @@ impl ObjectStore {
 
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
         let path = self.hash_to_path(hash);
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&path, content)?;
+        // Content-addressed: same bytes → same path. Skip when already present
+        // (idempotent). First install is temp+rename so a concurrent reader
+        // never sees a truncated object, and two racing first-writers both
+        // rename the same payload (no TOCTOU "check then write" gap).
+        if path.exists() {
+            return Ok(());
         }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content)?;
         Ok(())
     }
 
@@ -299,7 +339,7 @@ impl ObjectStore {
         let path = dir.join("architects.json");
         let list: Vec<&String> = architects.iter().collect();
         let json = serde_json::to_string(&list)?;
-        std::fs::write(path, json)?;
+        atomic_write(&path, json)?;
         Ok(())
     }
 

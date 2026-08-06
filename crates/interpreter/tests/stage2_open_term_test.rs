@@ -10,12 +10,8 @@ use nlang_parser::parse_program;
 use std::fs;
 use std::path::PathBuf;
 
-fn tmp_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!("nlang-stage2-{}-{}", tag, std::process::id()));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn tmp_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("stage2-{tag}"))
 }
 
 // (a) evolve stores open term as Thunk (P3: open terms may be stored)

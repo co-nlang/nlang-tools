@@ -104,16 +104,8 @@ const GOLDEN_VALUE_CAID: &str = "hash:sha256:v2:_:gICS1LCf09bLAQD//5HUsJ/T1ssBAA
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir() -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-det-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir() -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new("det")
 }
 
 fn oo(dir: &Path, args: &[&str]) -> String {
@@ -130,7 +122,7 @@ fn oo(dir: &Path, args: &[&str]) -> String {
 }
 
 /// A repository with `SRC` evolved and committed.
-fn repo() -> PathBuf {
+fn repo() -> nlang_interpreter::ScratchDir {
     let d = fresh_dir();
     fs::write(d.join("s.n"), SRC).unwrap();
     oo(&d, &["evolve", "s.n"]);
@@ -365,7 +357,7 @@ fn red_fresh_repository_has_no_self_appointed_architect() {
 
 /// A sibling repository seeded from `d`'s sources, for control arms that must
 /// not disturb the repository under test.
-fn repo_with(d: &Path) -> PathBuf {
+fn repo_with(d: &Path) -> nlang_interpreter::ScratchDir {
     let n = fresh_dir();
     for f in ["s.n", "i.n"] {
         if let Ok(b) = fs::read(d.join(f)) {

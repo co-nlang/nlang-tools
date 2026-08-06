@@ -54,17 +54,8 @@ static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-gc-{}-{}-{}",
-        tag,
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("gc-{tag}"))
 }
 
 fn oo_raw(dir: &Path, args: &[&str]) -> (String, bool) {
@@ -206,7 +197,7 @@ fn bytes_of(dir: &Path, set: &BTreeSet<String>) -> u64 {
 }
 
 /// A workspace with `n` generations committed.
-fn repo_with_history(tag: &str, n: usize) -> PathBuf {
+fn repo_with_history(tag: &str, n: usize) -> nlang_interpreter::ScratchDir {
     let d = fresh_dir(tag);
     oo(&d, &["run", "--help"]);
     for i in 1..=n {

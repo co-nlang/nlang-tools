@@ -8,12 +8,7 @@ use std::fs;
 #[test]
 fn test_object_store_persistence() {
     // 1. 準備測試目錄
-    let mut temp_dir = env::temp_dir();
-    temp_dir.push("nlang_test_storage");
-    if temp_dir.exists() {
-        fs::remove_dir_all(&temp_dir).unwrap();
-    }
-    fs::create_dir_all(&temp_dir).unwrap();
+    let temp_dir = nlang_interpreter::ScratchDir::new("test-storage");
 
     // 2. 初始化 Store
     let store = ObjectStore::init(&temp_dir).expect("Failed to init store");
@@ -49,7 +44,4 @@ fn test_object_store_persistence() {
     // 5. 驗證
     assert_eq!(val, loaded_val);
     println!("Loaded successfully and content matches!");
-
-    // 6. 清理
-    fs::remove_dir_all(&temp_dir).unwrap();
 }

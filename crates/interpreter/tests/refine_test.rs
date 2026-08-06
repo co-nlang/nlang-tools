@@ -7,18 +7,18 @@ use nlang_interpreter::*;
 use nlang_parser::ast::AtomKind;
 use std::sync::Arc;
 
-fn setup() -> (Universe, Arc<Ouroboros>, std::path::PathBuf) {
+fn setup() -> (Universe, Arc<Ouroboros>, nlang_interpreter::ScratchDir) {
     let oo = Arc::new(Ouroboros::new_in_memory());
     let u = Universe::load(&oo, &std::path::Path::new("/tmp/_refine_test")).unwrap();
-    let base_dir = std::env::temp_dir().join("nlang-refine-test");
-    let _ = std::fs::create_dir_all(&base_dir);
+    let base_dir = nlang_interpreter::ScratchDir::new("refine-test");
     (u, oo, base_dir)
 }
 
 #[test]
 fn refine_simple_source_to_target() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("simple");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("simple");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     // A = Top (generic), B = 5 (specific). Top & 5 = 5 = B ✓
     let val_a = Value::Top;
@@ -59,8 +59,9 @@ fn refine_simple_source_to_target() {
 
 #[test]
 fn refine_fails_monotonicity() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("mono_fail");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("mono_fail");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     // A = 1, B = 2 (disjoint atoms: 1 & 2 = ⊥, not 1)
     // So refine(1 → 2) should fail: new = 2, old = 1, meet = ⊥ ≠ 2
@@ -91,8 +92,9 @@ fn refine_fails_monotonicity() {
 
 #[test]
 fn refine_cycle_detection() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("cycle");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("cycle");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     // A = Top, B = 42. Top & 42 = 42 = B ✓
     let v1 = Value::Top;
@@ -140,8 +142,9 @@ fn refine_cycle_detection() {
 
 #[test]
 fn refine_max_hops() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("hops");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("hops");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     // Create a chain of 18 refines (A0 → A1 → ... → A17)
     // Max hops is 16, so following from A0 requires 18 hops → should exceed limit
@@ -182,8 +185,9 @@ fn refine_max_hops() {
 
 #[test]
 fn refine_no_redirect_in_history_commits() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("history");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("history");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     // A = Top, B = 42. Top & 42 = 42 = B ✓
     let val_a = Value::Top;
@@ -223,8 +227,9 @@ fn refine_no_redirect_in_history_commits() {
 
 #[test]
 fn refine_info_stored_in_commit() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("info");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("info");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     // A = Top, B = 7. Top & 7 = 7 = B ✓
     let src = Value::Top;
@@ -272,8 +277,9 @@ fn refine_info_stored_in_commit() {
 
 #[test]
 fn get_live_value_follows_refine() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("live");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("live");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     // A = Top, B = 99. Top & 99 = 99 = B ✓
     let v1 = Value::Top;
@@ -312,8 +318,7 @@ fn get_live_value_follows_refine() {
 #[test]
 fn bootstrap_exempt_when_no_architects() {
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let base_dir = std::env::temp_dir().join("nlang-refine-epoch-a");
-    let _ = std::fs::create_dir_all(&base_dir);
+    let base_dir = nlang_interpreter::ScratchDir::new("refine-epoch-a");
 
     // Clear architect_registry to simulate "no architects" state
     {
@@ -370,8 +375,7 @@ fn bootstrap_exempt_when_no_architects() {
 #[test]
 fn not_exempt_when_architect_registered_and_has_head() {
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let base_dir = std::env::temp_dir().join("nlang-refine-epoch-b");
-    let _ = std::fs::create_dir_all(&base_dir);
+    let base_dir = nlang_interpreter::ScratchDir::new("refine-epoch-b");
 
     // Register local key as architect
     let local_pk = hex::encode(&oo.identity().unwrap().public_key);
@@ -421,8 +425,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
 #[test]
 fn exempt_with_valid_signature_when_architect_registered() {
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let base_dir = std::env::temp_dir().join("nlang-refine-epoch-c");
-    let _ = std::fs::create_dir_all(&base_dir);
+    let base_dir = nlang_interpreter::ScratchDir::new("refine-epoch-c");
 
     // Register local key as architect
     let local_pk = hex::encode(&oo.identity().unwrap().public_key);
@@ -478,8 +481,9 @@ fn exempt_with_valid_signature_when_architect_registered() {
 
 #[test]
 fn shadow_affected_empty_on_fresh_universe() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("shadow_empty");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("shadow_empty");
+    let _ = std::fs::create_dir_all(&base_dir);
 
     let val_a = Value::Top;
     let val_b = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
@@ -507,8 +511,9 @@ fn shadow_affected_empty_on_fresh_universe() {
 
 #[test]
 fn shadow_affected_detects_historical_usage() {
-    let (mut u, oo, base_dir) = setup();
-    let base_dir = base_dir.join("shadow_detect");
+    let (mut u, oo, root) = setup();
+    let base_dir = root.join("shadow_detect");
+    let _ = std::fs::create_dir_all(&base_dir);
     {
         oo.architect_registry.write().unwrap().clear();
     }
@@ -562,8 +567,7 @@ fn shadow_affected_detects_historical_usage() {
 #[test]
 fn shadow_scan_finds_field_in_committed_root() {
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let base_dir = std::env::temp_dir().join("nlang-shadow-hit");
-    let _ = std::fs::create_dir_all(&base_dir);
+    let base_dir = nlang_interpreter::ScratchDir::new("shadow-hit");
     let mut u = Universe::new(None, oo.root_with_system());
     {
         oo.architect_registry.write().unwrap().clear();
@@ -621,8 +625,6 @@ fn shadow_scan_finds_field_in_committed_root() {
         ri.shadow_affected.contains(&ch0_hash) || !ri.shadow_affected.is_empty(),
         "shadow scan should find the historical commit with tracked_field == val_77"
     );
-
-    let _ = std::fs::remove_dir_all(&base_dir);
 }
 
 // ── Phase 15: cycle detection tests ──
@@ -631,8 +633,7 @@ fn shadow_scan_finds_field_in_committed_root() {
 #[test]
 fn refine_cycle_ab_ba_rejected() {
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let base_dir = std::env::temp_dir().join("nlang-cycle-ab");
-    let _ = std::fs::create_dir_all(&base_dir);
+    let base_dir = nlang_interpreter::ScratchDir::new("cycle-ab");
     let mut u = Universe::new(None, oo.root_with_system());
     {
         oo.architect_registry.write().unwrap().clear();

@@ -61,23 +61,14 @@ const GOLDEN_VALUE_CAID: &str = "hash:sha256:v2:_:gICS1LCf09bLAQD//5HUsJ/T1ssBAA
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-nid-{}-{}-{}",
-        tag,
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("nid-{tag}"))
 }
 
 /// One operator home shared by a test, so the node keys of several workspaces
 /// land in the same place — that is the arrangement the arc is about, and it
 /// must never be the developer's real `~/.oo`.
-fn fresh_home(tag: &str) -> PathBuf {
+fn fresh_home(tag: &str) -> nlang_interpreter::ScratchDir {
     fresh_dir(&format!("home-{tag}"))
 }
 
@@ -254,7 +245,7 @@ fn node_id(dir: &Path, home: &Path) -> String {
 }
 
 /// Copies a workspace to a NEW path, the way `cp -r` would.
-fn copy_workspace(src: &Path, tag: &str) -> PathBuf {
+fn copy_workspace(src: &Path, tag: &str) -> nlang_interpreter::ScratchDir {
     let dst = fresh_dir(tag);
     fn rec(a: &Path, b: &Path) {
         fs::create_dir_all(b).unwrap();

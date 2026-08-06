@@ -81,17 +81,8 @@ const GOLDEN_VALUE_CAID: &str = "hash:sha256:v2:_:gICS1LCf09bLAQD//5HUsJ/T1ssBAA
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-pe-{}-{}-{}",
-        tag,
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("pe-{tag}"))
 }
 
 struct Run {
@@ -174,7 +165,7 @@ fn committed_v(dir: &Path) -> String {
 
 /// A repository whose staged content was produced under a real discharge.
 /// Panics unless the discharge is proven to have happened.
-fn repo_with_discharge(tag: &str) -> PathBuf {
+fn repo_with_discharge(tag: &str) -> nlang_interpreter::ScratchDir {
     let d = fresh_dir(tag);
     write(&d, "s.n", DISCHARGE_SRC);
 

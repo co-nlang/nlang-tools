@@ -106,8 +106,7 @@ fn test_universe_refine_with_authority() {
 
     let oo = Arc::new(Ouroboros::new_in_memory());
     let mut u = Universe::load(&oo, &std::path::Path::new("/tmp/_auth_test")).unwrap();
-    let base_dir = std::env::temp_dir().join("nlang-auth-test");
-    std::fs::create_dir_all(&base_dir).ok();
+    let base_dir = nlang_interpreter::ScratchDir::new("auth-test");
 
     let src_val = Value::Top;
     let tgt_val = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
@@ -134,9 +133,8 @@ fn test_universe_refine_with_authority() {
 fn architect_persists_across_init() {
     use nlang_interpreter::Ouroboros;
 
-    let dir = std::env::temp_dir().join("nlang-persist-test-a");
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::create_dir_all(&dir.join(".oo"));
+    let dir = nlang_interpreter::ScratchDir::new("persist-test-a");
+    let _ = std::fs::create_dir_all(dir.join(".oo"));
 
     let fake_pk = "a".repeat(64);
     {

@@ -14,14 +14,7 @@ static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// Writes each (name, content) into a fresh temp dir; runs
 /// `oo run <files…> --observe <path>` there; returns trimmed stdout.
 fn run_cli(files: &[(&str, &str)], observe: &str) -> String {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!(
-        "nlang-fwdcli-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&dir).ok();
-    fs::create_dir_all(&dir).unwrap();
+    let dir = nlang_interpreter::ScratchDir::new("fwdcli");
     let mut paths: Vec<PathBuf> = Vec::new();
     for (name, content) in files {
         let p = dir.join(name);

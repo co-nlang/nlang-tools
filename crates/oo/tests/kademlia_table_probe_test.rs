@@ -76,17 +76,8 @@ const ID_BYTES: usize = 20;
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-kad-{}-{}-{}",
-        tag,
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("kad-{tag}"))
 }
 
 fn oo_cmd(dir: &Path) -> Command {
@@ -548,7 +539,9 @@ fn brute_force_closest(
 // ── fixtures ────────────────────────────────────────────────────────────
 
 struct Fixture {
-    caid_dir: PathBuf,
+    /// Server workspace — must outlive `node` (Drop deletes the tree).
+    _dir: nlang_interpreter::ScratchDir,
+    caid_dir: nlang_interpreter::ScratchDir,
     node: Node,
     self_id: [u8; ID_BYTES],
     peers: Vec<SynthPeer>,
@@ -628,8 +621,8 @@ fn fixture(tag: &str, n: usize) -> Fixture {
              below measures a routing table: {r}"
         );
     }
-    let _ = dir; // the server's workspace; probes observe it through its log
     Fixture {
+        _dir: dir,
         caid_dir,
         node,
         self_id: sid,

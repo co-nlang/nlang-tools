@@ -13,22 +13,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
-fn tmp_file(content: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-g2cli-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
+fn run_observe(content: &str, observe: &str) -> (i32, String, String) {
+    // ScratchDir must outlive the `oo` process that reads the file.
+    let d = nlang_interpreter::ScratchDir::new("g2cli");
     let f = d.join("probe.n");
     fs::write(&f, content).unwrap();
-    f
-}
-
-fn run_observe(content: &str, observe: &str) -> (i32, String, String) {
-    let f = tmp_file(content);
     let out = Command::new(env!("CARGO_BIN_EXE_oo"))
         .arg("run")
         .arg(&f)

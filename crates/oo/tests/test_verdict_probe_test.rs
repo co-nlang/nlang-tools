@@ -31,14 +31,7 @@ static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// Writes content as test.n in a fresh temp dir; runs `oo test test.n`;
 /// returns (exit_success, stdout+stderr).
 fn run_test_cmd(content: &str) -> (bool, String) {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!(
-        "nlang-verdict-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&dir).ok();
-    fs::create_dir_all(&dir).unwrap();
+    let dir = nlang_interpreter::ScratchDir::new("verdict");
     let p: PathBuf = dir.join("test.n");
     fs::write(&p, content).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_oo"))

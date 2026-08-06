@@ -32,14 +32,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 fn lint_src(src: &str) -> Vec<nlint::Diagnostic> {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!(
-        "nlang-r6lint-{}-{}",
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&dir).ok();
-    fs::create_dir_all(&dir).unwrap();
+    let dir = nlang_interpreter::ScratchDir::new("r6lint");
     let p: PathBuf = dir.join("probe.n");
     fs::write(&p, src).unwrap();
     let report = nlint::analyze_file(&p);

@@ -92,24 +92,43 @@ const SRC: &str = "v: { hello: \"world\" }\n";
 
 // ── harness ─────────────────────────────────────────────────────────────
 
-fn fresh_dir(tag: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    d.push(format!(
-        "nlang-ident-{}-{}-{}",
-        tag,
-        std::process::id(),
-        DIR_SEQ.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::remove_dir_all(&d).ok();
-    fs::create_dir_all(&d).unwrap();
-    d
+fn fresh_dir(tag: &str) -> nlang_interpreter::ScratchDir {
+    nlang_interpreter::ScratchDir::new(&format!("ident-{tag}"))
 }
 
 /// An identity-file path OUTSIDE any `.oo` component, so that protection of
 /// it can never be an accident of the v0.2.42 store boundary matching the
 /// literal name `.oo`.
-fn ident_path(tag: &str) -> PathBuf {
-    fresh_dir(tag).join("operator").join("key")
+/// Operator-key path that owns its parent tree until dropped.
+#[derive(Debug)]
+struct IdentPath {
+    _home: nlang_interpreter::ScratchDir,
+    path: PathBuf,
+}
+
+impl IdentPath {
+    fn new(tag: &str) -> Self {
+        let home = fresh_dir(&format!("idhome-{tag}"));
+        let path = home.join("operator").join("key");
+        Self { _home: home, path }
+    }
+}
+
+impl AsRef<Path> for IdentPath {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::ops::Deref for IdentPath {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn ident_path(tag: &str) -> IdentPath {
+    IdentPath::new(tag)
 }
 
 struct Run {
@@ -144,7 +163,7 @@ fn oo(dir: &Path, ident: &Path, args: &[&str]) -> Run {
 
 /// A repository with `SRC` evolved and committed, so refines are not
 /// bootstrap-exempt by way of a missing HEAD.
-fn repo(tag: &str, ident: &Path) -> PathBuf {
+fn repo(tag: &str, ident: &Path) -> nlang_interpreter::ScratchDir {
     let d = fresh_dir(tag);
     fs::write(d.join("s.n"), SRC).unwrap();
     oo(&d, ident, &["evolve", "s.n"]);
@@ -724,10 +743,13 @@ fn pin_concurrent_first_mint_yields_one_key() {
     let ident = ident_path("p7");
     let d = repo("p7", &ident);
 
+    // Path clones for threads; ScratchDir / IdentPath stay in this stack frame.
+    let d_path = d.path().to_path_buf();
+    let ident_path = ident.path.clone();
     let printed: Vec<String> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..8)
             .map(|_| {
-                let (d, ident) = (d.clone(), ident.clone());
+                let (d, ident) = (d_path.clone(), ident_path.clone());
                 s.spawn(move || oo(&d, &ident, &["identity"]).out)
             })
             .collect();
