@@ -267,11 +267,27 @@ fn r3_pin_pending_is_replaced_not_rewritten_in_place() {
 
 // ── pins ────────────────────────────────────────────────────────────────
 
-/// P1 — no temp-shaped leftover anywhere under `.oo/`. Leads with a control
-/// on the walker itself: a scan that silently returns nothing would let this
-/// pass by finding no files at all.
+/// P1 — nothing under `.oo/` is a work-in-progress. Leads with a control on
+/// the walker itself: a scan that silently returns nothing would let this pass
+/// by finding no files at all.
+///
+/// ACCEPTANCE REPAIR (2026-08-06): the first version filtered on names
+/// containing `tmp`. The delivery names its temp `.partial-XXXXXX`, so **the
+/// pin went blind against the very implementation it was guarding** —
+/// measured with two planted leaks, one at `.oo/` and one inside an object
+/// shard, and the old filter caught neither. The shard one is the failure
+/// mode work order §3.2 names: `local_gc`'s `store_map` keys every file under
+/// `objects/sha256/<2hex>/` as an object, so a leak there becomes a phantom.
+///
+/// The repair pins the property instead of a spelling. Inside a shard the
+/// rule is **exact**: an object's file name is the remaining 62 lowercase hex
+/// characters of its digest, and anything else is by construction not an
+/// object. At the flat level the rule stays a **heuristic** (dot-prefixed, or
+/// the usual work-in-progress suffixes) and says so — a closed whitelist of
+/// durable names was rejected because it would go red in unrelated arcs that
+/// legitimately add a file, which is a different pin than this one.
 #[test]
-fn p1_no_temp_shaped_leftovers_under_oo() {
+fn p1_nothing_under_oo_is_a_work_in_progress() {
     let d = workspace("p1");
     for n in 1..=3 {
         evolve_field(d.path(), n);
@@ -283,17 +299,42 @@ fn p1_no_temp_shaped_leftovers_under_oo() {
         files.len() >= 3,
         "walker control failed: expected several files under .oo/, saw {files:?}"
     );
+    assert!(
+        files.iter().any(|f| f.contains("/objects/")),
+        "walker control failed: no object file seen, so the shard rule below \
+         would pass vacuously. saw {files:?}"
+    );
 
-    let strays: Vec<_> = files
-        .iter()
-        .filter(|f| {
-            let name = f.rsplit('/').next().unwrap().to_ascii_lowercase();
-            name.contains("tmp") || name.ends_with('~') || name.ends_with(".new")
-        })
-        .collect();
+    let mut strays = Vec::new();
+    for f in &files {
+        let name = f.rsplit('/').next().unwrap();
+        let lower = name.to_ascii_lowercase();
+
+        // Exact rule inside an object shard: 62 lowercase hex, nothing else.
+        if f.contains("/objects/sha256/") {
+            let is_object = name.len() == 62
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
+            if !is_object {
+                strays.push(format!("{f} (not a 62-hex object name)"));
+            }
+            continue;
+        }
+
+        // Heuristic elsewhere: temps hide, or carry a work-in-progress suffix.
+        if name.starts_with('.')
+            || lower.contains("tmp")
+            || lower.contains("partial")
+            || lower.ends_with('~')
+            || lower.ends_with(".new")
+        {
+            strays.push(format!("{f} (work-in-progress shaped)"));
+        }
+    }
     assert!(
         strays.is_empty(),
-        "temp-shaped files left under .oo/: {strays:?} (all files: {files:?})"
+        "work-in-progress files left under .oo/: {strays:?}\nall files: {files:?}"
     );
 }
 
