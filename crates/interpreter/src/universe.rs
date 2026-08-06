@@ -503,7 +503,7 @@ impl Universe {
             std::fs::create_dir_all(staged_path.parent().unwrap())?;
         }
         let json = serde_json::to_string(&self.staged)?;
-        std::fs::write(&staged_path, json)?;
+        crate::storage::atomic_write(&staged_path, json)?;
         // Pin audit intent lives beside staged, never inside values (CAID).
         // ACCEPTANCE REPAIR: the file now carries the pinned COORDINATES, not
         // a bare flag — the commit must know which coordinates the privilege
@@ -511,7 +511,7 @@ impl Universe {
         let pin_path = base_dir.join(".oo").join("pin_pending");
         if self.pin_pending {
             let coords: Vec<&String> = self.pin_coords.iter().collect();
-            std::fs::write(pin_path, serde_json::to_string(&coords)?)?;
+            crate::storage::atomic_write(&pin_path, serde_json::to_string(&coords)?)?;
         } else if pin_path.exists() {
             let _ = std::fs::remove_file(pin_path);
         }
@@ -522,7 +522,7 @@ impl Universe {
         if let Some(tags) = self.effect_pending {
             // The TAG SET, not a bare marker: commit must be able to check
             // that the capability re-presented covers what was discharged.
-            std::fs::write(effect_path, tags.to_bits().to_string().as_bytes())?;
+            crate::storage::atomic_write(&effect_path, tags.to_bits().to_string().as_bytes())?;
         } else if effect_path.exists() {
             let _ = std::fs::remove_file(effect_path);
         }
@@ -670,7 +670,7 @@ impl Universe {
         if !existing.contains(&s) {
             existing.push(s);
         }
-        std::fs::write(p, existing.join("\n") + "\n")?;
+        crate::storage::atomic_write(&p, existing.join("\n") + "\n")?;
         Ok(())
     }
 

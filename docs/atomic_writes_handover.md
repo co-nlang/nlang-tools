@@ -264,4 +264,28 @@ baseline **and red for the stated reason** (inode stable, not "file missing").
 
 ## 8. Delivery record
 
-*(to be filled by the delivering model)*
+**Delivered** against open `402da32` / baseline `39249d5` (v0.10.0).
+
+### What landed
+
+* `storage::atomic_write` — same-directory temp (`.partial-*`), `write` +
+  `fsync`, then `rename` via `tempfile::persist`. Failure drops the temp.
+* Wired for: `.oo/staged`, `pin_pending`, `effect_pending`, `abandoned`,
+  `HEAD`, CAS objects (first install), `architects.json`, `.oo/format` mint.
+* Probe: three `#[ignore]` attributes removed only.
+* **Not** fixed: concurrent lost updates (40→2); no flock / OCC.
+
+### Numbers
+
+| Measurement | Result |
+| --- | --- |
+| `atomic_write_probe_test` | **8/8** (×3 stable) |
+| `local_gc` / `advert_persistence` / `history_ops` / `store_boundary` | all green |
+| full workspace | **1760 passed / 0 failed / 3 ignored**, 181 blocks |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| staged race (≈400-field seed, 60 evolves, continuous JSON reader) | **3/3 runs, 0 parse fail, 0 missing** (reads 7780 / 8421 / 9324) |
+| `cargo fmt --all -- --check` | pass |
+
+Opening with calibrated probe was effectively 1757/0/6; three reds move into
+the pass column (1757 + 3 = 1760; 6 − 3 = 3).

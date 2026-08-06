@@ -190,7 +190,6 @@ fn c1_the_fixture_rewrites_staged_and_content_moves() {
 
 /// R1 — `.oo/staged` must get a new inode on every write.
 #[test]
-#[ignore]
 fn r1_staged_is_replaced_not_rewritten_in_place() {
     let d = workspace("r1");
     let p = staged(d.path());
@@ -211,7 +210,6 @@ fn r1_staged_is_replaced_not_rewritten_in_place() {
 
 /// R2 — `.oo/HEAD` must get a new inode on every write.
 #[test]
-#[ignore]
 fn r2_head_is_replaced_not_rewritten_in_place() {
     let d = workspace("r2");
     let head = d.path().join(".oo").join("HEAD");
@@ -243,7 +241,6 @@ fn r2_head_is_replaced_not_rewritten_in_place() {
 /// `save_staged` / `save_abandoned` code path, so a fix that misses them
 /// would also miss this one.
 #[test]
-#[ignore]
 fn r3_pin_pending_is_replaced_not_rewritten_in_place() {
     let d = workspace("r3");
     let pin = d.path().join(".oo").join("pin_pending");
