@@ -1061,16 +1061,25 @@ fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Resul
         anyhow::bail!("#privileged_required: gc requires --grant gc (privilege.gc capability)");
     }
 
-    let report = nlang_interpreter::gc::run_gc(&engine.store, &cur, dry_run)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    print!("{}", nlang_interpreter::gc::format_plan_report(&report));
-    if dry_run {
-        println!("oo gc: dry-run — removed 0 objects, freed 0 bytes");
-    } else {
-        println!("{}", nlang_interpreter::gc::format_done_report(&report));
+    match nlang_interpreter::gc::run_gc(&engine.store, &cur, dry_run) {
+        Ok(report) => {
+            print!("{}", nlang_interpreter::gc::format_plan_report(&report));
+            if dry_run {
+                println!("oo gc: dry-run — removed 0 objects, freed 0 bytes");
+            } else {
+                println!("{}", nlang_interpreter::gc::format_done_report(&report));
+            }
+            Ok(())
+        }
+        Err(e) => {
+            // Walk incomplete: still surface the plan/integrity lines (diagnosis
+            // must not vanish with the gate — verdict_must_gate P2 shape).
+            if let Ok(plan) = nlang_interpreter::gc::plan_gc(&engine.store, &cur) {
+                print!("{}", nlang_interpreter::gc::format_plan_report(&plan));
+            }
+            anyhow::bail!("{e}")
+        }
     }
-    Ok(())
 }
 
 fn apply_cli_privilege(

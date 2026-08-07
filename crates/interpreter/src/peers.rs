@@ -401,7 +401,11 @@ pub fn append(
         Ok(mut f) => {
             if need_header {
                 let h = header_line(owner_node_id);
-                let _ = writeln!(f, "{h}");
+                // Header failure must not be followed by a successful data line
+                // (a file with records but no owner header).
+                if writeln!(f, "{h}").is_err() {
+                    return logs;
+                }
             }
             if writeln!(f, "{line}").is_ok() {
                 let _ = f.flush();
@@ -418,14 +422,20 @@ pub fn append(
     // Compaction gate: data lines > 2 × live unique records.
     let live_n = live.len().max(1);
     if state.file_lines > 2 * live_n {
-        if let Some(c) = compact(base_dir, owner_node_id, live, state) {
-            logs.push(c);
+        // Failure is distinct from "not needed" (we only enter when needed).
+        match compact(base_dir, owner_node_id, live, state) {
+            Some(c) => logs.push(c),
+            None => logs.push("OODP Peers: compact failed".into()),
         }
     }
     logs
 }
 
 /// Rewrite the file with only the live set (total admission order).
+///
+/// Uses [`crate::storage::atomic_write`] (unique temp name + fsync + rename).
+/// Returns `None` only on write failure — callers that decided to compact
+/// must treat `None` as a real error (verdict_must_gate R5).
 pub fn compact(
     base_dir: &Path,
     owner_node_id: &str,
@@ -448,9 +458,7 @@ pub fn compact(
         body.push('\n');
     }
     let bytes = body.len() as u64;
-    let tmp = path.with_extension("directory.tmp");
-    fs::write(&tmp, &body).ok()?;
-    fs::rename(&tmp, &path).ok()?;
+    crate::storage::atomic_write(&path, &body).ok()?;
     state.file_lines = sorted.len();
     let live_n = live.len();
     Some(format!("OODP Peers: compact {bytes} bytes ({live_n} live)"))

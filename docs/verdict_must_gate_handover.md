@@ -196,6 +196,32 @@ oodp.rs:630    write_file:std::fs::write(path, body)            ← 裸寫(錯�
 
 ---
 
-## 8. 交付紀錄(交付方填)
+## 8. 交付紀錄
 
-*(留白)*
+**Delivered** against open `217cc3a` / probes `9e059b6` / baseline `b5f39bc` (v0.11.0).
+
+### What landed
+
+* **GC `mark`**: after read, recompute as **Value then Commit**; match digest →
+  walk refs; `#caid_mismatch` / `#object_undecodable` recorded, refs **not**
+  followed. Absent digest: continue, no verdict (R3).
+* **`run_gc`**: if walk incomplete → **no deletes**, `Err` (non-zero CLI).
+  Dry-run still reports integrity. CLI prints plan/integrity before the error.
+* **`atomic_write` sole durable installer** for peers compact, affiliation
+  claim file, `discovery.n` (deleted second temp+rename copy).
+* Compaction failure visible in append logs; header write failure no longer
+  followed by a data line.
+* Probe: six `#[ignore]` attributes removed only.
+
+### Numbers
+
+| Measurement | Result |
+| --- | --- |
+| `verdict_must_gate_probe_test` | **12/12** (×3 stable) |
+| `local_gc` / `advert_persistence` / `discovery_trust` | **17 / 19 / 20** |
+| full workspace | **1772 passed / 0 failed / 3 ignored**, 182 blocks |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| fmt / `git diff --check` | pass |
+
+Opening with probe: 1766/0/9; six reds → pass (1766+6=1772; 9−6=3).

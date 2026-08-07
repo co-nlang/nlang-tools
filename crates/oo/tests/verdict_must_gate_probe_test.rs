@@ -148,7 +148,11 @@ fn digest_of_caid(caid: &str) -> String {
 }
 
 fn head_digest(dir: &Path) -> String {
-    digest_of_caid(fs::read_to_string(dir.join(".oo").join("HEAD")).unwrap().trim())
+    digest_of_caid(
+        fs::read_to_string(dir.join(".oo").join("HEAD"))
+            .unwrap()
+            .trim(),
+    )
 }
 
 fn hex_of(v: &serde_json::Value) -> Option<String> {
@@ -171,7 +175,10 @@ fn hex_of(v: &serde_json::Value) -> Option<String> {
 fn commit_links(dir: &Path, digest: &str) -> (Option<String>, Option<String>) {
     let bytes = fs::read(object_path(dir, digest)).unwrap();
     let j: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let p = j.get("parent").and_then(|x| x.get("digest")).and_then(hex_of);
+    let p = j
+        .get("parent")
+        .and_then(|x| x.get("digest"))
+        .and_then(hex_of);
     let r = j.get("root").and_then(|x| x.get("digest")).and_then(hex_of);
     (p, r)
 }
@@ -236,7 +243,11 @@ fn c1_untouched_store_is_whole_and_gc_collects_nothing() {
         out.contains("6 objects, 6 reachable, 0 collectable"),
         "healthy store did not read as fully reachable: {out}"
     );
-    assert_eq!(before, digests(&d), "gc removed something from a healthy store");
+    assert_eq!(
+        before,
+        digests(&d),
+        "gc removed something from a healthy store"
+    );
     assert_eq!(
         oo(&d, &["log"]).matches("commit hash:").count(),
         3,
@@ -272,7 +283,6 @@ fn c2_the_descendants_exist_before_anyone_tampers() {
 /// `live` set computed from an incomplete walk is a false answer, and
 /// collection acts on it irreversibly.
 #[test]
-#[ignore = "red until W0': gc sweeps on an incomplete walk (measured: removed 3, exit 0)"]
 fn r1_undecodable_reachable_object_stops_the_sweep() {
     let d = repo_with_history("r1", 3);
     let before = digests(&d);
@@ -297,7 +307,6 @@ fn r1_undecodable_reachable_object_stops_the_sweep() {
 /// The expected set is computed **before** the tamper, because the only
 /// walkers available afterwards share the engine's blind spot.
 #[test]
-#[ignore = "red until W0': the rest of the history is swept (measured: 3 objects, 508123 bytes)"]
 fn r2_descendants_of_the_undecodable_object_survive() {
     let d = repo_with_history("r2", 3);
     let c = chain(&d);
@@ -316,7 +325,10 @@ fn r2_descendants_of_the_undecodable_object_survive() {
     let (out, _) = oo_raw(&d, &["gc", "--grant", "gc"]);
 
     let after = digests(&d);
-    let gone: Vec<&String> = must_survive.iter().filter(|x| !after.contains(*x)).collect();
+    let gone: Vec<&String> = must_survive
+        .iter()
+        .filter(|x| !after.contains(*x))
+        .collect();
     assert!(
         gone.is_empty(),
         "{} objects reachable only through an undecodable object were deleted: {gone:?}\n{out}",
@@ -334,7 +346,6 @@ fn r2_descendants_of_the_undecodable_object_survive() {
 /// Measured today: two objects removed, exit 0, and the string
 /// `caid_mismatch` appears **zero** times in the output.
 #[test]
-#[ignore = "red until W0': the mark walk never recomputes the address"]
 fn r3_valid_bytes_at_the_wrong_address_are_caught() {
     let d = repo_with_history("r3", 3);
     let before = digests(&d);
@@ -353,8 +364,15 @@ fn r3_valid_bytes_at_the_wrong_address_are_caught() {
         out.contains("caid_mismatch"),
         "bytes at the wrong address produced no verdict at all:\n{out}"
     );
-    assert!(!ok, "gc exited zero on a store whose bytes are lying:\n{out}");
-    assert_eq!(before, digests(&d), "gc swept using the tamperer's references:\n{out}");
+    assert!(
+        !ok,
+        "gc exited zero on a store whose bytes are lying:\n{out}"
+    );
+    assert_eq!(
+        before,
+        digests(&d),
+        "gc swept using the tamperer's references:\n{out}"
+    );
 }
 
 /// R4 — the affiliation claim must not be written in place.
@@ -365,7 +383,6 @@ fn r3_valid_bytes_at_the_wrong_address_are_caught() {
 /// signature of writing in place (the probe shape v0.11.0 settled on).
 #[cfg(unix)]
 #[test]
-#[ignore = "red until W0': AffiliationClaim::write_file is a bare fs::write"]
 fn r4_affiliation_claim_is_replaced_not_overwritten() {
     let d = fresh_dir("r4");
     let p = d.join(".oo").join("affiliation");
@@ -406,7 +423,6 @@ fn r4_affiliation_claim_is_replaced_not_overwritten() {
 /// the concurrent-writer race into a deterministic assertion: today the write
 /// fails, `.ok()?` swallows it, and compaction silently does not happen.
 #[test]
-#[ignore = "red until W0': compact uses a predictable temp name and swallows the failure"]
 fn r5_compaction_survives_a_squatted_temp_name() {
     let d = fresh_dir("r5");
     let path = peers::directory_path(&d);
@@ -431,7 +447,6 @@ fn r5_compaction_survives_a_squatted_temp_name() {
 /// `discovery_config.rs:65` is a second, independent implementation of
 /// temp+rename. It gets `sync_all` right and the temp *name* wrong.
 #[test]
-#[ignore = "red until W0': DiscoveryConfig::write uses a predictable temp name"]
 fn r6_discovery_config_survives_a_squatted_temp_name() {
     let d = fresh_dir("r6");
     let path = DiscoveryConfig::path(&d);

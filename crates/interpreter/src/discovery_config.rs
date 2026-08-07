@@ -9,7 +9,7 @@ use nlang_parser::ast::{AtomKind, ExprKind, FieldKey, PathAnchor};
 use nlang_parser::parse_program;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 pub const CONFIG_FILE: &str = "discovery.n";
@@ -55,25 +55,13 @@ impl DiscoveryConfig {
         parse_config_text(&text, &path)
     }
 
-    /// Canonical rewrite: one key per line, sorted. Atomic via temp+rename.
+    /// Canonical rewrite: one key per line, sorted. Atomic via
+    /// [`crate::storage::atomic_write`] (unique temp name — not `discovery.n.tmp`).
     pub fn write(&self, base_dir: &Path) -> anyhow::Result<()> {
         let path = Self::path(base_dir);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let body = self.to_nlang();
-        let tmp = path.with_extension("n.tmp");
-        {
-            let mut f = fs::File::create(&tmp)
-                .map_err(|e| anyhow::anyhow!("discovery.n: cannot write {}: {e}", tmp.display()))?;
-            f.write_all(body.as_bytes())?;
-            f.sync_all()?;
-        }
-        fs::rename(&tmp, &path).map_err(|e| {
-            let _ = fs::remove_file(&tmp);
-            anyhow::anyhow!("discovery.n: cannot install {}: {e}", path.display())
-        })?;
-        Ok(())
+        crate::storage::atomic_write(&path, body)
+            .map_err(|e| anyhow::anyhow!("discovery.n: cannot write {}: {e}", path.display()))
     }
 
     pub fn to_nlang(&self) -> String {

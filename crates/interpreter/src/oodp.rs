@@ -636,7 +636,8 @@ impl AffiliationClaim {
             "operator_key: {}\nsignature: {}\nexpires: {}\n",
             self.operator_key, self.signature, self.expires
         );
-        std::fs::write(path, body)
+        crate::storage::atomic_write(path, body)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
     }
 
     pub fn read_file(path: &std::path::Path) -> Option<Self> {
