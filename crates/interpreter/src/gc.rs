@@ -3,9 +3,12 @@
 //! Roots: HEAD → commit chain (`parent`) + each commit's `root` tree, then
 //! every digest referenced by those value objects. **`CommitMeta.abandoned`
 //! is not a root** (R-b). Forgetting never runs automatically (R-c).
+//!
+//! REAL_03 §6.6 (verdict_must_gate): reachable `#object_undecodable` /
+//! `#caid_mismatch` make the walk **incomplete** — `run_gc` must not sweep.
 
 use crate::storage::ObjectStore;
-use crate::value::ContentHash;
+use crate::value::{Commit, ContentHash, Value};
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::Path;
@@ -20,8 +23,10 @@ pub struct GcReport {
     pub abandoned_content: usize,
     pub removed: usize,
     pub freed_bytes: u64,
-    /// Undecodable but *reachable* objects — reported, never swept.
+    /// Reachable integrity findings — reported; **block the sweep** when non-empty.
     pub integrity: Vec<String>,
+    /// True when any reachable object failed decode or address recompute.
+    pub walk_incomplete: bool,
 }
 
 /// Collect digests a JSON object refers to (64-hex strings and byte arrays).
@@ -76,8 +81,53 @@ fn is_hex64(s: &str) -> bool {
             .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))
 }
 
-/// Mark phase: reachable digests from HEAD (R-a). Reports undecodable
-/// reachable objects instead of treating them as garbage (R-10).
+/// Result of verifying one on-disk object at a requested digest.
+enum VerifiedObject {
+    /// Address recomputed and matches; JSON available for ref walking.
+    Ok(JsonValue),
+    /// Bytes present but do not hash/decode to the requested address.
+    CaidMismatch,
+    /// Present but neither a Value nor a Commit (or unreadable).
+    Undecodable,
+}
+
+/// Read + recompute (REAL_03 §6.6). Try Value then Commit so a genuine
+/// engine Commit is not mis-reported as undecodable (v0.2.52 trap).
+fn verify_reachable_object(store: &ObjectStore, digest_hex: &str) -> VerifiedObject {
+    let Ok(bytes) = store.read_raw_digest(digest_hex) else {
+        return VerifiedObject::Undecodable;
+    };
+    let want = digest_hex.to_lowercase();
+
+    if let Ok(val) = serde_json::from_slice::<Value>(&bytes) {
+        let recomputed = val.content_hash();
+        if hex::encode(&recomputed.digest) == want {
+            // Prefer walking the same JSON the store holds (pretty-printed).
+            if let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) {
+                return VerifiedObject::Ok(json);
+            }
+        } else {
+            return VerifiedObject::CaidMismatch;
+        }
+    }
+
+    if let Ok(commit) = serde_json::from_slice::<Commit>(&bytes) {
+        let recomputed = commit.content_hash();
+        if hex::encode(&recomputed.digest) == want {
+            if let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) {
+                return VerifiedObject::Ok(json);
+            }
+        } else {
+            return VerifiedObject::CaidMismatch;
+        }
+    }
+
+    // Neither Value nor Commit verified — including "JSON that is neither".
+    VerifiedObject::Undecodable
+}
+
+/// Mark phase: reachable digests from HEAD. Reports integrity findings;
+/// incomplete walks still list what was seen, but must not drive a sweep.
 pub fn mark(
     store: &ObjectStore,
     base_dir: &Path,
@@ -95,27 +145,31 @@ pub fn mark(
         if seen.contains(&d) {
             continue;
         }
+        // Absent: continue without a verdict (REAL_03 §6.6 / ruling R3).
         if !store.object_exists_digest(&d) {
             continue;
         }
         seen.insert(d.clone());
-        let Ok(bytes) = store.read_raw_digest(&d) else {
-            integrity.push(format!(
-                "integrity #object_undecodable: reachable digest {d} unreadable"
-            ));
-            continue;
-        };
-        let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) else {
-            integrity.push(format!(
-                "integrity #object_undecodable: reachable digest {d} cannot be decoded"
-            ));
-            continue;
-        };
-        let mut refs = Vec::new();
-        refs_of(&json, follow_abandoned, &mut refs);
-        for r in refs {
-            if !seen.contains(&r) {
-                stack.push_back(r);
+        match verify_reachable_object(store, &d) {
+            VerifiedObject::Ok(json) => {
+                let mut refs = Vec::new();
+                refs_of(&json, follow_abandoned, &mut refs);
+                for r in refs {
+                    if !seen.contains(&r) {
+                        stack.push_back(r);
+                    }
+                }
+            }
+            VerifiedObject::CaidMismatch => {
+                integrity.push(format!(
+                    "integrity #caid_mismatch: reachable digest {d} does not match its bytes"
+                ));
+                // Do not follow refs — they are the forger's graph.
+            }
+            VerifiedObject::Undecodable => {
+                integrity.push(format!(
+                    "integrity #object_undecodable: reachable digest {d} cannot be decoded"
+                ));
             }
         }
     }
@@ -145,6 +199,7 @@ pub fn plan_gc(store: &ObjectStore, base_dir: &Path) -> Result<GcReport, String>
         }
     }
 
+    let walk_incomplete = !integrity.is_empty();
     Ok(GcReport {
         total_objects,
         reachable: live.len(),
@@ -154,20 +209,43 @@ pub fn plan_gc(store: &ObjectStore, base_dir: &Path) -> Result<GcReport, String>
         removed: 0,
         freed_bytes: 0,
         integrity,
+        walk_incomplete,
     })
 }
 
 /// Sweep unreachable objects under `.oo/objects/` only.
+///
+/// If the reachability walk is incomplete (any `#object_undecodable` /
+/// `#caid_mismatch` on a reachable object), **nothing is deleted** and the
+/// call fails — REAL_03 §6.6 / verdict_must_gate. Dry-run still reports.
 pub fn run_gc(store: &ObjectStore, base_dir: &Path, dry_run: bool) -> Result<GcReport, String> {
     let mut report = plan_gc(store, base_dir)?;
-    if dry_run || report.collectable == 0 {
+    if dry_run {
+        return Ok(report);
+    }
+    if report.walk_incomplete {
+        return Err(format!(
+            "gc refused: reachability walk incomplete ({} integrity finding(s)); nothing removed",
+            report.integrity.len()
+        ));
+    }
+    if report.collectable == 0 {
         return Ok(report);
     }
 
     let all = store
         .list_digests()
         .map_err(|e| format!("list objects: {e}"))?;
-    let (live, _) = mark(store, base_dir, false);
+    let (live, integrity) = mark(store, base_dir, false);
+    // Re-check after a second walk (store could change under us).
+    if !integrity.is_empty() {
+        report.integrity = integrity;
+        report.walk_incomplete = true;
+        return Err(format!(
+            "gc refused: reachability walk incomplete ({} integrity finding(s)); nothing removed",
+            report.integrity.len()
+        ));
+    }
 
     let mut removed = 0usize;
     let mut freed = 0u64;
