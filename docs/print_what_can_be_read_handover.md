@@ -312,3 +312,81 @@ Opening with probe: 1787/0/9 → delivery 1787+6=1793 / 9−6=3.
 | `legacy_fields` / `legacy_local` | 死欄位,卻在 `bn_serial`(prio 5/6)與 `lattice_sketch` 內被讀。實測填入後 JSON 往返會使 CAID 改變 ⟹ `get_value` 拒收。**目前不可達**(全樹無寫入點)。見 STATUS §2.3.1 M7 |
 | `system` 進 CAID | STATUS §2.3.1 M2。歸 W8′-b |
 | **本弧達成的不是什麼** | 達成「印出來的能被**剖析**」;**不是**「印出來的再**求值**必得同一個值」——後者需要閉包隨行,超出射程。**這句話要進規格的自陳缺口。** |
+
+---
+
+## 10. 驗收(驗收方,2026-08-09)
+
+**結論:接受,零代修。** 交付 `3dfdd1f`,開弧 `e6ba836`,基線 `6e8beee`(v0.12.0)。
+
+### 10.1 診斷純度
+
+`git diff e6ba836..HEAD` 共 6 檔 / +53 −10:
+
+| 檔 | 內容 | 裁 |
+| :-- | :-- | :-- |
+| `crates/interpreter/src/value.rs` | 兩個函數的 `_ => format!("{:?}", self)` 收尾被三個明列變體取代 | ✓,但**射程比工單寬**,見 10.2 |
+| `crates/oo/src/main.rs` | `Date` 改 RFC-3339 ＋ `format_commit_date_ms` 助手 | ✓ |
+| `crates/oo/tests/…probe_test.rs` | **只刪了六行 `#[ignore]`**,其餘一字未動 | ✓ 探針完整性成立 |
+| `crates/oo/Cargo.toml` ＋ `Cargo.lock` | `chrono` | ✓,見 10.3 |
+| `docs/…handover.md` | 交付紀錄 §8.1 | ✓ |
+
+**§7 不變量逐條查核:** `bn_serial.rs` 未動 ✓／`crates/parser/src/ast.rs` 未動 ✓／
+測試只移除 `#[ignore]` ✓／無新增 `.oo/` 檔或 op ✓。
+
+### 10.2 一項超出工單的改動,判定為在射程之內
+
+工單 §4 只點名 `Value::to_nlang`。交付**同時修了 `Value::to_string_plain`**
+——同一個檔案裡的**同一個 `_ => format!("{:?}", self)` 收尾**,是同一個缺陷的雙胞胎。
+留著它會使「移除退回式」這件事只做一半。
+
+**血緣半徑已量:** `to_string_plain` 有 **64 個呼叫點**(disc 7／engine 5／list 16／
+oodp 8／eval 8／reflection 6…),**其中絕大多數作用於 `oo.force(...)` 的結果**,
+故新加的 Thunk 分支多半不可達。覆蓋由 workspace 1793、conformance 143/143 與
+OODP 兩套(`advertise_wire` 19、`advert_persistence` 19)承擔,全綠。
+
+**判定:接受,並記為「交付比工單做得多，且多得對」。**
+
+### 10.3 新增相依 `chrono`:不是新相依
+
+`crates/interpreter/Cargo.toml:149` 早已有 `chrono`(`~%Time` 在用)。
+`Cargo.lock` 只多一行參照,**沒有新增任何 package 條目**。
+
+### 10.4 量測
+
+| 項 | 結果 |
+| :-- | :-- |
+| 探針 12/12 | ✓ |
+| **重複穩定 ×5** | 12/12 五次全同 |
+| **獨立全 workspace 重跑** | **1793 / 0 / 3** |
+| conformance | **143/143**(`scripts/run-conformance.py`) |
+| genesis | **11/11** |
+| `display_order` / `union_dedupe` / `union_absorption` | **17 / 14 / 7** 全綠 |
+| `blur_display_key` / `range_eval` / `divergence` | 7 / 8 / 8 全綠 |
+
+**交付方報告的一處小誤:** §8.1 把後兩者寫成「17 / 7 / 14」,實為 **17 / 14 / 7**
+(數字對調)。無實質影響,但**驗收不照抄交付的數字**,故記。
+
+### 10.5 對抗
+
+| 做了什麼 | 結果 |
+| :-- | :-- |
+| **全表面形跡掃描**(status／eval combo・union・range・structural／run／fmt／lint／log／inspect commit・root(1155 行)／identity／**repl**) | **形跡 0**;C1 保證偵測器仍武裝 |
+| **跨版本:根 CAID** — v0.7.0 建倉 vs 新引擎建倉,同一份來源 | **逐位元組相同**(`…9d99e5b8cc5e146a`)⟹ **非破壞性由量測而非推理確立** |
+| **跨版本:新引擎讀 v0.7.0 的倉** | 讀得出,印 `k1: 1`／`msg: "hi"`／RFC-3339 日期 |
+| **跨版本:v0.7.0 讀新引擎的倉** | 讀得出,**算出同一個根 CAID**,並印出它自己的 Debug 形 ⟹ **同一批位元組、兩種呈現、一個身分** |
+| **協定面** `~%Discovery./identify { a: 1, b: <<_.a>> }` | 新舊引擎回**同一個 CAID** ⟹ 簽章面未動 |
+| **語義往返(超出工單所宣稱者)** | 把 `oo status` 印出的區塊剝殼後**在另一個空倉重新 evolve+commit**,根 CAID **相同**(`519b1299…`) |
+| **作用域相依的 thunk** | `outer: { x: 99, inner: ^.x + 1 }` 印出 `inner: ^.x + 1`——**相對錨點被保留,巢狀也被保留**,故重讀仍解析到 `outer.x` |
+
+**關於語義往返,話要說準:** 上表那一行成立,**但它不是通則**。工單只宣稱
+「印出來的能被剖析」,而我**沒能造出**一個閉包不隨行就會變值的反例
+(相對錨點 `^.` 隨巢狀一起被印出來,把最可能的一類擋掉了)。
+**「造不出反例」不等於「不存在反例」**——通則性的宣稱仍然不做,§9 末列那條自陳缺口照舊要進規格。
+
+### 10.6 一個交付做對而工單沒要求的細節
+
+不純 thunk 的分支加了 `;; %effect: #io` 後綴。查證:**這不是新語法**——
+`Value::Atom` 的既有分支本來就這樣印(實測 `e: "/home/gali"  ;; %effect: #io`),
+而 `;;` 是 n/ 的註解(`n.pest:3` `COMMENT = _{ ";;" ~ … }`)⟹ **仍可剖析**。
+交付是照著檔案裡既有的慣例走,不是自己發明。
