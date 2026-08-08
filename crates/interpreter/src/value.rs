@@ -2381,7 +2381,10 @@ impl Value {
                 }
                 s
             }
-            _ => format!("{:?}", self),
+            // Align with to_nlang — no Debug fallthrough (print_what_can_be_read).
+            Value::Thunk { expr, .. } => expr.to_nlang(0),
+            Value::Ref(path) => format!("<<{}>>", path),
+            Value::Code(expr) => expr.to_nlang(0),
         }
     }
 
@@ -2517,7 +2520,21 @@ impl Value {
                 }
                 s
             }
-            _ => format!("{:?}", self),
+            // print_what_can_be_read (W8'-a): never fall through to Debug.
+            // Unobserved thunk prints its source expression (not its answer).
+            Value::Thunk { expr, effect, .. } => {
+                let mut s = expr.to_nlang(indent);
+                if !effect.is_pure() {
+                    s.push_str(&format!("  ;; %effect: {}", effect));
+                }
+                s
+            }
+            // Structural ref: `<<path>>` is the only spelling that round-trips
+            // as a held reference (bare `_.a` would re-evaluate).
+            Value::Ref(path) => format!("<<{}>>", path),
+            // Quoted code prints its expression. Round-trip as *code* is an
+            // acknowledged gap (re-read evaluates rather than quotes).
+            Value::Code(expr) => expr.to_nlang(indent),
         }
     }
 

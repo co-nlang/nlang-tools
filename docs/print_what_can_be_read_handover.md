@@ -281,6 +281,26 @@ SPEC_10 §2.2.1 的 MUST「不得洩漏實作表示」**射程只有 evolve 邊�
 | #3 | §4「做」的兩項 ＋ 移除 `#[ignore]`。**不碰規格。** |
 | 驗收方 | 診斷純度／探針完整性證明／獨立全 workspace 重跑／重複穩定 ×5／跨版本;**規格條文(R-5)與 CHANGELOG 由驗收方寫** |
 
+### 8.1 交付紀錄（交付方）
+
+**Delivered** against open `e6ba836` / baseline `6e8beee` (v0.12.0).
+
+* `Value::to_nlang` / `to_string_plain`: **Thunk** → `expr.to_nlang`; **Ref** →
+  `<<path>>`; **Code** → `expr.to_nlang`. Exhaustive match — no Debug fallthrough.
+* `oo log` Date: RFC-3339 UTC (`%Y-%m-%dT%H:%M:%S%.3fZ`).
+* Probe: six `#[ignore]` removed only. Spec/CHANGELOG not touched.
+
+| Measurement | Result |
+| --- | --- |
+| `print_what_can_be_read_probe_test` | **12/12** |
+| `display_order` / `union_dedupe` / `union_absorption` | **17 / 7 / 14** (no colour change) |
+| full workspace | **1793 passed / 0 failed / 3 ignored**, 184 blocks |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| fmt / `git diff --check` | pass |
+
+Opening with probe: 1787/0/9 → delivery 1787+6=1793 / 9−6=3.
+
 ---
 
 ## 9. 本弧**不**處理但已掛帳的相鄰項

@@ -815,11 +815,21 @@ fn run_log() -> anyhow::Result<()> {
                 println!("    message: ");
             }
         }
-        let date = std::time::UNIX_EPOCH + std::time::Duration::from_millis(meta.timestamp);
-        println!("    Date: {:?}", date);
+        // print_what_can_be_read (W8'-a): RFC-3339 UTC, not SystemTime Debug.
+        println!("    Date: {}", format_commit_date_ms(meta.timestamp));
         println!();
     }
     Ok(())
+}
+
+/// Commit meta timestamp is milliseconds since Unix epoch (see `run_commit`).
+fn format_commit_date_ms(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let nsec = ((ms % 1000) * 1_000_000) as u32;
+    match chrono::DateTime::from_timestamp(secs, nsec) {
+        Some(dt) => dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        None => format!("{ms}"), // defensive; probe still requires a year when valid
+    }
 }
 
 fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {

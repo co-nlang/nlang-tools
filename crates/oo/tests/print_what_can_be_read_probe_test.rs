@@ -215,7 +215,6 @@ fn staged_block_as_program(status_out: &str) -> String {
 /// `"hi"` must be there. A delivery that made `status` print nothing would
 /// satisfy the absence alone.
 #[test]
-#[ignore]
 fn r1_status_shows_values_not_rust() {
     let d = repo_staged("r1", NESTED);
     let out = oo(&d, &["status"]);
@@ -237,7 +236,6 @@ fn r1_status_shows_values_not_rust() {
 
 /// R2 — and so does `oo inspect` of a stored root value.
 #[test]
-#[ignore]
 fn r2_inspect_shows_values_not_rust() {
     let d = repo_staged("r2", NESTED);
     let out = oo(&d, &["commit", "-m", "base"]);
@@ -274,7 +272,6 @@ fn r2_inspect_shows_values_not_rust() {
 /// This is the property `identify_caid` (oodp.rs:442) already depends on:
 /// it prints a value and hands the text back to the engine as source.
 #[test]
-#[ignore]
 fn r3_printed_state_parses_back() {
     let d = repo_staged("r3", NESTED);
     let out = oo(&d, &["status"]);
@@ -298,7 +295,6 @@ fn r3_printed_state_parses_back() {
 /// (eval.rs:1545). Printed as a bare `_.a`, reading it back evaluates the
 /// path instead of holding it — a different value.
 #[test]
-#[ignore]
 fn r4_structural_ref_prints_as_structural_ref() {
     let d = repo_staged("r4", "a: 1\nb: <<_.a>>\n");
     let out = oo(&d, &["status"]);
@@ -320,7 +316,6 @@ fn r4_structural_ref_prints_as_structural_ref() {
 
 /// R5 — `oo log` prints a date, not a Rust clock reading.
 #[test]
-#[ignore]
 fn r5_log_prints_a_date() {
     let d = repo_staged("r5", "a: 1\n");
     let out = oo(&d, &["commit", "-m", "base"]);
@@ -354,7 +349,6 @@ fn r5_log_prints_a_date() {
 /// `~%Reflection./quote` does not exist). So this one is built directly, and
 /// says so rather than pretending a CLI red exists.
 #[test]
-#[ignore]
 fn r6_quoted_code_prints_as_code() {
     let body = Expr {
         kind: ExprKind::Atom(AtomKind::Int(2.into())),
