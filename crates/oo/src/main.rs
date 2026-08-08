@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use nlang_interpreter::value::{BottomCause, BottomDetail};
 use nlang_interpreter::{
     CommitMeta, ContentHash, EffectTag, Ouroboros, Privilege, Universe, Value,
 };
@@ -7,6 +8,87 @@ use nlang_parser::parse_program;
 use std::fs;
 use std::io::{stdin, stdout, Write};
 use std::path::{Path, PathBuf};
+
+/// Operator-facing coordinate + cause (no file wrapper).
+/// Uses `detail.path` when present; otherwise the field-key fallback.
+/// Never Debug of AST keys or spans.
+fn format_conflict_where(detail: &BottomDetail, field_fallback: Option<&str>) -> String {
+    let cause = bottom_cause_tag(detail.cause);
+    let coord = detail
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(field_fallback.map(str::trim).filter(|s| !s.is_empty()));
+    match coord {
+        Some(c) => format!("{cause} at {c}"),
+        None => cause.to_string(),
+    }
+}
+
+/// Full operator-facing evolve failure text (where_the_conflict_is / W3'-a).
+fn format_evolution_conflict(detail: &BottomDetail, field_fallback: Option<&str>) -> String {
+    format!(
+        "Evolution Conflict: {}",
+        format_conflict_where(detail, field_fallback)
+    )
+}
+
+fn bottom_cause_tag(c: BottomCause) -> &'static str {
+    match c {
+        BottomCause::Conflict => "#conflict",
+        BottomCause::MissingKey => "#missing_key",
+        BottomCause::FuelExhausted => "#fuel_exhausted",
+        BottomCause::Timeout => "#timeout",
+        BottomCause::PeerTimeout => "#peer_timeout",
+        BottomCause::Divergent => "#divergent",
+        BottomCause::InvalidPath => "#invalid_path",
+        BottomCause::PrivateAccessViolation => "#private_access_violation",
+        BottomCause::NumericalError => "#numerical_error",
+        BottomCause::ArithmeticOnAnchor => "#arithmetic_on_anchor",
+        BottomCause::H1Split => "#h1_split",
+        BottomCause::H2Split => "#h2_split",
+        BottomCause::SemanticEclipse => "#semantic_eclipse",
+        BottomCause::NoContext => "#no_context",
+        BottomCause::OutOfHorizon => "#out_of_horizon",
+        BottomCause::SystemReserved => "#system_reserved",
+        BottomCause::InvalidConfig => "#invalid_config",
+        BottomCause::EffectViolation => "#effect_violation",
+        BottomCause::PrivilegedRequired => "#privileged_required",
+        BottomCause::StoreBoundary => "#store_boundary",
+        BottomCause::CaidMismatch => "#caid_mismatch",
+        BottomCause::PeerNotImplemented => "#peer_not_implemented",
+        BottomCause::PeerUnknownStatus => "#peer_unknown_status",
+        BottomCause::PeerRefused => "#peer_refused",
+    }
+}
+
+/// Simple n/-style label for a field key when `path` was not computed.
+fn field_key_label(key: &FieldKey) -> String {
+    match key {
+        FieldKey::Named { name, prefix } => {
+            let p = match prefix {
+                Some(nlang_parser::ast::Prefix::Logic) => "/",
+                Some(nlang_parser::ast::Prefix::Type) => "@",
+                Some(nlang_parser::ast::Prefix::Meta) => "%",
+                Some(nlang_parser::ast::Prefix::System) => "~%",
+                Some(nlang_parser::ast::Prefix::Private)
+                | Some(nlang_parser::ast::Prefix::Local)
+                | Some(nlang_parser::ast::Prefix::Data)
+                | None => "",
+            };
+            format!("{p}{}", name.trim())
+        }
+        FieldKey::Quoted(n) => n.trim().to_string(),
+        FieldKey::Path(p) => p
+            .segments
+            .iter()
+            .map(|s| s.trim())
+            .collect::<Vec<_>>()
+            .join("."),
+        _ => String::new(),
+    }
+}
 
 #[derive(Parser)]
 #[command(author, version = env!("OO_VERSION"), about, long_about = None)]
@@ -335,7 +417,12 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
             .map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
         for f in &program.fields {
             if let Err(e) = universe.evolve(&engine, &f) {
-                anyhow::bail!("Evolution Conflict in {:?}: {:?} at {:?}", file, e, f.key);
+                let fb = field_key_label(&f.key);
+                anyhow::bail!(
+                    "Evolution Conflict in \"{}\": {}",
+                    file.display(),
+                    format_conflict_where(&e, Some(&fb))
+                );
             }
         }
     }
@@ -960,7 +1047,8 @@ fn run_repl() -> anyhow::Result<()> {
             Ok(program) => {
                 for f in &program.fields {
                     if let Err(e) = universe.evolve(&engine, &f) {
-                        println!("Evolution Conflict: {:?}", e);
+                        let fb = field_key_label(&f.key);
+                        println!("{}", format_evolution_conflict(&e, Some(&fb)));
                     } else {
                         // 嘗試觀測剛剛進化的欄位
                         let path = match &f.key {
@@ -1120,7 +1208,12 @@ fn run_one_shot(
             .map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
         for f in &program.fields {
             if let Err(e) = universe.evolve(&engine, &f) {
-                anyhow::bail!("Evolution Conflict in {:?}: {:?} at {:?}", file, e, f.key);
+                let fb = field_key_label(&f.key);
+                anyhow::bail!(
+                    "Evolution Conflict in \"{}\": {}",
+                    file.display(),
+                    format_conflict_where(&e, Some(&fb))
+                );
             }
         }
     }
@@ -1174,7 +1267,8 @@ fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Resu
 
     for f in &program.fields {
         if let Err(e) = universe.evolve(&engine, f) {
-            anyhow::bail!("Eval error: {:?}", e);
+            let fb = field_key_label(&f.key);
+            anyhow::bail!("Eval error: {}", format_conflict_where(&e, Some(&fb)));
         }
     }
 
@@ -1339,7 +1433,12 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
                 }
             );
             if let Err(e) = universe.evolve(&engine, f) {
-                println!("FAIL: {:?} (Evolution error: {:?})", file, e);
+                let fb = field_key_label(&f.key);
+                println!(
+                    "FAIL: {:?} ({})",
+                    file,
+                    format_evolution_conflict(&e, Some(&fb))
+                );
                 failed += 1;
                 evolve_failed = true;
                 break;

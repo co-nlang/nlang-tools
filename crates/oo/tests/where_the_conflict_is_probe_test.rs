@@ -127,9 +127,15 @@ fn repo_with_deep_value(tag: &str) -> nlang_interpreter::ScratchDir {
     let d = fresh_dir(tag);
     write(&d, DEEP_A);
     let out = oo(&d, &["evolve", "u.n"]);
-    assert!(out.is_empty(), "LIVENESS: the first evolve was not clean: {out}");
+    assert!(
+        out.is_empty(),
+        "LIVENESS: the first evolve was not clean: {out}"
+    );
     let out = oo(&d, &["commit", "-m", "base"]);
-    assert!(out.contains("hash:"), "LIVENESS: base did not commit: {out}");
+    assert!(
+        out.contains("hash:"),
+        "LIVENESS: base did not commit: {out}"
+    );
     d
 }
 
@@ -191,7 +197,6 @@ fn c2_a_successful_evolve_says_nothing() {
 /// Measured: the engine has `Some("app.db.opts.retries")` in hand and prints
 /// `["app"]`.
 #[test]
-#[ignore = "red until W3'-a: the message names f.key, not the coordinate"]
 fn r1_the_message_names_the_leaf() {
     let d = repo_with_deep_value("r1");
     write(&d, DEEP_B);
@@ -209,7 +214,6 @@ fn r1_the_message_names_the_leaf() {
 /// implementation detail of the parser and it is currently printed to the
 /// operator's face.
 #[test]
-#[ignore = "red until W3'-a: internal structs are Debug-printed at the operator"]
 fn r2_no_rust_internals_reach_the_operator() {
     let d = repo_with_deep_value("r2");
     write(&d, DEEP_B);
@@ -226,7 +230,6 @@ fn r2_no_rust_internals_reach_the_operator() {
 /// Measured today, verbatim and complete: `Evolution Conflict: Conflict`.
 /// No coordinate, not even the field.
 #[test]
-#[ignore = "red until W3'-a: the REPL prints the cause and no location at all"]
 fn r3_the_repl_names_the_coordinate_too() {
     let d = fresh_dir("r3");
     let out = oo_repl(&d, &format!("{DEEP_A}{DEEP_B}exit\n"));
@@ -248,7 +251,6 @@ fn r3_the_repl_names_the_coordinate_too() {
 /// reproduced). A delivery that concatenates a missing path must not emit
 /// `x.` or an empty coordinate.
 #[test]
-#[ignore = "red until W3'-a: the shallow coordinate is wrapped in Debug output"]
 fn r4_a_shallow_coordinate_is_clean_and_well_formed() {
     let d = fresh_dir("r4");
     write(&d, "x: 1\n");
@@ -262,7 +264,10 @@ fn r4_a_shallow_coordinate_is_clean_and_well_formed() {
         found.is_empty(),
         "internal representation leaked on the shallow path: {found:?}\n{out}"
     );
-    assert!(out.contains('x'), "the shallow coordinate was not named:\n{out}");
+    assert!(
+        out.contains('x'),
+        "the shallow coordinate was not named:\n{out}"
+    );
     assert!(
         !out.contains(".."),
         "a malformed coordinate (double dot) was printed:\n{out}"
@@ -306,7 +311,10 @@ fn p2_a_conflicting_evolve_stages_nothing() {
         "a refused evolve left a staged file behind"
     );
     let (out, ok) = oo_raw(&d, &["commit", "-m", "should not exist"]);
-    assert!(!ok, "there was something to commit after a refused evolve: {out}");
+    assert!(
+        !ok,
+        "there was something to commit after a refused evolve: {out}"
+    );
     assert!(
         out.contains("Nothing to commit"),
         "a refused evolve left committable state: {out}"

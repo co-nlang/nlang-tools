@@ -190,6 +190,33 @@ ERROR_CODES 的 `#conflict` 只給人「檢查兩個值是否互斥」的建議,
 
 ---
 
-## 8. 交付紀錄(交付方填)
+## 8. 交付紀錄
 
-*(留白)*
+**Delivered** against open `314b474` / probes `df172a6` / baseline `f0ecb21` (v0.11.1).
+
+### What landed
+
+* `Universe::evolve` returns `Result<(), BottomDetail>` — conflict **path**
+  survives the type boundary (no longer collapsed to bare `BottomCause`).
+* G2-S root monotone check absolute-ises relative unify paths
+  (`db.opts.retries` → `app.db.opts.retries`) so the operator sees a full leaf
+  coordinate without CLI re-prefixing `f.key` (which would double-prefix the
+  staged×incoming path).
+* CLI (`evolve` / `run` / REPL / test / eval): prints
+  `Evolution Conflict: #conflict at <coord>` (with file wrapper where
+  applicable); no `{:?}` of Path/Span.
+* Fallback when `path` is `None`: simple field label only; no trailing dots.
+* Probe: four `#[ignore]` attributes removed only. Success path still silent.
+
+### Numbers
+
+| Measurement | Result |
+| --- | --- |
+| `where_the_conflict_is_probe_test` | **9/9** (×3 stable) |
+| `slash_shadow_cli_probe_test` | **3/3** |
+| full workspace | **1781 passed / 0 failed / 3 ignored**, 183 blocks |
+| conformance | **143/143** |
+| genesis | **11/11** |
+| fmt / `git diff --check` | pass |
+
+Opening with probe: 1777/0/7; four reds → pass (1777+4=1781; 7−4=3).

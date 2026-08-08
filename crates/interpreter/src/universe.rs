@@ -265,12 +265,17 @@ impl Universe {
         &mut self,
         engine: &Ouroboros,
         field: &Field,
-    ) -> std::result::Result<(), BottomCause> {
+    ) -> std::result::Result<(), crate::value::BottomDetail> {
         // SPEC_09 ownership: user LHS on `~%` is illegal (except root
         // ~%Config.<bare> horizon family). Loud at evolve boundary — same
         // family as G2-S Evolution Conflict (CLI exit 1).
+        // BottomDetail (not bare BottomCause) so conflict coordinates survive
+        // the boundary (where_the_conflict_is / W3'-a).
         if is_system_axis_lhs_forbidden(&field.key) {
-            return Err(BottomCause::SystemReserved);
+            return Err(crate::value::BottomDetail {
+                cause: BottomCause::SystemReserved,
+                ..Default::default()
+            });
         }
 
         let mut ctx = EvalContext::new(self.root.clone());
@@ -362,10 +367,18 @@ impl Universe {
                 let bare = p.segments[1].trim().to_string();
                 // Name membership before type check (unknown never stages).
                 if !is_known_config_knob(&bare) {
-                    return Err(BottomCause::InvalidConfig);
+                    return Err(crate::value::BottomDetail {
+                        cause: BottomCause::InvalidConfig,
+                        ..Default::default()
+                    });
                 }
                 // Type after eval — `fuel: 40 + 10` is lawful 50.
-                validate_config_knob_value(&bare, &val)?;
+                validate_config_knob_value(&bare, &val).map_err(|c| {
+                    crate::value::BottomDetail {
+                        cause: c,
+                        ..Default::default()
+                    }
+                })?;
                 evolved_coords.push("~%Config".to_string());
                 evolved_coords.push(format!("~%Config.{}", bare));
                 let mut partial = match self.staged.get_field("~%Config").cloned() {
@@ -393,8 +406,11 @@ impl Universe {
                         self.is_dirty = true;
                         Ok(())
                     }
-                    Value::Bottom(d) => Err(d.cause),
-                    _ => Err(BottomCause::Conflict),
+                    Value::Bottom(d) => Err(*d),
+                    _ => Err(crate::value::BottomDetail {
+                        cause: BottomCause::Conflict,
+                        ..Default::default()
+                    }),
                 };
             }
             _ => {
@@ -419,8 +435,18 @@ impl Universe {
                     .cloned()
                     .or_else(|| self.root.get_local_field(c).cloned())
                 {
-                    if let Value::Bottom(d) = engine.unify(root_val, val.clone()) {
-                        return Err(d.cause);
+                    if let Value::Bottom(mut d) = engine.unify(root_val, val.clone()) {
+                        // unify ran on the *field value*, so `path` is relative
+                        // to that coordinate. Absolute-ise for the operator
+                        // (where_the_conflict_is R1/R3): `app` + `db.opts…`
+                        // → `app.db.opts…`. Do not use f.key again at the CLI.
+                        let leaf = d.path.take().filter(|s| !s.is_empty());
+                        d.path = Some(match leaf {
+                            Some(p) if p == *c || p.starts_with(&format!("{c}.")) => p,
+                            Some(p) => format!("{c}.{p}"),
+                            None => c.clone(),
+                        });
+                        return Err(*d);
                     }
                 }
             }
@@ -492,8 +518,11 @@ impl Universe {
                 self.is_dirty = true;
                 Ok(())
             }
-            Value::Bottom(d) => Err(d.cause),
-            _ => Err(BottomCause::Conflict),
+            Value::Bottom(d) => Err(*d),
+            _ => Err(crate::value::BottomDetail {
+                cause: BottomCause::Conflict,
+                ..Default::default()
+            }),
         }
     }
 
