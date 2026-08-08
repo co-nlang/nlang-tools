@@ -71,15 +71,15 @@ fn assert_obs(src: &str, expect: &str) {
 
 /// Horizon verdict: #blur form with fuel-exhaustion cause. CAID is salted
 /// per engine instance — only form and cause are normative here.
-fn assert_blur_fuel(src: &str) {
+fn assert_blur_horizon(src: &str) {
     let got = observe_nlang(src, "out");
     assert!(
         got.starts_with("#blur"),
         "{src:?} :: out — expected #blur horizon, got {got:?}"
     );
     assert!(
-        got.contains("fuel_exhausted"),
-        "{src:?} :: out — expected fuel_exhausted cause, got {got:?}"
+        got.contains("max_depth_exceeded"),
+        "{src:?} :: out — expected max_depth_exceeded cause, got {got:?}"
     );
 }
 
@@ -99,13 +99,13 @@ fn red_blur_spread_absorbs_cause() {
             "big: {}\np: {{ b: 1, ...big }}\nout: p.%cause",
             flat_chain(4000)
         ),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 
 #[test]
 fn red_blur_spread_form() {
-    assert_blur_fuel(&format!(
+    assert_blur_horizon(&format!(
         "big: {}\nout: {{ b: 1, ...big }}",
         flat_chain(4000)
     ));
@@ -113,7 +113,7 @@ fn red_blur_spread_form() {
 
 #[test]
 fn red_blur_spread_order_blind() {
-    assert_blur_fuel(&format!(
+    assert_blur_horizon(&format!(
         "big: {}\nout: {{ ...big, b: 1 }}",
         flat_chain(4000)
     ));
@@ -121,7 +121,7 @@ fn red_blur_spread_order_blind() {
 
 #[test]
 fn red_blur_spread_empty_target() {
-    assert_blur_fuel(&format!("big: {}\nout: {{ ...big }}", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: {{ ...big }}", flat_chain(4000)));
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn red_blur_spread_nested_per_node() {
         "big: {}\nw: {{ a: {{ ...big }} }}\nout: (w.a).%cause",
         flat_chain(4000)
     );
-    assert_obs(&src, "#fuel_exhausted");
+    assert_obs(&src, "#max_depth_exceeded");
     let outer = observe_nlang(
         &format!(
             "big: {}\nw: {{ a: {{ ...big }} }}\nout: w.%cause",
@@ -158,7 +158,7 @@ fn red_blur_spread_nested_per_node() {
 #[test]
 fn red_blur_spread_cocoon_target() {
     // Target kind irrelevant: absorption precedes any target attribute.
-    assert_blur_fuel(&format!("big: {}\nout: {{{{ ...big }}}}", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: {{{{ ...big }}}}", flat_chain(4000)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -184,13 +184,13 @@ fn pin_bottom_spread_collapse() {
 #[test]
 fn pin_blur_merge_absorbs() {
     // Neighbor law (& absorption) — the derivation's second premise.
-    assert_blur_fuel(&format!("big: {}\nout: {{ b: 1 }} & big", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: {{ b: 1 }} & big", flat_chain(4000)));
 }
 
 #[test]
 fn pin_blur_nav_absorbs() {
     // SPEC_08 §3.2.2 #5 — coordinate absorption must survive untouched.
-    assert_blur_fuel(&format!("big: {}\nout: big.name", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: big.name", flat_chain(4000)));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn pin_blur_cause_meta() {
     // Recipe sanity: flat_chain(4000) is a fuel-exhaustion #blur.
     assert_obs(
         &format!("big: {}\nout: big.%cause", flat_chain(4000)),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 

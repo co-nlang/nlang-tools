@@ -175,7 +175,7 @@ fn pin_blur_cause_tag_whitelist() {
         &format!("big: {}\nout: big.%cause", flat_chain(4000)),
         "out",
     );
-    assert_eq!(got, "#fuel_exhausted");
+    assert_eq!(got, "#max_depth_exceeded");
 }
 
 #[test]

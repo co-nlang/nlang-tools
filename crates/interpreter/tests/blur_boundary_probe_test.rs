@@ -69,17 +69,20 @@ fn assert_obs(src: &str, expect: &str) {
     assert_eq!(got, expect, "{src:?} :: out");
 }
 
-/// Horizon verdict: #blur form with fuel-exhaustion cause. CAID is salted
-/// per engine instance — only form and cause are normative.
-fn assert_blur_fuel(src: &str) {
+/// Horizon verdict: #blur form with depth-exhaustion cause.
+/// `flat_chain(4000)` exceeds `max_unification_depth` (default 256) long
+/// before fuel runs out. ERROR_CODES §2.7.2 (the_name_points_at_the_remedy):
+/// that situation must report `#max_depth_exceeded`, not `#fuel_exhausted`.
+/// CAID is salted per engine instance — only form and cause are normative.
+fn assert_blur_horizon(src: &str) {
     let got = observe_nlang(src, "out");
     assert!(
         got.starts_with("#blur"),
         "{src:?} :: out — expected #blur horizon, got {got:?}"
     );
     assert!(
-        got.contains("fuel_exhausted"),
-        "{src:?} :: out — expected fuel_exhausted cause, got {got:?}"
+        got.contains("max_depth_exceeded"),
+        "{src:?} :: out — expected max_depth_exceeded cause, got {got:?}"
     );
 }
 
@@ -94,12 +97,12 @@ fn flat_chain(n: usize) -> String {
 #[test]
 fn red_nav_blur_absorbs() {
     // Today: ⊥ #invalid_path — the "path is invalid" lie.
-    assert_blur_fuel(&format!("big: {}\nout: big.name", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: big.name", flat_chain(4000)));
 }
 
 #[test]
 fn red_nav_through_combo_absorbs() {
-    assert_blur_fuel(&format!(
+    assert_blur_horizon(&format!(
         "big: {}\nc: {{ x: big }}\nout: c.x.name",
         flat_chain(4000)
     ));
@@ -110,7 +113,7 @@ fn red_nav_blur_cause_after_absorb() {
     // L2-24: absorbed blur still answers meta honestly.
     assert_obs(
         &format!("big: {}\nmid: big.name\nout: mid.%cause", flat_chain(4000)),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 
@@ -123,7 +126,7 @@ fn red_union_nav_blur_branch_survives() {
         "out",
     );
     assert!(
-        got.contains(" | ") && got.contains("#blur") && got.contains("fuel_exhausted"),
+        got.contains(" | ") && got.contains("#blur") && got.contains("max_depth_exceeded"),
         "blur branch must survive union navigation: {got:?}"
     );
 }
@@ -160,14 +163,14 @@ fn red_eq_blur_vs_value_absorbs() {
     // Migrated from blur_horizon_probe_test::pin_lattice_eq_blur_current_behavior
     // (frozen #false "until the separate case" — this is that case;
     // migration performed by the ACCEPTOR in the order commit).
-    assert_blur_fuel(&format!("big: {}\nout: big = 1", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: big = 1", flat_chain(4000)));
 }
 
 #[test]
 fn red_eq_twin_blurs_absorb() {
     // Two bindings, same text: snapshots differ (CAIDs differ) but both
     // denote 4000 — today's #false claims certain inequality, a lie.
-    assert_blur_fuel(&format!(
+    assert_blur_horizon(&format!(
         "bigA: {c}\nbigB: {c}\nout: bigA = bigB",
         c = flat_chain(4000)
     ));
@@ -181,7 +184,7 @@ fn red_eq_twin_cause_meta() {
             "bigA: {c}\nbigB: {c}\nout: (bigA = bigB).%cause",
             c = flat_chain(4000)
         ),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 
@@ -207,12 +210,12 @@ fn pin_eq_normal_values_unaffected() {
 #[test]
 fn pin_eqeq_blur_absorbs_g3_law() {
     // G3 R1 (value context) — must keep holding through this arc.
-    assert_blur_fuel(&format!("big: {}\nout: big == 1", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: big == 1", flat_chain(4000)));
 }
 
 #[test]
 fn pin_meet_blur_absorbs() {
-    assert_blur_fuel(&format!("big: {}\nout: big & 1", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: big & 1", flat_chain(4000)));
 }
 
 #[test]
@@ -226,7 +229,7 @@ fn pin_join_blur_first_class() {
 
 #[test]
 fn pin_combo_storage_transparent() {
-    assert_blur_fuel(&format!(
+    assert_blur_horizon(&format!(
         "big: {}\nc: {{ x: big }}\nout: c.x",
         flat_chain(4000)
     ));
@@ -236,7 +239,7 @@ fn pin_combo_storage_transparent() {
 fn pin_cause_meta_unchanged() {
     assert_obs(
         &format!("big: {}\nout: big.%cause", flat_chain(4000)),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 
@@ -281,7 +284,7 @@ fn pin_nav_blur_compositional() {
     // absorption continues the loop; later meta segments still answer.
     assert_obs(
         &format!("big: {}\nout: big.name.%cause", flat_chain(4000)),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 

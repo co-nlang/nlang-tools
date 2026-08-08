@@ -156,7 +156,7 @@ fn pin_config_fuel_write() {
             "~%Config.fuel: 50\nbig: {}\nout: big.%cause",
             flat_chain(300)
         ),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 

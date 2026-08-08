@@ -848,11 +848,12 @@ fn p4_unknown_and_retired_forms() {
 /// packet steer local routing.
 ///
 /// Measured baseline, and pinned in BOTH directions: advertising a value and
-/// then asking for it by the same key burns the hop budget and eclipses.
+/// then asking for it by the same key burns the hop budget.
 ///
 ///     a: ~%Discovery./advertise { pkg: "ladd", version: 1 }   →  #true
-///     f: ~%Discovery./find      { pkg: "ladd" }               →  _|_ #semantic_eclipse
+///     f: ~%Discovery./find      { pkg: "ladd" }               →  _|_ #routing_budget_exceeded
 ///
+/// (ERROR_CODES §2.7.1 / the_name_points_at_the_remedy: was `#semantic_eclipse`.)
 /// That verdict is **not endorsed here**. It is pre-existing (`disc.find` only
 /// resolves via the explicit-`target` direct-lookup path today) and it is on
 /// the ledger. The pin exists so this arc changes it in neither direction — a
@@ -875,7 +876,7 @@ fn p5_local_ladd_untouched() {
     let found = run_bounded(&p.b, &["run", "l.n", "--observe", "f"], 30);
     assert_ne!(HUNG, found, "~%Discovery./find hung");
     assert!(
-        found.contains("semantic_eclipse"),
+        found.contains("routing_budget_exceeded"),
         "local find's verdict moved; this arc must not touch it either way: {found:?}"
     );
 }

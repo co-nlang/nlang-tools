@@ -67,6 +67,7 @@ pub fn handle_resource_exhausted(
                 crate::ResourceExhausted::FuelExhausted => BottomCause::FuelExhausted,
                 crate::ResourceExhausted::Timeout => BottomCause::Timeout,
                 crate::ResourceExhausted::StackOverflow => BottomCause::Divergent,
+                crate::ResourceExhausted::DepthExceeded => BottomCause::MaxDepthExceeded,
             };
             Value::Bottom(Box::new(BottomDetail {
                 cause: cause_name,
@@ -82,7 +83,10 @@ pub fn handle_resource_exhausted(
             let blur_cause = match cause {
                 crate::ResourceExhausted::FuelExhausted => BlurCause::FuelExhausted,
                 crate::ResourceExhausted::Timeout => BlurCause::Timeout,
+                // StackOverflow is retained on BlurCause for CAID / stored
+                // decode but is not minted here for depth (ERROR_CODES §2.7.2).
                 crate::ResourceExhausted::StackOverflow => BlurCause::StackOverflow,
+                crate::ResourceExhausted::DepthExceeded => BlurCause::MaxDepthExceeded,
             };
             Value::Blur(BlurDetail {
                 cause: blur_cause,

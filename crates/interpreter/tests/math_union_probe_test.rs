@@ -142,7 +142,7 @@ fn red_math_union_blur_branch_survives() {
         "out",
     );
     assert!(
-        got.starts_with("3 | ") && got.contains("#blur") && got.contains("fuel_exhausted"),
+        got.starts_with("3 | ") && got.contains("#blur") && got.contains("max_depth_exceeded"),
         "blur branch must survive math distribution: {got:?}"
     );
 }
@@ -174,7 +174,7 @@ fn pin_math_blur_single_absorbs() {
     // G3 law anchor: single-value blur math absorbs (no union involved).
     let got = observe_nlang(&format!("big: {}\nout: big + 1", flat_chain(4000)), "out");
     assert!(
-        got.starts_with("#blur") && got.contains("fuel_exhausted"),
+        got.starts_with("#blur") && got.contains("max_depth_exceeded"),
         "single blur math must absorb: {got:?}"
     );
 }

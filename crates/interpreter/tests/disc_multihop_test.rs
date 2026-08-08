@@ -100,10 +100,12 @@ fn test_multihop_increments_hop_counter() {
     assert!(ctx.disc_routing_hops >= 1);
 }
 
-// ─── 4. SemanticEclipse when budget exhausted ─────────────────────────────────
+// ─── 4. RoutingBudgetExceeded when budget exhausted (ERROR_CODES §2.7.1) ─────
+// Same §2.7.1 rename as semantic_eclipse_test (handover §7 class): hop budget
+// is not an attack. Expectation only; test retained.
 
 #[test]
-fn test_multihop_semantic_eclipse_on_budget_exhaustion() {
+fn test_multihop_routing_budget_exceeded_on_budget_exhaustion() {
     let oo = oo();
     let mut ctx = oo.eval_context();
 
@@ -116,11 +118,11 @@ fn test_multihop_semantic_eclipse_on_budget_exhaustion() {
 
     let _ = find(&oo, &mut ctx, combo(&[("z", 99)]));
     ctx.disc_routing_hops = 16;
-    let eclipse = find(&oo, &mut ctx, combo(&[("z", 99)]));
+    let exhausted = find(&oo, &mut ctx, combo(&[("z", 99)]));
     assert!(
-        matches!(&eclipse, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse)),
-        "disc_routing_hops >= 16 should give SemanticEclipse, got {:?}",
-        eclipse
+        matches!(&exhausted, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::RoutingBudgetExceeded)),
+        "disc_routing_hops >= 16 should give RoutingBudgetExceeded, got {:?}",
+        exhausted
     );
 }
 

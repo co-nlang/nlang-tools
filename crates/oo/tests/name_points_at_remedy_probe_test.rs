@@ -202,7 +202,6 @@ fn c2_adequate_depth_converges() {
 
 /// R1 — depth exhaustion under strict says `#max_depth_exceeded`.
 #[test]
-#[ignore]
 fn r1_strict_depth_exhaustion_names_depth() {
     let out = oo_run("r1", &deep_merge_src(2, Some("#strict")));
     assert!(
@@ -218,7 +217,6 @@ fn r1_strict_depth_exhaustion_names_depth() {
 
 /// R2 — and under blur. **This is the one assertion here that moves a CAID.**
 #[test]
-#[ignore]
 fn r2_blur_depth_exhaustion_names_depth() {
     let out = oo_run("r2", &deep_merge_src(2, Some("#blur")));
     assert!(
@@ -237,7 +235,6 @@ fn r2_blur_depth_exhaustion_names_depth() {
 
 /// R3 — a spent routing budget is a spent routing budget.
 #[test]
-#[ignore]
 fn r3_hop_budget_is_not_an_attack() {
     let oo = oo_engine();
     let mut ctx = oo.eval_context();
@@ -266,7 +263,6 @@ fn r3_hop_budget_is_not_an_attack() {
 /// an abolished tag for stored universes, as `#invalid_path` already is.
 /// So this scans for *construction* sites outside the enum's own file.
 #[test]
-#[ignore]
 fn r4_nothing_mints_the_abolished_tag() {
     let src = interpreter_src_dir();
     let code = code_under(&src);
