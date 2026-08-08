@@ -29,7 +29,7 @@ Error: Evolution Conflict in "u.n": Conflict at
 
 三件事同時錯:
 
-1. **座標不是座標**,是 `f.key`——**你剛剛打的那個頂層欄位名**。它是前綴,不是答案。
+1. **座標不是座標**,是 `f.key`——**你剛剛打的那個頂層欄位名**。見 R3:那不是「前綴不足」,是**拿錯了東西**——真正的座標另有其物,而且是絕對的。
 2. **內部結構被 `{:?}` 印進操作者的臉**:`Path(Path { … span: Span { start: 0, end: 3 } })`。
    `Span` 是原始碼位元組偏移,是實作細節。
 3. **兩個回報點給的資訊不一樣**:
@@ -87,7 +87,7 @@ ERROR_CODES 的 `#conflict` 只給人「檢查兩個值是否互斥」的建議,
 | :-- | :--- |
 | **R1** | **座標必須到葉**(D38)。`app.db.opts.retries`,不是 `app`。 |
 | **R2** | **操作者面的座標必須以 n/ 的拼法表達**,不得是 Rust 結構的 `{:?}`。**不得出現 `Span`、位元組偏移、或任何 `Xxx(Xxx { … })` 形狀。** |
-| **R3** | **完整座標 = `f.key` ＋ `detail.path`**。`BottomDetail.path` 是相對於該次合併之根的,而 evolve 的根是**那個欄位的值**;單獨印任何一半都不是操作者能用的座標。**今天印的是前綴。** |
+| **R3** | **座標直接用 `detail.path`,不得再加 `f.key` 前綴。** 〔量 2026-08-08〕evolve 的合併是**整個 staged × 整個 incoming**,故 `unify_combo` 在最外層就已補上欄位名:深層案例得 `Some("app.db.opts.retries")`、淺層案例得 `Some("x")`,**兩者都已是絕對座標**。**本條的第一版寫「= f.key ＋ path」,實測推翻**——那樣會印出 `app.app.db.opts.retries`。今天印的 `f.key` 不是前綴不足,是**拿錯了東西**。 |
 | **R4** | **兩個回報點必須給同樣的資訊**。REPL 不是次等公民。 |
 | **R5** | **拒絕語義不變**:evolve 仍然 exit 1、仍然不寫 `staged`。本弧只治**它說了什麼**,不治**它做了什麼**。 |
 | **R6** | **D36 的靜默不得被破壞**:沒有衝突的 evolve 仍然**逐字零輸出**。 |
@@ -100,10 +100,15 @@ ERROR_CODES 的 `#conflict` 只給人「檢查兩個值是否互斥」的建議,
 
 1. `Universe::evolve` 的錯誤型別**必須**帶得動 `BottomDetail`(或至少 `cause` ＋ `path`)。
    `BottomCause` 是無 payload 的 enum,壓在那裡的東西救不回來。
+   **丟棄點就是這兩行**,`d` 在手上而只取了 `.cause`:
+   ```
+   universe.rs:396   Value::Bottom(d) => Err(d.cause),
+   universe.rs:495   Value::Bottom(d) => Err(d.cause),
+   ```
 2. `main.rs:338` 與 `main.rs:963` 兩處**都**印出完整座標(R3),形狀一致。
 3. 停止 `{:?}` 印任何內部結構(R2)。
-4. `path` 為 `None` 時(見 §4)座標退回 `f.key` 單獨一項,**且不得印出空的或殘缺的座標**
-   (例如結尾多一個點)。
+4. `path` 為 `None` 時(見 §4)座標退回 `f.key` 單獨一項——**那是全篇唯一該用到 `f.key` 的地方**。
+   **且不得印出空的或殘缺的座標**(例如結尾多一個點)。
 
 ### 3.2 明確**不在**本弧範圍
 
@@ -122,7 +127,7 @@ ERROR_CODES 的 `#conflict` 只給人「檢查兩個值是否互斥」的建議,
 | 要求 | 可滿足嗎 |
 | :-- | :--- |
 | 取得葉層座標 | ✅ **已實測**:`path = Some("p.q.deep")`。不是推論 |
-| 座標永遠存在 | ⚠ **不是。** 最內層的 `Atom` vs `Atom` ⊥ 本身 `path: None`,是 `unify_combo` 在回程補上鍵名的。⟹ **頂層直接衝突(`x: 1` vs `x: 2`)的 `path` 會是 `None`**,此時完整座標就只有 `f.key`。**R4 的探針必須釘住這一格,否則交付會做出一個 `x.` 這種東西** |
+| 座標永遠存在 | ⚠ **兩個實測案例都有**(`"app.db.opts.retries"` / `"x"`),因為 evolve 的合併恆為 Combo × Combo,最外層必補鍵名。**但 `universe.rs:396` 那條路徑的 `incoming` 未必是 Combo**,`path: None` 在型別上仍可達而我**未能造出**。⟹ R4 維持為**防禦性**探針:`None` 時不得印出殘缺座標(結尾的 `.`、空字串)。**「未能造出」記在此處,不假裝它不存在** |
 | 兩處回報點都拿得到 `f.key` | ✅ 兩處都在 `for f in &program.fields` 之內 |
 | 不破壞 D36 的靜默 | ✅ 成功路徑不經過這些分支;仍以探針釘住 |
 
@@ -139,13 +144,27 @@ ERROR_CODES 的 `#conflict` 只給人「檢查兩個值是否互斥」的建議,
 | **R1** | 深層衝突(`app.db.opts.retries`)的訊息**必須含 `app.db.opts.retries`** |
 | **R2** | 該訊息**不得**含 `Span`、`start:`、`Path(Path`、`segments:` |
 | **R3** | **REPL 路徑**的衝突訊息也必須含完整座標 |
-| **R4** | 頂層直接衝突(`x: 1` vs `x: 2`)訊息含 `x`,且**不得**以 `.` 結尾或含 `..` |
+| **R4** | 頂層直接衝突(`x: 1` vs `x: 2`)訊息含 `x`,且**不得**以 `.` 結尾或含 `..`(防禦性——見 §4) |
 | **P1** | 衝突時 exit code 仍為 **1** |
 | **P2** | 衝突時 **`staged` 仍未被寫出**(`oo commit` 仍回「Nothing to commit」) |
 | **P3** | 成功的 evolve 仍然零輸出(與 C2 同,但列為釘:交付不得為了「一致」而開始在成功時說話) |
 
 **校準**:R1–R4 在 `dev f0ecb21` 上必須全紅**且紅在對的理由上**;C1、C2、P1–P3 必須全綠。
 紅的以 `#[ignore]` 標記,交付方**只得移除 `#[ignore]`**,不得編輯探針。
+
+### 5.1 校準紀錄(2026-08-08,`dev f0ecb21`)
+
+**C1、C2、P1–P3 五支全綠;R1–R4 四支全紅,每一支紅在它自己名字說的理由上。**
+
+| 探針 | 基線實測 |
+| :-- | :--- |
+| **R1** | `Evolution Conflict in "u.n": Conflict at Path(Path { anchor: Bare, segments: ["app"], … })`——訊息不含 `app.db.opts.retries` |
+| **R2** | 五個碎片全中:`segments:` / `Span` / `start:` / `Path(Path` / `anchor:` |
+| **R3** | REPL 逐字全文 = `Evolution Conflict: Conflict`。**沒有座標,沒有欄位** |
+| **R4** | 淺層案例同樣洩漏五個碎片(`segments: ["x"], span: Span { start: 0, end: 1 }`) |
+
+**workspace 基線:1777 passed / 0 failed / 7 ignored,183 個區塊**(= v0.11.1 的 1772/0/3
+加上本檔的 5 綠 4 紅;算術對得上,證明沒有別的東西被動到)。
 
 ---
 
