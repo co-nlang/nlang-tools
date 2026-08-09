@@ -216,3 +216,70 @@ fn blur_bn_serial_deterministic() {
     assert_eq!(b1, b2);
     assert_eq!(b1[0], 0xFD);
 }
+
+
+#[test]
+fn m4_merge_set_caid_is_commutative() {
+    let mut ha = default_horizon(100);
+    ha.max_unification_depth = 2;
+    let mut hb = default_horizon(90);
+    hb.max_unification_depth = 2;
+    let a = BlurDetail::from_single(
+        BlurCause::MaxDepthExceeded,
+        ha,
+        Some(Value::Atom(AtomKind::Str("A".into()), EffectTag::Pure, None)),
+        EffectTag::Pure,
+    );
+    let b = BlurDetail::from_single(
+        BlurCause::MaxDepthExceeded,
+        hb,
+        Some(Value::Atom(AtomKind::Str("B".into()), EffectTag::Pure, None)),
+        EffectTag::Pure,
+    );
+    let ab = BlurDetail::merge_set(&a, &b);
+    let ba = BlurDetail::merge_set(&b, &a);
+    assert_eq!(ab.blur_caid(), ba.blur_caid(), "merge_set CAID not commutative");
+    assert_eq!(ab.record_set().len(), 2);
+    assert_eq!(ba.record_set().len(), 2);
+}
+
+#[test]
+fn m4_code_content_hash_is_span_free() {
+    use nlang_parser::parse_program;
+    let e1 = parse_program("x: {{a: 1}}\n").unwrap().fields.last().unwrap().value.clone();
+    let e2 = parse_program("pad: 0\nx: {{a: 1}}\n").unwrap().fields.last().unwrap().value.clone();
+    assert_ne!(e1.span, e2.span);
+    let c1 = Value::Code(Box::new(e1));
+    let c2 = Value::Code(Box::new(e2));
+    assert_eq!(
+        c1.content_hash().digest,
+        c2.content_hash().digest,
+        "Code CAID must not depend on source position"
+    );
+}
+
+#[test]
+fn m4_meet_of_depth_blurs_is_commutative() {
+    use nlang_parser::parse_program;
+    let oo = Ouroboros::new_in_memory();
+    let a_src = "{{a: {{b: {{c: {{d: 1}}}}}}}} & {{a: {{b: {{c: {{d: 1}}}}}}}}";
+    let b_src = "{{zz: {{yy: {{xx: {{ww: 9}}}}}}}} & {{zz: {{yy: {{xx: {{ww: 9}}}}}}}}";
+    let run = |body: &str| {
+        let src = format!("~%Config.max_unification_depth: 2\nm: {body}\n");
+        let prog = parse_program(&src).unwrap();
+        let mut ctx = oo.eval_context();
+        ctx.max_unification_depth = 2;
+        ctx.fuel = 10000;
+        ctx.fuel_budget = 10000;
+        oo.eval(&prog.fields.last().unwrap().value, &mut ctx)
+    };
+    let ab = run(&format!("({a_src}) & ({b_src})"));
+    let ba = run(&format!("({b_src}) & ({a_src})"));
+    match (&ab, &ba) {
+        (Value::Blur(a), Value::Blur(b)) => {
+            assert_ne!(a.record_set().len(), 1, "control: merge must unite records");
+            assert_eq!(a.blur_caid(), b.blur_caid(), "A&B CAID must equal B&A");
+        }
+        _ => panic!("expected blurs, got {ab:?} / {ba:?}"),
+    }
+}

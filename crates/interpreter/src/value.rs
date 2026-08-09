@@ -2973,8 +2973,10 @@ impl Value {
                 hasher.update(&[effect.to_serial_byte()]);
             }
             Value::Code(expr) => {
+                // Span-free (O42 M4). See bn_serial Code arm — to_nlang is
+                // too stack-heavy for deep left-associated chains.
                 hasher.update([0x06]);
-                hasher.update(format!("{:?}", expr).as_bytes());
+                hasher.update(format!("{:?}", expr.without_spans()).as_bytes());
             }
             Value::Ref(path) => {
                 hasher.update([0x07]);

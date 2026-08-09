@@ -915,7 +915,7 @@ impl Ouroboros {
             // O42 R-3: node_content for Blur only — never clone a deep AST
             // for stack_overflow / Strict (see needs_partial_body).
             let partial = if needs_partial_body(&e, ctx.strategy) {
-                Some(Value::Code(Box::new(expr.clone())))
+                Some(Value::Code(Box::new(expr.clone().without_spans())))
             } else {
                 None
             };
@@ -937,7 +937,7 @@ impl Ouroboros {
             } => {
                 if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
-                        Some(Value::Code(Box::new(expr.clone())))
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {
                         None
                     };
@@ -1259,7 +1259,7 @@ impl Ouroboros {
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(5) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
-                        Some(Value::Code(Box::new(expr.clone())))
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {
                         None
                     };
@@ -1609,7 +1609,7 @@ impl Ouroboros {
             ExprKind::Tuple(items) => {
                 if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
-                        Some(Value::Code(Box::new(expr.clone())))
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {
                         None
                     };
@@ -1632,7 +1632,7 @@ impl Ouroboros {
             ExprKind::Poset(relations) => {
                 if let Err(e) = ctx.check_resources(10 + (relations.len() as u64) * 2) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
-                        Some(Value::Code(Box::new(expr.clone())))
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {
                         None
                     };

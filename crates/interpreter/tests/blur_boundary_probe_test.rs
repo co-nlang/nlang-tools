@@ -167,24 +167,29 @@ fn red_eq_blur_vs_value_absorbs() {
 }
 
 #[test]
-fn red_eq_twin_blurs_absorb() {
-    // Two bindings, same text: snapshots differ (CAIDs differ) but both
-    // denote 4000 — today's #false claims certain inequality, a lie.
-    assert_blur_horizon(&format!(
-        "bigA: {c}\nbigB: {c}\nout: bigA = bigB",
-        c = flat_chain(4000)
-    ));
+fn pin_eq_twin_blurs_same_text_true() {
+    // O42 M4: Code node_content is span-free, so two bindings of the same
+    // text mint the same CHS (partial CAID). SPEC_08 §3.2.2 #6(a) → #true.
+    // Pre-M4 this was red as "absorb" because Debug-of-Expr baked spans into
+    // the partial digest and the CAIDs disagreed (a lie about inequality).
+    assert_obs(
+        &format!(
+            "bigA: {c}\nbigB: {c}\nout: bigA = bigB",
+            c = flat_chain(4000)
+        ),
+        "#true",
+    );
 }
 
 #[test]
-fn red_eq_twin_cause_meta() {
-    // L2-26 mirror.
+fn pin_eq_twin_cause_meta_is_blank() {
+    // L2-26: equality is #true, so .%cause has no cause tag.
     assert_obs(
         &format!(
             "bigA: {c}\nbigB: {c}\nout: (bigA = bigB).%cause",
             c = flat_chain(4000)
         ),
-        "#max_depth_exceeded",
+        "_",
     );
 }
 

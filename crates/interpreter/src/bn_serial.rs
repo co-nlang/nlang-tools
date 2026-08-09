@@ -61,8 +61,14 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
         Value::Combo(cv) => serialize_combo(cv, buf),
         Value::Union(items) => serialize_union(items, buf),
         Value::Code(expr) => {
+            // Span-free identity (O42 M4). Mint sites strip spans before
+            // boxing Code; callers that build Code ad hoc must too. Debug of
+            // a spanless Expr is position-independent. Do NOT use to_nlang
+            // here: left-associated chains of length ~10³ recurse through
+            // to_nlang_prec with large frames and overflow the 64 MiB CLI
+            // stack (L2-65 measured).
             buf.push(TAG_ATOM);
-            encode_string(&format!("{:?}", expr), buf);
+            encode_string(&format!("{:?}", expr.without_spans()), buf);
         }
         Value::Ref(path) => {
             buf.push(TAG_REF);

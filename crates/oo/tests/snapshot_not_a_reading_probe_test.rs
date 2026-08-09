@@ -417,7 +417,6 @@ fn r5_identical_snapshots_compare_true() {
 /// `a | b` (which says "one of", where the fact is "both horizons were hit").
 /// REAL_03 §7.3's envelope is already `canonical_json([params])`.
 #[test]
-#[ignore = "O46: merge_set is not order-independent; enable on delivery"]
 fn r6_merging_two_blurs_is_commutative() {
     // REWRITTEN 2026-08-10 AT FINAL ACCEPTANCE — the first version passed
     // without testing its own claim, and this probe is why the arc did not
