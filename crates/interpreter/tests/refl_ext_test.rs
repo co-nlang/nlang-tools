@@ -39,19 +39,20 @@ fn is_false(v: &Value) -> bool {
 }
 
 fn blur_val() -> Value {
-    Value::Blur(BlurDetail {
-        cause: BlurCause::FuelExhausted,
-        horizon: HorizonParams {
+    Value::Blur(BlurDetail::from_single(
+        BlurCause::FuelExhausted,
+        HorizonParams {
+            fuel: 10000,
             fuel_remaining: 0,
             strategy: ObservationStrategy::Blur,
-            salt: nlang_interpreter::value::ContentHash::parse(
-                "hash:sha256:v1:0000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
+            max_branches: 64,
+            max_unification_depth: 256,
+            max_lifting_depth: 32,
+            max_pattern_nodes: 1024,
         },
-        partial: None,
-        effect: EffectTag::Pure,
-    })
+        None,
+        EffectTag::Pure,
+    ))
 }
 
 #[test]

@@ -1,9 +1,23 @@
 use crate::value::{CaidVersion, Commit, ContentHash, HashAlgorithm, Value};
 use anyhow::Result;
-use sha2::Digest;
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// Deserialize JSON without serde's default 128-level recursion cap.
+///
+/// O42 puts `node_content` (partial) into `#blur`. A deep expression tree
+/// (e.g. a long left-associated `+` chain truncated at the depth horizon)
+/// serializes fine but cannot be reloaded under the default limit — status
+/// then lies that the universe is static. Store objects with the same shape
+/// need the same path.
+pub fn from_json_deep<T: DeserializeOwned>(json: &str) -> Result<T, serde_json::Error> {
+    let mut de = serde_json::Deserializer::from_str(json);
+    de.disable_recursion_limit();
+    T::deserialize(&mut de)
+}
 
 /// Write `contents` so a concurrent reader never sees a truncated (or briefly
 /// absent) target. Same-directory temp + `fsync` + `rename`. The temp is
@@ -224,7 +238,7 @@ impl ObjectStore {
     pub fn get_value(&self, hash: &ContentHash) -> Result<Value> {
         let content = self.read_object_raw(hash)?;
         let value: Value =
-            serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+            from_json_deep(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
             })?;
@@ -249,7 +263,7 @@ impl ObjectStore {
     pub fn get_commit(&self, hash: &ContentHash) -> Result<Commit> {
         let content = self.read_object_raw(hash)?;
         let commit: Commit =
-            serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+            from_json_deep(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
             })?;
@@ -285,15 +299,8 @@ impl ObjectStore {
         Ok(())
     }
 
-    pub fn get_horizon_salt(&self) -> ContentHash {
-        let mut hasher = sha2::Sha256::new();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        hasher.update(now.to_le_bytes());
-        ContentHash::v1(sha2::Digest::finalize(hasher).to_vec())
-    }
+    // O42 R-1: get_horizon_salt removed — clock salt is forbidden in blur CAID.
+
 
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
         let path = self.hash_to_path(hash);

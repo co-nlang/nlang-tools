@@ -320,7 +320,7 @@ fn p3_a_universe_without_a_blur_keeps_its_root() {
 /// one source, three universes. Content addressing does not hold for any
 /// universe containing a unify-side blur.
 #[test]
-#[ignore = "O42: the evolve-path blur salt is a clock reading; enable on delivery"]
+
 fn r1_a_universe_with_a_horizon_is_reproducible() {
     let src = format!("{KNOB}z: {DEEP_A}\n");
     let a = committed_root("r1a", &src);
@@ -336,7 +336,7 @@ fn r1_a_universe_with_a_horizon_is_reproducible() {
 /// depth blur's `%caid` is different on every run of the same file. C3 is the
 /// control that makes this readable — the fuel-side half already passes.
 #[test]
-#[ignore = "O42: the evolve-path blur salt is a clock reading; enable on delivery"]
+
 fn r2_a_blur_has_the_same_identity_in_every_process() {
     let src = format!("{KNOB}p: {DEEP_A}\ncp: p.%caid\n");
     let a = caid("r2a", &src);
@@ -353,7 +353,7 @@ fn r2_a_blur_has_the_same_identity_in_every_process() {
 /// exhibit this — see the header), so today it is red under both defects.
 /// SPEC_01 §2.4.1 already outlawed this for the display form.
 #[test]
-#[ignore = "O42: fuel_remaining is a global progress reading; enable on delivery"]
+
 fn r3_an_unrelated_field_does_not_move_a_blur() {
     let alone = caid("r3a", &format!("{KNOB}p: {DEEP_A}\ncp: p.%caid\n"));
     let crowded = caid(
@@ -372,7 +372,7 @@ fn r3_an_unrelated_field_does_not_move_a_blur() {
 /// one process, and get different identities because the second is reached
 /// with less fuel left.
 #[test]
-#[ignore = "O42: identical expressions get different identities; enable on delivery"]
+
 fn r4_the_same_expression_is_the_same_snapshot() {
     let d = fresh("r4");
     fs::write(
@@ -391,7 +391,7 @@ fn r4_the_same_expression_is_the_same_snapshot() {
 /// blurs returns a `#blur` (via #6(b), because the CAIDs differ), never
 /// `#true`. A clause no program can reach is not a clause.
 #[test]
-#[ignore = "O42: clause 6(a) is unreachable; enable on delivery"]
+
 fn r5_identical_snapshots_compare_true() {
     let d = fresh("r5");
     fs::write(
@@ -417,7 +417,7 @@ fn r5_identical_snapshots_compare_true() {
 /// `a | b` (which says "one of", where the fact is "both horizons were hit").
 /// REAL_03 §7.3's envelope is already `canonical_json([params])`.
 #[test]
-#[ignore = "O46: merged blur identity depends on operand order; enable on delivery"]
+
 fn r6_merging_two_blurs_is_commutative() {
     let xy = caid(
         "r6a",
@@ -444,7 +444,7 @@ fn r6_merging_two_blurs_is_commutative() {
 /// the merge stops rewriting `partial`. It passes only if the reading, the
 /// salt, the node_content term, and O47 all land together.
 #[test]
-#[ignore = "O47: absorption rewrites the partial; enable on delivery"]
+
 fn r7_absorption_does_not_rewrite_the_snapshot() {
     let bare = caid("r7a", &format!("{KNOB}x: {DEEP_A}\np: x\ncp: p.%caid\n"));
     let absorbed = caid(

@@ -311,18 +311,19 @@ fn p1_bottom_caid_ignores_cause() {
     );
 }
 
-/// P2 — the blur CAID of *fuel* exhaustion does not move.
+/// P2 — the blur CAID of *fuel* exhaustion is stable under CHS.
 ///
-/// R2 moves the depth-exhaustion blur's CAID on purpose. This is the border:
-/// the fuel side keeps its address to the byte.
+/// W4′ R2 moved the *depth* blur's CAID on purpose and pinned the fuel side
+/// so that arc would not touch it. O42 (CHS) redefines *every* blur identity
+/// — fuel side included — to `node_content + six budgets` (breaking #11).
+/// The pin is the post-CHS digest; C3 on the O42 probe guards reproducibility.
 #[test]
 fn p2_fuel_blur_caid_holds() {
-    const KNOWN: &str = "e4dc016e7ba3dd22f2e06175991407cbd1735d3b9c269e5852b5109e456a0f6a";
+    const KNOWN: &str = "4120193908e8225ba3330cf77b3bb371b336dad26812588d8b51bdaa06b3eff3";
     let out = oo_run("p2", "~%Config.fuel: 5\nv: <<_.>>\nout: v.%caid\n");
     assert!(
         out.contains(KNOWN),
-        "the CAID of a fuel-exhausted #blur moved — this arc must not touch \
-         the fuel side.\n  expected …{KNOWN}\n  got: {out}"
+        "the CAID of a fuel-exhausted #blur moved under CHS.\n  expected …{KNOWN}\n  got: {out}"
     );
 }
 

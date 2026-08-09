@@ -308,7 +308,8 @@ impl Universe {
 
         let mut ctx = EvalContext::new(self.root.clone());
         ctx.staged = Some(self.staged.clone());
-        ctx.horizon_salt = engine.store.get_horizon_salt();
+        // O42: no clock salt — blur identity is CHS (budgets + partial).
+        // EvalContext keeps a fixed disc tie-break salt from ::new only.
         ctx.privilege = engine.privilege;
         // O38: user-staged horizon knobs must govern evolve-time evaluation.
         // Pure math and union-branch arithmetic finish at evolve; without this,
@@ -603,7 +604,9 @@ impl Universe {
         let staged_path = base_dir.join(".oo").join("staged");
         if staged_path.exists() {
             let json = std::fs::read_to_string(staged_path)?;
-            self.staged = serde_json::from_str(&json)?;
+            // O42: #blur may embed a deep Code partial (node_content). Default
+            // serde recursion (128) would fail open as "Universe is static".
+            self.staged = crate::storage::from_json_deep(&json)?;
             self.is_dirty = true;
         }
         let pin_path = base_dir.join(".oo").join("pin_pending");

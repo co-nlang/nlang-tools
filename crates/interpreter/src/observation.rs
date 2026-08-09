@@ -1,6 +1,6 @@
 pub use crate::value::ObservationStrategy;
 use crate::value::{
-    BlurCause, BlurDetail, BottomCause, BottomDetail, ContentHash, EffectTag, HorizonParams, Value,
+    BlurCause, BlurDetail, BottomCause, BottomDetail, ContentHash, EffectTag, Value,
 };
 use nlang_parser::ast::AtomKind;
 use serde::{Deserialize, Serialize};
@@ -53,11 +53,14 @@ impl ObservationState {
     }
 }
 
+/// Mint a resource-exhaustion horizon value.
+///
+/// O42: blur identity takes budgets from `ctx` (CHS six params + partial),
+/// never salt or fuel_remaining-as-identity.
 pub fn handle_resource_exhausted(
     cause: crate::ResourceExhausted,
     strategy: ObservationStrategy,
-    horizon_salt: &ContentHash,
-    fuel_remaining: u64,
+    ctx: &crate::EvalContext,
     partial_result: Option<Value>,
     effect: EffectTag,
 ) -> Value {
@@ -100,20 +103,15 @@ pub fn handle_resource_exhausted(
             let blur_cause = match cause {
                 crate::ResourceExhausted::FuelExhausted => BlurCause::FuelExhausted,
                 crate::ResourceExhausted::Timeout => BlurCause::Timeout,
-                // Unreachable: StackOverflow handled above.
                 crate::ResourceExhausted::StackOverflow => BlurCause::StackOverflow,
                 crate::ResourceExhausted::DepthExceeded => BlurCause::MaxDepthExceeded,
             };
-            Value::Blur(BlurDetail {
-                cause: blur_cause,
-                horizon: HorizonParams {
-                    fuel_remaining,
-                    strategy,
-                    salt: horizon_salt.clone(),
-                },
-                partial: partial_result.map(Box::new),
+            Value::Blur(BlurDetail::from_single(
+                blur_cause,
+                ctx.horizon_params(),
+                partial_result.map(Box::new),
                 effect,
-            })
+            ))
         }
         ObservationStrategy::Approximate => {
             Value::Atom(AtomKind::Tag("approximate".to_string()), effect, None)

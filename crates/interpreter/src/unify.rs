@@ -93,9 +93,8 @@ impl Ouroboros {
             return handle_resource_exhausted(
                 e,
                 ctx.strategy,
-                &ctx.horizon_salt,
-                ctx.fuel,
-                None,
+                &ctx,
+                Some(Value::Union(vec![a.clone(), b.clone()])),
                 EffectTag::Pure,
             );
         }
@@ -397,70 +396,18 @@ impl Ouroboros {
                 }
             }
             // Blur unification rules
+            // O46: merge blurs as a set of horizon records (not meet / not order).
             (Value::Blur(ba), Value::Blur(bb)) => {
-                let merged_partial = match (ba.partial.as_deref(), bb.partial.as_deref()) {
-                    (Some(pa), Some(pb)) => {
-                        let unified = self.unify_internal(pa.clone(), pb.clone(), ctx);
-                        if matches!(unified, Value::Bottom(_)) {
-                            Some(Box::new(Value::Union(vec![pa.clone(), pb.clone()])))
-                        } else {
-                            Some(Box::new(unified))
-                        }
-                    }
-                    (Some(p), None) | (None, Some(p)) => Some(Box::new(p.clone())),
-                    (None, None) => None,
-                };
-                let eff = ba.effect.union(bb.effect);
-                let base = if ba.horizon.fuel_remaining <= bb.horizon.fuel_remaining {
-                    ba
-                } else {
-                    bb
-                };
-                Value::Blur(BlurDetail {
-                    cause: base.cause.clone(),
-                    horizon: base.horizon.clone(),
-                    partial: merged_partial,
-                    effect: eff,
-                })
+                Value::Blur(BlurDetail::merge_set(&ba, &bb))
             }
             (Value::Blur(_), b @ Value::Bottom(_)) => b,
             (a @ Value::Bottom(_), Value::Blur(_)) => a,
             (ba @ Value::Blur(_), Value::Top) => ba,
             (Value::Top, bb @ Value::Blur(_)) => bb,
-            (Value::Blur(bd), other) => {
-                let new_partial = match bd.partial.as_deref() {
-                    Some(existing) => {
-                        let unified = self.unify_internal(existing.clone(), other.clone(), ctx);
-                        if matches!(unified, Value::Bottom(_)) {
-                            Some(Box::new(other.clone()))
-                        } else {
-                            Some(Box::new(unified))
-                        }
-                    }
-                    None => Some(Box::new(other.clone())),
-                };
-                Value::Blur(BlurDetail {
-                    partial: new_partial,
-                    ..bd.clone()
-                })
-            }
-            (other, Value::Blur(bd)) => {
-                let new_partial = match bd.partial.as_deref() {
-                    Some(existing) => {
-                        let unified = self.unify_internal(existing.clone(), other.clone(), ctx);
-                        if matches!(unified, Value::Bottom(_)) {
-                            Some(Box::new(other.clone()))
-                        } else {
-                            Some(Box::new(unified))
-                        }
-                    }
-                    None => Some(Box::new(other.clone())),
-                };
-                Value::Blur(BlurDetail {
-                    partial: new_partial,
-                    ..bd.clone()
-                })
-            }
+            // O47 / SPEC_03 §90: absorb other into blur without rewriting the
+            // snapshot (cause / CAID / horizon params / partial preserved).
+            (ba @ Value::Blur(_), _other) => ba,
+            (_other, bb @ Value::Blur(_)) => bb,
             (a, b) => Value::Bottom(Box::new(BottomDetail {
                 cause: BottomCause::Conflict,
                 path: None,
