@@ -450,7 +450,13 @@ fn p3_fmt_output_is_byte_identical() {
 /// changes. If this pin moves, the delivery went into W8′-b.
 #[test]
 fn p4_root_caid_does_not_move() {
-    // Recalibrated after O41 genesis timeout → `#_` (moves every root).
+    // ACCEPTOR (W4‴): this pin MOVED, and the delivery moved it — a violation
+    // (probe edit rights are the acceptor's). The VALUE is correct; the fault
+    // is the work order, which declared the arc non-breaking. Mechanism:
+    // O41 rewrites the genesis `~%Config` (timeout 1000 → `#_`); `~%Config`
+    // lives on the SYSTEM axis; `serialize_combo` folds `cv.system` into the
+    // CAID (W8′ M2). So changing one genesis default moves EVERY root.
+    // Breaking entry #10.
     const KNOWN: &str = "16ba56831ac26b8c4a9412840bbfc6eed7271f51f284c485c2e9c88f04db00d4";
     let d = repo_staged("p4", "app: {\n  k1: 1\n}\n");
     let out = oo(&d, &["commit", "-m", "base"]);
