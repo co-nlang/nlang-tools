@@ -1,4 +1,4 @@
-use crate::value::{BlurCause, BlurDetail, BottomCause, EffectTag, HorizonParams, Value};
+use crate::value::{BlurCause, BlurDetail, BottomCause, EffectTag, Value};
 use crate::{BuiltinFn, EvalContext, Ouroboros};
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
@@ -644,16 +644,12 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     );
 
     fn blur_singularity(cause_tag: &str, ctx: &crate::EvalContext) -> Value {
-        Value::Blur(BlurDetail {
-            cause: BlurCause::MathSingularity(cause_tag.trim_start_matches('#').to_string()),
-            horizon: HorizonParams {
-                fuel_remaining: ctx.fuel,
-                strategy: ctx.strategy,
-                salt: ctx.horizon_salt.clone(),
-            },
-            partial: None,
-            effect: EffectTag::Pure,
-        })
+        Value::Blur(BlurDetail::from_single(
+            BlurCause::MathSingularity(cause_tag.trim_start_matches('#').to_string()),
+            ctx.horizon_params(),
+            None,
+            EffectTag::Pure,
+        ))
     }
 
     fn to_f64(v: &Value) -> Option<f64> {
@@ -1253,16 +1249,12 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 _ => return Value::Top,
             };
             if x <= 0.0 {
-                return Value::Blur(BlurDetail {
-                    cause: BlurCause::MathSingularity("log2".to_string()),
-                    horizon: HorizonParams {
-                        fuel_remaining: ctx.fuel,
-                        strategy: ctx.strategy,
-                        salt: ctx.horizon_salt.clone(),
-                    },
-                    partial: None,
-                    effect: EffectTag::Pure,
-                });
+                return Value::Blur(BlurDetail::from_single(
+                    BlurCause::MathSingularity("log2".to_string()),
+                    ctx.horizon_params(),
+                    None,
+                    EffectTag::Pure,
+                ));
             }
             Value::Atom(AtomKind::Float(x.log2()), EffectTag::Pure, None)
         }) as Arc<BuiltinFn>,
@@ -1287,16 +1279,12 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 _ => return Value::Top,
             };
             if x <= 0.0 {
-                return Value::Blur(BlurDetail {
-                    cause: BlurCause::MathSingularity("log10".to_string()),
-                    horizon: HorizonParams {
-                        fuel_remaining: ctx.fuel,
-                        strategy: ctx.strategy,
-                        salt: ctx.horizon_salt.clone(),
-                    },
-                    partial: None,
-                    effect: EffectTag::Pure,
-                });
+                return Value::Blur(BlurDetail::from_single(
+                    BlurCause::MathSingularity("log10".to_string()),
+                    ctx.horizon_params(),
+                    None,
+                    EffectTag::Pure,
+                ));
             }
             Value::Atom(AtomKind::Float(x.log10()), EffectTag::Pure, None)
         }) as Arc<BuiltinFn>,

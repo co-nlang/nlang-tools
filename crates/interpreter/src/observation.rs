@@ -1,6 +1,6 @@
 pub use crate::value::ObservationStrategy;
 use crate::value::{
-    BlurCause, BlurDetail, BottomCause, BottomDetail, ContentHash, EffectTag, HorizonParams, Value,
+    BlurCause, BlurDetail, BottomCause, BottomDetail, ContentHash, EffectTag, Value,
 };
 use nlang_parser::ast::AtomKind;
 use serde::{Deserialize, Serialize};
@@ -53,11 +53,28 @@ impl ObservationState {
     }
 }
 
+/// Whether a resource-exhaustion mint needs `node_content` at all.
+///
+/// Only Blur strategy records partial (as its CAID). StackOverflow never
+/// does — cloning a deep remaining AST just to discard it re-opens the
+/// native-stack bomb on long chains (measured: 6000+ terms abort).
+pub fn needs_partial_body(
+    cause: &crate::ResourceExhausted,
+    strategy: ObservationStrategy,
+) -> bool {
+    !matches!(cause, crate::ResourceExhausted::StackOverflow)
+        && matches!(strategy, ObservationStrategy::Blur)
+}
+
+/// Mint a resource-exhaustion horizon value.
+///
+/// O42: blur identity takes budgets from `ctx` (CHS six params + partial CAID),
+/// never salt or fuel_remaining-as-identity. Callers must not build a deep
+/// partial when [`needs_partial_body`] is false.
 pub fn handle_resource_exhausted(
     cause: crate::ResourceExhausted,
     strategy: ObservationStrategy,
-    horizon_salt: &ContentHash,
-    fuel_remaining: u64,
+    ctx: &crate::EvalContext,
     partial_result: Option<Value>,
     effect: EffectTag,
 ) -> Value {
@@ -73,7 +90,7 @@ pub fn handle_resource_exhausted(
                     .to_string(),
             ),
             expected: None,
-            found: partial_result,
+            found: None,
             involved: vec![],
             ..Default::default()
         }));
@@ -91,7 +108,7 @@ pub fn handle_resource_exhausted(
                 path: None,
                 message: Some("Resource exhausted in strict mode".to_string()),
                 expected: None,
-                found: partial_result,
+                found: None,
                 involved: vec![],
                 ..Default::default()
             }))
@@ -100,20 +117,16 @@ pub fn handle_resource_exhausted(
             let blur_cause = match cause {
                 crate::ResourceExhausted::FuelExhausted => BlurCause::FuelExhausted,
                 crate::ResourceExhausted::Timeout => BlurCause::Timeout,
-                // Unreachable: StackOverflow handled above.
                 crate::ResourceExhausted::StackOverflow => BlurCause::StackOverflow,
                 crate::ResourceExhausted::DepthExceeded => BlurCause::MaxDepthExceeded,
             };
-            Value::Blur(BlurDetail {
-                cause: blur_cause,
-                horizon: HorizonParams {
-                    fuel_remaining,
-                    strategy,
-                    salt: horizon_salt.clone(),
-                },
-                partial: partial_result.map(Box::new),
+            // 11.5: partial enters identity as its CAID; body held for CAS write.
+            Value::Blur(BlurDetail::from_single(
+                blur_cause,
+                ctx.horizon_params(),
+                partial_result,
                 effect,
-            })
+            ))
         }
         ObservationStrategy::Approximate => {
             Value::Atom(AtomKind::Tag("approximate".to_string()), effect, None)

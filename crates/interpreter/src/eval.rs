@@ -1,4 +1,4 @@
-use crate::observation::handle_resource_exhausted;
+use crate::observation::{handle_resource_exhausted, needs_partial_body};
 use crate::type_constraint::{get_type_constraint_name, is_type_constraint_combo, TypeConstraint};
 use crate::value::{
     normalize_union, primary_bottom_from_culled, BottomCause, BottomDetail, ComboVal, EffectTag,
@@ -912,14 +912,14 @@ impl Ouroboros {
 
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         if let Err(e) = ctx.check_resources(1) {
-            return handle_resource_exhausted(
-                e,
-                ctx.strategy,
-                &ctx.horizon_salt,
-                ctx.fuel,
-                None,
-                EffectTag::Pure,
-            );
+            // O42 R-3: node_content for Blur only — never clone a deep AST
+            // for stack_overflow / Strict (see needs_partial_body).
+            let partial = if needs_partial_body(&e, ctx.strategy) {
+                Some(Value::Code(Box::new(expr.clone().without_spans())))
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, EffectTag::Pure);
         }
         match &expr.kind {
             ExprKind::Atom(kind) => match kind.clone() {
@@ -936,12 +936,16 @@ impl Ouroboros {
                 closed,
             } => {
                 if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
-                        &ctx.horizon_salt,
-                        ctx.fuel,
-                        None,
+                        &*ctx,
+                        partial,
                         EffectTag::Pure,
                     );
                 }
@@ -1193,11 +1197,35 @@ impl Ouroboros {
                 let mut res = Value::Combo(combo);
                 // GUIDE_03 §11.5: cocoon is a solidification boundary — force
                 // after seal so siblings see the holder frame (inner-first).
+                // O47: if solidification would immediately hit the depth
+                // ceiling on a *flat* cocoon (no nested Combo), skip force so
+                // `{{b:1}} & depth_blur` does not mint a co-horizon.
+                // Nested cocoons still solidify (and mint blur when deep).
                 if *closed {
-                    res = self.force_recursive(res, ctx);
-                    me = me.union(res.effect());
-                    if let Value::Combo(ref mut cv) = res {
-                        cv.effect = me;
+                    let would_hit_ceiling =
+                        (ctx.depth as u32).saturating_add(1) > ctx.max_unification_depth as u32;
+                    // Flat = no nested structure in data (Combo, or Thunk of
+                    // Combo/Meet). Bare path keys store atoms as Thunks — those
+                    // are still flat. Deep cocoons store nested expr Thunks.
+                    let flat = match &res {
+                        Value::Combo(c) => c.data.values().all(|v| match v {
+                            Value::Combo(_) => false,
+                            Value::Thunk { expr, .. } => !matches!(
+                                &expr.kind,
+                                ExprKind::Combo { .. }
+                                    | ExprKind::Meet(_, _)
+                                    | ExprKind::Join(_, _)
+                            ),
+                            _ => true,
+                        }),
+                        _ => true,
+                    };
+                    if !(would_hit_ceiling && flat) {
+                        res = self.force_recursive(res, ctx);
+                        me = me.union(res.effect());
+                        if let Value::Combo(ref mut cv) = res {
+                            cv.effect = me;
+                        }
                     }
                 }
                 if let Value::Combo(ref cv) = res {
@@ -1230,12 +1258,16 @@ impl Ouroboros {
             ExprKind::Path(p) => self.resolve_path(p, ctx),
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(5) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
-                        &ctx.horizon_salt,
-                        ctx.fuel,
-                        None,
+                        &*ctx,
+                        partial,
                         EffectTag::Pure,
                     );
                 }
@@ -1576,12 +1608,16 @@ impl Ouroboros {
             // (2026-07-06 ruling: decoupled from the cocoon analogy).
             ExprKind::Tuple(items) => {
                 if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
-                        &ctx.horizon_salt,
-                        ctx.fuel,
-                        None,
+                        &*ctx,
+                        partial,
                         EffectTag::Pure,
                     );
                 }
@@ -1595,12 +1631,16 @@ impl Ouroboros {
             // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
             ExprKind::Poset(relations) => {
                 if let Err(e) = ctx.check_resources(10 + (relations.len() as u64) * 2) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone().without_spans())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
-                        &ctx.horizon_salt,
-                        ctx.fuel,
-                        None,
+                        &*ctx,
+                        partial,
                         EffectTag::Pure,
                     );
                 }
@@ -2150,17 +2190,36 @@ impl Ouroboros {
             if let Value::Bottom(_) = &vb {
                 return vb;
             }
-            // G3 R1: atomic family absorbs #blur — never silent #false via
-            // structural PartialEq fallthrough (same lie class as G1 combo==).
-            if let Value::Blur(bd) = &va {
-                let mut bd = bd.clone();
-                bd.effect = bd.effect.union(vb.effect());
-                return Value::Blur(bd);
-            }
-            if let Value::Blur(bd) = &vb {
-                let mut bd = bd.clone();
-                bd.effect = bd.effect.union(va.effect());
-                return Value::Blur(bd);
+            // SPEC_08 §3.2.2 #6(a): both #blur and same CAID → definite boolean
+            // (O42 makes this reachable). #6(b): different CAID → absorb left.
+            // G3 R1: one side blur → absorb — never silent #false via PartialEq.
+            let res_e = va.effect().union(vb.effect());
+            match (&va, &vb) {
+                (Value::Blur(ba), Value::Blur(bb)) if ba.blur_caid() == bb.blur_caid() => {
+                    return Value::Atom(
+                        AtomKind::Tag(
+                            if matches!(op, CmpOp::Eq) {
+                                "true"
+                            } else {
+                                "false"
+                            }
+                            .to_string(),
+                        ),
+                        res_e,
+                        None,
+                    );
+                }
+                (Value::Blur(bd), _) => {
+                    let mut bd = bd.clone();
+                    bd.effect = res_e;
+                    return Value::Blur(bd);
+                }
+                (_, Value::Blur(bd)) => {
+                    let mut bd = bd.clone();
+                    bd.effect = res_e;
+                    return Value::Blur(bd);
+                }
+                _ => {}
             }
             let res_e = va.effect().union(vb.effect());
             // G1 #12: peel hybrid %val into the atomic family; non-collapsible

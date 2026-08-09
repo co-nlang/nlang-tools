@@ -1,6 +1,5 @@
 use crate::value::{CaidVersion, Commit, ContentHash, HashAlgorithm, Value};
 use anyhow::Result;
-use sha2::Digest;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -285,15 +284,8 @@ impl ObjectStore {
         Ok(())
     }
 
-    pub fn get_horizon_salt(&self) -> ContentHash {
-        let mut hasher = sha2::Sha256::new();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        hasher.update(now.to_le_bytes());
-        ContentHash::v1(sha2::Digest::finalize(hasher).to_vec())
-    }
+    // O42 R-1: get_horizon_salt removed — clock salt is forbidden in blur CAID.
+
 
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
         let path = self.hash_to_path(hash);

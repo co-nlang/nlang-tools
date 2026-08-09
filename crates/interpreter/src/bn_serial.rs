@@ -61,8 +61,14 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
         Value::Combo(cv) => serialize_combo(cv, buf),
         Value::Union(items) => serialize_union(items, buf),
         Value::Code(expr) => {
+            // Span-free identity (O42 M4). Mint sites strip spans before
+            // boxing Code; callers that build Code ad hoc must too. Debug of
+            // a spanless Expr is position-independent. Do NOT use to_nlang
+            // here: left-associated chains of length ~10³ recurse through
+            // to_nlang_prec with large frames and overflow the 64 MiB CLI
+            // stack (L2-65 measured).
             buf.push(TAG_ATOM);
-            encode_string(&format!("{:?}", expr), buf);
+            encode_string(&format!("{:?}", expr.without_spans()), buf);
         }
         Value::Ref(path) => {
             buf.push(TAG_REF);
@@ -111,23 +117,37 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
             buf.push(effect.to_serial_byte());
         }
         Value::Blur(bd) => {
+            // O42 R-5: identity encoding is the CHS digest (same as blur_caid).
+            // Full record set is recoverable from display/runtime fields only
+            // for in-memory values; content-addressed store keys use CHS.
             buf.push(0xFD);
+            let chs = bd.blur_caid();
+            buf.extend_from_slice(&chs.digest);
+            // Preserve runtime payload for reconstruct (not identity):
+            // primary record fields + co_horizons length + each co digest.
             let cause_bytes = bd.cause.as_bytes();
             encode_unsigned_leb128(cause_bytes.len() as u64, buf);
             buf.extend_from_slice(cause_bytes);
+            buf.extend_from_slice(&bd.horizon.fuel.to_le_bytes());
             buf.extend_from_slice(&bd.horizon.fuel_remaining.to_le_bytes());
-            let strat_byte: u8 = match bd.horizon.strategy {
-                crate::value::ObservationStrategy::Blur => 0,
-                crate::value::ObservationStrategy::Strict => 1,
-                crate::value::ObservationStrategy::Approximate => 2,
-            };
-            buf.push(strat_byte);
-            buf.extend_from_slice(&bd.horizon.salt.digest);
+            buf.push(bd.horizon.strategy_byte());
+            buf.extend_from_slice(&bd.horizon.max_branches.to_le_bytes());
+            buf.extend_from_slice(&bd.horizon.max_unification_depth.to_le_bytes());
+            buf.extend_from_slice(&bd.horizon.max_lifting_depth.to_le_bytes());
+            buf.extend_from_slice(&bd.horizon.max_pattern_nodes.to_le_bytes());
+            // O42 repair: partial is a CAID, not an inlined tree.
             if let Some(partial) = &bd.partial {
                 buf.push(0x01);
-                serialize_value(partial, buf);
+                encode_unsigned_leb128(partial.digest.len() as u64, buf);
+                buf.extend_from_slice(&partial.digest);
             } else {
                 buf.push(0x00);
+            }
+            encode_unsigned_leb128(bd.co_horizons.len() as u64, buf);
+            for rec in &bd.co_horizons {
+                let d = rec.chs_digest();
+                encode_unsigned_leb128(d.len() as u64, buf);
+                buf.extend_from_slice(&d);
             }
         }
         Value::Range { start, end, step } => {

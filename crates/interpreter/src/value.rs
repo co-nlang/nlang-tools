@@ -704,25 +704,20 @@ fn display_order_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
         }
         // structured (3): canonical display string lex (no salt).
         3 => a.to_nlang(0).cmp(&b.to_nlang(0)),
-        // #blur (4): SPEC_01 §2.4.1 #5 amended — key is
-        // (cause name lex, fuel_remaining asc, strategy). NEVER %caid/salt
-        // (display string embeds salted caid → cross-process flip).
-        // Full key tie → Equal so stable sort keeps encounter order.
+        // #blur (4): SPEC_01 §2.4.1 — cause + strategy + CHS digest.
+        // NEVER fuel_remaining (a reading) or salt (O42). Full key tie → Equal
+        // so stable sort keeps encounter order.
         4 => match (a, b) {
-            (Value::Blur(ba), Value::Blur(bb)) => {
-                let strat = |s: ObservationStrategy| -> u8 {
-                    match s {
-                        ObservationStrategy::Blur => 0,
-                        ObservationStrategy::Strict => 1,
-                        ObservationStrategy::Approximate => 2,
-                    }
-                };
-                ba.cause
-                    .as_str()
-                    .cmp(bb.cause.as_str())
-                    .then_with(|| ba.horizon.fuel_remaining.cmp(&bb.horizon.fuel_remaining))
-                    .then_with(|| strat(ba.horizon.strategy).cmp(&strat(bb.horizon.strategy)))
-            }
+            (Value::Blur(ba), Value::Blur(bb)) => ba
+                .cause
+                .as_str()
+                .cmp(bb.cause.as_str())
+                .then_with(|| {
+                    ba.horizon
+                        .strategy_byte()
+                        .cmp(&bb.horizon.strategy_byte())
+                })
+                .then_with(|| ba.blur_caid().digest.cmp(&bb.blur_caid().digest)),
             _ => Ordering::Equal,
         },
         // Top (5) / Bottom (6): all equal within family (stable keeps order).
@@ -1567,39 +1562,255 @@ impl BlurCause {
     }
 }
 
+/// Horizon budgets that enter blur identity (REAL_03 §7.3 CHS / O42).
+///
+/// `fuel` is the **ceiling** (allowed budget), not remaining. `fuel_remaining`
+/// is runtime provenance only — never hashed (R-2). No salt (R-1). No timeout
+/// (spec forbids non-discrete horizon params in CAID).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HorizonParams {
+    /// Budget ceiling (`%fuel` 上限). Identity.
+    pub fuel: u64,
+    /// Runtime remaining — NOT in CAID.
     pub fuel_remaining: u64,
     pub strategy: ObservationStrategy,
-    pub salt: ContentHash,
+    pub max_branches: u64,
+    pub max_unification_depth: u64,
+    pub max_lifting_depth: u64,
+    pub max_pattern_nodes: u64,
+}
+
+impl HorizonParams {
+    pub fn strategy_byte(&self) -> u8 {
+        match self.strategy {
+            ObservationStrategy::Blur => 0,
+            ObservationStrategy::Strict => 1,
+            ObservationStrategy::Approximate => 2,
+        }
+    }
+
+    /// Identity-relevant bytes (no fuel_remaining).
+    pub fn encode_chs(&self, hasher: &mut Sha256) {
+        hasher.update(b":fuel=");
+        hasher.update(&self.fuel.to_le_bytes());
+        hasher.update(b":strategy=");
+        hasher.update(&[self.strategy_byte()]);
+        hasher.update(b":max_branches=");
+        hasher.update(&self.max_branches.to_le_bytes());
+        hasher.update(b":max_unification_depth=");
+        hasher.update(&self.max_unification_depth.to_le_bytes());
+        hasher.update(b":max_lifting_depth=");
+        hasher.update(&self.max_lifting_depth.to_le_bytes());
+        hasher.update(b":max_pattern_nodes=");
+        hasher.update(&self.max_pattern_nodes.to_le_bytes());
+    }
+}
+
+/// One horizon hit: cause + six CHS params + node_content as its CAID.
+///
+/// O42 repair (11.5): `node_content` enters identity via content-addressing.
+/// The body is **not** inlined into staged JSON — only its CAID is. The body
+/// is held ephemerally (`partial_body`) until `save_staged` writes it to CAS
+/// (11.6.1 (i)); reload recovers it with `store.get_value` when needed (O45).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HorizonRecord {
+    pub cause: BlurCause,
+    pub horizon: HorizonParams,
+    /// CAID of node_content, or none.
+    pub partial: Option<ContentHash>,
+    /// Ephemeral body for CAS write on evolve. Never serialized.
+    #[serde(skip)]
+    pub partial_body: Option<Box<Value>>,
+}
+
+impl HorizonRecord {
+    /// Canonical key for set ordering / dedupe (R-6).
+    pub fn chs_digest(&self) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        hasher.update(b"rec:");
+        hasher.update(self.cause.as_bytes());
+        self.horizon.encode_chs(&mut hasher);
+        hasher.update(b":partial=");
+        match &self.partial {
+            None => hasher.update(b"none"),
+            // node_content participates as its content-address (11.5).
+            Some(h) => hasher.update(&h.digest),
+        }
+        hasher.finalize().to_vec()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlurDetail {
+    /// Primary record (REAL_04 §4 projection for `%cause` / display).
     pub cause: BlurCause,
     pub horizon: HorizonParams,
-    pub partial: Option<Box<Value>>,
+    /// CAID of node_content (not the tree itself).
+    pub partial: Option<ContentHash>,
+    /// Ephemeral body until CAS write on evolve (11.6.1).
+    #[serde(skip)]
+    pub partial_body: Option<Box<Value>>,
     pub effect: EffectTag,
+    /// Co-horizon records from merges (O46). The full set is
+    /// `{primary} ∪ co_horizons`, canonically ordered for CHS.
+    #[serde(default)]
+    pub co_horizons: Vec<HorizonRecord>,
 }
 
 impl BlurDetail {
+    pub fn from_single(
+        cause: BlurCause,
+        horizon: HorizonParams,
+        partial: Option<Value>,
+        effect: EffectTag,
+    ) -> Self {
+        let (partial, partial_body) = match partial {
+            None => (None, None),
+            Some(v) => {
+                let h = v.content_hash();
+                (Some(h), Some(Box::new(v)))
+            }
+        };
+        Self {
+            cause,
+            horizon,
+            partial,
+            partial_body,
+            effect,
+            co_horizons: Vec::new(),
+        }
+    }
+
+    pub fn primary_record(&self) -> HorizonRecord {
+        HorizonRecord {
+            cause: self.cause.clone(),
+            horizon: self.horizon.clone(),
+            partial: self.partial.clone(),
+            partial_body: self.partial_body.clone(),
+        }
+    }
+
+    /// All records as a canonically ordered set (R-6).
+    pub fn record_set(&self) -> Vec<HorizonRecord> {
+        let mut recs = Vec::with_capacity(1 + self.co_horizons.len());
+        recs.push(self.primary_record());
+        recs.extend(self.co_horizons.iter().cloned());
+        recs.sort_by(|a, b| a.chs_digest().cmp(&b.chs_digest()));
+        recs.dedup_by(|a, b| a.chs_digest() == b.chs_digest());
+        recs
+    }
+
+    /// REAL_03 §7.3 CHS envelope over the record set (R-3/R-4/R-5).
+    /// Single function used by `%caid`, bn_serial 0xFD, and recursive hash.
     pub fn blur_caid(&self) -> ContentHash {
         let mut hasher = Sha256::new();
-        hasher.update(b"blur:");
-        hasher.update(self.cause.as_bytes());
-        hasher.update(b":fuel=");
-        hasher.update(&self.horizon.fuel_remaining.to_le_bytes());
-        hasher.update(b":strategy=");
-        let strat_byte: u8 = match self.horizon.strategy {
-            ObservationStrategy::Blur => 0,
-            ObservationStrategy::Strict => 1,
-            ObservationStrategy::Approximate => 2,
-        };
-        hasher.update(&[strat_byte]);
-        hasher.update(b":salt=");
-        hasher.update(&self.horizon.salt.digest);
+        hasher.update(b"blur:chs:v1:");
+        for rec in self.record_set() {
+            hasher.update(&rec.chs_digest());
+        }
         ContentHash::v1(hasher.finalize().to_vec())
     }
+
+    /// Merge two blurs as a set of records (O46). Not meet, not ordered tuple.
+    pub fn merge_set(a: &BlurDetail, b: &BlurDetail) -> BlurDetail {
+        let mut recs = a.record_set();
+        recs.extend(b.record_set());
+        recs.sort_by(|x, y| x.chs_digest().cmp(&y.chs_digest()));
+        recs.dedup_by(|x, y| x.chs_digest() == y.chs_digest());
+        // Primary = REAL_04-ish: prefer lower cause-name for stable projection
+        // among equal rank; fuel exhaustion ranks with timeout class.
+        let primary_idx = recs
+            .iter()
+            .enumerate()
+            .min_by(|(_, r1), (_, r2)| {
+                blur_cause_primary_key(&r1.cause).cmp(&blur_cause_primary_key(&r2.cause))
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let primary = recs.remove(primary_idx);
+        let effect = a.effect.union(b.effect);
+        BlurDetail {
+            cause: primary.cause,
+            horizon: primary.horizon,
+            partial: primary.partial,
+            partial_body: primary.partial_body,
+            effect,
+            co_horizons: recs,
+        }
+    }
+
+    /// Write any held partial bodies into the object store (11.6.1 (i)).
+    pub fn persist_partials(&self, store: &crate::storage::ObjectStore) -> anyhow::Result<()> {
+        if let Some(body) = &self.partial_body {
+            store.put_value(body)?;
+        }
+        for rec in &self.co_horizons {
+            if let Some(body) = &rec.partial_body {
+                store.put_value(body)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Value {
+    /// Walk a value tree and CAS-write every blur partial body (evolve path).
+    pub fn persist_blur_partials(
+        &self,
+        store: &crate::storage::ObjectStore,
+    ) -> anyhow::Result<()> {
+        match self {
+            Value::Blur(bd) => bd.persist_partials(store)?,
+            Value::Combo(c) => {
+                for (_, v) in c.all_fields_iter() {
+                    v.persist_blur_partials(store)?;
+                }
+                for v in c.local.values() {
+                    v.persist_blur_partials(store)?;
+                }
+                for v in &c.pending_spreads {
+                    v.persist_blur_partials(store)?;
+                }
+            }
+            Value::Union(branches) => {
+                for b in branches {
+                    b.persist_blur_partials(store)?;
+                }
+            }
+            Value::Range { start, end, step } => {
+                start.persist_blur_partials(store)?;
+                end.persist_blur_partials(store)?;
+                if let Some(s) = step {
+                    s.persist_blur_partials(store)?;
+                }
+            }
+            Value::Thunk { context, .. } => {
+                if let Some(c) = context {
+                    c.persist_blur_partials(store)?;
+                }
+            }
+            Value::Bottom(d) => {
+                if let Some(v) = &d.found {
+                    v.persist_blur_partials(store)?;
+                }
+                if let Some(v) = &d.expected {
+                    v.persist_blur_partials(store)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+fn blur_cause_primary_key(c: &BlurCause) -> (u8, &str) {
+    // Lower first — align roughly with BottomCause ranks; single string tiebreak.
+    let rank = match c {
+        BlurCause::StackOverflow => 0,
+        BlurCause::FuelExhausted | BlurCause::Timeout | BlurCause::MaxDepthExceeded => 1,
+        BlurCause::MathSingularity(_) => 2,
+    };
+    (rank, c.as_str())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2085,7 +2296,8 @@ impl Value {
             Value::Code(_) | Value::Thunk { .. } => 256,
             Value::Bottom(d) => d.bits(),
             Value::Ref(_) => 64,
-            Value::Blur(bd) => 128 + bd.partial.as_ref().map(|p| p.bits()).unwrap_or(0),
+            // Partial is a CAID only — fixed cost (body lives in CAS).
+            Value::Blur(_) => 128 + 256,
             Value::Range { start, end, step } => {
                 start.bits() + end.bits() + step.as_ref().map(|s| s.bits()).unwrap_or(0)
             }
@@ -2208,8 +2420,10 @@ impl Value {
             }
             Value::Blur(mut bd) => {
                 bd.effect = Self::solidify_active_effect(bd.effect);
-                if let Some(p) = bd.partial.take() {
-                    bd.partial = Some(Box::new((*p).solidify_effects()));
+                // O42 repair: partial body is content-addressed; solidify the
+                // ephemeral body when still held, never rewrite the CAID.
+                if let Some(p) = bd.partial_body.take() {
+                    bd.partial_body = Some(Box::new((*p).solidify_effects()));
                 }
                 Value::Blur(bd)
             }
@@ -2272,8 +2486,8 @@ impl Value {
             }
             Value::Blur(mut bd) => {
                 bd.effect = Self::purify_active_effect(bd.effect);
-                if let Some(p) = bd.partial.take() {
-                    bd.partial = Some(Box::new((*p).purify_effects()));
+                if let Some(p) = bd.partial_body.take() {
+                    bd.partial_body = Some(Box::new((*p).purify_effects()));
                 }
                 Value::Blur(bd)
             }
@@ -2724,10 +2938,9 @@ impl Value {
                 hasher.update([d.cause as u8]);
             }
             Value::Blur(bd) => {
+                // O42 R-5: same CHS as blur_caid / bn_serial.
                 hasher.update([0xFD]);
-                hasher.update(bd.cause.as_bytes());
-                hasher.update(&bd.horizon.fuel_remaining.to_le_bytes());
-                hasher.update(&bd.horizon.salt.digest);
+                hasher.update(&bd.blur_caid().digest);
             }
             Value::Thunk {
                 expr,
@@ -2760,8 +2973,10 @@ impl Value {
                 hasher.update(&[effect.to_serial_byte()]);
             }
             Value::Code(expr) => {
+                // Span-free (O42 M4). See bn_serial Code arm — to_nlang is
+                // too stack-heavy for deep left-associated chains.
                 hasher.update([0x06]);
-                hasher.update(format!("{:?}", expr).as_bytes());
+                hasher.update(format!("{:?}", expr.without_spans()).as_bytes());
             }
             Value::Ref(path) => {
                 hasher.update([0x07]);

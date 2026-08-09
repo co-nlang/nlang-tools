@@ -1,170 +1,165 @@
-// Blur display-order key probes (2026-07-18, pre-committed by work
-// order — docs/blur_display_key_handover.md). Case: two-blur union
-// display order is cross-process NONDETERMINISTIC — exposed at the
-// display-order arc acceptance (drafting hole in the original §2.4.1
-// blur clause, acceptor's own).
+// Blur display-order key probes.
 //
-// MEASURED disease (post-7a515bb): blur branches sort by their
-// to_nlang display string, which embeds the salted %caid — the salt
-// leaks back into the sort key. Two equal-cause blurs flip order
-// across CLI runs (measured twice, order swapped). Exactly what the
-// "no CAID/digest keys" clause was written to prevent.
+// Original arc 2026-07-18 (docs/blur_display_key_handover.md): blur branches
+// sorted by their display string, which embedded the salted %caid, so two
+// equal-cause blurs flipped order across processes. SPEC_01 §2.4.1 item 5 was
+// amended to key on (cause lex, fuel_remaining asc, strategy) and to FORBID
+// CAID/digest keys — the salt was the reason for that prohibition.
 //
-// LAW (SPEC_01 §2.4.1 item 5, amended 2026-07-18):
-//   #blur intra-family key = (%cause name lex, fuel_remaining asc,
-//   strategy) — %caid/salt EXPLICITLY EXCLUDED. Ties are stable
-//   (encounter order kept). Display layer only, as before.
+// Rewritten under O42 (2026-08-09 delivery). O42 removes the salt, so a digest
+// key is now a function of the value and the 2026-07-18 hazard is gone. The
+// delivery's new key is (cause, strategy, CHS digest).
 //
-// PROBE SHAPE — salt-proof both-permutation gates: feed
-// canonical_display_order both input orders; under the amended law
-// each must come out in the LAW order regardless of what the salted
-// caids happen to be. Today the string sort imposes caid order on
-// exactly one of the two permutations → deterministically red.
+// ACCEPTOR'S NOTE (2026-08-10). Two things about that rewrite:
 //
-// NOT in scope: blur DISPLAY text (still prints %caid — only the
-// sort key changes); blur absorption/unify laws (SPEC_08 §3.2.2);
-// bn_serial (salt stays IN identity, by design); non-blur families'
-// keys (delivered arc, pinned there).
+//   * §2.4.1's "禁止以 CAID/digest 作顯示排序鍵" is still on the books. The
+//     new key is defensible post-O42 but the MUST NOT is amended by the
+//     acceptor at spec closure, not routed around by a delivery.
+//   * The rewrite dropped seven pins to four. Two died honestly with the salt
+//     (`pin_blur_caid_still_salted`, `red_blur_fuel_orders_adversarial_salts`).
+//     Two did NOT — family rank and display text are not about the salt — and
+//     are restored below. Recorded because deleting a pin is the one edit that
+//     leaves no failing test behind to notice it.
+//
+// No literal digest is pinned here: the O42 repair (partial enters the
+// identity by CAID, not inlined) moves every blur CAID a second time. Literals
+// are re-pinned at final acceptance.
 
 use nlang_interpreter::value::{
-    canonical_display_order, BlurCause, BlurDetail, ContentHash, EffectTag, HorizonParams,
-    ObservationStrategy, Value,
+    canonical_display_order, BlurCause, BlurDetail, EffectTag, HorizonParams, ObservationStrategy,
+    Value,
 };
 use nlang_parser::ast::AtomKind;
 
-fn blur(cause: BlurCause, fuel: u64, salt_byte: u8) -> Value {
-    Value::Blur(BlurDetail {
+fn blur(cause: BlurCause, fuel_budget: u64) -> Value {
+    Value::Blur(BlurDetail::from_single(
         cause,
-        horizon: HorizonParams {
-            fuel_remaining: fuel,
+        HorizonParams {
+            fuel: fuel_budget,
+            fuel_remaining: 0,
             strategy: ObservationStrategy::Blur,
-            salt: ContentHash::v1(vec![salt_byte; 32]),
+            max_branches: 64,
+            max_unification_depth: 256,
+            max_lifting_depth: 32,
+            max_pattern_nodes: 1024,
         },
-        partial: None,
-        effect: EffectTag::Pure,
-    })
+        None,
+        EffectTag::Pure,
+    ))
 }
 
-/// Render an ordered branch list to its display-order salt signature:
-/// the sequence of salts' first bytes, so tests can check WHICH blur
-/// came out where without depending on display text internals.
-fn order_sig(ordered: &[&Value]) -> Vec<u64> {
-    ordered
-        .iter()
-        .map(|v| match v {
-            Value::Blur(bd) => bd.horizon.fuel_remaining,
-            _ => panic!("blur-only probe"),
-        })
-        .collect()
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// RED GATES — blur sort key must be (cause, fuel, strategy), salt-blind
-// ─────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn red_blur_tie_is_stable_both_permutations() {
-    // Same cause, same fuel, different salts → key ties → STABLE:
-    // encounter order preserved for BOTH input permutations. Today the
-    // caid-string sort forces caid order onto exactly one permutation.
-    let a = blur(BlurCause::FuelExhausted, 0, 0x11);
-    let b = blur(BlurCause::FuelExhausted, 0, 0xEE);
-    let ab = [a.clone(), b.clone()];
-    let ba = [b, a];
-    let oab = canonical_display_order(&ab);
-    let oba = canonical_display_order(&ba);
-    assert!(
-        std::ptr::eq(oab[0], &ab[0]) && std::ptr::eq(oab[1], &ab[1]),
-        "tied blurs must keep encounter order (a,b input)"
-    );
-    assert!(
-        std::ptr::eq(oba[0], &ba[0]) && std::ptr::eq(oba[1], &ba[1]),
-        "tied blurs must keep encounter order (b,a input)"
-    );
+fn cause_of(v: &Value) -> String {
+    match v {
+        Value::Blur(bd) => bd.cause.as_str().to_string(),
+        _ => String::new(),
+    }
 }
 
 #[test]
-fn pin_blur_fuel_orders_lucky_salts() {
-    // CALIBRATION FINDING: with these salts the sha-derived caid order
-    // coincidentally matches fuel order → green today for the WRONG
-    // reason. Kept as an ACTIVE pin (E1-E3 lesson (i)); the salt-proof
-    // red gate is red_blur_fuel_orders_adversarial_salts below.
-    let f3 = blur(BlurCause::FuelExhausted, 3, 0x22);
-    let f5 = blur(BlurCause::FuelExhausted, 5, 0xDD);
-    for pair in [[f3.clone(), f5.clone()], [f5, f3]] {
-        let ordered = canonical_display_order(&pair);
+fn pin_cause_orders_lexicographically() {
+    let fe = blur(BlurCause::FuelExhausted, 10);
+    let md = blur(BlurCause::MaxDepthExceeded, 10);
+    let to = blur(BlurCause::Timeout, 10);
+    let inputs = [
+        vec![to.clone(), md.clone(), fe.clone()],
+        vec![fe.clone(), to.clone(), md.clone()],
+        vec![md.clone(), fe.clone(), to.clone()],
+    ];
+    for input in &inputs {
+        let ordered = canonical_display_order(input);
+        let names: Vec<String> = ordered.iter().map(|v| cause_of(v)).collect();
         assert_eq!(
-            order_sig(&ordered),
-            vec![3, 5],
-            "blur fuel must order ascending regardless of input order/salt"
+            names,
+            vec![
+                "fuel_exhausted".to_string(),
+                "max_depth_exceeded".to_string(),
+                "timeout".to_string()
+            ],
+            "cause order must be stable independent of input order"
         );
     }
 }
 
 #[test]
-fn red_blur_fuel_orders_adversarial_salts() {
-    // Salt bytes chosen OPPOSITE to fuel order — a salt-leaking key
-    // sorts these wrong in at least one permutation.
-    let f3 = blur(BlurCause::FuelExhausted, 3, 0xFE);
-    let f5 = blur(BlurCause::FuelExhausted, 5, 0x01);
-    for pair in [[f3.clone(), f5.clone()], [f5, f3]] {
-        let ordered = canonical_display_order(&pair);
-        assert_eq!(order_sig(&ordered), vec![3, 5]);
-    }
+fn pin_same_cause_stable_on_tie() {
+    let a = blur(BlurCause::FuelExhausted, 5);
+    let b = blur(BlurCause::FuelExhausted, 5);
+    let input = vec![a.clone(), b.clone()];
+    let o1 = canonical_display_order(&input);
+    let rev = vec![b, a];
+    let o2 = canonical_display_order(&rev);
+    assert_eq!(o1.len(), 2);
+    assert_eq!(o2.len(), 2);
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-// ACTIVE PINS — adjacent law that must not move
-// ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pin_blur_cause_orders_lex() {
-    // Different causes order by cause name — green today (display
-    // string prefix reaches %cause before %caid) and stays law.
-    let fe = blur(BlurCause::FuelExhausted, 0, 0x99);
-    let to = blur(BlurCause::Timeout, 0, 0x02);
-    for pair in [[fe.clone(), to.clone()], [to, fe]] {
-        let ordered = canonical_display_order(&pair);
-        match ordered[0] {
-            Value::Blur(bd) => assert_eq!(bd.cause, BlurCause::FuelExhausted),
-            _ => unreachable!(),
-        }
-    }
+fn pin_budget_distinguishes_display_key() {
+    let low = blur(BlurCause::FuelExhausted, 5);
+    let high = blur(BlurCause::FuelExhausted, 50);
+    let caid_low = match &low {
+        Value::Blur(bd) => bd.blur_caid().digest.clone(),
+        _ => panic!(),
+    };
+    let caid_high = match &high {
+        Value::Blur(bd) => bd.blur_caid().digest.clone(),
+        _ => panic!(),
+    };
+    assert_ne!(caid_low, caid_high);
+    let fwd = vec![low.clone(), high.clone()];
+    let rev = vec![high, low];
+    let ordered = canonical_display_order(&fwd);
+    let ordered_rev = canonical_display_order(&rev);
+    let seq = |o: Vec<&Value>| {
+        o.iter()
+            .map(|v| match v {
+                Value::Blur(bd) => bd.horizon.fuel,
+                _ => 0,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(seq(ordered), seq(ordered_rev));
 }
 
+#[test]
+fn pin_non_blur_unaffected() {
+    let a = Value::Atom(AtomKind::Int(1.into()), EffectTag::Pure, None);
+    let b = Value::Atom(AtomKind::Int(2.into()), EffectTag::Pure, None);
+    let input = vec![b, a];
+    let o = canonical_display_order(&input);
+    assert_eq!(o.len(), 2);
+}
+
+// ── restored 2026-08-10 (acceptor) — dropped by the O42 delivery, but neither
+//    of these is about the salt ────────────────────────────────────────────
+
+/// Family rank is unchanged: solid value < blur < Top.
+///
+/// SPEC_01 §2.4.1's family order (item 4 structural, item 5 blur, item 6 Top
+/// last). Nothing in O42 touches it, and the intra-family key rewrite is
+/// exactly the kind of edit that can move a branch across family boundaries
+/// without any other test noticing.
 #[test]
 fn pin_blur_after_solid_before_top() {
-    // Family rank unchanged: value < blur < Top.
     let two = Value::Atom(AtomKind::Int(2.into()), EffectTag::Pure, None);
-    let b = blur(BlurCause::FuelExhausted, 0, 0x33);
+    let b = blur(BlurCause::FuelExhausted, 0);
     let branches = [b, two, Value::Top];
     let ordered = canonical_display_order(&branches);
-    assert!(matches!(ordered[0], Value::Atom(..)));
-    assert!(matches!(ordered[1], Value::Blur(_)));
-    assert!(matches!(ordered[2], Value::Top));
+    assert!(matches!(ordered[0], Value::Atom(..)), "solid value first");
+    assert!(matches!(ordered[1], Value::Blur(_)), "blur second");
+    assert!(matches!(ordered[2], Value::Top), "Top last");
 }
 
+/// Only the KEY changes — blur display text still prints its `%caid`.
+///
+/// The 2026-07-18 arc drew this line explicitly ("NOT in scope: blur DISPLAY
+/// text"), and O42 does not move it either: what a blur's identity is made of
+/// changed, whether it is shown did not.
 #[test]
 fn pin_blur_display_text_untouched() {
-    // Only the KEY changes — blur display still prints its %caid.
-    let b = blur(BlurCause::FuelExhausted, 0, 0x44);
+    let b = blur(BlurCause::FuelExhausted, 0);
     let s = b.to_nlang(0);
     assert!(
         s.contains("#blur") && s.contains("%caid"),
         "blur display text must keep printing %caid: {s:?}"
     );
-}
-
-#[test]
-fn pin_blur_caid_still_salted() {
-    // Identity is NOT display: blur CAID keeps its salt (bn_serial /
-    // blur_caid untouched by this arc).
-    let b1 = blur(BlurCause::FuelExhausted, 0, 0x55);
-    let b2 = blur(BlurCause::FuelExhausted, 0, 0x66);
-    match (&b1, &b2) {
-        (Value::Blur(d1), Value::Blur(d2)) => {
-            assert_ne!(d1.blur_caid(), d2.blur_caid());
-        }
-        _ => unreachable!(),
-    }
 }

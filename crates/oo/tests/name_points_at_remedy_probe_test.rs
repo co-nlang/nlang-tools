@@ -311,18 +311,49 @@ fn p1_bottom_caid_ignores_cause() {
     );
 }
 
-/// P2 — the blur CAID of *fuel* exhaustion does not move.
+/// P2 — a fuel-exhausted `#blur` has one identity, not one per run.
 ///
-/// R2 moves the depth-exhaustion blur's CAID on purpose. This is the border:
-/// the fuel side keeps its address to the byte.
+/// HISTORY, because this pin has now changed shape twice and the reason
+/// matters more than the value (acceptor, 2026-08-10):
+///
+///   * W4′ (this arc) moved the DEPTH blur's CAID on purpose and pinned the
+///     fuel side to a literal digest, so this arc could be shown not to touch
+///     it. That was the right pin for that arc.
+///   * O42 redefines EVERY blur identity, fuel side included (breaking #11),
+///     so the literal had to move. The O42 delivery moved it — which is the
+///     acceptor's call, not a delivery's, and is on the O42 repair ledger.
+///   * I expected the O42 repair (partial enters the identity by CAID rather
+///     than inlined) to move it a SECOND time, and de-literalised the pin for
+///     the duration on that reasoning. MEASUREMENT AT FINAL ACCEPTANCE SAYS
+///     OTHERWISE: this blur has no partial, so `CAID(None)` and inlined-`None`
+///     hash the same, and the value never moved from the one the first
+///     delivery computed. The prediction held for the depth side and not here.
+///     The de-literalising was still the right call — it was not knowable
+///     without the repair in hand — but the reason is recorded so the next
+///     person does not inherit a rule of thumb that is only half true.
+///
+/// Both halves are asserted: the literal (what it is) and the relation (that
+/// it is the same in every process, which is what W4′ actually cared about).
 #[test]
 fn p2_fuel_blur_caid_holds() {
-    const KNOWN: &str = "e4dc016e7ba3dd22f2e06175991407cbd1735d3b9c269e5852b5109e456a0f6a";
-    let out = oo_run("p2", "~%Config.fuel: 5\nv: <<_.>>\nout: v.%caid\n");
+    const SRC: &str = "~%Config.fuel: 5\nv: <<_.>>\nout: v.%caid\n";
+    const KNOWN: &str = "4120193908e8225ba3330cf77b3bb371b336dad26812588d8b51bdaa06b3eff3";
+    let a = oo_run("p2a", SRC);
+    let b = oo_run("p2b", SRC);
+    let caid = |s: &str| -> String {
+        let i = s.find("hash:sha256:v1:").unwrap_or_else(|| {
+            panic!("no blur %caid in output — the fuel horizon stopped producing one:\n{s}")
+        });
+        s[i..].chars().take(79).collect()
+    };
+    assert_eq!(
+        caid(&a),
+        caid(&b),
+        "the CAID of a fuel-exhausted #blur differs between processes"
+    );
     assert!(
-        out.contains(KNOWN),
-        "the CAID of a fuel-exhausted #blur moved — this arc must not touch \
-         the fuel side.\n  expected …{KNOWN}\n  got: {out}"
+        a.contains(KNOWN),
+        "the CAID of a fuel-exhausted #blur moved.\n  expected …{KNOWN}\n  got: {a}"
     );
 }
 

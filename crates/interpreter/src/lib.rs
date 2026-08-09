@@ -40,7 +40,8 @@ use crate::type_constraint::{
 pub use crate::value::{
     normalize_union, primary_bottom_from_culled, AuthorityInfo, BlurCause, BlurDetail, BottomCause,
     BottomDetail, CaidVersion, ComboVal, Commit, CommitKind, CommitMeta, ContentHash, EffectTag,
-    Holonomy, HorizonParams, Identity, MasaRef, ObservationStrategy, Privilege, RefineInfo, Value,
+    Holonomy, HorizonParams, HorizonRecord, Identity, MasaRef, ObservationStrategy, Privilege,
+    RefineInfo, Value,
 };
 use anyhow::Result;
 use sha2::Digest;
@@ -110,6 +111,8 @@ pub struct EvalContext {
     pub union_absorb_fence: bool,
     pub context_value: Option<Value>,
     pub fuel: u64,
+    /// Initial fuel budget (config ceiling). Identity for blur CHS; `fuel` is remaining.
+    pub fuel_budget: u64,
     pub timeout_deadline: Option<u64>,
     pub depth: u32,
     /// Stage 5 (§5a): dependency collector for Route B per-coordinate
@@ -160,10 +163,12 @@ impl EvalContext {
             union_absorb_fence: false,
             context_value: None,
             fuel: 10000,
+            fuel_budget: 10000,
             timeout_deadline: None,
             depth: 0,
             dep_collector: None,
             memo_enabled: true,
+            // Fixed salt for disc tie-break only — NOT blur identity (O42).
             horizon_salt: salt,
             strategy: ObservationStrategy::Blur,
             max_branches: 64,
@@ -191,7 +196,21 @@ impl EvalContext {
 
     pub fn with_fuel(mut self, fuel: u64) -> Self {
         self.fuel = fuel;
+        self.fuel_budget = fuel;
         self
+    }
+
+    /// Snapshot of horizon budgets for blur minting (O42 CHS).
+    pub fn horizon_params(&self) -> crate::value::HorizonParams {
+        crate::value::HorizonParams {
+            fuel: self.fuel_budget,
+            fuel_remaining: self.fuel,
+            strategy: self.strategy,
+            max_branches: self.max_branches as u64,
+            max_unification_depth: self.max_unification_depth as u64,
+            max_lifting_depth: self.max_lifting_depth as u64,
+            max_pattern_nodes: self.max_pattern_nodes as u64,
+        }
     }
     pub fn with_strategy(mut self, strategy: ObservationStrategy) -> Self {
         self.strategy = strategy;
@@ -218,6 +237,7 @@ impl EvalContext {
             if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("fuel").cloned() {
                 if let Some(f) = n.to_u64() {
                     self.fuel = f;
+                    self.fuel_budget = f;
                 }
             }
             if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("strategy").cloned() {
@@ -3126,8 +3146,7 @@ impl Ouroboros {
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
-                        &ctx.horizon_salt,
-                        ctx.fuel,
+                        &*ctx,
                         None,
                         EffectTag::Pure,
                     );
@@ -3151,14 +3170,13 @@ impl Ouroboros {
         ctx.depth += 1;
         if let Err(e) = ctx.check_resources(0) {
             ctx.depth -= 1;
-            return handle_resource_exhausted(
-                e,
-                ctx.strategy,
-                &ctx.horizon_salt,
-                ctx.fuel,
-                None,
-                EffectTag::Pure,
-            );
+            // O42 R-3: node_content of the force site for Blur only.
+            let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                Some(val.clone())
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, EffectTag::Pure);
         }
         // F1 (§3-fix): when force_recursive deref's a Ref, the resolved value
         // becomes the $ binding for all thunks forced in the subtree (SYNTAX_07
@@ -3608,8 +3626,7 @@ impl Ouroboros {
                 return handle_resource_exhausted(
                     e,
                     ctx.strategy,
-                    &ctx.horizon_salt,
-                    ctx.fuel,
+                    &*ctx,
                     None,
                     accumulated_effect,
                 );

@@ -308,7 +308,8 @@ impl Universe {
 
         let mut ctx = EvalContext::new(self.root.clone());
         ctx.staged = Some(self.staged.clone());
-        ctx.horizon_salt = engine.store.get_horizon_salt();
+        // O42: no clock salt — blur identity is CHS (budgets + partial).
+        // EvalContext keeps a fixed disc tie-break salt from ::new only.
         ctx.privilege = engine.privilege;
         // O38: user-staged horizon knobs must govern evolve-time evaluation.
         // Pure math and union-branch arithmetic finish at evolve; without this,
@@ -567,7 +568,12 @@ impl Universe {
         }
     }
 
-    pub fn save_staged(&self, _engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+    pub fn save_staged(&self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+        // O42 11.6.1 (i): write blur partial bodies into CAS before staged
+        // JSON drops them (partial is CAID-only on disk). Uncommitted bodies
+        // are unreachable after the next commit of a different root and are
+        // local-GC fodder — same class as auto-cleared adverts (v0.2.54).
+        Value::Combo(self.staged.clone()).persist_blur_partials(&engine.store)?;
         let staged_path = base_dir.join(".oo").join("staged");
         if !staged_path.parent().unwrap().exists() {
             std::fs::create_dir_all(staged_path.parent().unwrap())?;
@@ -603,6 +609,8 @@ impl Universe {
         let staged_path = base_dir.join(".oo").join("staged");
         if staged_path.exists() {
             let json = std::fs::read_to_string(staged_path)?;
+            // O42 repair: blur carries partial as CAID only — staged stays
+            // shallow; default serde recursion limit is correct again.
             self.staged = serde_json::from_str(&json)?;
             self.is_dirty = true;
         }
