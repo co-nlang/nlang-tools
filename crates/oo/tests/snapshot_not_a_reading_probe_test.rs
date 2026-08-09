@@ -436,11 +436,17 @@ fn r6_merging_two_blurs_is_commutative() {
     //     A alone  d0967392…    B alone  e3d8e76a…
     //     A & B    7967db7f…    B & A    c64f900f…
     //
-    // Cause: the CHS distinguishes the primary record (`cause` + `horizon`,
-    // taken from the left operand) from `co_horizons`, so which blur is
-    // primary reaches the hash. R-6 requires the FULL SET, canonically
-    // ordered, the primary distinction surviving only for `%cause` projection
-    // and display.
+    // CAUSE — MY DIAGNOSIS HERE WAS WRONG, corrected after M4. I wrote that
+    // the CHS fed the primary record separately from `co_horizons`, so which
+    // blur was primary reached the hash. Measurement says otherwise: the
+    // record set was already canonical, and the asymmetry came from SPANS.
+    // `Value::Code` hashed `format!("{:?}", expr)` including source
+    // positions, so the same partial written at a different byte offset had a
+    // different digest — `A & B` and `B & A` place A and B at different
+    // offsets. M4 hashes `expr.without_spans()` and the property holds.
+    // Kept visible because the wrong diagnosis also reached ENGINE_SYNC, and
+    // a diagnosis that was corrected is worth more than one that was quietly
+    // replaced.
     let a_alone = caid("r6a", &format!("{KNOB}m: {DEEP_A}\ncp: m.%caid\n"));
     let b_alone = caid("r6b", &format!("{KNOB}m: {DEEP_B}\ncp: m.%caid\n"));
     let ab = caid(
@@ -515,4 +521,33 @@ fn p4_a_unify_side_blur_has_a_literal_address() {
     const KNOWN: &str = "d0967392f92cc2e77b156ae18dc98d8d1b3d31ba5ec570901ca5beb19e2561d3";
     let got = caid("p4", &format!("{KNOB}p: {DEEP_A}\ncp: p.%caid\n"));
     assert_eq!(got, KNOWN, "the CHS inputs of a depth-exhausted #blur moved");
+}
+
+/// P5 — the breaking scope, stated correctly after M4 widened it.
+///
+/// P3 pins that a value-only universe does not move, and claims in its comment
+/// that "this arc's breaking scope is blur-bearing universes only". M4
+/// FALSIFIED that claim and P3 could not see it, because P3's fixture holds no
+/// `Value::Code`.
+///
+/// M4 made `Value::Code` identity span-free (`expr.without_spans()`), which is
+/// the same principle as the rest of the arc — where a thing sits in a file is
+/// a circumstance, not content — but it reaches EVERY universe holding a
+/// morphism, blur or no blur. Measured across the M4 boundary:
+///
+///     value-only     4c45e486…  →  4c45e486…   unmoved
+///     morphism       ba89a8a9…  →  5529bc46…   MOVED
+///     blur (combo)   d21875a8…  →  d21875a8…   unmoved by M4 itself
+///
+/// So the honest boundary is not "blur / not blur". It is "does the universe
+/// contain a value whose identity encoding this arc touched" — `#blur` and
+/// `Value::Code`.
+#[test]
+fn p5_a_morphism_bearing_universe_has_its_new_root() {
+    assert_eq!(
+        committed_root("p5", "inc: (x) -> x + 1\nv: 5\n"),
+        "5529bc46ab585d95efe0684e4747a23182646484828f892dbc0b4edbca4fc6d2",
+        "a universe holding a morphism moved again — M4's span-free Code \
+         identity is the last change that was allowed to move it"
+    );
 }
