@@ -90,13 +90,12 @@ impl Ouroboros {
     pub fn unify(&self, a: Value, b: Value) -> Value {
         let mut ctx = self.eval_context();
         if let Err(e) = ctx.check_resources(10) {
-            return handle_resource_exhausted(
-                e,
-                ctx.strategy,
-                &ctx,
-                Some(Value::Union(vec![a.clone(), b.clone()])),
-                EffectTag::Pure,
-            );
+            let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                Some(Value::Union(vec![a.clone(), b.clone()]))
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &ctx, partial, EffectTag::Pure);
         }
         self.unify_internal(a, b, &mut ctx)
     }

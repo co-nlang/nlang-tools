@@ -1,4 +1,4 @@
-use crate::observation::handle_resource_exhausted;
+use crate::observation::{handle_resource_exhausted, needs_partial_body};
 use crate::type_constraint::{get_type_constraint_name, is_type_constraint_combo, TypeConstraint};
 use crate::value::{
     normalize_union, primary_bottom_from_culled, BottomCause, BottomDetail, ComboVal, EffectTag,
@@ -912,14 +912,14 @@ impl Ouroboros {
 
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         if let Err(e) = ctx.check_resources(1) {
-            // O42 R-3: node_content — the expression under evaluation.
-            return handle_resource_exhausted(
-                e,
-                ctx.strategy,
-                &*ctx,
-                Some(Value::Code(Box::new(expr.clone()))),
-                EffectTag::Pure,
-            );
+            // O42 R-3: node_content for Blur only — never clone a deep AST
+            // for stack_overflow / Strict (see needs_partial_body).
+            let partial = if needs_partial_body(&e, ctx.strategy) {
+                Some(Value::Code(Box::new(expr.clone())))
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, EffectTag::Pure);
         }
         match &expr.kind {
             ExprKind::Atom(kind) => match kind.clone() {
@@ -936,11 +936,16 @@ impl Ouroboros {
                 closed,
             } => {
                 if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
                         &*ctx,
-                        Some(Value::Code(Box::new(expr.clone()))),
+                        partial,
                         EffectTag::Pure,
                     );
                 }
@@ -1253,11 +1258,16 @@ impl Ouroboros {
             ExprKind::Path(p) => self.resolve_path(p, ctx),
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(5) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
                         &*ctx,
-                        Some(Value::Code(Box::new(expr.clone()))),
+                        partial,
                         EffectTag::Pure,
                     );
                 }
@@ -1598,11 +1608,16 @@ impl Ouroboros {
             // (2026-07-06 ruling: decoupled from the cocoon analogy).
             ExprKind::Tuple(items) => {
                 if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
                         &*ctx,
-                        Some(Value::Code(Box::new(expr.clone()))),
+                        partial,
                         EffectTag::Pure,
                     );
                 }
@@ -1616,11 +1631,16 @@ impl Ouroboros {
             // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
             ExprKind::Poset(relations) => {
                 if let Err(e) = ctx.check_resources(10 + (relations.len() as u64) * 2) {
+                    let partial = if needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.clone())))
+                    } else {
+                        None
+                    };
                     return handle_resource_exhausted(
                         e,
                         ctx.strategy,
                         &*ctx,
-                        Some(Value::Code(Box::new(expr.clone()))),
+                        partial,
                         EffectTag::Pure,
                     );
                 }

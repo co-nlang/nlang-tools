@@ -1,23 +1,8 @@
 use crate::value::{CaidVersion, Commit, ContentHash, HashAlgorithm, Value};
 use anyhow::Result;
-use serde::de::DeserializeOwned;
-use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-/// Deserialize JSON without serde's default 128-level recursion cap.
-///
-/// O42 puts `node_content` (partial) into `#blur`. A deep expression tree
-/// (e.g. a long left-associated `+` chain truncated at the depth horizon)
-/// serializes fine but cannot be reloaded under the default limit — status
-/// then lies that the universe is static. Store objects with the same shape
-/// need the same path.
-pub fn from_json_deep<T: DeserializeOwned>(json: &str) -> Result<T, serde_json::Error> {
-    let mut de = serde_json::Deserializer::from_str(json);
-    de.disable_recursion_limit();
-    T::deserialize(&mut de)
-}
 
 /// Write `contents` so a concurrent reader never sees a truncated (or briefly
 /// absent) target. Same-directory temp + `fsync` + `rename`. The temp is
@@ -238,7 +223,7 @@ impl ObjectStore {
     pub fn get_value(&self, hash: &ContentHash) -> Result<Value> {
         let content = self.read_object_raw(hash)?;
         let value: Value =
-            from_json_deep(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+            serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
             })?;
@@ -263,7 +248,7 @@ impl ObjectStore {
     pub fn get_commit(&self, hash: &ContentHash) -> Result<Commit> {
         let content = self.read_object_raw(hash)?;
         let commit: Commit =
-            from_json_deep(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+            serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
             })?;

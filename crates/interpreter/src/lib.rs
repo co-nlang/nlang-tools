@@ -3170,14 +3170,13 @@ impl Ouroboros {
         ctx.depth += 1;
         if let Err(e) = ctx.check_resources(0) {
             ctx.depth -= 1;
-            // O42 R-3: node_content of the force site enters CHS.
-            return handle_resource_exhausted(
-                e,
-                ctx.strategy,
-                &*ctx,
-                Some(val.clone()),
-                EffectTag::Pure,
-            );
+            // O42 R-3: node_content of the force site for Blur only.
+            let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                Some(val.clone())
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, EffectTag::Pure);
         }
         // F1 (§3-fix): when force_recursive deref's a Ref, the resolved value
         // becomes the $ binding for all thunks forced in the subtree (SYNTAX_07

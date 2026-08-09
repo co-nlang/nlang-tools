@@ -142,10 +142,7 @@ nlang-parser = { path = "../parser" }
 thiserror = "1.0"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-# unbounded_depth: O42 stores node_content (partial) on #blur; a long
-# left-associated expression becomes a deep Code AST and exceeds serde's
-# default 128-level recursion guard when reloading staged / store objects.
-serde_json = { version = "1.0", features = ["unbounded_depth"] }
+serde_json = "1.0"
 indexmap = { version = "=2.5.0", features = ["serde"] }
 hashbrown = "0.14"
 base64 = "0.22"

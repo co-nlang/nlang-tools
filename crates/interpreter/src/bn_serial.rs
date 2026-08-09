@@ -129,9 +129,11 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
             buf.extend_from_slice(&bd.horizon.max_unification_depth.to_le_bytes());
             buf.extend_from_slice(&bd.horizon.max_lifting_depth.to_le_bytes());
             buf.extend_from_slice(&bd.horizon.max_pattern_nodes.to_le_bytes());
+            // O42 repair: partial is a CAID, not an inlined tree.
             if let Some(partial) = &bd.partial {
                 buf.push(0x01);
-                serialize_value(partial, buf);
+                encode_unsigned_leb128(partial.digest.len() as u64, buf);
+                buf.extend_from_slice(&partial.digest);
             } else {
                 buf.push(0x00);
             }
