@@ -37,10 +37,18 @@
 //
 // ── What these probes are not ────────────────────────────────────────────
 //
-// Not a fix for frame size, and not a fix for O42 (a `#blur`'s CAID is
-// `sha256(now_nanos)`, so blur identity is already not content-addressed).
-// R2 sidesteps O42 by requiring that the hard limit never mint a blur at all:
-// a blur claims an addressable snapshot, and an aborted stack has none.
+// Not a fix for frame size, and not a fix for O42.
+//
+// CORRECTED 2026-08-09 (O42 recon): this comment used to say a `#blur`'s CAID
+// is `sha256(now_nanos)` outright. Measurement says the salt is fixed
+// (`sha256("default")`) for blurs minted at OBSERVE, and a clock reading only
+// for blurs minted at EVOLVE — one call site, `universe.rs`. So fuel-side
+// blurs are reproducible today and unify-side ones are not. The original
+// claim came from reading `storage.rs` without measuring its call site.
+//
+// R2 sidesteps O42 either way, by requiring that the hard limit never mint a
+// blur at all: a blur claims an addressable snapshot, and an aborted stack
+// has none.
 
 use std::fs;
 use std::path::Path;

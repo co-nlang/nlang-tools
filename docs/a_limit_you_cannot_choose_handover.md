@@ -223,7 +223,7 @@ R1 因此直接看 `oo` 的退出狀態與 stderr。
 | 項 | 內容 |
 | :-- | :-- |
 | **frame 134 KB／層** | 真正的成因。`sub_context` 的 `ctx.clone()`(F2,自陳 open)是第一個該量的嫌疑。**本弧只加界,不減重** |
-| **O42** | `#blur` 的 CAID ＝ `sha256(now_nanos)`;§3.2.2 第 6 款 (a) 永遠執行不到。**擋在「堆疊耗盡要不要報成 blur」前面,而本弧用「不得鑄 blur」繞開它** |
+| **O42** | `#blur` 的 CAID 由讀數決定,§3.2.2 第 6 款 (a) 永遠執行不到。**擋在「堆疊耗盡要不要報成 blur」前面,而本弧用「不得鑄 blur」繞開它**。〔2026-08-09 更正:原記「CAID ＝ `sha256(now_nanos)`」只對 evolve 側成立,observe 側是固定鹽;詳見 `a_snapshot_is_not_a_reading_handover.md` §2(c)〕 |
 | **O40** | `oo run`／`oo eval` 看不見倉;`--load`／`--commit` 記載於 REAL_01 §1.1 而不存在 |
 | **W22** | 指令面設計稿 `meta/oo/cli_surface.md` |
 
