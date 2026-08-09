@@ -219,7 +219,6 @@ fn c2_ordinary_commit_lands_and_the_detector_is_armed() {
 
 /// R1 — `timeout` bites.
 #[test]
-#[ignore]
 fn r1_timeout_bites() {
     const HEAVY: &str = "~%Config.fuel: 5000000\nout: ~%List./range 1 200000 |> ~%List./sum\n";
     let tight = run_src("r1a", &format!("~%Config.timeout: 1\n{HEAVY}"));
@@ -239,7 +238,6 @@ fn r1_timeout_bites() {
 
 /// R2 — `max_branches` bites.
 #[test]
-#[ignore]
 fn r2_max_branches_bites() {
     let capped = run_src(
         "r2a",
@@ -264,7 +262,6 @@ fn r2_max_branches_bites() {
 
 /// R3 — `max_unification_depth` bites: two knob values, two thresholds.
 #[test]
-#[ignore]
 fn r3_depth_knob_moves_the_threshold() {
     let low = depth_threshold(16);
     let high = depth_threshold(300);
@@ -277,7 +274,6 @@ fn r3_depth_knob_moves_the_threshold() {
 
 /// R4 — a knob beside an ordinary write does not punish the write.
 #[test]
-#[ignore]
 fn r4_config_beside_a_write_still_commits() {
     let d = fresh("r4");
     fs::write(d.join("u.n"), "~%Config.fuel: 7\nx: 1\n").unwrap();
@@ -303,7 +299,6 @@ fn r4_config_beside_a_write_still_commits() {
 /// Silence is allowed for "there is no obligation" (D36). It is not allowed
 /// for "something you wrote was dropped".
 #[test]
-#[ignore]
 fn r5_the_engine_says_config_was_not_committed() {
     let d = fresh("r5");
     fs::write(d.join("u.n"), "~%Config.fuel: 7\nx: 1\n").unwrap();

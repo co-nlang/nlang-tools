@@ -185,6 +185,76 @@ impl EvalContext {
         self.strategy = strategy;
         self
     }
+
+    /// Apply `~%Config` horizon knobs (SPEC_08 §3.1 / SPEC_09 §6 closed family).
+    ///
+    /// * `include_fuel_strategy` — observe / `eval_context` apply fuel & strategy.
+    ///   Evolve skips them: fuel already governs force-at-observe, and applying
+    ///   it on evolve mints `#blur` under evolve's per-call random salt (moves
+    ///   fuel-side CAIDs).
+    /// * `apply_timeout` — only when the user staged a `timeout` override.
+    ///   Genesis carries `timeout: 1000`, but that value was never wired; applying
+    ///   it globally would put a 1s wall on every observation of a stdlib root.
+    pub fn apply_horizon_config(
+        &mut self,
+        cfg: &crate::value::ComboVal,
+        include_fuel_strategy: bool,
+        apply_timeout: bool,
+    ) {
+        use num_traits::ToPrimitive;
+        if include_fuel_strategy {
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("fuel").cloned() {
+                if let Some(f) = n.to_u64() {
+                    self.fuel = f;
+                }
+            }
+            if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("strategy").cloned() {
+                self.strategy = match s.trim_start_matches('#') {
+                    "strict" => ObservationStrategy::Strict,
+                    "approximate" => ObservationStrategy::Approximate,
+                    _ => ObservationStrategy::Blur,
+                };
+            }
+        }
+        if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_branches").cloned() {
+            if let Some(v) = n.to_u64() {
+                self.max_branches = v as usize;
+            }
+        }
+        if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
+            cfg.get_field("max_unification_depth").cloned()
+        {
+            if let Some(v) = n.to_u64() {
+                self.max_unification_depth = v as usize;
+            }
+        }
+        if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
+            cfg.get_field("max_lifting_depth").cloned()
+        {
+            if let Some(v) = n.to_u64() {
+                self.max_lifting_depth = v as usize;
+            }
+        }
+        if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
+            cfg.get_field("max_pattern_nodes").cloned()
+        {
+            if let Some(v) = n.to_u64() {
+                self.max_pattern_nodes = v as usize;
+            }
+        }
+        if apply_timeout {
+            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("timeout").cloned() {
+                if let Some(timeout_ms) = n.to_u64() {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    self.timeout_deadline = Some(now_ms + timeout_ms);
+                }
+            }
+        }
+    }
+
     pub fn check_resources(&mut self, cost: u64) -> Result<(), ResourceExhausted> {
         if self.fuel < cost {
             return Err(ResourceExhausted::FuelExhausted);
@@ -2514,55 +2584,8 @@ impl Ouroboros {
         // Initial horizon from ~%Config (bare names). Runtime override of
         // strategy is /set_strategy (mutates live ctx, not the genesis node).
         if let Some(Value::Combo(ref cfg)) = sys_root.get_field("~%Config").cloned() {
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("fuel").cloned() {
-                if let Some(f) = n.to_u64() {
-                    ctx.fuel = f;
-                }
-            }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                cfg.get_field("max_branches").cloned()
-            {
-                if let Some(v) = n.to_u64() {
-                    ctx.max_branches = v as usize;
-                }
-            }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                cfg.get_field("max_unification_depth").cloned()
-            {
-                if let Some(v) = n.to_u64() {
-                    ctx.max_unification_depth = v as usize;
-                }
-            }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                cfg.get_field("max_lifting_depth").cloned()
-            {
-                if let Some(v) = n.to_u64() {
-                    ctx.max_lifting_depth = v as usize;
-                }
-            }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                cfg.get_field("max_pattern_nodes").cloned()
-            {
-                if let Some(v) = n.to_u64() {
-                    ctx.max_pattern_nodes = v as usize;
-                }
-            }
-            if let Some(Value::Atom(AtomKind::Tag(s), _, _)) = cfg.get_field("strategy").cloned() {
-                ctx.strategy = match s.trim_start_matches('#') {
-                    "strict" => ObservationStrategy::Strict,
-                    "approximate" => ObservationStrategy::Approximate,
-                    _ => ObservationStrategy::Blur,
-                };
-            }
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("timeout").cloned() {
-                if let Some(timeout_ms) = n.to_u64() {
-                    let now_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    ctx.timeout_deadline = Some(now_ms + timeout_ms);
-                }
-            }
+            // Engine-internal: apply the closed table including timeout.
+            ctx.apply_horizon_config(cfg, true, true);
         }
         ctx
     }

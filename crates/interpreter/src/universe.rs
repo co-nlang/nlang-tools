@@ -282,6 +282,19 @@ impl Universe {
         ctx.staged = Some(self.staged.clone());
         ctx.horizon_salt = engine.store.get_horizon_salt();
         ctx.privilege = engine.privilege;
+        // O38: user-staged horizon knobs must govern evolve-time evaluation.
+        // Pure math and union-branch arithmetic finish at evolve; without this,
+        // `timeout` / `max_branches` / `max_unification_depth` look set (readable)
+        // but never reach the gates. Only apply when the user has staged a
+        // `~%Config` override — genesis defaults already match EvalContext::new.
+        // Fuel/strategy stay observe-only (see apply_horizon_config) so
+        // fuel-side blur CAIDs keep their fixed observe salt.
+        if let Some(Value::Combo(ref staged_cfg)) = self.staged.get_field("~%Config") {
+            if let Some(eff) = effective_config(&self.root, Some(&self.staged)) {
+                let apply_timeout = staged_cfg.get_field("timeout").is_some();
+                ctx.apply_horizon_config(&eff, false, apply_timeout);
+            }
+        }
         // forward_spread acceptance repair: cocoon literals force_recursive
         // at construction (GUIDE_03 §11.5) — during evolve a forward source
         // is open-miss Top only because it is not defined YET; mark the
@@ -586,13 +599,24 @@ impl Universe {
         Ok(())
     }
 
+    /// Outcome of a successful commit. `config_not_committed` is true when a
+    /// staged `~%Config` was retained as session state (O37) and did not enter
+    /// the committed root — the CLI must say so (never silent drop).
     pub fn commit(
         &mut self,
         engine: &Ouroboros,
         base_dir: &std::path::Path,
         meta: crate::value::CommitMeta,
-    ) -> Result<ContentHash> {
+    ) -> Result<(ContentHash, bool)> {
         engine.clear_force_memo();
+        // O37: horizon parameters do not enter history. Strip `~%Config` from
+        // the commit meet so ordinary writes beside a knob still land; keep
+        // the override in staging as session state after the commit.
+        let retained_config = self.staged.get_field("~%Config").cloned();
+        let mut staged_for_commit = self.staged.clone();
+        if retained_config.is_some() {
+            staged_for_commit.remove_field("~%Config");
+        }
         let (new_root, kind) = if self.pin_pending {
             // ACCEPTANCE REPAIR: replace ONLY the pinned coordinates; everything
             // else staged still meets the root. Replacing the whole staged combo
@@ -602,14 +626,14 @@ impl Universe {
             // been pinned in the same session). Audit marker is CommitKind only
             // — the value structure is identical to a normal write of the same
             // payload, so its content hash is unchanged (§6.2).
-            match Self::pin_commit_merge(engine, &self.root, &self.staged, &self.pin_coords) {
+            match Self::pin_commit_merge(engine, &self.root, &staged_for_commit, &self.pin_coords) {
                 Some(m) => (m, CommitKind::Pin),
                 None => return Err(anyhow::anyhow!("Commit failed")),
             }
         } else {
             match engine.unify(
                 Value::Combo(self.root.clone()),
-                Value::Combo(self.staged.clone()),
+                Value::Combo(staged_for_commit),
             ) {
                 Value::Combo(m) => (m, CommitKind::Standard),
                 _ => return Err(anyhow::anyhow!("Commit failed")),
@@ -636,16 +660,26 @@ impl Universe {
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
         self.root = new_root;
-        self.staged = ComboVal::default();
+        // Retain ~%Config as session state; everything else left history.
+        if let Some(cfg) = retained_config {
+            let mut restaged = ComboVal::default();
+            restaged.insert_field("~%Config", cfg);
+            self.staged = restaged;
+            self.is_dirty = true;
+            self.save_staged(engine, base_dir)?;
+        } else {
+            self.staged = ComboVal::default();
+            self.is_dirty = false;
+            let staged_path = base_dir.join(".oo").join("staged");
+            if staged_path.exists() {
+                let _ = std::fs::remove_file(staged_path);
+            }
+        }
+        let config_not_committed = self.staged.get_field("~%Config").is_some();
         self.head = Some(commit_hash.clone());
-        self.is_dirty = false;
         self.pin_pending = false;
         self.pin_coords.clear();
         self.effect_pending = None;
-        let staged_path = base_dir.join(".oo").join("staged");
-        if staged_path.exists() {
-            let _ = std::fs::remove_file(staged_path);
-        }
         let pin_path = base_dir.join(".oo").join("pin_pending");
         if pin_path.exists() {
             let _ = std::fs::remove_file(pin_path);
@@ -655,7 +689,7 @@ impl Universe {
             let _ = std::fs::remove_file(effect_path);
         }
         Self::clear_abandoned_file(base_dir);
-        Ok(commit_hash)
+        Ok((commit_hash, config_not_committed))
     }
 
     fn abandoned_path(base_dir: &std::path::Path) -> std::path::PathBuf {
@@ -840,52 +874,16 @@ impl Universe {
             let mut ctx = EvalContext::new(r.clone());
             ctx.privilege = engine.privilege;
             // Apply ~%Config horizon params from the observation root
-            // (includes staged overrides — SPEC_08 §3.1).
+            // (includes staged overrides — SPEC_08 §3.1). Timeout only when
+            // the user staged it (genesis `timeout: 1000` was never wired as
+            // a global wall-clock; applying it here would arm every stdlib
+            // observation with a 1s deadline).
             if let Some(Value::Combo(ref cfg)) = r.get_field("~%Config").cloned() {
-                use num_traits::ToPrimitive;
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("fuel").cloned() {
-                    if let Some(f) = n.to_u64() {
-                        ctx.fuel = f;
-                    }
-                }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                    cfg.get_field("max_branches").cloned()
-                {
-                    if let Some(v) = n.to_u64() {
-                        ctx.max_branches = v as usize;
-                    }
-                }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                    cfg.get_field("max_unification_depth").cloned()
-                {
-                    if let Some(v) = n.to_u64() {
-                        ctx.max_unification_depth = v as usize;
-                    }
-                }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                    cfg.get_field("max_lifting_depth").cloned()
-                {
-                    if let Some(v) = n.to_u64() {
-                        ctx.max_lifting_depth = v as usize;
-                    }
-                }
-                if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-                    cfg.get_field("max_pattern_nodes").cloned()
-                {
-                    if let Some(v) = n.to_u64() {
-                        ctx.max_pattern_nodes = v as usize;
-                    }
-                }
-                if let Some(Value::Atom(AtomKind::Tag(s), _, _)) =
-                    cfg.get_field("strategy").cloned()
-                {
-                    use crate::value::ObservationStrategy;
-                    ctx.strategy = match s.trim_start_matches('#') {
-                        "strict" => ObservationStrategy::Strict,
-                        "approximate" => ObservationStrategy::Approximate,
-                        _ => ObservationStrategy::Blur,
-                    };
-                }
+                let apply_timeout = match self.staged.get_field("~%Config") {
+                    Some(Value::Combo(sc)) => sc.get_field("timeout").is_some(),
+                    _ => false,
+                };
+                ctx.apply_horizon_config(cfg, true, apply_timeout);
             }
             ctx.refine_map_active = true;
             // Stage 2 (§3.4): force_recursive on the *return value* — solidification
