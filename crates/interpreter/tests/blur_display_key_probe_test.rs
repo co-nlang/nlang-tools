@@ -1,5 +1,29 @@
-// Blur display-order key probes — updated for O42 (no salt / no fuel_remaining
-// in identity or display key). Law key: cause + strategy + CHS digest.
+// Blur display-order key probes.
+//
+// Original arc 2026-07-18 (docs/blur_display_key_handover.md): blur branches
+// sorted by their display string, which embedded the salted %caid, so two
+// equal-cause blurs flipped order across processes. SPEC_01 §2.4.1 item 5 was
+// amended to key on (cause lex, fuel_remaining asc, strategy) and to FORBID
+// CAID/digest keys — the salt was the reason for that prohibition.
+//
+// Rewritten under O42 (2026-08-09 delivery). O42 removes the salt, so a digest
+// key is now a function of the value and the 2026-07-18 hazard is gone. The
+// delivery's new key is (cause, strategy, CHS digest).
+//
+// ACCEPTOR'S NOTE (2026-08-10). Two things about that rewrite:
+//
+//   * §2.4.1's "禁止以 CAID/digest 作顯示排序鍵" is still on the books. The
+//     new key is defensible post-O42 but the MUST NOT is amended by the
+//     acceptor at spec closure, not routed around by a delivery.
+//   * The rewrite dropped seven pins to four. Two died honestly with the salt
+//     (`pin_blur_caid_still_salted`, `red_blur_fuel_orders_adversarial_salts`).
+//     Two did NOT — family rank and display text are not about the salt — and
+//     are restored below. Recorded because deleting a pin is the one edit that
+//     leaves no failing test behind to notice it.
+//
+// No literal digest is pinned here: the O42 repair (partial enters the
+// identity by CAID, not inlined) moves every blur CAID a second time. Literals
+// are re-pinned at final acceptance.
 
 use nlang_interpreter::value::{
     canonical_display_order, BlurCause, BlurDetail, EffectTag, HorizonParams, ObservationStrategy,
@@ -103,4 +127,39 @@ fn pin_non_blur_unaffected() {
     let input = vec![b, a];
     let o = canonical_display_order(&input);
     assert_eq!(o.len(), 2);
+}
+
+// ── restored 2026-08-10 (acceptor) — dropped by the O42 delivery, but neither
+//    of these is about the salt ────────────────────────────────────────────
+
+/// Family rank is unchanged: solid value < blur < Top.
+///
+/// SPEC_01 §2.4.1's family order (item 4 structural, item 5 blur, item 6 Top
+/// last). Nothing in O42 touches it, and the intra-family key rewrite is
+/// exactly the kind of edit that can move a branch across family boundaries
+/// without any other test noticing.
+#[test]
+fn pin_blur_after_solid_before_top() {
+    let two = Value::Atom(AtomKind::Int(2.into()), EffectTag::Pure, None);
+    let b = blur(BlurCause::FuelExhausted, 0);
+    let branches = [b, two, Value::Top];
+    let ordered = canonical_display_order(&branches);
+    assert!(matches!(ordered[0], Value::Atom(..)), "solid value first");
+    assert!(matches!(ordered[1], Value::Blur(_)), "blur second");
+    assert!(matches!(ordered[2], Value::Top), "Top last");
+}
+
+/// Only the KEY changes — blur display text still prints its `%caid`.
+///
+/// The 2026-07-18 arc drew this line explicitly ("NOT in scope: blur DISPLAY
+/// text"), and O42 does not move it either: what a blur's identity is made of
+/// changed, whether it is shown did not.
+#[test]
+fn pin_blur_display_text_untouched() {
+    let b = blur(BlurCause::FuelExhausted, 0);
+    let s = b.to_nlang(0);
+    assert!(
+        s.contains("#blur") && s.contains("%caid"),
+        "blur display text must keep printing %caid: {s:?}"
+    );
 }

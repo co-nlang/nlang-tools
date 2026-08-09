@@ -311,19 +311,39 @@ fn p1_bottom_caid_ignores_cause() {
     );
 }
 
-/// P2 — the blur CAID of *fuel* exhaustion is stable under CHS.
+/// P2 — a fuel-exhausted `#blur` has one identity, not one per run.
 ///
-/// W4′ R2 moved the *depth* blur's CAID on purpose and pinned the fuel side
-/// so that arc would not touch it. O42 (CHS) redefines *every* blur identity
-/// — fuel side included — to `node_content + six budgets` (breaking #11).
-/// The pin is the post-CHS digest; C3 on the O42 probe guards reproducibility.
+/// HISTORY, because this pin has now changed shape twice and the reason
+/// matters more than the value (acceptor, 2026-08-10):
+///
+///   * W4′ (this arc) moved the DEPTH blur's CAID on purpose and pinned the
+///     fuel side to a literal digest, so this arc could be shown not to touch
+///     it. That was the right pin for that arc.
+///   * O42 redefines EVERY blur identity, fuel side included (breaking #11),
+///     so the literal had to move. The O42 delivery moved it — which is the
+///     acceptor's call, not a delivery's, and is on the O42 repair ledger.
+///   * The O42 repair then moves it AGAIN (the partial enters the identity by
+///     CAID rather than inlined). A literal pinned now is a guaranteed false
+///     failure, so this asserts the RELATION until O42's final acceptance,
+///     where the literal is pinned back.
+///
+/// The relation is the part W4′ actually cared about: the fuel side was
+/// already reproducible before O42 and must stay that way through it.
 #[test]
 fn p2_fuel_blur_caid_holds() {
-    const KNOWN: &str = "4120193908e8225ba3330cf77b3bb371b336dad26812588d8b51bdaa06b3eff3";
-    let out = oo_run("p2", "~%Config.fuel: 5\nv: <<_.>>\nout: v.%caid\n");
-    assert!(
-        out.contains(KNOWN),
-        "the CAID of a fuel-exhausted #blur moved under CHS.\n  expected …{KNOWN}\n  got: {out}"
+    const SRC: &str = "~%Config.fuel: 5\nv: <<_.>>\nout: v.%caid\n";
+    let a = oo_run("p2a", SRC);
+    let b = oo_run("p2b", SRC);
+    let caid = |s: &str| -> String {
+        let i = s.find("hash:sha256:v1:").unwrap_or_else(|| {
+            panic!("no blur %caid in output — the fuel horizon stopped producing one:\n{s}")
+        });
+        s[i..].chars().take(79).collect()
+    };
+    assert_eq!(
+        caid(&a),
+        caid(&b),
+        "the CAID of a fuel-exhausted #blur differs between processes"
     );
 }
 
