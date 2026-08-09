@@ -129,9 +129,10 @@ fn red_config_effective_display() {
     // SPEC_09 §6: observing ~%Config shows the EFFECTIVE config —
     // genesis ∧ overrides, all seven knobs — not the staged fragment.
     let (_, got) = run_program("~%Config.fuel: 50\nout: ~%Config", "out");
+    // O41: genesis timeout is `#_` (unbound), not 1000.
     for needle in [
         "fuel: 50",
-        "timeout: 1000",
+        "timeout: #_",
         "max_branches: 64",
         "max_unification_depth: 256",
         "max_lifting_depth: 32",
@@ -165,7 +166,8 @@ fn pin_seven_knobs_writable() {
 fn pin_override_readthrough() {
     // Per-knob reads see the override AND genesis through the overlay.
     assert_obs("~%Config.fuel: 50\nout: ~%Config.fuel", "50");
-    assert_obs("~%Config.fuel: 50\nout: ~%Config.timeout", "1000");
+    // O41: genesis timeout is `#_`.
+    assert_obs("~%Config.fuel: 50\nout: ~%Config.timeout", "#_");
     assert_obs("~%Config.fuel: 50\nout: (~%Config).max_branches", "64");
 }
 

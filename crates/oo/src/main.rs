@@ -62,6 +62,7 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::PeerRefused => "#peer_refused",
         BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
         BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
+        BottomCause::StackOverflow => "#stack_overflow",
     }
 }
 
@@ -893,7 +894,12 @@ fn run_commit(
     let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     let mut universe = load_universe(&engine, &std::env::current_dir()?)?;
-    if !universe.is_dirty {
+    // W4‴ (a): "dirty" for commit means content beyond `~%Config`. A stage
+    // holding only horizon knobs is session state (O37) — reuse the existing
+    // `Nothing to commit` path; knobs stay staged.
+    if !universe.is_dirty
+        || !nlang_interpreter::universe::staged_has_committable_content(&universe.staged)
+    {
         anyhow::bail!("Nothing to commit");
     }
     // ACCEPTANCE REPAIR (privilege escalation, 2026-07-26): the commit is where
@@ -944,8 +950,7 @@ fn run_commit(
         abandoned: None,
         privileged_effect: None, // set by Universe::commit from effect_pending
     };
-    let (hash, config_not_committed) =
-        universe.commit(&engine, &std::env::current_dir()?, meta)?;
+    let (hash, config_not_committed) = universe.commit(&engine, &std::env::current_dir()?, meta)?;
     println!("Commit successful: {}", hash);
     // O37: horizon knobs are session state — never silent when dropped from history.
     if config_not_committed {

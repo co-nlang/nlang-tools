@@ -1197,6 +1197,7 @@ impl BottomDetail {
             BottomCause::PeerRefused => "#peer_refused",
             BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
             BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
+            BottomCause::StackOverflow => "#stack_overflow",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1413,6 +1414,10 @@ pub enum BottomCause {
     /// Unification / observation depth budget exhausted (ERROR_CODES §2.7.2).
     /// Append-only tail. Distinct from `#fuel_exhausted` — different knob.
     MaxDepthExceeded,
+    /// Implementation recursion ceiling (W4‴). Append-only tail.
+    /// Incapacity — the native stack cannot go further — not the operator's
+    /// policy (`#max_depth_exceeded`). Never minted as `#blur`.
+    StackOverflow,
 }
 
 impl BottomCause {
@@ -1444,6 +1449,7 @@ impl BottomCause {
             BottomCause::PeerRefused => "peer_refused",
             BottomCause::RoutingBudgetExceeded => "routing_budget_exceeded",
             BottomCause::MaxDepthExceeded => "max_depth_exceeded",
+            BottomCause::StackOverflow => "stack_overflow",
         }
     }
 
@@ -1475,7 +1481,8 @@ impl BottomCause {
             | BottomCause::PeerRefused
             | BottomCause::OutOfHorizon
             | BottomCause::RoutingBudgetExceeded
-            | BottomCause::MaxDepthExceeded => 3,
+            | BottomCause::MaxDepthExceeded
+            | BottomCause::StackOverflow => 3,
             BottomCause::MissingKey | BottomCause::InvalidPath => 4,
         }
     }

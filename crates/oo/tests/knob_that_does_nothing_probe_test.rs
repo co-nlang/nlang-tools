@@ -327,7 +327,14 @@ fn r5_the_engine_says_config_was_not_committed() {
 /// P1 — this arc does not move identity.
 #[test]
 fn p1_plain_commit_root_is_unchanged() {
-    const KNOWN: &str = "aa1b70f7c262cd9f0d80ada7d4f6c7bf2dc62b83ef8d3ca0fb642a6ff88f7ed1";
+    // ACCEPTOR (W4‴): this pin MOVED, and the delivery moved it — a violation
+    // (probe edit rights are the acceptor's). The VALUE is correct; the fault
+    // is the work order, which declared the arc non-breaking. Mechanism:
+    // O41 rewrites the genesis `~%Config` (timeout 1000 → `#_`); `~%Config`
+    // lives on the SYSTEM axis; `serialize_combo` folds `cv.system` into the
+    // CAID (W8′ M2). So changing one genesis default moves EVERY root.
+    // Breaking entry #10.
+    const KNOWN: &str = "8698d297572062a96d670f33cfcd05c5a008ed3bb060a332da5a2e58b5e5cee4";
     let d = fresh("p1");
     fs::write(d.join("u.n"), "x: 1\n").unwrap();
     oo(&d, &["evolve", "u.n"]);

@@ -49,11 +49,23 @@ use sha2::Digest;
 pub enum ResourceExhausted {
     FuelExhausted,
     Timeout,
+    /// Implementation recursion ceiling — incapacity, not policy
+    /// (`max_unification_depth`). Always becomes ⊥ `#stack_overflow`, never
+    /// `#blur` (W4‴ / a_limit_you_cannot_choose).
     StackOverflow,
     /// Unification / observation depth budget exhausted (ERROR_CODES §2.7.2).
     /// Distinct from FuelExhausted — different operator knob.
     DepthExceeded,
 }
+
+/// Implementation-owned recursion ceiling (W4‴).
+///
+/// Measured 2026-08-09 on the 64 MiB CLI thread (`main.rs`): policy depth
+/// 488 still exits cleanly; 499+ dumps core (`stack overflow, aborting`).
+/// Frame size ≈ 64 MiB / ~490 ≈ 134 KB/layer. This constant is a **safety
+/// margin under the measured ~488** so no operator-chosen
+/// `max_unification_depth` can outrun the native stack. Not a policy knob.
+pub const HARD_RECURSION_LIMIT: u32 = 400;
 
 #[derive(Debug, Clone)]
 pub struct EvalContext {
@@ -216,9 +228,18 @@ impl EvalContext {
                 };
             }
         }
-        if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("max_branches").cloned() {
-            if let Some(v) = n.to_u64() {
-                self.max_branches = v as usize;
+        if let Some(v) = cfg.get_field("max_branches").cloned() {
+            match v {
+                // O41: `#_` = TagEnd (order supremum).
+                Value::Atom(AtomKind::TagEnd, _, _) => {
+                    self.max_branches = usize::MAX;
+                }
+                Value::Atom(AtomKind::Int(n), _, _) => {
+                    if let Some(n) = n.to_u64() {
+                        self.max_branches = n as usize;
+                    }
+                }
+                _ => {}
             }
         }
         if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
@@ -235,22 +256,35 @@ impl EvalContext {
                 self.max_lifting_depth = v as usize;
             }
         }
-        if let Some(Value::Atom(AtomKind::Int(n), _, _)) =
-            cfg.get_field("max_pattern_nodes").cloned()
-        {
-            if let Some(v) = n.to_u64() {
-                self.max_pattern_nodes = v as usize;
+        if let Some(v) = cfg.get_field("max_pattern_nodes").cloned() {
+            match v {
+                Value::Atom(AtomKind::TagEnd, _, _) => {
+                    self.max_pattern_nodes = usize::MAX;
+                }
+                Value::Atom(AtomKind::Int(n), _, _) => {
+                    if let Some(n) = n.to_u64() {
+                        self.max_pattern_nodes = n as usize;
+                    }
+                }
+                _ => {}
             }
         }
         if apply_timeout {
-            if let Some(Value::Atom(AtomKind::Int(n), _, _)) = cfg.get_field("timeout").cloned() {
-                if let Some(timeout_ms) = n.to_u64() {
-                    let now_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    self.timeout_deadline = Some(now_ms + timeout_ms);
+            match cfg.get_field("timeout").cloned() {
+                // O41: `#_` (TagEnd) = no deadline.
+                Some(Value::Atom(AtomKind::TagEnd, _, _)) => {
+                    self.timeout_deadline = None;
                 }
+                Some(Value::Atom(AtomKind::Int(n), _, _)) => {
+                    if let Some(timeout_ms) = n.to_u64() {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        self.timeout_deadline = Some(now_ms + timeout_ms);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -263,10 +297,15 @@ impl EvalContext {
         // exhaustion, not a cycle and not fuel. Report DepthExceeded so
         // Blur %cause / Strict ⊥ share #max_depth_exceeded (L2-21/22;
         // #divergent reserved for L2-17 in_flight / coordinate self-ref;
-        // #fuel_exhausted reserved for actual fuel). StackOverflow remains
-        // for explicit callers if ever needed but is no longer minted here.
+        // #fuel_exhausted reserved for actual fuel).
         if self.depth > self.max_unification_depth as u32 {
             return Err(ResourceExhausted::DepthExceeded);
+        }
+        // W4‴: implementation ceiling — incapacity, not policy. Always below
+        // the native-stack cliff (~490 frames / 64 MiB). Operator-chosen
+        // max_unification_depth must not be able to dump core.
+        if self.depth > HARD_RECURSION_LIMIT {
+            return Err(ResourceExhausted::StackOverflow);
         }
         if let Some(deadline) = self.timeout_deadline {
             let now = std::time::SystemTime::now()
@@ -2554,9 +2593,11 @@ impl Ouroboros {
             "max_pattern_nodes".to_string(),
             Value::Atom(AtomKind::Int(1024i64.into()), EffectTag::Pure, None),
         );
+        // O41: genesis timeout is `#_` (TagEnd / order supremum — unbound).
+        // Wall-clock only when the operator stages a finite non-negative Int.
         config_fields.insert(
             "timeout".to_string(),
-            Value::Atom(AtomKind::Int(1000i64.into()), EffectTag::Pure, None),
+            Value::Atom(AtomKind::TagEnd, EffectTag::Pure, None),
         );
         config_fields.insert(
             "strategy".to_string(),

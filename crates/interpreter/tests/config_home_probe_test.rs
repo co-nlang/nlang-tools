@@ -75,7 +75,8 @@ fn red_config_strategy_bare() {
 
 #[test]
 fn red_config_timeout_bare() {
-    assert_obs("out: ~%Config.timeout", "1000");
+    // O41 (a_limit_you_cannot_choose): genesis timeout is `#_` (unbound).
+    assert_obs("out: ~%Config.timeout", "#_");
 }
 
 #[test]

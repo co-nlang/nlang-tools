@@ -55,7 +55,7 @@ pub const SEED_RESULT: &str =
 pub const SEED_REGEX: &str =
     "hash:sha256:v1:80d321e07858a76dedca5edf51b0b93913e95c93da5a6e135070c1b6647e05a3";
 pub const SEED_CONFIG: &str =
-    "hash:sha256:v1:1259d1c2f08687029e27377181ddfb126544ff61c4b4ba976a335bb3d56e9e2a";
+    "hash:sha256:v1:05be3b87c7e8e91eacc0cd057edc761315e2ebf7f8f0ccfff18e7e722b399229";
 
 pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
     vec![
