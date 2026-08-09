@@ -322,16 +322,22 @@ fn p1_bottom_caid_ignores_cause() {
 ///   * O42 redefines EVERY blur identity, fuel side included (breaking #11),
 ///     so the literal had to move. The O42 delivery moved it — which is the
 ///     acceptor's call, not a delivery's, and is on the O42 repair ledger.
-///   * The O42 repair then moves it AGAIN (the partial enters the identity by
-///     CAID rather than inlined). A literal pinned now is a guaranteed false
-///     failure, so this asserts the RELATION until O42's final acceptance,
-///     where the literal is pinned back.
+///   * I expected the O42 repair (partial enters the identity by CAID rather
+///     than inlined) to move it a SECOND time, and de-literalised the pin for
+///     the duration on that reasoning. MEASUREMENT AT FINAL ACCEPTANCE SAYS
+///     OTHERWISE: this blur has no partial, so `CAID(None)` and inlined-`None`
+///     hash the same, and the value never moved from the one the first
+///     delivery computed. The prediction held for the depth side and not here.
+///     The de-literalising was still the right call — it was not knowable
+///     without the repair in hand — but the reason is recorded so the next
+///     person does not inherit a rule of thumb that is only half true.
 ///
-/// The relation is the part W4′ actually cared about: the fuel side was
-/// already reproducible before O42 and must stay that way through it.
+/// Both halves are asserted: the literal (what it is) and the relation (that
+/// it is the same in every process, which is what W4′ actually cared about).
 #[test]
 fn p2_fuel_blur_caid_holds() {
     const SRC: &str = "~%Config.fuel: 5\nv: <<_.>>\nout: v.%caid\n";
+    const KNOWN: &str = "4120193908e8225ba3330cf77b3bb371b336dad26812588d8b51bdaa06b3eff3";
     let a = oo_run("p2a", SRC);
     let b = oo_run("p2b", SRC);
     let caid = |s: &str| -> String {
@@ -344,6 +350,10 @@ fn p2_fuel_blur_caid_holds() {
         caid(&a),
         caid(&b),
         "the CAID of a fuel-exhausted #blur differs between processes"
+    );
+    assert!(
+        a.contains(KNOWN),
+        "the CAID of a fuel-exhausted #blur moved.\n  expected …{KNOWN}\n  got: {a}"
     );
 }
 

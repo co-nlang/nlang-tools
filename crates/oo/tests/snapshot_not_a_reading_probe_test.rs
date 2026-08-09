@@ -457,3 +457,24 @@ fn r7_absorption_does_not_rewrite_the_snapshot() {
          SPEC_03 §90 requires the blur 原樣"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════════
+//  PIN — added at final acceptance (2026-08-10, acceptor)
+// ════════════════════════════════════════════════════════════════════════
+
+/// P4 — a unify-side blur has a literal address, and this is what it is.
+///
+/// This pin could not exist before this arc. A `#max_depth_exceeded` blur was
+/// minted under a clock salt, so its CAID was a different 64 hex digits on
+/// every run and there was nothing to write down. Pinning the literal is the
+/// most compact possible statement of what O42 delivered.
+///
+/// Measured three times on the accepted tree, byte-identical. If this moves,
+/// the CHS inputs moved — which is a breaking change (entry #11 was this arc)
+/// and must be a ruling, not a side effect.
+#[test]
+fn p4_a_unify_side_blur_has_a_literal_address() {
+    const KNOWN: &str = "d0967392f92cc2e77b156ae18dc98d8d1b3d31ba5ec570901ca5beb19e2561d3";
+    let got = caid("p4", &format!("{KNOB}p: {DEEP_A}\ncp: p.%caid\n"));
+    assert_eq!(got, KNOWN, "the CHS inputs of a depth-exhausted #blur moved");
+}
