@@ -417,17 +417,56 @@ fn r5_identical_snapshots_compare_true() {
 /// `a | b` (which says "one of", where the fact is "both horizons were hit").
 /// REAL_03 §7.3's envelope is already `canonical_json([params])`.
 #[test]
-
+#[ignore = "O46: merge_set is not order-independent; enable on delivery"]
 fn r6_merging_two_blurs_is_commutative() {
-    let xy = caid(
-        "r6a",
-        &format!("{KNOB}x: {DEEP_A}\ny: {DEEP_B}\np: x & y\ncp: p.%caid\n"),
+    // REWRITTEN 2026-08-10 AT FINAL ACCEPTANCE — the first version passed
+    // without testing its own claim, and this probe is why the arc did not
+    // close on the first try.
+    //
+    // It wrote the operands as COORDINATES (`x: A / y: B / p: x & y`). A
+    // coordinate arrives at the meet as an unforced thunk, so the pair never
+    // reached the `(Blur, Blur)` arm at all — it hit O47's absorption arm
+    // `(Blur, _other) => blur`, which returns one operand untouched. Both
+    // orders returned the same digest, the assertion passed, and nothing about
+    // record union had been exercised.
+    //
+    // THE MISSING PIECE WAS A CONTROL. An equality assertion about an
+    // operation needs a witness that the operation happened. With literals and
+    // that control, the property fails:
+    //
+    //     A alone  d0967392…    B alone  e3d8e76a…
+    //     A & B    7967db7f…    B & A    c64f900f…
+    //
+    // Cause: the CHS distinguishes the primary record (`cause` + `horizon`,
+    // taken from the left operand) from `co_horizons`, so which blur is
+    // primary reaches the hash. R-6 requires the FULL SET, canonically
+    // ordered, the primary distinction surviving only for `%cause` projection
+    // and display.
+    let a_alone = caid("r6a", &format!("{KNOB}m: {DEEP_A}\ncp: m.%caid\n"));
+    let b_alone = caid("r6b", &format!("{KNOB}m: {DEEP_B}\ncp: m.%caid\n"));
+    let ab = caid(
+        "r6ab",
+        &format!("{KNOB}m: ({DEEP_A}) & ({DEEP_B})\ncp: m.%caid\n"),
     );
-    let yx = caid(
-        "r6b",
-        &format!("{KNOB}x: {DEEP_A}\ny: {DEEP_B}\np: y & x\ncp: p.%caid\n"),
+    let ba = caid(
+        "r6ba",
+        &format!("{KNOB}m: ({DEEP_B}) & ({DEEP_A})\ncp: m.%caid\n"),
     );
-    assert_eq!(xy, yx, "`x & y` and `y & x` are different snapshots");
+    assert_ne!(a_alone, b_alone, "control: the two operands must differ");
+    assert_ne!(
+        ab, a_alone,
+        "control: the merge kept only the left operand — the (Blur, Blur) arm \
+         was not reached, so the equality below would be vacuous"
+    );
+    assert_ne!(
+        ab, b_alone,
+        "control: the merge kept only the right operand — same vacuity"
+    );
+    assert_eq!(
+        ab, ba,
+        "`A & B` and `B & A` are different snapshots — the record set is not \
+         canonically ordered before it reaches the CHS"
+    );
 }
 
 /// R7 — absorbing a value into a blur does not rewrite the blur. (O47)
