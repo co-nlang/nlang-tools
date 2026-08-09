@@ -76,6 +76,10 @@ fn is_known_config_knob(name: &str) -> bool {
     CONFIG_INT_KNOBS.contains(&name) || name == "strategy"
 }
 
+/// Knobs that may take `#_` (order supremum / unbound). Criterion (O41):
+/// lifting the bound must leave another bound on every path the knob governs.
+const CONFIG_UNLIMITED_OK: &[&str] = &["timeout", "max_branches", "max_pattern_nodes"];
+
 /// Validate a root `~%Config.<bare>` RHS after evaluation (SPEC_09 §6).
 /// Unknown name / wrong type / ⊥ / Top → `InvalidConfig` (evolve-loud;
 /// never stored as a node-level ⊥).
@@ -97,11 +101,35 @@ fn validate_config_knob_value(name: &str, val: &Value) -> Result<(), BottomCause
             _ => Err(BottomCause::InvalidConfig),
         };
     }
+    // O41: `#_` is AtomKind::TagEnd (order supremum, SPEC_01 §2.6), not
+    // Tag("_") and not lattice Top `_` (AtomKind::Top) — the WARNING table
+    // is exactly this distinction. Allowed only where lifting leaves another
+    // bound on every path the knob governs.
+    if matches!(v, Value::Atom(AtomKind::TagEnd, _, _)) {
+        return if CONFIG_UNLIMITED_OK.contains(&name) {
+            Ok(())
+        } else {
+            Err(BottomCause::InvalidConfig)
+        };
+    }
     // Non-negative integer knobs.
     match v {
         Value::Atom(AtomKind::Int(n), _, _) if *n >= 0i64.into() => Ok(()),
         _ => Err(BottomCause::InvalidConfig),
     }
+}
+
+/// True when staged holds anything other than horizon knobs (O37/W4‴).
+/// A stage of only `~%Config` is session state, not a commit payload.
+pub fn staged_has_committable_content(staged: &ComboVal) -> bool {
+    let mut s = staged.clone();
+    s.remove_field("~%Config");
+    !s.data.is_empty()
+        || !s.types.is_empty()
+        || !s.rules.is_empty()
+        || !s.meta.is_empty()
+        || !s.system.is_empty()
+        || !s.local.is_empty()
 }
 
 /// Genesis ∧ staged overrides — effective closed config (display + resolve).

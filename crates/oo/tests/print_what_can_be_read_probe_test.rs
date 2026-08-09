@@ -450,7 +450,8 @@ fn p3_fmt_output_is_byte_identical() {
 /// changes. If this pin moves, the delivery went into W8′-b.
 #[test]
 fn p4_root_caid_does_not_move() {
-    const KNOWN: &str = "6e8eae8b3998fe947c719990c569494db9629f2c9e8246f4fe9207814aaf9aec";
+    // Recalibrated after O41 genesis timeout → `#_` (moves every root).
+    const KNOWN: &str = "16ba56831ac26b8c4a9412840bbfc6eed7271f51f284c485c2e9c88f04db00d4";
     let d = repo_staged("p4", "app: {\n  k1: 1\n}\n");
     let out = oo(&d, &["commit", "-m", "base"]);
     assert!(out.contains("hash:"), "LIVENESS: no commit: {out}");

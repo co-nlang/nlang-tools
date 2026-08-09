@@ -178,7 +178,6 @@ fn c2_commit_paths_are_intact() {
 /// Measured on the exit status, not on a value: a `dump core` never gets to
 /// answer a question about its `%cause`.
 #[test]
-#[ignore]
 fn r1_a_large_depth_knob_must_not_crash() {
     for knob in [499u64, 4000, 100_000] {
         let o = evolve_deep(&format!("r1-{knob}"), Some(knob), 5000);
@@ -194,7 +193,6 @@ fn r1_a_large_depth_knob_must_not_crash() {
 
 /// R2 — the hard limit is not the policy limit, and never mints a blur.
 #[test]
-#[ignore]
 fn r2_the_hard_limit_has_its_own_name() {
     let d = fresh("r2");
     fs::write(
@@ -225,7 +223,6 @@ fn r2_the_hard_limit_has_its_own_name() {
 
 /// R3 — a stage holding only `~%Config` is nothing to commit.
 #[test]
-#[ignore]
 fn r3_config_only_stage_is_nothing_to_commit() {
     let d = fresh("r3");
     fs::write(d.join("u.n"), "~%Config.fuel: 7\n").unwrap();
@@ -244,7 +241,6 @@ fn r3_config_only_stage_is_nothing_to_commit() {
 
 /// R4 — `#_` is accepted where the ruling allows it.
 #[test]
-#[ignore]
 fn r4_timeout_accepts_the_order_supremum() {
     let d = fresh("r4");
     fs::write(d.join("u.n"), "~%Config.timeout: #_\nx: 1\n").unwrap();
@@ -260,7 +256,6 @@ fn r4_timeout_accepts_the_order_supremum() {
 /// The criterion, not a list: a knob may take `#_` only if every path it
 /// governs still has another bound after it is lifted.
 #[test]
-#[ignore]
 fn r5_the_criterion_is_enforced_both_ways() {
     for knob in ["max_branches", "max_pattern_nodes"] {
         let d = fresh(&format!("r5a-{knob}"));
@@ -288,10 +283,12 @@ fn r5_the_criterion_is_enforced_both_ways() {
 //  PINS
 // ════════════════════════════════════════════════════════════════════════
 
-/// P1 — identity does not move.
+/// P1 — identity does not move (beyond O41's intentional genesis Config
+/// rewrite: `timeout: 1000` → `#_`, which is inside every root).
 #[test]
 fn p1_plain_commit_root_is_unchanged() {
-    const KNOWN: &str = "aa1b70f7c262cd9f0d80ada7d4f6c7bf2dc62b83ef8d3ca0fb642a6ff88f7ed1";
+    // Recalibrated 2026-08-09 after O41 genesis timeout → TagEnd (`#_`).
+    const KNOWN: &str = "8698d297572062a96d670f33cfcd05c5a008ed3bb060a332da5a2e58b5e5cee4";
     let d = fresh("p1");
     fs::write(d.join("u.n"), "x: 1\n").unwrap();
     oo(&d, &["evolve", "u.n"]);

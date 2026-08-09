@@ -195,28 +195,19 @@ fn eval_context_reads_config_strategy() {
     );
 }
 
-// ── Phase 15: timeout → timeout_deadline tests ──
+// ── Phase 15 / O41: genesis timeout is `#_` (unbound) ──
+// Updated under a_limit_you_cannot_choose (ERROR_CODES / SPEC_09 §6 O41):
+// the previous assertion expected a finite 1000 ms default; that default is
+// now the order supremum and arms no deadline.
 
 #[test]
-fn eval_context_sets_timeout_deadline() {
+fn eval_context_genesis_timeout_is_unbound() {
     let oo = Ouroboros::new_in_memory();
     let ctx = oo.eval_context();
     assert!(
-        ctx.timeout_deadline.is_some(),
-        "eval_context() should set timeout_deadline from ~%Config timeout"
-    );
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    let deadline = ctx.timeout_deadline.unwrap();
-    assert!(
-        deadline > now_ms,
-        "timeout_deadline should be in the future"
-    );
-    assert!(
-        deadline < now_ms + 2000,
-        "timeout_deadline should be within 2 seconds"
+        ctx.timeout_deadline.is_none(),
+        "genesis ~%Config.timeout: #_ must leave timeout_deadline unarmed, got {:?}",
+        ctx.timeout_deadline
     );
 }
 
