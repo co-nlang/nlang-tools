@@ -944,8 +944,15 @@ fn run_commit(
         abandoned: None,
         privileged_effect: None, // set by Universe::commit from effect_pending
     };
-    let hash = universe.commit(&engine, &std::env::current_dir()?, meta)?;
+    let (hash, config_not_committed) =
+        universe.commit(&engine, &std::env::current_dir()?, meta)?;
     println!("Commit successful: {}", hash);
+    // O37: horizon knobs are session state — never silent when dropped from history.
+    if config_not_committed {
+        println!(
+            "note: ~%Config was not committed (horizon parameters stay staged as session state)"
+        );
+    }
     Ok(())
 }
 
