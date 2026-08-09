@@ -50,6 +50,9 @@ pub enum ResourceExhausted {
     FuelExhausted,
     Timeout,
     StackOverflow,
+    /// Unification / observation depth budget exhausted (ERROR_CODES §2.7.2).
+    /// Distinct from FuelExhausted — different operator knob.
+    DepthExceeded,
 }
 
 #[derive(Debug, Clone)]
@@ -186,13 +189,14 @@ impl EvalContext {
         if self.fuel < cost {
             return Err(ResourceExhausted::FuelExhausted);
         }
-        // G3 R3: depth/stack gate is observation-budget exhaustion, not a
-        // detected cycle. Report FuelExhausted so Blur %cause / Strict ⊥
-        // share the #fuel_exhausted tag (L2-21/22; #divergent reserved for
-        // L2-17 in_flight / coordinate self-ref). ResourceExhausted::StackOverflow
-        // remains for explicit callers if ever needed.
+        // G3 R3 / ERROR_CODES §2.7.2: depth gate is observation-budget
+        // exhaustion, not a cycle and not fuel. Report DepthExceeded so
+        // Blur %cause / Strict ⊥ share #max_depth_exceeded (L2-21/22;
+        // #divergent reserved for L2-17 in_flight / coordinate self-ref;
+        // #fuel_exhausted reserved for actual fuel). StackOverflow remains
+        // for explicit callers if ever needed but is no longer minted here.
         if self.depth > self.max_unification_depth as u32 {
-            return Err(ResourceExhausted::FuelExhausted);
+            return Err(ResourceExhausted::DepthExceeded);
         }
         if let Some(deadline) = self.timeout_deadline {
             let now = std::time::SystemTime::now()

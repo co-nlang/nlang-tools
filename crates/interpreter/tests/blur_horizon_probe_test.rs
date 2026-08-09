@@ -68,17 +68,20 @@ fn assert_obs(src: &str, expect: &str) {
     assert_eq!(got, expect, "{src:?} :: out");
 }
 
-/// Horizon verdict: a #blur snapshot with fuel-exhaustion cause. The CAID
-/// is salted per engine instance — only the form and cause are normative.
-fn assert_blur_fuel(src: &str) {
+/// Horizon verdict: a #blur snapshot with depth-exhaustion cause.
+/// Unbounded recursion and flat_chain(4000) both hit max_unification_depth
+/// before fuel under default budgets (ERROR_CODES §2.7.2 /
+/// the_name_points_at_the_remedy). The CAID is salted per engine instance —
+/// only the form and cause are normative.
+fn assert_blur_horizon(src: &str) {
     let got = observe_nlang(src, "out");
     assert!(
         got.starts_with("#blur"),
         "{src:?} :: out — expected #blur horizon, got {got:?}"
     );
     assert!(
-        got.contains("#fuel_exhausted") || got.contains("fuel_exhausted"),
-        "{src:?} :: out — expected fuel_exhausted cause, got {got:?}"
+        got.contains("max_depth_exceeded"),
+        "{src:?} :: out — expected max_depth_exceeded cause, got {got:?}"
     );
 }
 
@@ -93,18 +96,18 @@ fn flat_chain(n: usize) -> String {
 #[test]
 fn red_flat_math_exhaustion_is_blur() {
     // Generic case, no recursion anywhere. Today: ⊥ #conflict.
-    assert_blur_fuel(&format!("out: {}", flat_chain(4000)));
+    assert_blur_horizon(&format!("out: {}", flat_chain(4000)));
 }
 
 #[test]
 fn red_runaway_slash_morphism_is_blur() {
-    assert_blur_fuel("/recursive: x -> /recursive (x + 1)\nout: /recursive 1");
+    assert_blur_horizon("/recursive: x -> /recursive (x + 1)\nout: /recursive 1");
 }
 
 #[test]
 fn red_runaway_bare_morphism_is_blur() {
     // `/` is not a variable (G2 lesson): bare-name control.
-    assert_blur_fuel("rec: (x -> rec (x + 1))\nout: rec 1");
+    assert_blur_horizon("rec: (x -> rec (x + 1))\nout: rec 1");
 }
 
 #[test]
@@ -112,25 +115,25 @@ fn red_same_arg_runaway_is_blur_not_divergent() {
     // R3: same-argument self-call is theoretically detectable but the
     // detector is a SEPARATE future case — until then the honest cause
     // is fuel exhaustion, not a claimed divergence.
-    assert_blur_fuel("same: (x -> same x)\nout: same 1");
+    assert_blur_horizon("same: (x -> same x)\nout: same 1");
 }
 
 #[test]
 fn red_eqeq_blur_operand_absorbs() {
     // Today: silent #false (blur falls through to structural compare) —
     // same lie class as G1's combo ==.
-    assert_blur_fuel(&format!("big: {}\nout: big == 1", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: big == 1", flat_chain(4000)));
 }
 
 #[test]
 fn red_neq_blur_operand_absorbs() {
-    assert_blur_fuel(&format!("big: {}\nout: big != 1", flat_chain(4000)));
+    assert_blur_horizon(&format!("big: {}\nout: big != 1", flat_chain(4000)));
 }
 
 #[test]
 fn red_pipe_blur_arg_carries_body_absorbs() {
     // R2: the argument carries the blur; the body's math absorbs it.
-    assert_blur_fuel(&format!(
+    assert_blur_horizon(&format!(
         "inc: (n -> n + 1)\nbig: {}\nout: big |> inc",
         flat_chain(4000)
     ));
@@ -141,21 +144,21 @@ fn red_pipe_blur_arg_carries_body_absorbs() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn red_runaway_type_meta_fuel_exhausted() {
+fn red_runaway_type_meta_max_depth_exceeded() {
     // L2-21. cocoon_shape: blur meta whitelist is %cause/%caid only —
     // read the BlurCause tag via %cause (former %type alias retired).
     assert_obs(
         "/recursive: x -> /recursive (x + 1)\nout: (/recursive 1).%cause",
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 
 #[test]
-fn red_flat_cause_meta_fuel_exhausted() {
+fn red_flat_cause_meta_max_depth_exceeded() {
     // L2-22.
     assert_obs(
         &format!("big: {}\nout: big.%cause", flat_chain(4000)),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 

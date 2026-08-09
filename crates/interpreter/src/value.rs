@@ -1195,6 +1195,8 @@ impl BottomDetail {
             BottomCause::PeerNotImplemented => "#peer_not_implemented",
             BottomCause::PeerUnknownStatus => "#peer_unknown_status",
             BottomCause::PeerRefused => "#peer_refused",
+            BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
+            BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1402,6 +1404,15 @@ pub enum BottomCause {
     /// Peer answered `#conflict` without a substantiated integrity reason
     /// (older peer, or non-integrity conflict). Not an integrity incident.
     PeerRefused,
+    /// disc.find hop budget exhausted (ERROR_CODES §2.7.1). Append-only tail.
+    /// Replaces minting `#semantic_eclipse` for a spent routing budget —
+    /// that tag named an attack; the remedy for a far peer is budget/topology,
+    /// not eclipse defence. `#semantic_eclipse` remains readable for stored
+    /// universes (same retention as `#invalid_path`).
+    RoutingBudgetExceeded,
+    /// Unification / observation depth budget exhausted (ERROR_CODES §2.7.2).
+    /// Append-only tail. Distinct from `#fuel_exhausted` — different knob.
+    MaxDepthExceeded,
 }
 
 impl BottomCause {
@@ -1431,6 +1442,8 @@ impl BottomCause {
             BottomCause::PeerNotImplemented => "peer_not_implemented",
             BottomCause::PeerUnknownStatus => "peer_unknown_status",
             BottomCause::PeerRefused => "peer_refused",
+            BottomCause::RoutingBudgetExceeded => "routing_budget_exceeded",
+            BottomCause::MaxDepthExceeded => "max_depth_exceeded",
         }
     }
 
@@ -1460,7 +1473,9 @@ impl BottomCause {
             | BottomCause::PeerNotImplemented
             | BottomCause::PeerUnknownStatus
             | BottomCause::PeerRefused
-            | BottomCause::OutOfHorizon => 3,
+            | BottomCause::OutOfHorizon
+            | BottomCause::RoutingBudgetExceeded
+            | BottomCause::MaxDepthExceeded => 3,
             BottomCause::MissingKey | BottomCause::InvalidPath => 4,
         }
     }
@@ -1517,6 +1532,11 @@ pub enum BlurCause {
     Timeout,
     StackOverflow,
     MathSingularity(String),
+    /// Depth budget exhausted (ERROR_CODES §2.7.2). Append-only tail.
+    /// Enters blur CAID via `as_bytes` (bn_serial path). StackOverflow is
+    /// retained for CAID table / stored decode but is no longer minted by
+    /// `handle_resource_exhausted`.
+    MaxDepthExceeded,
 }
 
 impl BlurCause {
@@ -1526,6 +1546,7 @@ impl BlurCause {
             BlurCause::Timeout => b"timeout",
             BlurCause::StackOverflow => b"stack_overflow",
             BlurCause::MathSingularity(s) => s.as_bytes(),
+            BlurCause::MaxDepthExceeded => b"max_depth_exceeded",
         }
     }
     pub fn as_str(&self) -> &str {
@@ -1534,6 +1555,7 @@ impl BlurCause {
             BlurCause::Timeout => "timeout",
             BlurCause::StackOverflow => "stack_overflow",
             BlurCause::MathSingularity(s) => s.as_str(),
+            BlurCause::MaxDepthExceeded => "max_depth_exceeded",
         }
     }
 }

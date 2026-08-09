@@ -111,7 +111,7 @@ fn pin_fuel_wiring_alive_flat_exhaustion_blurs() {
     let chain = vec!["1"; 4000].join(" + ");
     let got = observe_nlang(&format!("out: {chain}"), "out");
     assert!(
-        got.starts_with("#blur") && got.contains("fuel_exhausted"),
+        got.starts_with("#blur") && got.contains("max_depth_exceeded"),
         "fuel wiring broken: {got:?}"
     );
 }

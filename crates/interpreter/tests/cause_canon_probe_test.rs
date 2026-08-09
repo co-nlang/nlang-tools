@@ -191,6 +191,6 @@ fn pin_single_source_blur_absorb_still() {
             "big: {}\nout: ({{ b: 1, ...big }}).%cause",
             flat_chain(4000)
         ),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }

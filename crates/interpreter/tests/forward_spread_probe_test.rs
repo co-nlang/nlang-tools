@@ -107,7 +107,7 @@ fn red_fwd_spread_blur_absorbs() {
         "out",
     );
     assert!(
-        got.starts_with("#blur") && got.contains("fuel_exhausted"),
+        got.starts_with("#blur") && got.contains("max_depth_exceeded"),
         "forward blur source must absorb the target: {got:?}"
     );
 }

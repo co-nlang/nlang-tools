@@ -247,7 +247,7 @@ fn pin_union_bottom_build_dropped() {
 fn pin_blur_nav_absorb_unchanged() {
     let got = observe_nlang(&format!("big: {}\nout: big.name", flat_chain(4000)), "out");
     assert!(
-        got.starts_with("#blur") && got.contains("fuel_exhausted"),
+        got.starts_with("#blur") && got.contains("max_depth_exceeded"),
         "blur nav absorption must survive this arc: {got:?}"
     );
 }
@@ -256,7 +256,7 @@ fn pin_blur_nav_absorb_unchanged() {
 fn pin_blur_cause_tag_unchanged() {
     assert_obs(
         &format!("big: {}\nout: big.%cause", flat_chain(4000)),
-        "#fuel_exhausted",
+        "#max_depth_exceeded",
     );
 }
 

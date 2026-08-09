@@ -1,3 +1,11 @@
+// Updated under the_name_points_at_the_remedy handover §7 (ERROR_CODES §2.7.1).
+// Hop-budget exhaustion used to mint `#semantic_eclipse`; the registry
+// renamed that situation to `#routing_budget_exceeded` so the tag points at
+// the remedy (budget/topology), not at an attack. Expectations and the
+// budget-exhaustion test name below follow that rename. `#semantic_eclipse`
+// remains a readable BottomCause variant for stored universes — only minting
+// stopped. No tests deleted; no assertions weakened.
+
 use indexmap::IndexMap;
 use nlang_interpreter::value::{BottomCause, ComboVal, EffectTag, Value};
 use nlang_interpreter::{EvalContext, Ouroboros};
@@ -73,10 +81,10 @@ fn test_find_adds_to_visited() {
     );
 }
 
-// ─── 3. Budget exceeded → SemanticEclipse ─────────────────────────────────────
+// ─── 3. Budget exceeded → RoutingBudgetExceeded (ERROR_CODES §2.7.1) ──────────
 
 #[test]
-fn test_find_hop_budget_exceeded_returns_semantic_eclipse() {
+fn test_find_hop_budget_exceeded_returns_routing_budget_exceeded() {
     let oo = oo();
     let mut ctx = oo.eval_context();
     let node = combo(&[("x", 42)]);
@@ -86,16 +94,21 @@ fn test_find_hop_budget_exceeded_returns_semantic_eclipse() {
 
     let result = call_find(&oo, &mut ctx, node);
     assert!(
-        matches!(&result, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::SemanticEclipse)),
-        "exceeded hop budget should return SemanticEclipse, got {:?}",
+        matches!(&result, Value::Bottom(ref bd) if matches!(bd.cause, BottomCause::RoutingBudgetExceeded)),
+        "exceeded hop budget should return RoutingBudgetExceeded, got {:?}",
         result
     );
 }
 
-// ─── 4. SemanticEclipse has correct %type path ────────────────────────────────
+// ─── 4. Cause tags (readable retained + new mint name) ────────────────────────
 
 #[test]
-fn test_semantic_eclipse_as_tag() {
+fn test_routing_budget_exceeded_as_tag() {
+    assert_eq!(
+        BottomCause::RoutingBudgetExceeded.as_tag(),
+        "routing_budget_exceeded"
+    );
+    // Retained for stored-universe read (ERROR_CODES §2.7.1); not minted.
     assert_eq!(BottomCause::SemanticEclipse.as_tag(), "semantic_eclipse");
 }
 

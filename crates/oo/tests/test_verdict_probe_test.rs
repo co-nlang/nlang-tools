@@ -74,10 +74,11 @@ fn red_top_alias_test_fails() {
 #[test]
 fn red_blur_test_fails() {
     // Runaway recursion blurs at the horizon — undetermined, not proof.
+    // Default budgets hit max_unification_depth before fuel (ERROR_CODES §2.7.2).
     let (ok, text) = run_test_cmd("/rec: x -> /rec (x + 1)\ntest_runaway: /rec 1\n");
     assert!(!ok, "blur test must fail the run: {text}");
     assert!(
-        text.contains("FAIL") && text.contains("fuel_exhausted"),
+        text.contains("FAIL") && text.contains("max_depth_exceeded"),
         "blur verdict reports the horizon cause: {text}"
     );
 }
@@ -120,10 +121,11 @@ fn pin_bottom_fails_with_cause() {
 }
 
 #[test]
-fn pin_migrated_fuel_test_genuinely_true() {
+fn pin_migrated_depth_test_genuinely_true() {
     // The open-migration twin: the .%cause respelling decides a fact.
+    // Runaway under default budgets is #max_depth_exceeded (ERROR_CODES §2.7.2).
     let (ok, text) = run_test_cmd(
-        "/rec: x -> /rec (x + 1)\n~e: (/rec 1).%cause\ntest_fuel: ~e == #fuel_exhausted\n",
+        "/rec: x -> /rec (x + 1)\n~e: (/rec 1).%cause\ntest_depth: ~e == #max_depth_exceeded\n",
     );
     assert!(ok, "migrated spelling passes genuinely: {text}");
     assert!(text.contains("PASS"), "{text}");

@@ -60,6 +60,8 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::PeerNotImplemented => "#peer_not_implemented",
         BottomCause::PeerUnknownStatus => "#peer_unknown_status",
         BottomCause::PeerRefused => "#peer_refused",
+        BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
+        BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
     }
 }
 

@@ -55,9 +55,16 @@ fn contains_horizon(v: &Value) -> bool {
     match v {
         Value::Blur(bd) => matches!(
             bd.cause,
-            BlurCause::FuelExhausted | BlurCause::StackOverflow
+            BlurCause::FuelExhausted
+                | BlurCause::StackOverflow
+                | BlurCause::MaxDepthExceeded
         ),
-        Value::Bottom(d) => matches!(d.cause, BottomCause::FuelExhausted | BottomCause::Divergent),
+        Value::Bottom(d) => matches!(
+            d.cause,
+            BottomCause::FuelExhausted
+                | BottomCause::Divergent
+                | BottomCause::MaxDepthExceeded
+        ),
         // walk by reference: all_fields_iter() yields OWNED clones, which on a
         // horizon-deep nested chain is O(depth x total_size) memory — the
         // helper OOMs on a value the engine produced just fine.
