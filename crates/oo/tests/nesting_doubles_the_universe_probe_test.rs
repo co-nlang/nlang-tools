@@ -246,7 +246,6 @@ fn c2_a_shallow_nest_still_has_its_value() {
 /// Baseline: does not finish (measured to 20 s; extrapolated peak RSS ~2 GB).
 /// The value assertion rides along so completion alone cannot satisfy it.
 #[test]
-#[ignore = "D1: seal_defining_scope deep-clones frames; enable on delivery"]
 fn r1_sixteen_levels_of_nesting_finish() {
     let d = fresh("r1");
     fs::write(d.join("u.n"), chain_src(16)).unwrap();
@@ -272,7 +271,6 @@ fn r1_sixteen_levels_of_nesting_finish() {
 /// about n^2, and 40^2 is nothing. A probe demanding linearity would be
 /// demanding more than the ruling grants.
 #[test]
-#[ignore = "D1: peak RSS doubles per nesting level; enable on delivery"]
 fn r2_forty_levels_of_nesting_finish() {
     let d = fresh("r2");
     fs::write(d.join("u.n"), chain_src(40)).unwrap();
@@ -292,7 +290,6 @@ fn r2_forty_levels_of_nesting_finish() {
 /// this separate from R1 means a fix that only helped the single-child spine
 /// cannot pass the arc.
 #[test]
-#[ignore = "D1: branching multiplies the same clone; enable on delivery"]
 fn r3_a_branching_nest_finishes() {
     let d = fresh("r3");
     fs::write(d.join("u.n"), branch_src(8)).unwrap();

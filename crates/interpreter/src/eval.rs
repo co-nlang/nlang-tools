@@ -54,6 +54,7 @@ fn value_context_operand(v: &Value) -> Result<Value, ()> {
 /// field thunks, fall back to same-axes-keys + equal `local` (privacy surface).
 fn spread_target_is_insider(target: &ComboVal, ctx: &EvalContext) -> bool {
     ctx.scopes.iter().any(|frame| {
+        let frame = frame.as_ref();
         if frame == target {
             return true;
         }
@@ -1364,7 +1365,7 @@ impl Ouroboros {
                 let mut closure_fields = IndexMap::new();
                 let current_scopes = ctx.scopes.clone();
                 for (i, s) in current_scopes.iter().enumerate() {
-                    closure_fields.insert(i.to_string(), Value::Combo(s.clone()));
+                    closure_fields.insert(i.to_string(), Value::Combo((**s).clone()));
                 }
                 rule_fields.insert(
                     "%closure".to_string(),

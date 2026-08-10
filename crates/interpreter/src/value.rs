@@ -234,7 +234,12 @@ pub enum Value {
     Code(Box<Expr>),
     Thunk {
         expr: Box<Expr>,
-        closure: Vec<ComboVal>,
+        /// Scope frames shared by refcount (D1: every level of nesting doubles
+        /// the universe). Was `Vec<ComboVal>` by value — seal_defining_scope
+        /// deep-cloned the whole frame into every field thunk → 2^depth.
+        /// Arc keeps seal's effect; cost falls to ~n² (frame structure still
+        /// cloned once per level; Arc-ing Value::Combo is out of scope).
+        closure: Vec<std::sync::Arc<ComboVal>>,
         #[serde(default)]
         context: Option<Box<Value>>,
         effect: EffectTag,
@@ -552,11 +557,13 @@ pub fn project_value_context(v: Value) -> Value {
 /// frame (any hop). Twin-literal / `%id` tripwires stay green when public
 /// spelling matches (equal pre-inject frames).
 pub fn seal_defining_scope(c: &mut ComboVal) {
-    let frame = c.clone();
-    fn inject(v: &mut Value, frame: &ComboVal) {
+    // One deep clone of this level's structure, then Arc-shared into every
+    // field thunk (D1). Pre-D1 each push cloned the whole frame again.
+    let frame = std::sync::Arc::new(c.clone());
+    fn inject(v: &mut Value, frame: &std::sync::Arc<ComboVal>) {
         match v {
             Value::Thunk { closure, .. } => {
-                closure.push(frame.clone());
+                closure.push(std::sync::Arc::clone(frame));
             }
             Value::Combo(inner) => {
                 for (_, fv) in inner.data.iter_mut() {
@@ -797,7 +804,7 @@ pub fn normalize_union(branches: impl IntoIterator<Item = Value>) -> Value {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ComboVal {
     pub data: IndexMap<String, Value>,
     pub types: IndexMap<String, Value>,
@@ -821,6 +828,32 @@ pub struct ComboVal {
     pub legacy_fields: IndexMap<String, Value>,
     #[serde(skip, default)]
     pub legacy_local: IndexMap<String, Value>,
+}
+
+/// Clone must **not** share `cache_id`. content_hash memoizes there; a cloned
+/// ComboVal is often mutated (Config partials, seal frames) and a shared
+/// cache makes unify's CAID early-out treat the post-mutation value as equal
+/// to the pre-mutation one — dropping fields (D1: `~%Config.strategy` lost
+/// when staged after `fuel`).
+impl Clone for ComboVal {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+            types: self.types.clone(),
+            rules: self.rules.clone(),
+            meta: self.meta.clone(),
+            system: self.system.clone(),
+            local: self.local.clone(),
+            closed: self.closed,
+            effect: self.effect,
+            relations: self.relations.clone(),
+            masa_ref: self.masa_ref.clone(),
+            pending_spreads: self.pending_spreads.clone(),
+            cache_id: default_cache_id(),
+            legacy_fields: self.legacy_fields.clone(),
+            legacy_local: self.legacy_local.clone(),
+        }
+    }
 }
 
 impl Default for ComboVal {
@@ -2792,17 +2825,16 @@ impl Value {
     }
 
     pub fn content_hash(&self) -> ContentHash {
-        let _bn_bytes = crate::bn_serial::serialize_bn(self);
+        // ComboVal has its own memoized path (cache_id).
+        if let Value::Combo(c) = self {
+            return c.content_hash();
+        }
         let digest = crate::bn_serial::content_digest(self);
         let sketch = crate::lattice_sketch::compute_sketch_v2(self);
-        let masa_ref = match self {
-            Value::Combo(c) => c.masa_ref.clone(),
-            _ => MasaRef::Top,
-        };
         ContentHash {
             algorithm: HashAlgorithm::Sha256,
             version: CaidVersion::V2,
-            masa_ref,
+            masa_ref: MasaRef::Top,
             lattice_sketch: sketch,
             digest: digest.to_vec(),
         }
@@ -2958,7 +2990,7 @@ impl Value {
                 // frame (closure scopes): hash each ComboVal in the scope stack.
                 hasher.update(b"|frame:");
                 for cv in closure.iter() {
-                    let cv_hash = Value::Combo(cv.clone()).content_hash();
+                    let cv_hash = cv.content_hash();
                     hasher.update(&cv_hash.digest);
                 }
                 // context: None = open term (#open); Some(v) = v's content hash.
@@ -3013,9 +3045,43 @@ impl Value {
 }
 
 impl ComboVal {
+    /// In-place content hash with `cache_id` memo. Do not clone first —
+    /// Clone resets the cache (see `impl Clone for ComboVal`).
     pub fn content_hash(&self) -> ContentHash {
-        let v = Value::Combo(self.clone());
-        v.content_hash()
+        if let Ok(guard) = self.cache_id.read() {
+            if let Some(ref h) = *guard {
+                return h.clone();
+            }
+        }
+        let digest = crate::bn_serial::content_digest_combo(self);
+        // Sketch walks the value tree; a temporary wrap clones fields only.
+        let sketch = crate::lattice_sketch::compute_sketch_v2(&Value::Combo(Self {
+            data: self.data.clone(),
+            types: self.types.clone(),
+            rules: self.rules.clone(),
+            meta: self.meta.clone(),
+            system: self.system.clone(),
+            local: self.local.clone(),
+            closed: self.closed,
+            effect: self.effect,
+            relations: self.relations.clone(),
+            masa_ref: self.masa_ref.clone(),
+            pending_spreads: self.pending_spreads.clone(),
+            cache_id: default_cache_id(),
+            legacy_fields: self.legacy_fields.clone(),
+            legacy_local: self.legacy_local.clone(),
+        }));
+        let h = ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            version: CaidVersion::V2,
+            masa_ref: self.masa_ref.clone(),
+            lattice_sketch: sketch,
+            digest: digest.to_vec(),
+        };
+        if let Ok(mut guard) = self.cache_id.write() {
+            *guard = Some(h.clone());
+        }
+        h
     }
 }
 

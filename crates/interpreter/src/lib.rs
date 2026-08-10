@@ -79,7 +79,8 @@ pub struct EvalContext {
     /// clones. Sound because the engine never mutates root mid-observation
     /// (tests that mutate via Arc::make_mut do so before any force).
     pub root_caid_cache: Option<ContentHash>,
-    pub scopes: Vec<ComboVal>,
+    /// Lexical scope frames, Arc-shared (D1 nesting). See Thunk.closure.
+    pub scopes: Vec<std::sync::Arc<ComboVal>>,
     pub staged: Option<ComboVal>,
     pub computing: HashSet<String>,
     pub call_history: HashMap<String, Vec<ContentHash>>,
@@ -341,6 +342,40 @@ impl EvalContext {
     }
 }
 
+/// D1: digest of Arc frame **pointers** (not deep structure). Used only for
+/// force-memo / in_flight keys so sealed frames stay O(1) to identify.
+fn frames_ptr_digest(closure: &[std::sync::Arc<ComboVal>]) -> ContentHash {
+    let mut h = sha2::Sha256::new();
+    h.update(b"frames_ptr:v1:");
+    for cv in closure {
+        h.update(&(std::sync::Arc::as_ptr(cv) as usize).to_le_bytes());
+    }
+    ContentHash::v1(h.finalize().to_vec())
+}
+
+/// Cycle / memo identity for a thunk under force. Avoids content_hash of
+/// sealed frames (which re-expands Arc sharing as a tree).
+fn thunk_cycle_id(
+    expr: &Expr,
+    closure: &[std::sync::Arc<ComboVal>],
+    context: &Option<Box<Value>>,
+    effect: EffectTag,
+) -> ContentHash {
+    let mut h = sha2::Sha256::new();
+    h.update(b"thunk_cycle:v1:");
+    h.update(expr.to_nlang(0).as_bytes());
+    h.update(&frames_ptr_digest(closure).digest);
+    match context {
+        None => h.update(b"|#open"),
+        Some(v) => {
+            h.update(b"|ctx:");
+            h.update(&v.content_hash().digest);
+        }
+    }
+    h.update(&[effect.to_serial_byte()]);
+    ContentHash::v1(h.finalize().to_vec())
+}
+
 /// Bare path coordinate for L2-17 path-shaped thunks (`s.v` → `"s.v"`).
 fn path_coord_of(expr: &Expr) -> Option<String> {
     match &expr.kind {
@@ -546,6 +581,13 @@ pub struct ForceMemoKey {
     pub expr_caid: ContentHash,
     pub frame_caid: ContentHash,
     pub context_caid: Option<ContentHash>,
+    /// Horizon strategy + fuel ceiling must partition the memo: evolve fills
+    /// entries under default Blur/10k fuel; observe may re-force the same
+    /// expr under `#strict` / low fuel. Without these, a hit returns a
+    /// `#blur` under a strategy that should have minted ⊥ (D1 regression
+    /// via denser force activity during evolve).
+    pub strategy: ObservationStrategy,
+    pub fuel_budget: u64,
 }
 
 /// Force-memo entry (Stage 5): cached value + coordinate dependencies.
@@ -2886,25 +2928,16 @@ impl Ouroboros {
                         h.update(expr.to_nlang(0).as_bytes());
                         ContentHash::v1(h.finalize().to_vec())
                     };
-                    let frame_caid = {
-                        let cv = Value::Combo(ComboVal::new(
-                            closure
-                                .iter()
-                                .enumerate()
-                                .flat_map(|(i, cv)| vec![(i.to_string(), Value::Combo(cv.clone()))])
-                                .collect(),
-                            true,
-                            IndexMap::new(),
-                            EffectTag::Pure,
-                            vec![],
-                        ));
-                        cv.content_hash()
-                    };
+                    // Frame identity for memo: Arc pointer sequence (see
+                    // thunk_cycle_id). Must not deep-hash sealed frames.
+                    let frame_caid = frames_ptr_digest(&closure);
                     let context_caid = effective_context.as_ref().map(|v| v.content_hash());
                     Some(ForceMemoKey {
                         expr_caid,
                         frame_caid,
                         context_caid,
+                        strategy: ctx.strategy,
+                        fuel_budget: ctx.fuel_budget,
                     })
                 } else {
                     None
@@ -2952,8 +2985,11 @@ impl Ouroboros {
                 }
 
                 // L2-17 / forward-ref: same-thunk re-entry → ⊥ #divergent
-                // (before stack/fuel). Identity = content_hash of the thunk
-                // (expr+frame+context).
+                // (before stack/fuel). Cycle key is NOT full content_hash:
+                // hashing sealed frames by inlining them re-expands Arc
+                // sharing as a tree (2^depth) — the cost D1 eliminates.
+                // Pointer identity of Arc frames is stable for a given seal
+                // (one Arc::new, then Arc::clone into thunks).
                 //
                 // Path-shaped thunks (`out: mid`): do NOT mark the *target*
                 // path (`mid`) into `computing` — that collides with
@@ -2961,14 +2997,8 @@ impl Ouroboros {
                 // #divergent on bare reference chains). Cycle detection for
                 // path self-loops keys on the *holder* coordinate already
                 // placed in `computing` by force_coord (see below), or on
-                // in_flight content-hash when solidifying a re-fetched Thunk.
-                let thunk_id = Value::Thunk {
-                    expr: expr.clone(),
-                    closure: closure.clone(),
-                    context: context.clone(),
-                    effect,
-                }
-                .content_hash();
+                // in_flight when solidifying a re-fetched Thunk.
+                let thunk_id = thunk_cycle_id(&expr, &closure, &context, effect);
                 if ctx.in_flight.contains(&thunk_id) {
                     // SPEC_12 §1.1: pure-ref cycle → caused Top; transform → ⊥.
                     // The re-entered thunk's own expr coordinate is a loop
@@ -3557,7 +3587,7 @@ impl Ouroboros {
                 if hops < len {
                     // Still inside sealed frames: scopes[len-1] is current,
                     // scopes[len-1-hops] is the designated ancestor.
-                    Value::Combo(ctx.scopes[len - 1 - hops].clone())
+                    Value::Combo((*ctx.scopes[len - 1 - hops]).clone())
                 } else if hops == len {
                     // Exactly through all frames → root universe.
                     Value::Combo((*ctx.root).clone())
@@ -3568,7 +3598,7 @@ impl Ouroboros {
             }
             PathAnchor::Current => {
                 if let Some(top) = ctx.scopes.last() {
-                    Value::Combo(top.clone())
+                    Value::Combo((**top).clone())
                 } else {
                     Value::Combo((*ctx.root).clone())
                 }
