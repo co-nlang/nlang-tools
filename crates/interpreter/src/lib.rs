@@ -79,7 +79,8 @@ pub struct EvalContext {
     /// clones. Sound because the engine never mutates root mid-observation
     /// (tests that mutate via Arc::make_mut do so before any force).
     pub root_caid_cache: Option<ContentHash>,
-    pub scopes: Vec<ComboVal>,
+    /// Lexical scope frames, Arc-shared (D1 nesting). See Thunk.closure.
+    pub scopes: Vec<std::sync::Arc<ComboVal>>,
     pub staged: Option<ComboVal>,
     pub computing: HashSet<String>,
     pub call_history: HashMap<String, Vec<ContentHash>>,
@@ -341,6 +342,66 @@ impl EvalContext {
     }
 }
 
+/// Whether a combo needs no further force_recursive field walk: no thunks,
+/// no refs, no pending spreads, and every nested combo is likewise solid.
+/// Used to avoid re-solidifying cocoons that eval already forced after seal
+/// (that re-walk burned ~3 depth units per nest level and cliffed at ~87).
+fn value_is_fully_solid_combo(c: &ComboVal) -> bool {
+    if !c.pending_spreads.is_empty() {
+        return false;
+    }
+    fn solid(v: &Value) -> bool {
+        match v {
+            Value::Thunk { .. } | Value::Ref(_) => false,
+            Value::Combo(inner) => value_is_fully_solid_combo(inner),
+            Value::Union(bs) => bs.iter().all(solid),
+            Value::Range { start, end, step } => {
+                solid(start) && solid(end) && step.as_ref().map(|s| solid(s)).unwrap_or(true)
+            }
+            _ => true,
+        }
+    }
+    c.all_fields_iter().all(|(_, v)| solid(&v)) && c.local.values().all(solid)
+}
+
+/// D1/M1: digest of sealed frame **content** for force-memo / in_flight keys.
+///
+/// Each `Arc<ComboVal>` contributes its memoized `cycle_frame_digest` (Merkle
+/// over nested Arc frames). Equal content ⇒ equal key across allocations
+/// (SPEC_01 §2.4.1: not a memory address). Cost is once per unique Arc.
+fn frames_content_digest(closure: &[std::sync::Arc<ComboVal>]) -> ContentHash {
+    let mut h = sha2::Sha256::new();
+    h.update(b"frames_content:v1:");
+    for cv in closure {
+        h.update(&cv.cycle_frame_digest().digest);
+    }
+    ContentHash::v1(h.finalize().to_vec())
+}
+
+/// Cycle / memo identity for a thunk under force. Frame component is content
+/// (M1), not `Arc::as_ptr` — pointer keys missed re-entry of equal frames in
+/// separate allocations (SPEC_01 §2.4.1).
+fn thunk_cycle_id(
+    expr: &Expr,
+    closure: &[std::sync::Arc<ComboVal>],
+    context: &Option<Box<Value>>,
+    effect: EffectTag,
+) -> ContentHash {
+    let mut h = sha2::Sha256::new();
+    h.update(b"thunk_cycle:v1:");
+    h.update(expr.to_nlang(0).as_bytes());
+    h.update(&frames_content_digest(closure).digest);
+    match context {
+        None => h.update(b"|#open"),
+        Some(v) => {
+            h.update(b"|ctx:");
+            h.update(&v.content_hash().digest);
+        }
+    }
+    h.update(&[effect.to_serial_byte()]);
+    ContentHash::v1(h.finalize().to_vec())
+}
+
 /// Bare path coordinate for L2-17 path-shaped thunks (`s.v` → `"s.v"`).
 fn path_coord_of(expr: &Expr) -> Option<String> {
     match &expr.kind {
@@ -546,6 +607,13 @@ pub struct ForceMemoKey {
     pub expr_caid: ContentHash,
     pub frame_caid: ContentHash,
     pub context_caid: Option<ContentHash>,
+    /// Horizon strategy + fuel ceiling must partition the memo: evolve fills
+    /// entries under default Blur/10k fuel; observe may re-force the same
+    /// expr under `#strict` / low fuel. Without these, a hit returns a
+    /// `#blur` under a strategy that should have minted ⊥ (D1 regression
+    /// via denser force activity during evolve).
+    pub strategy: ObservationStrategy,
+    pub fuel_budget: u64,
 }
 
 /// Force-memo entry (Stage 5): cached value + coordinate dependencies.
@@ -2886,25 +2954,16 @@ impl Ouroboros {
                         h.update(expr.to_nlang(0).as_bytes());
                         ContentHash::v1(h.finalize().to_vec())
                     };
-                    let frame_caid = {
-                        let cv = Value::Combo(ComboVal::new(
-                            closure
-                                .iter()
-                                .enumerate()
-                                .flat_map(|(i, cv)| vec![(i.to_string(), Value::Combo(cv.clone()))])
-                                .collect(),
-                            true,
-                            IndexMap::new(),
-                            EffectTag::Pure,
-                            vec![],
-                        ));
-                        cv.content_hash()
-                    };
+                    // Frame identity for memo: content digests of Arc frames
+                    // (see thunk_cycle_id / frames_content_digest).
+                    let frame_caid = frames_content_digest(&closure);
                     let context_caid = effective_context.as_ref().map(|v| v.content_hash());
                     Some(ForceMemoKey {
                         expr_caid,
                         frame_caid,
                         context_caid,
+                        strategy: ctx.strategy,
+                        fuel_budget: ctx.fuel_budget,
                     })
                 } else {
                     None
@@ -2952,8 +3011,10 @@ impl Ouroboros {
                 }
 
                 // L2-17 / forward-ref: same-thunk re-entry → ⊥ #divergent
-                // (before stack/fuel). Identity = content_hash of the thunk
-                // (expr+frame+context).
+                // (before stack/fuel). Cycle key uses content digests of
+                // sealed frames (M1), memoized per Arc — not Arc::as_ptr
+                // (SPEC_01 §2.4.1) and not full inline content_hash of the
+                // frame tree (2^depth, the cost D1 eliminates).
                 //
                 // Path-shaped thunks (`out: mid`): do NOT mark the *target*
                 // path (`mid`) into `computing` — that collides with
@@ -2961,14 +3022,8 @@ impl Ouroboros {
                 // #divergent on bare reference chains). Cycle detection for
                 // path self-loops keys on the *holder* coordinate already
                 // placed in `computing` by force_coord (see below), or on
-                // in_flight content-hash when solidifying a re-fetched Thunk.
-                let thunk_id = Value::Thunk {
-                    expr: expr.clone(),
-                    closure: closure.clone(),
-                    context: context.clone(),
-                    effect,
-                }
-                .content_hash();
+                // in_flight when solidifying a re-fetched Thunk.
+                let thunk_id = thunk_cycle_id(&expr, &closure, &context, effect);
                 if ctx.in_flight.contains(&thunk_id) {
                     // SPEC_12 §1.1: pure-ref cycle → caused Top; transform → ⊥.
                     // The re-entered thunk's own expr coordinate is a loop
@@ -3162,6 +3217,41 @@ impl Ouroboros {
     }
 
     pub fn force_recursive(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        // Already-solid combos (cocoon eval forced fields after seal): do not
+        // charge depth or re-walk. Re-entry used to cost ~3 depth units per
+        // nest level and hit max_unification_depth (256) at nest≈87, then
+        // blur-partial content_hash hung (M1 cliff).
+        if let Value::Combo(ref c) = val {
+            if c.pending_spreads.is_empty() && value_is_fully_solid_combo(c) {
+                return val;
+            }
+        }
+        // Thunk peel without stacking force_recursive depth: force alone runs
+        // eval (cocoon post-seal solidify charges depth once). Nested
+        // force_recursive(Thunk) used to add a second/third unit per level.
+        if matches!(val, Value::Thunk { .. }) {
+            let mut v = val;
+            let mut peel = 0u32;
+            while matches!(v, Value::Thunk { .. }) && peel < 64 {
+                if let Err(e) = ctx.check_resources(0) {
+                    let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                        Some(v.clone())
+                    } else {
+                        None
+                    };
+                    return handle_resource_exhausted(
+                        e,
+                        ctx.strategy,
+                        &*ctx,
+                        partial,
+                        EffectTag::Pure,
+                    );
+                }
+                v = self.force(v, ctx);
+                peel += 1;
+            }
+            return self.force_recursive(v, ctx);
+        }
         // Stage 3 (§3c): solidification must participate in depth accounting —
         // a self-referential Ref chain (v: <<_.>>) recurses through here, not
         // through eval, so without this guard the Rust stack dies before the
@@ -3192,34 +3282,37 @@ impl Ouroboros {
             None
         };
         let res = match val {
-            // Stage 2: force may return a Thunk if the underlying eval hit a
-            // navigate_segments that returned an unforced field thunk (GUIDE_03
-            // §11.4 — path-directed observe forces only path nodes, not the
-            // final field). force_recursive must keep forcing until non-Thunk.
+            // Residual thunk after force (path field leave): peel without
+            // double-counting depth (Thunk arm above).
             Value::Thunk { .. } => self.force_recursive(val, ctx),
             Value::Combo(c) => {
-                // forward_spread: expand deferred sources before solidifying fields.
-                let expanded = self.expand_combo_pending(c, ctx);
-                match expanded {
-                    Value::Combo(c) => {
-                        let mut new_c = ComboVal::default();
-                        new_c.closed = c.closed;
-                        new_c.effect = c.effect;
-                        new_c.relations = c.relations.clone();
-                        // forward_spread acceptance repair: re-queued pending
-                        // sources (evolve-phase Top) must survive the rebuild.
-                        new_c.pending_spreads = c.pending_spreads.clone();
-                        for (k, v) in c.all_fields_iter() {
-                            new_c.insert_field(&k, self.force_recursive(v, ctx));
+                // May have become solid under force (thunk → cocoon eval).
+                if c.pending_spreads.is_empty() && value_is_fully_solid_combo(&c) {
+                    Value::Combo(c)
+                } else {
+                    // forward_spread: expand deferred sources before solidifying fields.
+                    let expanded = self.expand_combo_pending(c, ctx);
+                    match expanded {
+                        Value::Combo(c) => {
+                            let mut new_c = ComboVal::default();
+                            new_c.closed = c.closed;
+                            new_c.effect = c.effect;
+                            new_c.relations = c.relations.clone();
+                            // forward_spread acceptance repair: re-queued pending
+                            // sources (evolve-phase Top) must survive the rebuild.
+                            new_c.pending_spreads = c.pending_spreads.clone();
+                            for (k, v) in c.all_fields_iter() {
+                                new_c.insert_field(&k, self.force_recursive(v, ctx));
+                            }
+                            for (k, v) in c.local.iter() {
+                                new_c
+                                    .local
+                                    .insert(k.clone(), self.force_recursive(v.clone(), ctx));
+                            }
+                            Value::Combo(new_c)
                         }
-                        for (k, v) in c.local.iter() {
-                            new_c
-                                .local
-                                .insert(k.clone(), self.force_recursive(v.clone(), ctx));
-                        }
-                        Value::Combo(new_c)
+                        other => other,
                     }
-                    other => other,
                 }
             }
             // T2 (union_cull): force each branch, then cull ⊥ (SPEC_08
@@ -3557,7 +3650,7 @@ impl Ouroboros {
                 if hops < len {
                     // Still inside sealed frames: scopes[len-1] is current,
                     // scopes[len-1-hops] is the designated ancestor.
-                    Value::Combo(ctx.scopes[len - 1 - hops].clone())
+                    Value::Combo((*ctx.scopes[len - 1 - hops]).clone())
                 } else if hops == len {
                     // Exactly through all frames → root universe.
                     Value::Combo((*ctx.root).clone())
@@ -3568,7 +3661,7 @@ impl Ouroboros {
             }
             PathAnchor::Current => {
                 if let Some(top) = ctx.scopes.last() {
-                    Value::Combo(top.clone())
+                    Value::Combo((**top).clone())
                 } else {
                     Value::Combo((*ctx.root).clone())
                 }

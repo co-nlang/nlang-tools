@@ -211,7 +211,7 @@ impl Ouroboros {
                 if let Some(Value::Combo(cc)) = rc.get_field("%closure") {
                     for (_, sv) in &cc.fields() {
                         if let Value::Combo(s) = sv {
-                            call_ctx.scopes.push(s.clone());
+                            call_ctx.scopes.push(std::sync::Arc::new(s.clone()));
                         }
                     }
                 }
@@ -262,13 +262,13 @@ impl Ouroboros {
 
                 // Param frame = body "current" level (isomorphic to nested
                 // literal inside the holder); ^ = holder, ^^ = holder's parent.
-                call_ctx.scopes.push(ComboVal::new(
+                call_ctx.scopes.push(std::sync::Arc::new(ComboVal::new(
                     arg_map,
                     false,
                     IndexMap::new(),
                     EffectTag::Pure,
                     vec![],
-                ));
+                )));
                 call_ctx.context_value = Some(arg.clone());
 
                 let out = self.eval(expr, &mut call_ctx);

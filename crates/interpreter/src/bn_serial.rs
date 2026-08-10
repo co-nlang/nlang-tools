@@ -50,6 +50,14 @@ pub fn content_digest(value: &Value) -> [u8; 32] {
     Sha256::digest(&bytes).into()
 }
 
+/// Content digest of a combo without wrapping as `Value::Combo` (avoids
+/// clone that would reset `cache_id`).
+pub fn content_digest_combo(cv: &ComboVal) -> [u8; 32] {
+    let mut buf = Vec::new();
+    serialize_combo(cv, &mut buf);
+    Sha256::digest(&buf).into()
+}
+
 // ── Internal serialization ────────────────────────────────────
 
 fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
@@ -99,10 +107,14 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
         } => {
             buf.push(TAG_THUNK);
             encode_string(&expr.to_nlang(0), buf);
-            // closure: scope stack — each frame serialized via serialize_combo
+            // Identity encoding (store CAID): still inlines frames via
+            // serialize_combo so digests stay bit-stable (D1 success §5).
+            // Force/in_flight uses a separate cycle key that hashes frame
+            // digests only — see `thunk_cycle_id` — because inlining Arc
+            // frames as a tree is 2^depth work.
             encode_unsigned_leb128(closure.len() as u64, buf);
             for cv in closure.iter() {
-                serialize_combo(cv, buf);
+                serialize_combo(cv.as_ref(), buf);
             }
             // context: None = #open; Some(v) = recursive serialize_value
             match context {
