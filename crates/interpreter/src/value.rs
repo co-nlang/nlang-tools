@@ -824,17 +824,22 @@ pub struct ComboVal {
     pub pending_spreads: Vec<Value>,
     #[serde(skip, default = "default_cache_id")]
     pub cache_id: Arc<RwLock<Option<ContentHash>>>,
+    /// M1: memo for `cycle_frame_digest` (force/in_flight frame identity).
+    /// Distinct from `cache_id` (store content_hash). Shared via Arc of the
+    /// sealed frame so equal content hashes once across thunks.
+    #[serde(skip, default = "default_cache_id")]
+    pub cycle_frame_id: Arc<RwLock<Option<ContentHash>>>,
     #[serde(skip, default)]
     pub legacy_fields: IndexMap<String, Value>,
     #[serde(skip, default)]
     pub legacy_local: IndexMap<String, Value>,
 }
 
-/// Clone must **not** share `cache_id`. content_hash memoizes there; a cloned
-/// ComboVal is often mutated (Config partials, seal frames) and a shared
-/// cache makes unify's CAID early-out treat the post-mutation value as equal
-/// to the pre-mutation one — dropping fields (D1: `~%Config.strategy` lost
-/// when staged after `fuel`).
+/// Clone must **not** share `cache_id` or `cycle_frame_id`. content_hash /
+/// cycle_frame_digest memoize there; a cloned ComboVal is often mutated
+/// (Config partials, seal frames) and a shared cache makes unify's CAID
+/// early-out treat the post-mutation value as equal to the pre-mutation one
+/// — dropping fields (D1: `~%Config.strategy` lost when staged after `fuel`).
 impl Clone for ComboVal {
     fn clone(&self) -> Self {
         Self {
@@ -850,6 +855,7 @@ impl Clone for ComboVal {
             masa_ref: self.masa_ref.clone(),
             pending_spreads: self.pending_spreads.clone(),
             cache_id: default_cache_id(),
+            cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),
             legacy_local: self.legacy_local.clone(),
         }
@@ -871,6 +877,7 @@ impl Default for ComboVal {
             masa_ref: MasaRef::Top,
             pending_spreads: Vec::new(),
             cache_id: default_cache_id(),
+            cycle_frame_id: default_cache_id(),
             legacy_fields: IndexMap::new(),
             legacy_local: IndexMap::new(),
         }
@@ -3068,6 +3075,7 @@ impl ComboVal {
             masa_ref: self.masa_ref.clone(),
             pending_spreads: self.pending_spreads.clone(),
             cache_id: default_cache_id(),
+            cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),
             legacy_local: self.legacy_local.clone(),
         }));
@@ -3082,6 +3090,123 @@ impl ComboVal {
             *guard = Some(h.clone());
         }
         h
+    }
+
+    /// Content identity of a sealed scope frame for force/in_flight keys (M1).
+    ///
+    /// Nested `Arc` frames in thunk closures contribute only their digests
+    /// (Merkle), memoized on `cycle_frame_id` so each unique Arc is hashed
+    /// once. Distinct from `content_hash` / store CAID (which still inlines
+    /// frames for bit-stable durable encoding of unforced thunks).
+    pub fn cycle_frame_digest(&self) -> ContentHash {
+        if let Ok(guard) = self.cycle_frame_id.read() {
+            if let Some(ref h) = *guard {
+                return h.clone();
+            }
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"cycle_frame:v1:");
+        hasher.update([self.closed as u8]);
+        hasher.update([self.effect.to_serial_byte()]);
+        // Stable family order matching bn_serial axis priority.
+        for (prio, map) in [
+            (1u8, &self.system),
+            (2, &self.meta),
+            (3, &self.types),
+            (4, &self.rules),
+            (5, &self.data),
+            (6, &self.local),
+        ] {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for k in keys {
+                hasher.update([prio]);
+                hasher.update(k.as_bytes());
+                hash_value_for_cycle_frame(map.get(k).unwrap(), &mut hasher);
+            }
+        }
+        for (prio, map) in [(5u8, &self.legacy_fields), (6, &self.legacy_local)] {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for k in keys {
+                hasher.update([prio]);
+                hasher.update(k.as_bytes());
+                hash_value_for_cycle_frame(map.get(k).unwrap(), &mut hasher);
+            }
+        }
+        for r in &self.relations {
+            hasher.update(b"rel:");
+            hasher.update(r.left.as_bytes());
+            hasher.update([match r.op {
+                RelOp::Lt => 0,
+                RelOp::Gt => 1,
+                RelOp::Lte => 2,
+                RelOp::Gte => 3,
+                RelOp::Eq => 4,
+            }]);
+            hasher.update(r.right.as_bytes());
+        }
+        let h = ContentHash::v1(hasher.finalize().to_vec());
+        if let Ok(mut guard) = self.cycle_frame_id.write() {
+            *guard = Some(h.clone());
+        }
+        h
+    }
+}
+
+/// Structural walk for `cycle_frame_digest`: Arc frames Merkle-hash; atoms
+/// and other leaves use their ordinary content digest.
+fn hash_value_for_cycle_frame(v: &Value, hasher: &mut Sha256) {
+    match v {
+        Value::Thunk {
+            expr,
+            closure,
+            context,
+            effect,
+        } => {
+            hasher.update(b"thunk:");
+            hasher.update(expr.to_nlang(0).as_bytes());
+            hasher.update(&(closure.len() as u64).to_le_bytes());
+            for cv in closure.iter() {
+                hasher.update(&cv.cycle_frame_digest().digest);
+            }
+            match context {
+                None => hasher.update(b"#open"),
+                Some(c) => {
+                    hasher.update(b"ctx:");
+                    hash_value_for_cycle_frame(c, hasher);
+                }
+            }
+            hasher.update([effect.to_serial_byte()]);
+        }
+        Value::Combo(cv) => {
+            hasher.update(b"combo:");
+            hasher.update(&cv.cycle_frame_digest().digest);
+        }
+        Value::Union(items) => {
+            hasher.update(b"union:");
+            hasher.update(&(items.len() as u64).to_le_bytes());
+            for it in items {
+                hash_value_for_cycle_frame(it, hasher);
+            }
+        }
+        Value::Range { start, end, step } => {
+            hasher.update(b"range:");
+            hash_value_for_cycle_frame(start, hasher);
+            hash_value_for_cycle_frame(end, hasher);
+            match step {
+                None => hasher.update([0]),
+                Some(s) => {
+                    hasher.update([1]);
+                    hash_value_for_cycle_frame(s, hasher);
+                }
+            }
+        }
+        // Atoms / Top / Bottom / Blur / Code / Ref: store content digest.
+        other => {
+            hasher.update(b"leaf:");
+            hasher.update(&other.content_hash().digest);
+        }
     }
 }
 

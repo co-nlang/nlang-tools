@@ -345,7 +345,6 @@ fn r3_a_branching_nest_finishes() {
 /// delivery) names memory addresses among the non-deterministic quantities
 /// that must not decide anything.
 #[test]
-#[ignore = "D1 M1: the cycle key is a memory address; enable on delivery"]
 fn r4_a_timeout_always_terminates_the_observation() {
     for depth in [88usize, 200] {
         let d = fresh(&format!("r4-{depth}"));
@@ -379,7 +378,6 @@ fn r4_a_timeout_always_terminates_the_observation() {
 /// Baseline at acceptance: a discrete cliff between 86 levels (0.434 s) and
 /// 87 (does not terminate) — not a growth curve, 82 through 86 are flat.
 #[test]
-#[ignore = "D1 M1: a discrete cliff at ~87 levels; enable on delivery"]
 fn r5_two_hundred_levels_finish() {
     let d = fresh("r5");
     fs::write(d.join("u.n"), chain_src(200)).unwrap();
