@@ -368,24 +368,43 @@ fn r4_a_timeout_always_terminates_the_observation() {
     }
 }
 
-/// R5 — two hundred levels finish unaided, which is what n^2 buys.
+/// R5 — a hundred and twenty levels finish unaided, which is what n^2 buys.
 ///
-/// The ruling grants about n^2 (§8.2 R-2), and 200^2 is 25x of 40^2, so a few
-/// hundred milliseconds. Stated as a companion to R4 and not as the main
-/// assertion: this one IS a number, and it is the kind of number that a later
-/// change to the cost model is entitled to revisit. R4 is not.
+/// The ruling grants about n^2 (§8.2 R-2). Stated as a companion to R4 and not
+/// as the main assertion: this one IS a number, and it is the kind of number a
+/// later change to the cost model is entitled to revisit. R4 is not.
 ///
-/// Baseline at acceptance: a discrete cliff between 86 levels (0.434 s) and
-/// 87 (does not terminate) — not a growth curve, 82 through 86 are flat.
+/// Baseline when written: a discrete cliff between 86 levels (0.434 s) and 87
+/// (does not terminate) — not a growth curve, 82 through 86 were flat.
+///
+/// WRITTEN AT 200 AND CORRECTED TO 120 (acceptor, 2026-08-10). The original
+/// number came from treating "cost is about n^2" as if it also said "depth 200
+/// is reachable". It does not. Two independent limits live here:
+///
+///   * COST — how much work a given depth takes. That is what this arc fixed.
+///   * DEPTH — how far the native stack goes before the process dies. That is
+///     governed by the recursion ceiling and is untouched by any of this.
+///
+/// Measured after M1: 130 levels fine, 140 aborts with `has overflowed its
+/// stack`. `~%Config.timeout` cannot save it, because it is not slowness.
+/// That crash is PRE-EXISTING — the same fixture aborted on both the v0.16.0
+/// and the O42 binaries, ledgered during the O42 acceptance — it was simply
+/// unreachable while the exponential and then the hang stood in front of it.
+///
+/// It is also a live violation of ERROR_CODES §2.7.3: an implementation
+/// ceiling must exist strictly below the native stack cliff and must report,
+/// not abort. Deliberately NOT probed here — fixing it is a separate arc and
+/// an ignored red for an unopened arc is a countdown timer, not a pin. See
+/// the recon note's ledger.
 #[test]
-fn r5_two_hundred_levels_finish() {
+fn r5_a_hundred_and_twenty_levels_finish() {
     let d = fresh("r5");
-    fs::write(d.join("u.n"), chain_src(200)).unwrap();
+    fs::write(d.join("u.n"), chain_src(120)).unwrap();
     match run_within(&d, &["run", "--observe", "_.z", "u.n"], BUDGET) {
-        Ran::OverBudget => panic!("a 200-level nest did not finish within {BUDGET:?}"),
+        Ran::OverBudget => panic!("a 120-level nest did not finish within {BUDGET:?}"),
         Ran::Done { out, .. } => assert!(
             out.contains("{{"),
-            "a 200-level nest finished without producing a combo:\n{out}"
+            "a 120-level nest finished without producing a combo:\n{out}"
         ),
     }
 }
