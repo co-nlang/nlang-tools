@@ -270,6 +270,21 @@ fn r1_sixteen_levels_of_nesting_finish() {
 /// It also distinguishes the ruled fix from the unruled one: `Arc` gives
 /// about n^2, and 40^2 is nothing. A probe demanding linearity would be
 /// demanding more than the ruling grants.
+///
+/// WHAT THIS PROBE MISSED, kept here because the miss is instructive
+/// (acceptor, 2026-08-10). Forty was chosen from the scale of the OLD defect
+/// — the old wall stood at about fifteen levels, so forty looked like a
+/// comfortable 2.7x past it. The first delivery moved the wall to
+/// eighty-seven and left a hang on the far side, and this probe was green
+/// through all of it. The number was never the point:
+///
+///   * when an arc exists to push a wall further out, the probes must reach
+///     PAST THE NEW WALL, and the old wall's position says nothing about
+///     where the new implementation's limit falls;
+///   * better still, pin the PROPERTY rather than a number — R4 below asserts
+///     that the horizon is always reachable, which no future optimisation can
+///     outrun, whereas this test will need revisiting the next time the cost
+///     model changes.
 #[test]
 fn r2_forty_levels_of_nesting_finish() {
     let d = fresh("r2");
@@ -298,6 +313,81 @@ fn r3_a_branching_nest_finishes() {
         Ran::Done { out, .. } => assert!(
             out.contains("{{"),
             "a depth-8 branching nest finished without producing a combo:\n{out}"
+        ),
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  RED — added at acceptance, 2026-08-10 (the first delivery moved the wall
+//  to 87 levels and left a hang on the far side)
+// ════════════════════════════════════════════════════════════════════════
+
+/// R4 — the horizon is always reachable. THIS IS THE PROPERTY R2 SHOULD HAVE
+/// BEEN.
+///
+/// An operator who sets `~%Config.timeout` has asked for a wall. Whether the
+/// engine can evaluate a given program quickly is a cost question and may keep
+/// changing; whether a wall the operator asked for actually stops the engine
+/// is not negotiable, and no optimisation can outrun this assertion the way it
+/// outruns a fixed depth.
+///
+/// Measured across the first delivery, `n=88` with `~%Config.timeout: 3000`:
+///
+///     before   exit 0 in 5.0 s      (exponentially slow, but METERED)
+///     after    still running at 150 s
+///
+/// Cause found at acceptance: `thunk_cycle_id` derives its frame component
+/// from `Arc::as_ptr(cv) as usize`, so the cycle key is a memory address. Two
+/// structurally identical thunks in separate allocations no longer recognise
+/// re-entry. The motive was sound — content-hashing shared frames would
+/// re-expand the sharing as a tree — but pointer identity is not value
+/// identity, and SPEC_01 §2.4.1 (as revised in v0.17.0, four days before this
+/// delivery) names memory addresses among the non-deterministic quantities
+/// that must not decide anything.
+#[test]
+#[ignore = "D1 M1: the cycle key is a memory address; enable on delivery"]
+fn r4_a_timeout_always_terminates_the_observation() {
+    for depth in [88usize, 200] {
+        let d = fresh(&format!("r4-{depth}"));
+        fs::write(
+            d.join("u.n"),
+            format!("~%Config.timeout: 2000\n{}", chain_src(depth)),
+        )
+        .unwrap();
+        match run_within(&d, &["run", "--observe", "_.z", "u.n"], BUDGET) {
+            Ran::OverBudget => panic!(
+                "at {depth} levels a `timeout: 2000` did not stop the \
+                 observation within {BUDGET:?} — the operator asked for a wall \
+                 and did not get one"
+            ),
+            Ran::Done { took, .. } => assert!(
+                took < Duration::from_secs(10),
+                "at {depth} levels the observation ran {took:?} under a 2 s \
+                 timeout — the horizon was reached late, not on request"
+            ),
+        }
+    }
+}
+
+/// R5 — two hundred levels finish unaided, which is what n^2 buys.
+///
+/// The ruling grants about n^2 (§8.2 R-2), and 200^2 is 25x of 40^2, so a few
+/// hundred milliseconds. Stated as a companion to R4 and not as the main
+/// assertion: this one IS a number, and it is the kind of number that a later
+/// change to the cost model is entitled to revisit. R4 is not.
+///
+/// Baseline at acceptance: a discrete cliff between 86 levels (0.434 s) and
+/// 87 (does not terminate) — not a growth curve, 82 through 86 are flat.
+#[test]
+#[ignore = "D1 M1: a discrete cliff at ~87 levels; enable on delivery"]
+fn r5_two_hundred_levels_finish() {
+    let d = fresh("r5");
+    fs::write(d.join("u.n"), chain_src(200)).unwrap();
+    match run_within(&d, &["run", "--observe", "_.z", "u.n"], BUDGET) {
+        Ran::OverBudget => panic!("a 200-level nest did not finish within {BUDGET:?}"),
+        Ran::Done { out, .. } => assert!(
+            out.contains("{{"),
+            "a 200-level nest finished without producing a combo:\n{out}"
         ),
     }
 }
