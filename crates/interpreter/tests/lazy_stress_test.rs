@@ -26,69 +26,75 @@ fn int_expr(v: i64) -> Expr {
 }
 
 #[test]
-#[ignore = "Known Issue: Stack Overflow on deep thunks"]
 fn test_chained_thunk_performance() {
-    let oo = empty_ouroboros();
-    let mut root = ComboVal::default();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let oo = empty_ouroboros();
+            let mut root = ComboVal::default();
 
-    // 建立深度為 50 的鏈條：v0 -> v1 + 1, v1 -> v2 + 1, ..., v49 -> 100
-    let n = 50;
-    for i in 0..n {
-        let key = format!("v{}", i);
-        let expr = if i == n - 1 {
-            int_expr(100)
-        } else {
-            // 簡化：這裡我們直接模擬 ExprKind::Add(v_{i+1}, 1)
-            Expr::new(
-                ExprKind::Add(
-                    Box::new(path_expr(&format!("v{}", i + 1))),
-                    Box::new(int_expr(1)),
-                ),
-                Span::new(0, 0),
-            )
-        };
+            // 建立深度為 50 的鏈條：v0 -> v1 + 1, v1 -> v2 + 1, ..., v49 -> 100
+            let n = 50;
+            for i in 0..n {
+                let key = format!("v{}", i);
+                let expr = if i == n - 1 {
+                    int_expr(100)
+                } else {
+                    // 簡化：這裡我們直接模擬 ExprKind::Add(v_{i+1}, 1)
+                    Expr::new(
+                        ExprKind::Add(
+                            Box::new(path_expr(&format!("v{}", i + 1))),
+                            Box::new(int_expr(1)),
+                        ),
+                        Span::new(0, 0),
+                    )
+                };
 
-        root.insert_field(
-            &key,
-            Value::Thunk {
-                expr: Box::new(expr),
-                closure: vec![],
-                context: None,
-                effect: EffectTag::Pure,
-            },
-        );
-    }
+                root.insert_field(
+                    &key,
+                    Value::Thunk {
+                        expr: Box::new(expr),
+                        closure: vec![],
+                        context: None,
+                        effect: EffectTag::Pure,
+                    },
+                );
+            }
 
-    let mut ctx = EvalContext::new(root).with_fuel(10000);
+            let mut ctx = EvalContext::new(root).with_fuel(10000);
 
-    // 1. 首次觀測 v0 (觸發連鎖坍縮)
-    let start = std::time::Instant::now();
-    let v0_path = Path {
-        anchor: PathAnchor::Bare,
-        segments: vec!["v0".to_string()],
-        span: Span::new(0, 0),
-    };
-    let res = oo.resolve_path(&v0_path, &mut ctx);
-    let duration = start.elapsed();
+            // 1. 首次觀測 v0 (觸發連鎖坍縮)
+            let start = std::time::Instant::now();
+            let v0_path = Path {
+                anchor: PathAnchor::Bare,
+                segments: vec!["v0".to_string()],
+                span: Span::new(0, 0),
+            };
+            let res = oo.resolve_path(&v0_path, &mut ctx);
+            let duration = start.elapsed();
 
-    assert_eq!(
-        res,
-        Value::Atom(
-            AtomKind::Int(BigInt::from(100 + (n as i64) - 1)),
-            EffectTag::Pure,
-            None
-        )
-    );
-    println!("First observation took: {:?}", duration);
+            assert_eq!(
+                res,
+                Value::Atom(
+                    AtomKind::Int(BigInt::from(100 + (n as i64) - 1)),
+                    EffectTag::Pure,
+                    None
+                )
+            );
+            println!("First observation took: {:?}", duration);
 
-    // 2. 第二次觀測 v0 (預期瞬間完成，利用記憶化)
-    let start2 = std::time::Instant::now();
-    let res2 = oo.resolve_path(&v0_path, &mut ctx);
-    let duration2 = start2.elapsed();
+            // 2. 第二次觀測 v0 (預期瞬間完成，利用記憶化)
+            let start2 = std::time::Instant::now();
+            let res2 = oo.resolve_path(&v0_path, &mut ctx);
+            let duration2 = start2.elapsed();
 
-    assert_eq!(res2, res);
-    println!("Second observation took: {:?}", duration2);
-    assert!(duration2 < duration);
+            assert_eq!(res2, res);
+            println!("Second observation took: {:?}", duration2);
+            assert!(duration2 < duration);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]

@@ -170,9 +170,22 @@ fn code_under(dir: &Path) -> String {
 /// This arc renames what depth exhaustion reports. If a delivery renamed the
 /// *fuel* path too, every red below would still go green while a second,
 /// larger lie took the first one's place.
+/// ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11). This used to read
+/// `v.%cause` and expect the WHOLE structural observation to have collapsed
+/// into one blur. It no longer does: with billing moved from the generic AST
+/// walk onto the semantic operations, the horizon is now reached inside each
+/// member, so `v` is a combo whose members are each their own named blur —
+/// which is what SPEC_08 §3.2.4 describes ("**節點**會根據 `%strategy` 進行
+/// 語義坍縮", per node) and what its `#blur` row means by keeping the universe
+/// in a partially-observed state.
+///
+/// The property this control exists for is untouched and is what it now
+/// asserts: genuine fuel exhaustion still SAYS fuel. Where it says it is a
+/// reporting-surface question, and that is being redesigned separately
+/// (`~%Observe`); pinning the old shape here would pin an interim answer.
 #[test]
 fn c1_fuel_exhaustion_still_says_fuel() {
-    let out = oo_run("c1", "~%Config.fuel: 5\nv: <<_.>>\nout: v.%cause\n");
+    let out = oo_run("c1", "~%Config.fuel: 5\nv: <<_.>>\nout: v\n");
     assert!(
         out.contains("#fuel_exhausted"),
         "genuine fuel exhaustion no longer reports #fuel_exhausted: {out}"
@@ -336,8 +349,21 @@ fn p1_bottom_caid_ignores_cause() {
 /// it is the same in every process, which is what W4′ actually cared about).
 #[test]
 fn p2_fuel_blur_caid_holds() {
-    const SRC: &str = "~%Config.fuel: 5\nv: <<_.>>\nout: v.%caid\n";
-    const KNOWN: &str = "4120193908e8225ba3330cf77b3bb371b336dad26812588d8b51bdaa06b3eff3";
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11). Observes `v` rather than
+    // `v.%caid` for the reason given on C1 above: the horizon now lands inside
+    // each member, so the whole observation is a combo and has no single
+    // `%caid` of its own. The members still carry theirs.
+    //
+    // The literal moved: the MBU schedule changed, which relocates every
+    // fuel-side blur address. That is this arc's ruled breaking change, and the
+    // value below was re-measured by the acceptor at final acceptance (stable
+    // across three fresh processes), not adopted from the delivery's report.
+    //
+    // Both halves are still asserted, and the RELATION is the load-bearing one:
+    // the same program at the same horizon must address the same blur in every
+    // process. The literal only says which blur that is today.
+    const SRC: &str = "~%Config.fuel: 5\nv: <<_.>>\nout: v\n";
+    const KNOWN: &str = "3e731e0788ac0f47dec9db218007fe87ad3831687fea2b2dfc4adb54d83fd102";
     let a = oo_run("p2a", SRC);
     let b = oo_run("p2b", SRC);
     let caid = |s: &str| -> String {

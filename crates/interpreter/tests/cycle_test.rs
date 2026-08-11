@@ -29,7 +29,16 @@ fn test_static_cycle() {
 
 #[test]
 fn test_fuel_exhausted_strict_mode() {
-    let input = "x: 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1";
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11). This was a ten-term
+    // arithmetic chain. Under the semantic MBU schedule, work whose extent is
+    // already fixed by the supplied AST is not billed — `%fuel`'s job, per O41,
+    // is that observation is guaranteed to TERMINATE, and a finite expression
+    // evaluated once always does. A literal `1 + 1 + …` therefore no longer
+    // exhausts anything, and the old fixture stopped testing exhaustion.
+    //
+    // Morphism application is billed (REAL_01 §9.1: 算子應用 = 10 MBU), so this
+    // fixture crosses the horizon the way the test always meant to.
+    let input = "x: (y -> y + 1) ((y -> y + 1) 1)";
     let program = parse_program(input).unwrap();
     let oo = Ouroboros::new_in_memory();
     let mut ctx = EvalContext::new(ComboVal::new(
@@ -67,7 +76,10 @@ fn test_fuel_exhausted_blur_mode() {
     .with_fuel(1)
     .with_strategy(ObservationStrategy::Blur);
 
-    let input = "x: 1 + 2";
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11) — same reason as the
+    // strict-mode test above: `1 + 2` is AST-bounded and is no longer billed,
+    // so it can no longer reach the horizon. Application is.
+    let input = "x: (y -> y + 1) 1";
     let program = parse_program(input).unwrap();
 
     let res = oo.eval_observed(&program.fields[0].value, &mut ctx);

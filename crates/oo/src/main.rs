@@ -1360,7 +1360,8 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     if write {
         fs::write(file, formatted)?;
     } else {
-        println!("{}", formatted);
+        let mut output = stdout();
+        let _ = writeln!(output, "{}", formatted);
     }
     Ok(())
 }

@@ -4,7 +4,7 @@ use crate::value::{
     normalize_union, primary_bottom_from_culled, BottomCause, BottomDetail, ComboVal, EffectTag,
     RelOp as ValRelOp, ValRelation, Value,
 };
-use crate::{CmpOp, EvalContext, Ouroboros};
+use crate::{mbu, CmpOp, EvalContext, Ouroboros};
 use indexmap::IndexMap;
 use nlang_parser::ast::{AtomKind, Expr, ExprKind, FieldKey, PathAnchor, Prefix, UnaryOp};
 use num_bigint::BigInt;
@@ -283,6 +283,18 @@ impl Ouroboros {
         let mut flat = Vec::new();
         for b in branches {
             push_flat(b, &mut flat);
+        }
+        // Flattening may expose a union received through a path or a thunk,
+        // whose cardinality is not bounded by this union expression's AST.
+        // Bill each projected branch rather than the implementation's nested
+        // representation depth.
+        if let Err(e) = ctx.check_resources(flat.len() as u64 * mbu::SUBSPACE_EXPANSION) {
+            let partial = if needs_partial_body(&e, ctx.strategy) {
+                Some(Value::Union(flat))
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, EffectTag::Pure);
         }
         // Cull ⊥ (G4).
         let mut culled: Vec<BottomDetail> = Vec::new();
@@ -840,6 +852,14 @@ impl Ouroboros {
     // evaluates the RHS, then dispatches on its form — morphism application
     // (with list functor-lifting fallback), transformer merge, or passthrough.
     fn pipe_apply(&self, lv: Value, r: &Expr, ctx: &mut EvalContext) -> Value {
+        if let Err(e) = ctx.check_resources(mbu::OPERATOR_APPLICATION) {
+            let partial = if needs_partial_body(&e, ctx.strategy) {
+                Some(lv.clone())
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, lv.effect());
+        }
         let mut call_ctx = self.sub_context(ctx);
         call_ctx.context_value = Some(lv.clone());
         // Solidify field *thunks* on multi-segment paths like `p.add`
@@ -856,11 +876,34 @@ impl Ouroboros {
             if matches!(res, Value::Bottom(_) | Value::Top) {
                 if let Value::Combo(ref cv) = lv {
                     if self.is_list(&lv, ctx) {
+                        if let Err(e) = ctx.check_resources(mbu::LIFTING_BASE) {
+                            let partial = if needs_partial_body(&e, ctx.strategy) {
+                                Some(lv.clone())
+                            } else {
+                                None
+                            };
+                            return handle_resource_exhausted(
+                                e,
+                                ctx.strategy,
+                                &*ctx,
+                                partial,
+                                lv.effect(),
+                            );
+                        }
                         let mut res_fields = IndexMap::new();
                         let mut max_e = lv.effect();
                         let mut lifted = false;
                         for (k, v) in &cv.fields() {
                             if k.parse::<usize>().is_ok() {
+                                if let Err(e) = ctx.check_resources(mbu::OPERATOR_APPLICATION) {
+                                    return handle_resource_exhausted(
+                                        e,
+                                        ctx.strategy,
+                                        &*ctx,
+                                        None,
+                                        lv.effect(),
+                                    );
+                                }
                                 let item = self.force(v.clone(), ctx);
                                 let item_res = self.apply_morphism(rv.clone(), item, ctx);
                                 if !matches!(item_res, Value::Bottom(_)) {
@@ -912,7 +955,11 @@ impl Ouroboros {
     }
 
     fn eval_internal(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
-        if let Err(e) = ctx.check_resources(1) {
+        // Traversing the already-supplied AST is bounded by that AST's size;
+        // it is therefore not an MBU operation.  Keep this resource check for
+        // depth/stack/timeout enforcement, while charging only the semantic
+        // operations selected below (REAL_01 §9.1; meter_reads_two §6.3).
+        if let Err(e) = ctx.check_resources(0) {
             // O42 R-3: node_content for Blur only — never clone a deep AST
             // for stack_overflow / Strict (see needs_partial_body).
             let partial = if needs_partial_body(&e, ctx.strategy) {
@@ -936,7 +983,10 @@ impl Ouroboros {
                 relations,
                 closed,
             } => {
-                if let Err(e) = ctx.check_resources(10 + (fields.len() as u64) * 2) {
+                // Literal construction is bounded by the supplied AST. Dynamic
+                // spread expansion is charged later, at its semantic reads and
+                // merges; this check remains for non-fuel horizon gates.
+                if let Err(e) = ctx.check_resources(0) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
                         Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {
@@ -1258,7 +1308,7 @@ impl Ouroboros {
             }
             ExprKind::Path(p) => self.resolve_path(p, ctx),
             ExprKind::Apply(f, a) => {
-                if let Err(e) = ctx.check_resources(5) {
+                if let Err(e) = ctx.check_resources(mbu::OPERATOR_APPLICATION) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
                         Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {
@@ -1474,6 +1524,19 @@ impl Ouroboros {
                 self.unify_internal(va, vb, ctx)
             }
             ExprKind::Join(a, b) => {
+                // Join normally normalizes without passing through
+                // `unify_internal`; bill its one semantic union here.  Any
+                // runtime-sized absorption comparisons subsequently recurse
+                // through `unify_internal` and bill there as well.
+                if let Err(e) = ctx.check_resources(mbu::ORTHOGONAL_MERGE) {
+                    return handle_resource_exhausted(
+                        e,
+                        ctx.strategy,
+                        &*ctx,
+                        None,
+                        EffectTag::Pure,
+                    );
+                }
                 let va = self.eval(a, ctx);
                 let vb = self.eval(b, ctx);
                 // SPEC_01 §2.4.2: absorb after dedupe (union_absorption).
@@ -1608,7 +1671,8 @@ impl Ouroboros {
             // shielding is Cocoon-exclusive — tuple effect = max over elements
             // (2026-07-06 ruling: decoupled from the cocoon analogy).
             ExprKind::Tuple(items) => {
-                if let Err(e) = ctx.check_resources(10 + (items.len() as u64) * 2) {
+                // Fixed tuple construction is AST-bounded (not an MBU row).
+                if let Err(e) = ctx.check_resources(0) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
                         Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {
@@ -1631,7 +1695,10 @@ impl Ouroboros {
             }
             // Poset literal #{ ... }: relation-only combo; members get ranks (SYNTAX_10)
             ExprKind::Poset(relations) => {
-                if let Err(e) = ctx.check_resources(10 + (relations.len() as u64) * 2) {
+                // Rank derivation is over the literal's relation AST.  It is
+                // not the REAL_01 spectral-calibration operation (which is no
+                // language-level evaluator path in this engine yet).
+                if let Err(e) = ctx.check_resources(0) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
                         Some(Value::Code(Box::new(expr.clone().without_spans())))
                     } else {

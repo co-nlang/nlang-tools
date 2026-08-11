@@ -49,6 +49,26 @@ fn fuel_after_observe(
     (result, ctx.fuel)
 }
 
+/// ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11). Same observation, also
+/// reporting how many force-memo entries were served.
+///
+/// The tests here used to detect a memo hit by "the second observe left more
+/// fuel". That instrument is gone on purpose: if a warm cache leaves more
+/// fuel, the horizon — and so the `#blur` CHS, and so its CAID — depends on
+/// whether a value happened to be observed before. `force_memo_hit_count` is
+/// diagnostic state that never touches fuel or identity, which is exactly what
+/// a memo detector has to be.
+fn observe_with_hits(
+    engine: &Ouroboros,
+    universe: &Universe,
+    path: &Path,
+    initial_fuel: u64,
+) -> (Value, u64, u64) {
+    let before = engine.force_memo_hit_count();
+    let (v, fuel) = fuel_after_observe(engine, universe, path, initial_fuel);
+    (v, fuel, engine.force_memo_hit_count() - before)
+}
+
 fn int_of(v: &Value) -> Option<i64> {
     match v {
         Value::Atom(AtomKind::Int(n), _, _) => n.try_into().ok(),
@@ -71,23 +91,23 @@ fn stage5_r1_memo_survives_unrelated_evolve() {
     );
     let p = path_of(&["r", "v"]);
 
-    let (v1, cold) = fuel_after_observe(&engine, &universe, &p, 1000);
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11): a memo hit is detected
+    // by the hit counter, not by fuel. Fuel must be identical warm and cold —
+    // otherwise cache warmth moves the horizon and the #blur CAID with it.
+    let (v1, cold, _) = observe_with_hits(&engine, &universe, &p, 1000);
     assert_eq!(int_of(&v1), Some(3));
-    let (_, warm) = fuel_after_observe(&engine, &universe, &p, 1000);
-    assert!(
-        warm > cold,
-        "precondition: memo hit before evolve (cold={}, warm={})",
-        cold,
-        warm
-    );
+    let (_, warm, warm_hits) = observe_with_hits(&engine, &universe, &p, 1000);
+    assert!(warm_hits > 0, "precondition: memo hit before evolve");
+    assert_eq!(warm, cold, "a memo hit changed the fuel account");
 
     // unrelated coordinate
     evolve_all(&engine, &mut universe, "zzz_unrelated: 9");
 
-    let (v3, after) = fuel_after_observe(&engine, &universe, &p, 1000);
+    let (v3, after, after_hits) = observe_with_hits(&engine, &universe, &p, 1000);
     assert_eq!(int_of(&v3), Some(3));
-    assert!(after > cold,
-        "RED LINE (Route B): evolving an unrelated coordinate must not wipe the entry — fuel should still show a hit (cold={}, after={})", cold, after);
+    assert!(after_hits > 0,
+        "RED LINE (Route B): evolving an unrelated coordinate must not wipe the entry — the observe served no memo entry");
+    assert_eq!(after, cold, "a memo hit changed the fuel account");
 }
 
 // R2 (no-regression): a thunk whose eval READS a root coordinate must be
@@ -105,15 +125,14 @@ fn stage5_r2_related_evolve_still_invalidates() {
     );
     let p = path_of(&["r", "v"]);
 
-    let (v1, cold) = fuel_after_observe(&engine, &universe, &p, 1000);
-    let (v2, warm) = fuel_after_observe(&engine, &universe, &p, 1000);
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11): a memo hit is detected
+    // by the hit counter, not by fuel. Fuel must be identical warm and cold —
+    // otherwise cache warmth moves the horizon and the #blur CAID with it.
+    let (v1, cold, _) = observe_with_hits(&engine, &universe, &p, 1000);
+    let (v2, warm, warm_hits) = observe_with_hits(&engine, &universe, &p, 1000);
     assert_eq!(v1.content_hash(), v2.content_hash(), "stable before evolve");
-    assert!(
-        warm > cold,
-        "precondition: entry cached (cold={}, warm={})",
-        cold,
-        warm
-    );
+    assert!(warm_hits > 0, "precondition: entry cached");
+    assert_eq!(warm, cold, "a memo hit changed the fuel account");
 
     // refine the READ coordinate: flag widens {x:1} -> {x:1, y:2}
     evolve_all(&engine, &mut universe, "t: { flag: { y: 2 } }");
@@ -135,18 +154,22 @@ fn stage5_r3_c0_survives_any_evolve() {
     );
     let p = path_of(&["r", "v"]);
 
-    let (_, cold) = fuel_after_observe(&engine, &universe, &p, 1000);
-    let (_, warm) = fuel_after_observe(&engine, &universe, &p, 1000);
-    assert!(warm > cold, "precondition: hit established");
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11): a memo hit is detected
+    // by the hit counter, not by fuel. Fuel must be identical warm and cold —
+    // otherwise cache warmth moves the horizon and the #blur CAID with it.
+    let (_, cold, _) = observe_with_hits(&engine, &universe, &p, 1000);
+    let (_, warm, warm_hits) = observe_with_hits(&engine, &universe, &p, 1000);
+    assert!(warm_hits > 0, "precondition: hit established");
+    assert_eq!(warm, cold, "a memo hit changed the fuel account");
 
     for i in 0..3 {
         evolve_all(&engine, &mut universe, &format!("gen_{}: {}", i, i));
     }
-    let (_, after) = fuel_after_observe(&engine, &universe, &p, 1000);
+    let (_, after, after_hits) = observe_with_hits(&engine, &universe, &p, 1000);
     assert!(
-        after > cold,
-        "C0 entry (no root reads) must survive arbitrary evolves (cold={}, after={})",
-        cold,
-        after
+        after_hits > 0,
+        "C0 entry (no root reads) must survive arbitrary evolves — the observe \
+         served no memo entry"
     );
+    assert_eq!(after, cold, "a memo hit changed the fuel account");
 }

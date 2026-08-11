@@ -311,17 +311,16 @@ impl Universe {
         // O42: no clock salt — blur identity is CHS (budgets + partial).
         // EvalContext keeps a fixed disc tie-break salt from ::new only.
         ctx.privilege = engine.privilege;
-        // O38: user-staged horizon knobs must govern evolve-time evaluation.
-        // Pure math and union-branch arithmetic finish at evolve; without this,
-        // `timeout` / `max_branches` / `max_unification_depth` look set (readable)
-        // but never reach the gates. Only apply when the user has staged a
-        // `~%Config` override — genesis defaults already match EvalContext::new.
-        // Fuel/strategy stay observe-only (see apply_horizon_config) so
-        // fuel-side blur CAIDs keep their fixed observe salt.
+        // User-staged horizon knobs govern evolve-time evaluation too. A field
+        // may complete a pipe, application, merge, or cocoon force before the
+        // final observe call; leaving fuel out here made that real work free at
+        // the only boundary which can still represent it. The fixed horizon
+        // parameters flow into any resulting blur's CHS just as they do at
+        // observe (REAL_01 §9 / meter_reads_two).
         if let Some(Value::Combo(ref staged_cfg)) = self.staged.get_field("~%Config") {
             if let Some(eff) = effective_config(&self.root, Some(&self.staged)) {
                 let apply_timeout = staged_cfg.get_field("timeout").is_some();
-                ctx.apply_horizon_config(&eff, false, apply_timeout);
+                ctx.apply_horizon_config(&eff, true, apply_timeout);
             }
         }
         // forward_spread acceptance repair: cocoon literals force_recursive
@@ -911,9 +910,8 @@ impl Universe {
             ctx.privilege = engine.privilege;
             // Apply ~%Config horizon params from the observation root
             // (includes staged overrides — SPEC_08 §3.1). Timeout only when
-            // the user staged it (genesis `timeout: 1000` was never wired as
-            // a global wall-clock; applying it here would arm every stdlib
-            // observation with a 1s deadline).
+            // the user stages a finite value: genesis is `timeout: #_`
+            // (unbound), so ordinary observations carry no wall-clock limit.
             if let Some(Value::Combo(ref cfg)) = r.get_field("~%Config").cloned() {
                 let apply_timeout = match self.staged.get_field("~%Config") {
                     Some(Value::Combo(sc)) => sc.get_field("timeout").is_some(),

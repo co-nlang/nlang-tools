@@ -1,9 +1,21 @@
+use crate::observation::handle_resource_exhausted;
 use crate::value::{BottomCause, BottomDetail, ComboVal, Value};
-use crate::{EvalContext, Ouroboros};
+use crate::{mbu, EvalContext, Ouroboros};
 use nlang_parser::ast::AtomKind;
 
 impl Ouroboros {
     pub fn orthocomplement(&self, v: Value, ctx: &mut EvalContext) -> Value {
+        // Complement distributes through runtime unions/combos.  Every
+        // recursive member visit is a semantic subspace expansion, so a
+        // dynamically large value cannot make this structural walk free.
+        if let Err(e) = ctx.check_resources(mbu::SUBSPACE_EXPANSION) {
+            let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                Some(v.clone())
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, v.effect());
+        }
         let forced = self.force(v.clone(), ctx);
         let effect = forced.effect();
 
