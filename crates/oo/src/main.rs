@@ -4,7 +4,7 @@ use nlang_interpreter::{
     CommitMeta, ContentHash, EffectTag, Ouroboros, Privilege, Universe, Value,
 };
 use nlang_parser::ast::{AtomKind, FieldKey};
-use nlang_parser::parse_program;
+use nlang_parser::{is_parser_nesting_limit_error, parse_program};
 use std::fs;
 use std::io::{stdin, stdout, Write};
 use std::path::{Path, PathBuf};
@@ -64,6 +64,13 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
         BottomCause::StackOverflow => "#stack_overflow",
     }
+}
+
+/// The parser fence is an incapacity boundary, so CLI parse entry points render
+/// it as the language's Bottom and succeed cleanly instead of exposing a host
+/// parser failure to the operator.
+fn print_parser_stack_overflow() {
+    println!("{}", Value::from(BottomCause::StackOverflow).to_nlang(0));
 }
 
 /// Simple n/-style label for a field key when `path` was not computed.
@@ -416,8 +423,14 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
 
     for file in files {
         let input = fs::read_to_string(&file)?;
-        let program = parse_program(&input)
-            .map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
+        let program = match parse_program(&input) {
+            Ok(program) => program,
+            Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
+                print_parser_stack_overflow();
+                return Ok(());
+            }
+            Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
+        };
         for f in &program.fields {
             if let Err(e) = universe.evolve(&engine, &f) {
                 let fb = field_key_label(&f.key);
@@ -434,9 +447,62 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
     Ok(())
 }
 
+enum CappedRequestLine {
+    Eof,
+    Line(Vec<u8>),
+    TooLarge,
+}
+
+/// Read one OODP request line without ever accumulating more than `limit`
+/// payload bytes. `BufReader` may hold its normal small read buffer, but a
+/// hostile line cannot become an unbounded application allocation.
+fn read_capped_request_line<R: std::io::BufRead>(
+    reader: &mut R,
+    limit: usize,
+) -> std::io::Result<CappedRequestLine> {
+    let mut request = Vec::with_capacity(limit);
+    loop {
+        let (consume, append, complete, too_large) = {
+            let buffer = reader.fill_buf()?;
+            if buffer.is_empty() {
+                return Ok(if request.is_empty() {
+                    CappedRequestLine::Eof
+                } else {
+                    CappedRequestLine::Line(request)
+                });
+            }
+
+            let remaining = limit.saturating_sub(request.len());
+            // Include one byte beyond the permitted payload only to accept a
+            // newline immediately after an exactly-limit-sized request.
+            let searchable = buffer.len().min(remaining.saturating_add(1));
+            if let Some(newline) = buffer[..searchable].iter().position(|&b| b == b'\n') {
+                (newline + 1, newline, true, false)
+            } else if request.len() >= limit || buffer.len() > remaining {
+                (0, 0, false, true)
+            } else {
+                (buffer.len(), buffer.len(), false, false)
+            }
+        };
+
+        if too_large {
+            return Ok(CappedRequestLine::TooLarge);
+        }
+
+        if append > 0 {
+            let buffer = reader.fill_buf()?;
+            request.extend_from_slice(&buffer[..append]);
+        }
+        reader.consume(consume);
+        if complete {
+            return Ok(CappedRequestLine::Line(request));
+        }
+    }
+}
+
 fn run_serve(port: u16) -> anyhow::Result<()> {
     use nlang_interpreter::oodp;
-    use std::io::{BufRead, BufReader};
+    use std::io::BufReader;
     let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))?;
     let current_dir = std::env::current_dir()?;
     let engine = Ouroboros::init(&current_dir)?;
@@ -460,14 +526,31 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "0.0.0.0".into());
             if let Ok(stream_clone) = stream.try_clone() {
                 let mut reader = BufReader::new(stream_clone);
-                let mut request = String::new();
-                if reader.read_line(&mut request).is_ok() {
-                    let line = request.trim();
-                    println!("OODP Request: {}", line);
-                    let (body, log) = oodp::serve_request(&engine, line, &source_id, &peer_host);
-                    let _ = stream.write_all(body.as_bytes());
-                    let _ = stream.flush();
-                    println!("{}", log);
+                match read_capped_request_line(&mut reader, oodp::MAX_DISCOVER_RESPONSE_BYTES) {
+                    Ok(CappedRequestLine::TooLarge) => {
+                        let body = oodp::encode_response_reason(
+                            oodp::OodpStatus::Rejected,
+                            Some("request_too_large"),
+                            None,
+                            &source_id,
+                            0,
+                        );
+                        let _ = stream.write_all(body.as_bytes());
+                        let _ = stream.flush();
+                        println!("OODP Request rejected: #request_too_large");
+                    }
+                    Ok(CappedRequestLine::Line(request)) => {
+                        if let Ok(request) = String::from_utf8(request) {
+                            let line = request.trim();
+                            println!("OODP Request: {}", line);
+                            let (body, log) =
+                                oodp::serve_request(&engine, line, &source_id, &peer_host);
+                            let _ = stream.write_all(body.as_bytes());
+                            let _ = stream.flush();
+                            println!("{}", log);
+                        }
+                    }
+                    Ok(CappedRequestLine::Eof) | Err(_) => {}
                 }
             }
         }
@@ -1090,7 +1173,10 @@ fn run_repl() -> anyhow::Result<()> {
                     }
                 }
             }
-            Err(e) => println!("Parse Error: {}", e),
+            Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
+                print_parser_stack_overflow()
+            }
+            Err(error) => println!("Parse Error: {}", error),
         }
         // ACCEPTANCE REPAIR (peer-fetch arc). The work order named `oo repl`
         // among the commands that must drain the log; it was omitted. Drained
@@ -1228,8 +1314,14 @@ fn run_one_shot(
 
     for file in files {
         let input = fs::read_to_string(&file)?;
-        let program = parse_program(&input)
-            .map_err(|e| anyhow::anyhow!("Parse Error in {:?}: {}", file, e))?;
+        let program = match parse_program(&input) {
+            Ok(program) => program,
+            Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
+                print_parser_stack_overflow();
+                return Ok(());
+            }
+            Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
+        };
         for f in &program.fields {
             if let Err(e) = universe.evolve(&engine, &f) {
                 let fb = field_key_label(&f.key);
@@ -1255,7 +1347,14 @@ fn run_one_shot(
 
 fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     let input = fs::read_to_string(&file)?;
-    let mut program = parse_program(&input).map_err(|e| anyhow::anyhow!("Parse Error: {}", e))?;
+    let mut program = match parse_program(&input) {
+        Ok(program) => program,
+        Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
+            print_parser_stack_overflow();
+            return Ok(());
+        }
+        Err(error) => return Err(anyhow::anyhow!("Parse Error: {}", error)),
+    };
     program.canonicalize();
     let formatted = program.to_nlang();
     if write {
@@ -1273,8 +1372,14 @@ fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Resu
 
     let mut universe = Universe::new(None, engine.root_with_system());
 
-    let parsed_expr = nlang_parser::parse_expr_only(expr.trim())
-        .map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let parsed_expr = match nlang_parser::parse_expr_only(expr.trim()) {
+        Ok(expr) => expr,
+        Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
+            print_parser_stack_overflow();
+            return Ok(());
+        }
+        Err(error) => return Err(anyhow::anyhow!("Parse error: {}", error)),
+    };
 
     let field = nlang_parser::ast::Field {
         key: nlang_parser::ast::FieldKey::Named {

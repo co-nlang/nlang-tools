@@ -275,9 +275,17 @@ fn wire_send(port: u16, payload: &str, budget: Duration) -> Option<String> {
 #[test]
 fn c0_a_shallow_program_still_parses_and_runs() {
     let d = fresh("c0");
-    fs::write(d.join("u.n"), "a: 1\nb: {{ c: 2, d: [3, 4] }}\ne: b.c + a\n").unwrap();
+    fs::write(
+        d.join("u.n"),
+        "a: 1\nb: {{ c: 2, d: [3, 4] }}\ne: b.c + a\n",
+    )
+    .unwrap();
     let out = oo(&d, &["run", "u.n", "-o", "e"]);
-    assert_eq!(out.trim(), "3", "a shallow program stopped evaluating:\n{out}");
+    assert_eq!(
+        out.trim(),
+        "3",
+        "a shallow program stopped evaluating:\n{out}"
+    );
 }
 
 /// C1 — a legitimately deep nest still has its value.
@@ -311,7 +319,11 @@ fn c1_a_legitimately_deep_nest_still_has_its_value() {
 fn c2_grouping_and_tuple_keep_their_distinct_values() {
     let d = fresh("c2");
     let grp = oo(&d, &["eval", "(7)"]);
-    assert_eq!(grp.trim(), "7", "grouping (7) is no longer the identity:\n{grp}");
+    assert_eq!(
+        grp.trim(),
+        "7",
+        "grouping (7) is no longer the identity:\n{grp}"
+    );
 
     let one = oo(&d, &["eval", "(7,)"]);
     let one_flat: String = one.chars().filter(|c| !c.is_whitespace()).collect();
@@ -367,6 +379,43 @@ fn p2_a_one_tuple_is_not_its_element() {
     assert_ne!(flat, "1", "(1,) collapsed to its element:\n{out}");
 }
 
+/// C4 (repair round) — unary and operator chains keep their meaning.
+///
+/// The control for the repair's grammar change: `unary_expr` becomes iterative
+/// (`unary_op* ~ operand`) so a run of `!` no longer recurses in pest. That
+/// MUST NOT change what `!` means, nor how chains format. If this goes red, the
+/// repair bought its safety with the language — the same trap C0/C2 guard for
+/// the first round.
+#[test]
+fn c4_unary_and_operator_chains_keep_their_meaning() {
+    let d = fresh("c4");
+    assert_eq!(oo(&d, &["eval", "!#true"]).trim(), "#false");
+    assert_eq!(oo(&d, &["eval", "!#false"]).trim(), "#true");
+    assert_eq!(oo(&d, &["eval", "!!#true"]).trim(), "#true");
+    assert_eq!(oo(&d, &["eval", "1 + 1 + 1"]).trim(), "3");
+
+    // Formatting a file that mixes unary with chains round-trips unchanged.
+    fs::write(d.join("u.n"), "z: !#true\ny: 1 + 1 + 1\nw: x |> f |> g\n").unwrap();
+    let out = oo(&d, &["fmt", "u.n"]);
+    for expect in ["z: !#true", "y: 1 + 1 + 1", "w: x |> f |> g"] {
+        assert!(out.contains(expect), "fmt lost `{expect}`:\n{out}");
+    }
+}
+
+/// P3 (repair round) — `!` is still the orthocomplement, and still refuses
+/// atoms it is not defined on. Pins the unary semantics the iterative rule
+/// must preserve, at a depth where no ceiling can interfere.
+#[test]
+fn p3_unary_keeps_its_semantics() {
+    let d = fresh("p3");
+    assert_eq!(oo(&d, &["eval", "!#true"]).trim(), "#false");
+    let bad = oo(&d, &["eval", "!1"]);
+    assert!(
+        bad.contains("#conflict"),
+        "`!1` stopped being a conflict:\n{bad}"
+    );
+}
+
 // ════════════════════════════════════════════════════════════════════════
 //  RED — must fail now, must pass after (#[ignore] removed by the delivery)
 // ════════════════════════════════════════════════════════════════════════
@@ -379,7 +428,6 @@ fn p2_a_one_tuple_is_not_its_element() {
 /// this by rejecting deep parens (a low depth gate) FAILS — 24 is far below
 /// any ceiling this arc sets, so it must genuinely parse to 7.
 #[test]
-#[ignore = "red until the grammar is left-factored (ruling A)"]
 fn r1_deep_grouping_finishes() {
     let d = fresh("r1");
     let src = grouping(24, "7");
@@ -387,7 +435,11 @@ fn r1_deep_grouping_finishes() {
         Ran::OverBudget => panic!("24 levels of grouping did not finish within {BUDGET:?}"),
         Ran::Done { out, code } => {
             assert_eq!(code, Some(0), "deep grouping did not exit cleanly:\n{out}");
-            assert_eq!(out.trim(), "7", "deep grouping finished with a wrong value:\n{out}");
+            assert_eq!(
+                out.trim(),
+                "7",
+                "deep grouping finished with a wrong value:\n{out}"
+            );
         }
     }
 }
@@ -404,7 +456,6 @@ fn r1_deep_grouping_finishes() {
 /// minting a `#blur` (which claims an addressable snapshot an aborted parse has
 /// none of). Same ruling as the evaluator's ceiling, now on the parser.
 #[test]
-#[ignore = "red until the parser has a pre-parse depth ceiling (ruling B)"]
 fn r2_a_deep_nest_is_a_clean_bottom_not_a_crash() {
     let d = fresh("r2");
     fs::write(d.join("u.n"), format!("z: {}\n", cocoon_chain(2000, "7"))).unwrap();
@@ -443,7 +494,6 @@ fn r2_a_deep_nest_is_a_clean_bottom_not_a_crash() {
 /// The control is the shape: a WELL-FORMED find_node under the cap is still
 /// served (C3), so R3's refusal is by size, not by content.
 #[test]
-#[ignore = "red until the wire read is byte-capped (byte cap)"]
 fn r3_an_oversized_request_is_refused_by_size() {
     let s = spawn_server("r3");
     // 128 KiB of a valid-looking prefix — over the 64 KiB cap, well under any
@@ -469,7 +519,6 @@ fn r3_an_oversized_request_is_refused_by_size() {
 /// hostile request is refused before the parser recurses, the node stays up,
 /// and the legit client is answered within the budget.
 #[test]
-#[ignore = "red until deep wire input is refused before the parser recurses (rulings A+B)"]
 fn r4_a_hostile_request_does_not_fell_the_node() {
     let s = spawn_server("r4");
     let port = s.port;
@@ -489,4 +538,254 @@ fn r4_a_hostile_request_does_not_fell_the_node() {
         reply.contains("%source"),
         "the node did not serve a legit client during a hostile request:\n{reply}"
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  RED — repair round (acceptor-added 2026-08-11 after the first delivery)
+// ════════════════════════════════════════════════════════════════════════
+//
+// WHY THESE EXIST, kept verbatim because the miss is the lesson.
+//
+// R2 and R4 above went green on the first delivery while the node could still
+// be felled by one packet. Both of them — and the recon that produced them —
+// only ever nested BRACKETS. The delivery's pre-parse scan counts delimiters,
+// so it protects exactly the family the probes tested and nothing else.
+//
+// Two families walk straight past it, and neither contains a bracket:
+//
+//   1. `unary_expr = { (unary_op ~ unary_expr) | … }` is RIGHT-RECURSIVE, so a
+//      run of `!` recurses in pest with no delimiter to count. Measured on the
+//      delivered tree: `oo fmt` on `!`x2022 aborts (debug; release at ~60000),
+//      in the '<unknown>' PARSER thread. Over the wire it abort()s the whole
+//      serve process — the very DoS this arc exists to close, reached by
+//      changing which character is repeated.
+//
+//   2. Flat operator chains build a DEEP AST from FLAT source. `oo fmt` on
+//      `1+1+…`, `x@t…`, `x|>f…`, `x&y…` all abort at exactly 7971 ok / 7972
+//      crash (debug) — one shared walker frame, one number, in the 'oo-main'
+//      thread (to_nlang / canonicalize), NOT the parser. `oo run` on the same
+//      input is clean, because the evaluator has HARD_RECURSION_LIMIT and the
+//      formatter has nothing.
+//
+// So the arc needs TWO guards in two places, not one constant:
+//
+//   * the pre-parse lexical scan protects PEST's own recursion. Once `!` is
+//     iterative, brackets are the only unbounded parser recursion and the scan
+//     is complete;
+//   * a post-parse AST-depth check protects EVERY DOWNSTREAM WALKER from deep
+//     trees built out of flat source. It must itself use an explicit stack, or
+//     it is the crash it is trying to prevent.
+//
+// Both report the same `#stack_overflow` — same incapacity, two stages.
+//
+// These probes pin the PROPERTY, not either constant: deep input never kills
+// the process; it either does the job or reports a bottom. Each also asserts a
+// SHALLOW case in the same run, so a repair that "passes" by setting a ceiling
+// absurdly low fails here.
+
+/// How deep input must behave: exit cleanly, and say `#stack_overflow` if it
+/// declines. Never a native crash.
+fn assert_deep_input_is_survivable(what: &str, out: &str, code: Option<i32>) {
+    assert!(
+        !out.contains("overflowed its stack"),
+        "{what}: the process died on a native stack overflow:\n{out}"
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "{what}: did not exit cleanly (signal or error) — output:\n{out}"
+    );
+    assert!(
+        out.contains("#stack_overflow") || !out.trim().is_empty(),
+        "{what}: exited 0 but produced nothing at all"
+    );
+}
+
+/// R5 (repair) — a run of `!` does not kill the parser, locally or on the wire.
+///
+/// Baseline on the delivered tree: `oo fmt` aborts at 2022 in debug, and a
+/// bang-chain advertise request abort()s the serve process outright (measured:
+/// attacker gets an empty reply, `kill -0` on the server fails, serve.log ends
+/// in "has overflowed its stack"). No bracket appears in the payload, so the
+/// pre-parse scan never sees it.
+///
+/// The shallow half runs first and must stay green: `!`x200 formats correctly.
+#[test]
+fn r5_a_run_of_bangs_does_not_kill_the_parser() {
+    let d = fresh("r5");
+
+    // Presence of good, same run: a shallow run of `!` still formats.
+    fs::write(d.join("ok.n"), format!("z: {}#true\n", "!".repeat(200))).unwrap();
+    match run_within(&d, &["fmt", "ok.n"], BUDGET) {
+        Ran::Done { out, code } => {
+            assert_eq!(code, Some(0), "200 bangs stopped formatting:\n{out}");
+            assert!(
+                out.contains('!'),
+                "200 bangs formatted to something without `!`:\n{out}"
+            );
+        }
+        Ran::OverBudget => panic!("200 bangs stopped finishing"),
+    }
+
+    // Absence of bad: a deep run must not abort the process.
+    fs::write(d.join("deep.n"), format!("z: {}x\n", "!".repeat(8000))).unwrap();
+    match run_within(&d, &["fmt", "deep.n"], BUDGET) {
+        Ran::Done { out, code } => assert_deep_input_is_survivable("8000 bangs", &out, code),
+        Ran::OverBudget => panic!("8000 bangs neither finished nor was refused"),
+    }
+
+    // And the same payload must not fell a serving node.
+    let s = spawn_server("r5-wire");
+    let port = s.port;
+    let attacker = std::thread::spawn(move || {
+        let hostile = format!("{{%op: #advertise, %ad: {}x}}", "!".repeat(8000));
+        let _ = wire_send(port, &hostile, Duration::from_secs(20));
+    });
+    std::thread::sleep(Duration::from_millis(500));
+    let reply = wire_send(port, "{%op: #find_node}", Duration::from_secs(8));
+    let _ = attacker.join();
+    let reply = reply.expect("a bang-chain request felled the node (or starved a legit client)");
+    assert!(
+        reply.contains("%source"),
+        "the node did not serve a legit client after a bang-chain request:\n{reply}"
+    );
+}
+
+/// R6 (repair) — a deep AST built from flat source does not kill the formatter.
+///
+/// Baseline on the delivered tree: `oo fmt` aborts at 7971/7972 (debug) for
+/// `+`, `@`, `|>` and `&` alike — the same walker, the same number, in
+/// 'oo-main'. The source is FLAT, so neither the pre-parse delimiter scan nor
+/// the parser's own recursion is involved: this is the AST walker.
+///
+/// `oo run` on the same input is already clean (the evaluator's ceiling), which
+/// is what makes the formatter's silence a gap rather than a policy.
+///
+/// The shallow half must stay green so the AST ceiling cannot be set at a value
+/// that rejects ordinary code — the deepest operator run in the entire corpus
+/// is 7.
+#[test]
+fn r6_a_deep_ast_does_not_kill_the_formatter() {
+    let d = fresh("r6");
+
+    // Presence of good, same run: a 200-term chain still formats to its source.
+    let shallow = format!("z: 1{}\n", " + 1".repeat(200));
+    fs::write(d.join("ok.n"), &shallow).unwrap();
+    match run_within(&d, &["fmt", "ok.n"], BUDGET) {
+        Ran::Done { out, code } => {
+            assert_eq!(code, Some(0), "a 200-term chain stopped formatting:\n{out}");
+            assert!(
+                out.contains("1 + 1"),
+                "a 200-term chain formatted to something unrecognisable:\n{out}"
+            );
+        }
+        Ran::OverBudget => panic!("a 200-term chain stopped finishing"),
+    }
+
+    // Absence of bad, across all four operator families that share the walker.
+    for (tag, src) in [
+        ("plus", format!("z: 1{}\n", "+1".repeat(9000))),
+        ("at", format!("z: x{}\n", "@t".repeat(9000))),
+        ("pipe", format!("z: x{}\n", "|>f".repeat(9000))),
+        ("meet", format!("z: x{}\n", "&y".repeat(9000))),
+    ] {
+        fs::write(d.join("deep.n"), &src).unwrap();
+        match run_within(&d, &["fmt", "deep.n"], BUDGET) {
+            Ran::Done { out, code } => {
+                assert_deep_input_is_survivable(&format!("9000-term {tag} chain"), &out, code)
+            }
+            Ran::OverBudget => panic!("a 9000-term {tag} chain neither finished nor was refused"),
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  RED — repair round 2 (acceptor-added 2026-08-11, ruling A)
+// ════════════════════════════════════════════════════════════════════════
+//
+// Repair round 1 set the pre-parse fence at 100. That is BELOW a guarantee the
+// previous version already shipped: v0.17.1's arc pins that a 120-level nest
+// evaluates, and its probe picked 120 deliberately, just under the measured
+// native cliff. A fence of 100 refuses it — a capability regression against a
+// cut release, caught by the whole-workspace run.
+//
+// The numbers do not leave room for a small correction. The fence must sit
+// above 120 (the shipped guarantee) and below 131 (the measured debug native
+// cliff) — a ten-level window, on a cliff that moves by 10x between build
+// profiles (debug 504 KB/level, release 49 KB/level). No constant is safe in
+// that window.
+//
+// RULING A (2026-08-11): choose the fence as a LANGUAGE PROMISE first, then
+// size the parser thread stack so the worst profile clears it with margin.
+// Fence 256 (the number Clang's -fbracket-depth has defaulted to for years);
+// parser stack 64 MiB -> 512 MiB, which on Linux reserves address space and is
+// committed lazily, and which changes only the size argument of an mmap the
+// parser already performs on every parse. Measured: debug needs ~378 MiB for a
+// 3x margin at 256; 512 MiB gives ~4x, and ~31x in release.
+//
+// WHY THIS PROBE CANNOT BE SATISFIED BY THE CONSTANT ALONE: with the fence at
+// 256 and the stack left at 64 MiB, the fence stops guarding anything — the
+// native cliff is at 131, so the 256-level case below would walk past the fence
+// and abort. Raising the fence without raising the stack makes this RED in a
+// worse way than it is now. The two changes are one change.
+
+/// R7 (ruling A) — the promised nesting depth is real, and the older
+/// guarantee it must not undercut still holds.
+///
+/// Part 1 is the new language promise: 256 levels PARSE. Today the fence
+/// refuses them at 100.
+///
+/// Part 2 restates v0.17.1's guarantee INSIDE this arc, so this arc can never
+/// again lower a shipped capability without its own probes going red. That is
+/// the cross-arc guard the first round lacked — the regression was found by the
+/// workspace run, which is luck compared to a probe that names the promise.
+#[test]
+fn r7_the_promised_nesting_depth_is_real() {
+    let d = fresh("r7");
+
+    // Part 1 — 256 levels must parse. Cannot pass unless the stack moved too:
+    // at 64 MiB the native cliff is 131 and this aborts instead of formatting.
+    fs::write(
+        d.join("promise.n"),
+        format!("z: {}\n", cocoon_chain(256, "1")),
+    )
+    .unwrap();
+    match run_within(&d, &["fmt", "promise.n"], BUDGET) {
+        Ran::Done { out, code } => {
+            assert!(
+                !out.contains("overflowed its stack"),
+                "256 levels crashed the parser — the fence was raised without \
+                 the stack:\n{out}"
+            );
+            assert_eq!(code, Some(0), "256 levels did not format cleanly:\n{out}");
+            assert!(
+                out.contains("{{"),
+                "256 levels were refused rather than parsed — the promised \
+                 depth is not real:\n{out}"
+            );
+        }
+        Ran::OverBudget => panic!("a 256-level nest neither parsed nor was refused"),
+    }
+
+    // Part 2 — v0.17.1's shipped guarantee: 120 levels still EVALUATE.
+    fs::write(
+        d.join("shipped.n"),
+        format!("z: {}\n", cocoon_chain(120, "1")),
+    )
+    .unwrap();
+    match run_within(&d, &["run", "--observe", "_.z", "shipped.n"], BUDGET) {
+        Ran::Done { out, code } => {
+            assert_eq!(
+                code,
+                Some(0),
+                "the 120-level guarantee stopped exiting cleanly:\n{out}"
+            );
+            assert!(
+                out.contains("{{"),
+                "a 120-level nest stopped producing a combo — this arc lowered \
+                 a capability the previous version shipped:\n{out}"
+            );
+        }
+        Ran::OverBudget => panic!("the 120-level guarantee stopped finishing"),
+    }
 }
