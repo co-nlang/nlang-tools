@@ -15,7 +15,7 @@ use crate::storage::{value_address_matches, StoreReadError};
 use crate::value::{BottomCause, ComboVal, ContentHash, Identity, Value};
 use crate::{IntegrityKind, Ouroboros, PeerAdvert};
 use nlang_parser::ast::{AtomKind as AstAtom, Expr, ExprKind, FieldKey, Prefix};
-use nlang_parser::parse_expr_only;
+use nlang_parser::{is_parser_nesting_limit_error, parse_expr_only};
 use ring::rand::{SecureRandom, SystemRandom};
 use ring::signature::{self, UnparsedPublicKey};
 use serde_json::{json, Map, Value as JsonValue};
@@ -193,10 +193,16 @@ pub fn parse_request(line: &str) -> Result<OodpRequest, String> {
 
     // n/ cocoon / combo
     if line.starts_with('{') {
-        if let Ok(expr) = parse_expr_only(line) {
-            if let Ok(req) = parse_nlang_request(&expr) {
-                return Ok(req);
+        match parse_expr_only(line) {
+            Ok(expr) => {
+                if let Ok(req) = parse_nlang_request(&expr) {
+                    return Ok(req);
+                }
             }
+            Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
+                return Err("#stack_overflow".into());
+            }
+            Err(_) => {}
         }
     }
 
@@ -348,7 +354,12 @@ pub fn serve_request(
     let req = match parse_request(line) {
         Ok(r) => r,
         Err(e) => {
-            let body = refuse(OodpStatus::Conflict, "malformed", source_id);
+            let (status, reason) = if e == "#stack_overflow" {
+                (OodpStatus::Rejected, "stack_overflow")
+            } else {
+                (OodpStatus::Conflict, "malformed")
+            };
+            let body = refuse(status, reason, source_id);
             return (body, format!("OODP bad request: {e}"));
         }
     };

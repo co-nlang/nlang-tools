@@ -4,6 +4,7 @@ extern crate pest_derive;
 
 use pest::Parser;
 use std::error::Error;
+use std::fmt;
 
 #[derive(Parser)]
 #[grammar = "n.pest"]
@@ -15,6 +16,38 @@ use crate::ast::{
     AtomKind, Expr, ExprKind, Field, FieldKey, Path, PathAnchor, Prefix, Program, RelOp, Relation,
     Span, StringPart, UnaryOp,
 };
+
+/// A parser crash-fence tripped before pest is allowed to recurse on the native
+/// stack.  This is an implementation incapacity, not the evaluator's
+/// operator-configurable depth policy, so it carries `#stack_overflow`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParserNestingLimitExceeded;
+
+impl fmt::Display for ParserNestingLimitExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("#stack_overflow")
+    }
+}
+
+impl Error for ParserNestingLimitExceeded {}
+
+/// Guaranteed parser nesting depth. The parser thread is sized to retain a
+/// substantial native-stack margin at this boundary in debug builds.
+pub const PARSER_NESTING_LIMIT: usize = 256;
+
+/// Maximum AST height allowed to leave the parser. This protects recursive AST
+/// consumers (formatter, canonicalizer, evaluator adapters, and drop glue)
+/// from a deep tree built by otherwise flat source such as a long `+` chain.
+/// It is intentionally an implementation fence, not an operator knob. 4,096
+/// admits the existing 4,000-term conformance stress vectors while retaining
+/// nearly a twofold margin below the measured ~7,900-level native-stack cliff.
+pub const PARSER_AST_DEPTH_LIMIT: usize = 4096;
+
+/// Lets front ends render the parser fence as the language Bottom rather than
+/// treating it as an ordinary syntax diagnostic.
+pub fn is_parser_nesting_limit_error(error: &(dyn Error + 'static)) -> bool {
+    error.downcast_ref::<ParserNestingLimitExceeded>().is_some()
+}
 
 pub fn parse_field(pair: pest::iterators::Pair<Rule>) -> Result<Field, Box<dyn Error>> {
     let span = Span::new(pair.as_span().start(), pair.as_span().end());
@@ -282,27 +315,37 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
             Ok(left)
         }
 
-        // 4. Positional: Unary (op expr)
+        // 4. Positional: Unary. `unary_op*` is deliberately iterative in the
+        // grammar, and this fold is iterative too: moving a long `!` run from
+        // pest recursion into a recursive AST fold would only relocate the
+        // native-stack failure.
         Rule::unary_expr => {
-            let mut inner = pair.into_inner();
-            let first = inner.next().ok_or("Empty unary")?;
-            if first.as_rule() == Rule::unary_op {
-                let op = match first.as_str() {
-                    "!" => UnaryOp::Not,
-                    "-" => UnaryOp::Neg,
-                    _ => return Err("Unknown unary op".into()),
-                };
-                let expr = parse_expr(inner.next().ok_or("Unary op missing expr")?)?;
-                Ok(Expr::new(
+            let mut ops = Vec::new();
+            let mut operand = None;
+            for inner in pair.into_inner() {
+                if inner.as_rule() == Rule::unary_op {
+                    let op = match inner.as_str() {
+                        "!" => UnaryOp::Not,
+                        "-" => UnaryOp::Neg,
+                        _ => return Err("Unknown unary op".into()),
+                    };
+                    ops.push((op, inner.as_span()));
+                } else {
+                    operand = Some(inner);
+                }
+            }
+            let mut expr = parse_expr(operand.ok_or("Unary op missing operand")?)?;
+            for (op, op_span) in ops.into_iter().rev() {
+                let unary_span = Span::new(op_span.start(), expr.span.end);
+                expr = Expr::new(
                     ExprKind::Unary {
                         op,
                         expr: Box::new(expr),
                     },
-                    span,
-                ))
-            } else {
-                parse_expr(first)
+                    unary_span,
+                );
             }
+            Ok(expr)
         }
 
         // 5. Positional: Spread (... expr) — the "..." literal produces no pest
@@ -393,14 +436,29 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Result<Expr, Box<dyn Error>>
             }
             Ok(Expr::new(ExprKind::Poset(relations), span))
         }
-        Rule::tuple => {
-            let mut items = Vec::new();
-            for e in pair.into_inner() {
-                if e.as_rule() == Rule::expr {
-                    items.push(parse_expr(e)?);
+        // `paren_expr` has already parsed the shared opening paren and first
+        // expression.  With no `tuple_tail` it is grouping (the identity);
+        // with one it is a positional tuple including that first expression.
+        Rule::paren_expr => {
+            let mut inner = pair.into_inner();
+            let first = parse_expr(inner.next().ok_or("Empty paren expression")?)?;
+            match inner.next() {
+                None => Ok(first),
+                Some(tail) if tail.as_rule() == Rule::tuple_tail => {
+                    let mut items = vec![first];
+                    for e in tail.into_inner() {
+                        if e.as_rule() == Rule::expr {
+                            items.push(parse_expr(e)?);
+                        }
+                    }
+                    Ok(Expr::new(ExprKind::Tuple(items), span))
                 }
+                Some(other) => Err(format!(
+                    "Unexpected parenthesized expression tail: {:?}",
+                    other.as_rule()
+                )
+                .into()),
             }
-            Ok(Expr::new(ExprKind::Tuple(items), span))
         }
         Rule::list => {
             let mut items = Vec::new();
@@ -690,24 +748,404 @@ fn parse_path(pair: pest::iterators::Pair<Rule>) -> Result<Path, Box<dyn Error>>
     })
 }
 
-// The 16-level precedence chain makes recursive descent stack-hungry on deeply
-// nested programs (debug-build test threads default to 2 MiB) — run parse entry
-// points on a dedicated thread with generous stack.
-const PARSER_STACK_BYTES: usize = 64 * 1024 * 1024;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScanMode {
+    Code,
+    Comment,
+    Quoted,
+    MultilineQuoted,
+    Interpolated,
+}
 
-fn with_parser_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Delimiter {
+    Paren,
+    Bracket,
+    Brace,
+    Cocoon,
+    Structural,
+    Interpolation,
+}
+
+fn push_delimiter(delimiters: &mut Vec<Delimiter>, delimiter: Delimiter) -> bool {
+    delimiters.push(delimiter);
+    delimiters.len() > PARSER_NESTING_LIMIT
+}
+
+/// Returns true before pest sees a syntactically nested input that could cross
+/// its native-stack cliff.  It is intentionally a small lexical scan rather
+/// than a second parser: delimiters inside comments and string bodies do not
+/// count, while interpolation bodies do return to normal n/ syntax.
+fn exceeds_parser_nesting_limit(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut delimiters = Vec::with_capacity(PARSER_NESTING_LIMIT + 1);
+    let mut mode = ScanMode::Code;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match mode {
+            ScanMode::Comment => {
+                if matches!(bytes[i], b'\n' | b'\r') {
+                    mode = ScanMode::Code;
+                }
+                i += 1;
+            }
+            ScanMode::Quoted => {
+                if bytes[i] == b'"' {
+                    mode = ScanMode::Code;
+                }
+                i += 1;
+            }
+            ScanMode::MultilineQuoted => {
+                if bytes[i..].starts_with(b"\\\"\"\"") {
+                    i += 4;
+                } else if bytes[i..].starts_with(b"\"\"\"") {
+                    mode = ScanMode::Code;
+                    i += 3;
+                } else {
+                    i += 1;
+                }
+            }
+            ScanMode::Interpolated => {
+                if bytes[i] == b'`' {
+                    mode = ScanMode::Code;
+                    i += 1;
+                } else if bytes[i..].starts_with(b"${") {
+                    if push_delimiter(&mut delimiters, Delimiter::Interpolation) {
+                        return true;
+                    }
+                    mode = ScanMode::Code;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            ScanMode::Code => {
+                if bytes[i..].starts_with(b";;") {
+                    mode = ScanMode::Comment;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"\"\"\"") {
+                    mode = ScanMode::MultilineQuoted;
+                    i += 3;
+                } else if bytes[i] == b'"' {
+                    mode = ScanMode::Quoted;
+                    i += 1;
+                } else if bytes[i] == b'`' {
+                    mode = ScanMode::Interpolated;
+                    i += 1;
+                } else if bytes[i..].starts_with(b"{{") {
+                    if push_delimiter(&mut delimiters, Delimiter::Cocoon) {
+                        return true;
+                    }
+                    i += 2;
+                } else if bytes[i..].starts_with(b"<<") {
+                    if push_delimiter(&mut delimiters, Delimiter::Structural) {
+                        return true;
+                    }
+                    i += 2;
+                } else {
+                    match bytes[i] {
+                        b'(' => {
+                            if push_delimiter(&mut delimiters, Delimiter::Paren) {
+                                return true;
+                            }
+                            i += 1;
+                        }
+                        b'[' => {
+                            if push_delimiter(&mut delimiters, Delimiter::Bracket) {
+                                return true;
+                            }
+                            i += 1;
+                        }
+                        b'{' => {
+                            if push_delimiter(&mut delimiters, Delimiter::Brace) {
+                                return true;
+                            }
+                            i += 1;
+                        }
+                        b')' => {
+                            if matches!(delimiters.last(), Some(Delimiter::Paren)) {
+                                delimiters.pop();
+                            }
+                            i += 1;
+                        }
+                        b']' => {
+                            if matches!(delimiters.last(), Some(Delimiter::Bracket)) {
+                                delimiters.pop();
+                            }
+                            i += 1;
+                        }
+                        b'}' if bytes[i..].starts_with(b"}}")
+                            && matches!(delimiters.last(), Some(Delimiter::Cocoon)) =>
+                        {
+                            delimiters.pop();
+                            i += 2;
+                        }
+                        b'}' => {
+                            if matches!(
+                                delimiters.last(),
+                                Some(Delimiter::Brace | Delimiter::Interpolation)
+                            ) {
+                                let closed_interpolation =
+                                    matches!(delimiters.pop(), Some(Delimiter::Interpolation));
+                                if closed_interpolation {
+                                    mode = ScanMode::Interpolated;
+                                }
+                            }
+                            i += 1;
+                        }
+                        b'>' if bytes[i..].starts_with(b">>")
+                            && matches!(delimiters.last(), Some(Delimiter::Structural)) =>
+                        {
+                            delimiters.pop();
+                            i += 2;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn parser_nesting_gate(input: &str) -> Result<(), Box<dyn Error>> {
+    if exceeds_parser_nesting_limit(input) {
+        Err(Box::new(ParserNestingLimitExceeded))
+    } else {
+        Ok(())
+    }
+}
+
+/// Walk an expression with an explicit worklist. Recursive AST walkers are
+/// precisely what this fence protects, so this check must never recurse.
+fn expr_exceeds_ast_depth(root: &Expr) -> bool {
+    let mut pending = vec![(root, 1usize)];
+
+    while let Some((expr, depth)) = pending.pop() {
+        if depth > PARSER_AST_DEPTH_LIMIT {
+            return true;
+        }
+        let child_depth = depth + 1;
+        match &expr.kind {
+            ExprKind::Apply(a, b)
+            | ExprKind::Pipe(a, b)
+            | ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b) => {
+                pending.push((a, child_depth));
+                pending.push((b, child_depth));
+            }
+            ExprKind::Morphism { param, body } => {
+                pending.push((param, child_depth));
+                pending.push((body, child_depth));
+            }
+            ExprKind::Combo { fields, .. } => {
+                for field in fields {
+                    pending.push((&field.value, child_depth));
+                    if let FieldKey::Pattern(expr) = &field.key {
+                        pending.push((expr, child_depth));
+                    }
+                }
+            }
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                pending.push((cond, child_depth));
+                pending.push((then_branch, child_depth));
+                pending.push((else_branch, child_depth));
+            }
+            ExprKind::Unary { expr, .. }
+            | ExprKind::Complement(expr)
+            | ExprKind::AnonSet(expr)
+            | ExprKind::Spread(expr)
+            | ExprKind::Structural(expr) => pending.push((expr, child_depth)),
+            ExprKind::List(items) | ExprKind::Tuple(items) => {
+                pending.extend(items.iter().map(|item| (item, child_depth)));
+            }
+            ExprKind::Interpolated(parts) => {
+                for part in parts {
+                    if let StringPart::Interpolated(expr) = part {
+                        pending.push((expr, child_depth));
+                    }
+                }
+            }
+            ExprKind::Range { start, end, step } => {
+                pending.push((start, child_depth));
+                pending.push((end, child_depth));
+                if let Some(step) = step {
+                    pending.push((step, child_depth));
+                }
+            }
+            ExprKind::Atom(_) | ExprKind::Path(_) | ExprKind::Poset(_) | ExprKind::Context => {}
+        }
+    }
+    false
+}
+
+fn program_exceeds_ast_depth(program: &Program) -> bool {
+    program.fields.iter().any(|field| {
+        expr_exceeds_ast_depth(&field.value)
+            || matches!(&field.key, FieldKey::Pattern(expr) if expr_exceeds_ast_depth(expr))
+    })
+}
+
+/// Drain a rejected AST without asking Rust's generated recursive drop glue to
+/// follow its deepest child chain. Each node is first replaced by an atom, then
+/// its owned child expressions are moved onto an explicit worklist.
+fn drop_exprs_iteratively(mut pending: Vec<Expr>) {
+    while let Some(mut expr) = pending.pop() {
+        let kind = std::mem::replace(&mut expr.kind, ExprKind::Atom(AtomKind::Unit));
+        match kind {
+            ExprKind::Apply(a, b)
+            | ExprKind::Pipe(a, b)
+            | ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b) => {
+                pending.push(*a);
+                pending.push(*b);
+            }
+            ExprKind::Morphism { param, body } => {
+                pending.push(*param);
+                pending.push(*body);
+            }
+            ExprKind::Combo { fields, .. } => {
+                for field in fields {
+                    let Field { key, value, .. } = field;
+                    if let FieldKey::Pattern(expr) = key {
+                        pending.push(expr);
+                    }
+                    pending.push(value);
+                }
+            }
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                pending.push(*cond);
+                pending.push(*then_branch);
+                pending.push(*else_branch);
+            }
+            ExprKind::Unary { expr, .. }
+            | ExprKind::Complement(expr)
+            | ExprKind::AnonSet(expr)
+            | ExprKind::Spread(expr)
+            | ExprKind::Structural(expr) => pending.push(*expr),
+            ExprKind::List(items) | ExprKind::Tuple(items) => pending.extend(items),
+            ExprKind::Interpolated(parts) => {
+                for part in parts {
+                    if let StringPart::Interpolated(expr) = part {
+                        pending.push(*expr);
+                    }
+                }
+            }
+            ExprKind::Range { start, end, step } => {
+                pending.push(*start);
+                pending.push(*end);
+                if let Some(step) = step {
+                    pending.push(*step);
+                }
+            }
+            ExprKind::Atom(_) | ExprKind::Path(_) | ExprKind::Poset(_) | ExprKind::Context => {}
+        }
+    }
+}
+
+fn drop_program_iteratively(mut program: Program) {
+    let fields = std::mem::take(&mut program.fields);
+    let mut pending = Vec::with_capacity(fields.len());
+    for field in fields {
+        let Field { key, value, .. } = field;
+        if let FieldKey::Pattern(expr) = key {
+            pending.push(expr);
+        }
+        pending.push(value);
+    }
+    drop_exprs_iteratively(pending);
+}
+
+fn parser_ast_gate_expr(expr: Expr) -> Result<Expr, Box<dyn Error>> {
+    if expr_exceeds_ast_depth(&expr) {
+        drop_exprs_iteratively(vec![expr]);
+        Err(Box::new(ParserNestingLimitExceeded))
+    } else {
+        Ok(expr)
+    }
+}
+
+fn parser_ast_gate_program(program: Program) -> Result<Program, Box<dyn Error>> {
+    if program_exceeds_ast_depth(&program) {
+        drop_program_iteratively(program);
+        Err(Box::new(ParserNestingLimitExceeded))
+    } else {
+        Ok(program)
+    }
+}
+
+// The 16-level precedence chain makes recursive descent stack-hungry on deeply
+// nested programs. 512 MiB reserves about four times the debug requirement for
+// the promised 256-level worst form; Linux commits that reservation lazily.
+const PARSER_STACK_BYTES: usize = 512 * 1024 * 1024;
+
+fn with_parser_stack<T: Send>(
+    f: impl FnOnce() -> T + Send,
+) -> Result<T, ParserNestingLimitExceeded> {
+    with_parser_stack_using(
+        std::thread::Builder::new().stack_size(PARSER_STACK_BYTES),
+        f,
+    )
+}
+
+/// Keep thread creation fallible: a process under a tight address-space limit
+/// must report a parser incapacity, not turn an allocation failure into panic.
+fn with_parser_stack_using<T: Send>(
+    builder: std::thread::Builder,
+    f: impl FnOnce() -> T + Send,
+) -> Result<T, ParserNestingLimitExceeded> {
     std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(PARSER_STACK_BYTES)
+        let parser = builder
             .spawn_scoped(s, f)
-            .expect("failed to spawn parser thread")
-            .join()
-            .expect("parser thread panicked")
+            .map_err(|_| ParserNestingLimitExceeded)?;
+        parser.join().map_err(|_| ParserNestingLimitExceeded)
     })
 }
 
 pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>> {
-    with_parser_stack(|| {
+    parser_nesting_gate(input)?;
+    let expr = with_parser_stack(|| {
         // expr_toplevel = SOI ~ expr ~ EOI — rejects trailing junk that the bare
         // `expr` rule would silently leave unparsed (e.g. `a <=> b <=> c`,
         // `x: leftover`). Silent partial parse is the same bug class as
@@ -722,11 +1160,14 @@ pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>> {
             .ok_or_else(|| "expr_toplevel missing expr".to_string())?;
         parse_expr(inner).map_err(|e| e.to_string())
     })
-    .map_err(|e: String| e.into())
+    .map_err(|error| -> Box<dyn Error> { Box::new(error) })?
+    .map_err(|e: String| -> Box<dyn Error> { e.into() })?;
+    parser_ast_gate_expr(expr)
 }
 
 pub fn parse_program(input: &str) -> Result<Program, Box<dyn Error>> {
-    with_parser_stack(|| {
+    parser_nesting_gate(input)?;
+    let program = with_parser_stack(|| {
         let mut pairs = NParser::parse(Rule::program, input).map_err(|e| e.to_string())?;
         let mut fields = Vec::new();
         if let Some(p) = pairs.next() {
@@ -738,5 +1179,66 @@ pub fn parse_program(input: &str) -> Result<Program, Box<dyn Error>> {
         }
         Ok(Program { fields })
     })
-    .map_err(|e: String| e.into())
+    .map_err(|error| -> Box<dyn Error> { Box::new(error) })?
+    .map_err(|e: String| -> Box<dyn Error> { e.into() })?;
+    parser_ast_gate_program(program)
+}
+
+#[cfg(test)]
+mod nesting_gate_tests {
+    use super::*;
+
+    #[test]
+    fn ignores_delimiters_inside_comments_and_string_bodies() {
+        let delimiters = "(".repeat(PARSER_NESTING_LIMIT + 1);
+
+        assert!(parse_expr_only(&format!("\"{delimiters}\"")).is_ok());
+        assert!(parse_expr_only(&format!("\"\"\"{delimiters}\"\"\"")).is_ok());
+        assert!(parse_expr_only(&format!("`{delimiters}`")).is_ok());
+        assert!(parse_program(&format!("a: 1 ;; {delimiters}\n")).is_ok());
+    }
+
+    #[test]
+    fn rejects_real_nesting_before_pest_recurses() {
+        // Cocoon chains are the measured worst form for parser stack use. The
+        // exact ceiling remains parseable; the next layer never reaches pest.
+        let mut at_limit = "1".to_string();
+        for _ in 0..PARSER_NESTING_LIMIT {
+            at_limit = format!("{{{{a: {at_limit}}}}}");
+        }
+        assert!(parse_expr_only(&at_limit).is_ok());
+
+        let over_limit = format!("{{{{a: {at_limit}}}}}");
+        let error = parse_expr_only(&over_limit).expect_err("deep input must hit the parser fence");
+        assert!(is_parser_nesting_limit_error(error.as_ref()));
+    }
+
+    #[test]
+    fn ast_depth_fence_keeps_the_normal_drop_path_inside_its_margin() {
+        // A left-associated binary chain with N terms has AST height N. Build
+        // exactly the permitted height, then let Rust drop it normally: this
+        // pins the drop-glue side of the post-parse fence, not only formatting.
+        let at_limit = format!("1{}", "+1".repeat(PARSER_AST_DEPTH_LIMIT - 1));
+        let expr = parse_expr_only(&at_limit).expect("AST at the fence must parse");
+        drop(expr);
+
+        // The next node is built, measured and drained by the explicit
+        // worklist before the public error is returned.
+        let over_limit = format!("1{}", "+1".repeat(PARSER_AST_DEPTH_LIMIT));
+        let error = parse_expr_only(&over_limit).expect_err("deep AST must hit the fence");
+        assert!(is_parser_nesting_limit_error(error.as_ref()));
+    }
+
+    #[test]
+    fn iterative_unary_rule_keeps_whitespace_between_prefixes() {
+        assert!(parse_expr_only("! !#true").is_ok());
+    }
+
+    #[test]
+    fn parser_thread_spawn_failure_is_a_typed_fence_error() {
+        let error =
+            with_parser_stack_using(std::thread::Builder::new().stack_size(usize::MAX), || ())
+                .expect_err("an impossible stack reservation must make spawn fail cleanly");
+        assert_eq!(error, ParserNestingLimitExceeded);
+    }
 }

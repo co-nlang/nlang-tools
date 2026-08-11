@@ -90,6 +90,28 @@ fn chain(n: usize) -> String {
     vec!["1"; n].join(" + ")
 }
 
+/// Chain length for the two probes below that must reach the EVALUATOR's
+/// ceilings.
+///
+/// ACCEPTOR EDIT (a_limit_you_cannot_catch, 2026-08-11). These were 5000. The
+/// parser arc introduced an AST-depth ceiling of 4096, so a 5000-term chain is
+/// now refused at PARSE and never reaches the evaluator at all:
+///
+///   * C1 below went red — nothing was staged, so there was no horizon to
+///     report (`Universe is static`);
+///   * R2 below stayed GREEN FOR THE WRONG REASON — it asserts the absence of
+///     `#max_depth_exceeded` and `#blur`, and an empty universe contains
+///     neither. The evaluator's `HARD_RECURSION_LIMIT` it was written to
+///     exercise was no longer reached by it at all.
+///
+/// 1000 is under the parser ceiling (4096) and over both evaluator limits it
+/// must cross — the default depth policy (256) for C1 and
+/// `HARD_RECURSION_LIMIT` (400) for R2. Measured after the change: C1's fixture
+/// reports `#max_depth_exceeded`, R2's reports `#stack_overflow` from the
+/// evaluator. The 5000 was always incidental; what these probes pin is which
+/// side of a limit the report comes from, not how long the chain is.
+const EVALUATOR_REACHING_CHAIN: usize = 1000;
+
 /// Evolve a deep addition chain under a given depth knob; return the raw
 /// process outcome, because a crash has no value to inspect.
 fn evolve_deep(tag: &str, knob: Option<u64>, terms: usize) -> Output {
@@ -150,7 +172,11 @@ fn c1_default_depth_still_gives_a_horizon() {
         String::from_utf8_lossy(&o.stderr)
     );
     let d = fresh("c1b");
-    fs::write(d.join("u.n"), format!("big: {}\n", chain(5000))).unwrap();
+    fs::write(
+        d.join("u.n"),
+        format!("big: {}\n", chain(EVALUATOR_REACHING_CHAIN)),
+    )
+    .unwrap();
     oo(&d, &["evolve", "u.n"]);
     let st = oo(&d, &["status"]);
     assert!(
@@ -207,7 +233,7 @@ fn r2_the_hard_limit_has_its_own_name() {
         d.join("u.n"),
         format!(
             "~%Config.max_unification_depth: 100000\n~%Config.strategy: #strict\nbig: {}\n",
-            chain(5000)
+            chain(EVALUATOR_REACHING_CHAIN)
         ),
     )
     .unwrap();
@@ -217,6 +243,15 @@ fn r2_the_hard_limit_has_its_own_name() {
         "LIVENESS: still crashing, so there is no report to inspect"
     );
     let st = oo(&d, &["status"]);
+    // ACCEPTOR HARDENING (2026-08-11). Every assertion below is an ABSENCE, so
+    // an empty universe satisfied all of them — which is exactly how the parser
+    // arc hollowed this probe out without turning it red. Assert the presence
+    // of the report first: the evaluator's ceiling must actually have fired.
+    assert!(
+        st.contains("#stack_overflow"),
+        "the evaluator's hard limit was never reached, so the assertions below \
+         would be vacuous: {st}"
+    );
     assert!(
         !st.contains("#max_depth_exceeded"),
         "an implementation limit is reported under the operator's policy \

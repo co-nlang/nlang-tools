@@ -63,7 +63,9 @@ logic_infix = @{ "/" ~ ident }
 // !logic_infix: `a /f b` must reach the L7 infix level — juxtaposition may not
 // swallow /f as an operand (authority fix, reverse-adopted into SPEC_14 2026-07-05)
 apply_expr = { unary_expr ~ (!field_start ~ !add_op ~ !mul_op ~ !cmp_op ~ !logic_infix ~ unary_expr)* }
-unary_expr = { (unary_op ~ unary_expr) | spread_expr | type_ann_expr }
+// A run of `!` must not recurse through pest's native stack. Parse the prefix
+// as a flat sequence, then fold it into nested AST nodes iteratively.
+unary_expr = { unary_op* ~ (spread_expr | type_ann_expr) }
 unary_op = { "!" }
 spread_expr = { "..." ~ type_ann_expr }
 type_ann_expr = { postfix_expr ~ (!field_start ~ type_ann_op ~ postfix_expr)* }
@@ -80,8 +82,7 @@ primary = {
     | complex_lit
     | context
     | structural
-    | tuple
-    | "(" ~ expr ~ ")"
+    | paren_expr
     | combo
     | cocoon
     | anon_set
@@ -116,8 +117,14 @@ order_chain = { poset_node ~ (order_op ~ poset_node)+ }
 order_op    = { "<=" | ">=" | "=" | "<" | ">" }
 poset_node  = { tag_start | tag_end | tag }
 
-// tuple is delimited by "at least one separator": (x) is grouping, (x,) is a 1-tuple
-tuple = { "(" ~ WHITESPACE* ~ expr ~ list_sep ~ (expr ~ (list_sep ~ expr)* ~ list_sep?)? ~ WHITESPACE* ~ ")" }
+// Parse the shared `( expr` prefix once, then branch on the next token.  The
+// former `tuple | "(" ~ expr ~ ")"` ordering retried every grouping level as
+// a tuple first, making `(((x)))` exponential in its nesting depth.
+//
+// `tuple_tail` begins with a separator, so it is disjoint from grouping's `)`:
+// `(x)` is grouping; `(x,)` is a one-tuple; `(x, y)` is a tuple.
+paren_expr = { "(" ~ WHITESPACE* ~ expr ~ (tuple_tail | ")") }
+tuple_tail = { list_sep ~ (expr ~ (list_sep ~ expr)* ~ list_sep?)? ~ WHITESPACE* ~ ")" }
 list = { "[" ~ WHITESPACE* ~ (expr ~ (list_sep ~ expr)* ~ list_sep?)? ~ WHITESPACE* ~ "]" }
 list_sep = _{ "," | ";" }
 
