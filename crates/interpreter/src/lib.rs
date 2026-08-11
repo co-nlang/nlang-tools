@@ -6,7 +6,10 @@ use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, RwLock,
+};
 pub use universe::Universe;
 pub mod authority;
 pub mod bn_serial;
@@ -45,6 +48,24 @@ pub use crate::value::{
 };
 use anyhow::Result;
 use sha2::Digest;
+
+/// REAL_01 §9.1's standardized Metered Billing Unit schedule. These are
+/// semantic operations, deliberately separate from implementation visits: two
+/// engines may use different data structures yet must put a #blur horizon at
+/// the same semantic point.
+///
+/// The interpreter has no language-level FFI or spectral-calibration dispatch
+/// yet, so those prescribed rows are retained here for the future binding but
+/// intentionally have no current call site.
+#[allow(dead_code)]
+pub(crate) mod mbu {
+    pub const SUBSPACE_EXPANSION: u64 = 1;
+    pub const OPERATOR_APPLICATION: u64 = 10;
+    pub const SPECTRAL_CALIBRATION: u64 = 25;
+    pub const ORTHOGONAL_MERGE: u64 = 5;
+    pub const LIFTING_BASE: u64 = 5;
+    pub const FFI_BASE: u64 = 50;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceExhausted {
@@ -224,9 +245,9 @@ impl EvalContext {
     ///   Evolve skips them: fuel already governs force-at-observe, and applying
     ///   it on evolve mints `#blur` under evolve's per-call random salt (moves
     ///   fuel-side CAIDs).
-    /// * `apply_timeout` — only when the user staged a `timeout` override.
-    ///   Genesis carries `timeout: 1000`, but that value was never wired; applying
-    ///   it globally would put a 1s wall on every observation of a stdlib root.
+    /// * `apply_timeout` — only when the user staged a finite `timeout` override.
+    ///   Genesis carries `timeout: #_` (unbound); a finite override alone may
+    ///   arm a wall-clock deadline for the observation.
     pub fn apply_horizon_config(
         &mut self,
         cfg: &crate::value::ComboVal,
@@ -311,9 +332,6 @@ impl EvalContext {
     }
 
     pub fn check_resources(&mut self, cost: u64) -> Result<(), ResourceExhausted> {
-        if self.fuel < cost {
-            return Err(ResourceExhausted::FuelExhausted);
-        }
         // G3 R3 / ERROR_CODES §2.7.2: depth gate is observation-budget
         // exhaustion, not a cycle and not fuel. Report DepthExceeded so
         // Blur %cause / Strict ⊥ share #max_depth_exceeded (L2-21/22;
@@ -337,31 +355,59 @@ impl EvalContext {
                 return Err(ResourceExhausted::Timeout);
             }
         }
+        // Structural policy limits have priority when multiple horizons are
+        // crossed at the same evaluation point.  In particular, a depth-
+        //bounded program must not be reported as fuel exhaustion merely
+        // because the semantic meter was also depleted on the way there.
+        if self.fuel < cost {
+            return Err(ResourceExhausted::FuelExhausted);
+        }
         self.fuel -= cost;
         Ok(())
     }
 }
 
-/// Whether a combo needs no further force_recursive field walk: no thunks,
-/// no refs, no pending spreads, and every nested combo is likewise solid.
-/// Used to avoid re-solidifying cocoons that eval already forced after seal
-/// (that re-walk burned ~3 depth units per nest level and cliffed at ~87).
-fn value_is_fully_solid_combo(c: &ComboVal) -> bool {
+/// The semantic subspace-expansion bill for proving a combo already solid.
+/// `None` means that a thunk/ref/pending spread needs the ordinary forcing
+/// path. The fast path still walks dynamic value structure, so letting it
+/// return for free would make a deep, already-solid cocoon evade the meter.
+///
+/// Count semantic containers and their projected members, not recursive-frame
+/// visits: a depth-n cocoon bills O(n), even if this implementation revisits
+/// frames while settling it.
+fn solid_combo_expansion_cost(c: &ComboVal) -> Option<u64> {
     if !c.pending_spreads.is_empty() {
-        return false;
+        return None;
     }
-    fn solid(v: &Value) -> bool {
-        match v {
-            Value::Thunk { .. } | Value::Ref(_) => false,
-            Value::Combo(inner) => value_is_fully_solid_combo(inner),
-            Value::Union(bs) => bs.iter().all(solid),
-            Value::Range { start, end, step } => {
-                solid(start) && solid(end) && step.as_ref().map(|s| solid(s)).unwrap_or(true)
+    let mut cost = mbu::SUBSPACE_EXPANSION;
+    let mut pending: Vec<Value> = c
+        .all_fields_iter()
+        .map(|(_, value)| value)
+        .chain(c.local.values().cloned())
+        .collect();
+    while let Some(value) = pending.pop() {
+        cost = cost.saturating_add(mbu::SUBSPACE_EXPANSION);
+        match value {
+            Value::Thunk { .. } | Value::Ref(_) => return None,
+            Value::Combo(inner) => {
+                if !inner.pending_spreads.is_empty() {
+                    return None;
+                }
+                pending.extend(inner.all_fields_iter().map(|(_, child)| child));
+                pending.extend(inner.local.values().cloned());
             }
-            _ => true,
+            Value::Union(branches) => pending.extend(branches),
+            Value::Range { start, end, step } => {
+                pending.push(*start);
+                pending.push(*end);
+                if let Some(step) = step {
+                    pending.push(*step);
+                }
+            }
+            _ => {}
         }
     }
-    c.all_fields_iter().all(|(_, v)| solid(&v)) && c.local.values().all(solid)
+    Some(cost)
 }
 
 /// D1/M1: digest of sealed frame **content** for force-memo / in_flight keys.
@@ -620,6 +666,10 @@ pub struct ForceMemoKey {
 #[derive(Debug, Clone)]
 pub struct MemoEntry {
     pub value: Value,
+    /// Semantic MBU consumed to produce `value`.  A cache is an implementation
+    /// optimisation, not a second billing schedule: a hit must debit the same
+    /// semantic work as a miss so cache warmth cannot move a blur horizon.
+    pub mbu_cost: u64,
     /// Coordinates (top-level root field names) read during evaluation.
     /// Empty set = C₀ (path-free, $-free — permanent tier).
     pub deps: HashSet<String>,
@@ -650,6 +700,9 @@ pub struct Ouroboros {
     pub force_memo: RwLock<HashMap<ForceMemoKey, MemoEntry>>,
     /// Reverse index: coord → memo keys that read this coord.
     pub force_memo_rev: RwLock<HashMap<String, HashSet<ForceMemoKey>>>,
+    /// Monotonic count of successfully served force-memo entries. This is
+    /// diagnostic state only: it never participates in fuel or CAID.
+    force_memo_hit_count: AtomicU64,
     pub builtin_registry: HashMap<String, Arc<BuiltinFn>>,
     pub peers: RwLock<HashMap<String, Peer>>,
     /// Automatic remote fetch sources (admission class). Keyed by `node_id`,
@@ -741,6 +794,14 @@ impl Ouroboros {
         }
     }
 
+    /// Number of force-memo entries that have been successfully served by
+    /// this engine instance. The counter is intentionally not reset by
+    /// invalidation: callers compare before/after snapshots to verify a hit
+    /// without making cache warmth observable through the fuel horizon.
+    pub fn force_memo_hit_count(&self) -> u64 {
+        self.force_memo_hit_count.load(Ordering::Relaxed)
+    }
+
     /// Stage 5 (§5a): record a coordinate dependency in the active collector.
     fn record_dep(&self, ctx: &mut EvalContext, coord: &str) {
         if let Some(ref mut deps) = ctx.dep_collector {
@@ -762,6 +823,7 @@ impl Ouroboros {
             unify_memo: RwLock::new(HashMap::new()),
             force_memo: RwLock::new(HashMap::new()),
             force_memo_rev: RwLock::new(HashMap::new()),
+            force_memo_hit_count: AtomicU64::new(0),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
             automatic_remotes: RwLock::new(IndexMap::new()),
@@ -819,6 +881,7 @@ impl Ouroboros {
             unify_memo: RwLock::new(HashMap::new()),
             force_memo: RwLock::new(HashMap::new()),
             force_memo_rev: RwLock::new(HashMap::new()),
+            force_memo_hit_count: AtomicU64::new(0),
             builtin_registry: builtins,
             peers: RwLock::new(HashMap::new()),
             automatic_remotes: RwLock::new(IndexMap::new()),
@@ -2938,6 +3001,7 @@ impl Ouroboros {
                 context,
                 effect,
             } => {
+                let fuel_before = ctx.fuel;
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
                 // staged, which the key does not include.
@@ -2970,43 +3034,68 @@ impl Ouroboros {
                 };
 
                 if let Some(ref k) = memo_key {
-                    if let Ok(memo) = self.force_memo.read() {
-                        if let Some(entry) = memo.get(k) {
-                            // Stage 5 acceptance fix: a HIT must float the
-                            // entry's deps into the active outer collector —
-                            // an outer entry built over this hit embeds this
-                            // value, so it inherits these invalidation edges
-                            // (probe p1_hit_path_must_float_transitive_deps).
-                            if let Some(ref mut c) = ctx.dep_collector {
-                                c.extend(entry.deps.iter().cloned());
-                            }
-                            let mut res = entry.value.clone();
-                            res = match res {
-                                Value::Atom(kind, old_e, r) => {
-                                    Value::Atom(kind, old_e.union(effect), r)
-                                }
-                                Value::Combo(mut cv) => {
-                                    cv.effect = cv.effect.union(effect);
-                                    Value::Combo(cv)
-                                }
-                                Value::Bottom(_)
-                                | Value::Blur(_)
-                                | Value::Top
-                                | Value::TopCaused { .. } => res,
-                                other if !other.effect().contains_all(effect) => {
-                                    let e = effect.union(other.effect());
-                                    Value::Combo(ComboVal::new(
-                                        IndexMap::from_iter(vec![("%val".to_string(), other)]),
-                                        true,
-                                        IndexMap::new(),
-                                        e,
-                                        vec![],
-                                    ))
-                                }
-                                other => other.with_effect(effect),
-                            };
-                            return res;
+                    let hit = self
+                        .force_memo
+                        .read()
+                        .ok()
+                        .and_then(|memo| memo.get(k).cloned());
+                    if let Some(entry) = hit {
+                        if let Err(e) = ctx.check_resources(entry.mbu_cost) {
+                            let partial =
+                                if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                                    Some(Value::Code(Box::new(
+                                        expr.as_ref().clone().without_spans(),
+                                    )))
+                                } else {
+                                    None
+                                };
+                            return handle_resource_exhausted(
+                                e,
+                                ctx.strategy,
+                                &*ctx,
+                                partial,
+                                effect,
+                            );
                         }
+                        // §10 repair: memo reuse is observable for testing,
+                        // but its semantic MBU bill remains identical to a
+                        // miss, so cache warmth cannot affect #blur CAIDs.
+                        self.force_memo_hit_count
+                            .fetch_add(1, Ordering::Relaxed);
+                        // Stage 5 acceptance fix: a HIT must float the
+                        // entry's deps into the active outer collector —
+                        // an outer entry built over this hit embeds this
+                        // value, so it inherits these invalidation edges
+                        // (probe p1_hit_path_must_float_transitive_deps).
+                        if let Some(ref mut c) = ctx.dep_collector {
+                            c.extend(entry.deps.iter().cloned());
+                        }
+                        let mut res = entry.value.clone();
+                        res = match res {
+                            Value::Atom(kind, old_e, r) => {
+                                Value::Atom(kind, old_e.union(effect), r)
+                            }
+                            Value::Combo(mut cv) => {
+                                cv.effect = cv.effect.union(effect);
+                                Value::Combo(cv)
+                            }
+                            Value::Bottom(_)
+                            | Value::Blur(_)
+                            | Value::Top
+                            | Value::TopCaused { .. } => res,
+                            other if !other.effect().contains_all(effect) => {
+                                let e = effect.union(other.effect());
+                                Value::Combo(ComboVal::new(
+                                    IndexMap::from_iter(vec![("%val".to_string(), other)]),
+                                    true,
+                                    IndexMap::new(),
+                                    e,
+                                    vec![],
+                                ))
+                            }
+                            other => other.with_effect(effect),
+                        };
+                        return res;
                     }
                 }
 
@@ -3040,6 +3129,18 @@ impl Ouroboros {
                     if ctx.computing.contains(pc) {
                         return cycle_reentry(ctx, Some(pc));
                     }
+                }
+
+                // A thunk force opens one deferred subspace even when its
+                // expression is an atom. This is semantic observation work,
+                // not AST traversal; include it in the stored memo bill.
+                if let Err(e) = ctx.check_resources(mbu::SUBSPACE_EXPANSION) {
+                    let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                        Some(Value::Code(Box::new(expr.as_ref().clone().without_spans())))
+                    } else {
+                        None
+                    };
+                    return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, effect);
                 }
 
                 // Stage 5 (§5a): nested dep_collector propagation.
@@ -3114,6 +3215,7 @@ impl Ouroboros {
                 // list for %members still filled at re-entry sites.
                 ctx.cycle_chain = call_ctx.cycle_chain;
                 let inner_deps = call_ctx.dep_collector.take();
+                let mbu_cost = fuel_before.saturating_sub(ctx.fuel);
 
                 // Do NOT wrap Bottom/Blur/Top in a pure-wrapper for effect
                 // escalation — that shell traps `.%cause` navigation (meta
@@ -3175,6 +3277,7 @@ impl Ouroboros {
                                 k.clone(),
                                 MemoEntry {
                                     value: res.clone(),
+                                    mbu_cost,
                                     deps,
                                 },
                             );
@@ -3192,11 +3295,7 @@ impl Ouroboros {
                 // invalidates (conservative over-approximation, correct for
                 // self-referential chains).
                 self.record_dep(ctx, "*");
-                let cost = if path.segments.is_empty() {
-                    32
-                } else {
-                    1 + path.segments.len() as u64
-                };
+                let cost = mbu::SUBSPACE_EXPANSION;
                 if let Err(e) = ctx.check_resources(cost) {
                     return handle_resource_exhausted(
                         e,
@@ -3217,12 +3316,25 @@ impl Ouroboros {
     }
 
     pub fn force_recursive(&self, val: Value, ctx: &mut EvalContext) -> Value {
-        // Already-solid combos (cocoon eval forced fields after seal): do not
-        // charge depth or re-walk. Re-entry used to cost ~3 depth units per
-        // nest level and hit max_unification_depth (256) at nest≈87, then
-        // blur-partial content_hash hung (M1 cliff).
+        // Already-solid combos (cocoon eval forced fields after seal): avoid
+        // recursively re-forcing them, but still bill the semantic subspaces
+        // inspected to establish that fact.
         if let Value::Combo(ref c) = val {
-            if c.pending_spreads.is_empty() && value_is_fully_solid_combo(c) {
+            if let Some(cost) = solid_combo_expansion_cost(c) {
+                if let Err(e) = ctx.check_resources(cost) {
+                    let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                        Some(val.clone())
+                    } else {
+                        None
+                    };
+                    return handle_resource_exhausted(
+                        e,
+                        ctx.strategy,
+                        &*ctx,
+                        partial,
+                        EffectTag::Pure,
+                    );
+                }
                 return val;
             }
         }
@@ -3233,7 +3345,7 @@ impl Ouroboros {
             let mut v = val;
             let mut peel = 0u32;
             while matches!(v, Value::Thunk { .. }) && peel < 64 {
-                if let Err(e) = ctx.check_resources(0) {
+                if let Err(e) = ctx.check_resources(mbu::SUBSPACE_EXPANSION) {
                     let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
                         Some(v.clone())
                     } else {
@@ -3258,7 +3370,7 @@ impl Ouroboros {
         // fuel horizon ever engages. Depth exhaustion is the same semantic
         // truncation as fuel: the horizon, not an error.
         ctx.depth += 1;
-        if let Err(e) = ctx.check_resources(0) {
+        if let Err(e) = ctx.check_resources(mbu::SUBSPACE_EXPANSION) {
             ctx.depth -= 1;
             // O42 R-3: node_content of the force site for Blur only.
             let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
@@ -3287,8 +3399,25 @@ impl Ouroboros {
             Value::Thunk { .. } => self.force_recursive(val, ctx),
             Value::Combo(c) => {
                 // May have become solid under force (thunk → cocoon eval).
-                if c.pending_spreads.is_empty() && value_is_fully_solid_combo(&c) {
-                    Value::Combo(c)
+                if let Some(cost) = solid_combo_expansion_cost(&c) {
+                    match ctx.check_resources(cost) {
+                        Ok(()) => Value::Combo(c),
+                        Err(e) => {
+                            let partial =
+                                if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                                    Some(Value::Combo(c))
+                                } else {
+                                    None
+                                };
+                            handle_resource_exhausted(
+                                e,
+                                ctx.strategy,
+                                &*ctx,
+                                partial,
+                                EffectTag::Pure,
+                            )
+                        }
+                    }
                 } else {
                     // forward_spread: expand deferred sources before solidifying fields.
                     let expanded = self.expand_combo_pending(c, ctx);
@@ -3715,14 +3844,8 @@ impl Ouroboros {
         let mut accumulated_effect = val.effect();
         let mut path_so_far = path_prefix.to_string();
         for seg in segments {
-            if let Err(e) = ctx.check_resources(2) {
-                return handle_resource_exhausted(
-                    e,
-                    ctx.strategy,
-                    &*ctx,
-                    None,
-                    accumulated_effect,
-                );
+            if let Err(e) = ctx.check_resources(mbu::SUBSPACE_EXPANSION) {
+                return handle_resource_exhausted(e, ctx.strategy, &*ctx, None, accumulated_effect);
             }
             let seg = seg.trim();
             let mut current = self.force(val, ctx);

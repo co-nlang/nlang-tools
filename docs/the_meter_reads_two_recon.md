@@ -228,3 +228,148 @@ English commit messages.
 * **Parser-thread panic mislabel** (v0.18.0 §10.5): `with_parser_stack_using`
   maps a panic inside the parser thread to `#stack_overflow`. Next parser arc.
 * **pest replacement**: the real ceiling-raiser, already deferred in v0.18.0.
+
+---
+
+# §10 Acceptance round 1 — repair required (2026-08-11)
+
+Probe integrity **intact**: exactly seven `#[ignore]` removals, no probe body
+edited. Arc probes **12/12**. conformance **143/143**, genesis **11/11**,
+workspace **1874/0** with the nine reported failures reproduced exactly.
+
+The delivery contains one finding worth more than the arc asked for, and one
+error of direction. Its own characterisation of the nine — "all pin an old
+low-fuel threshold, old blur CAID, or fuel-cheaper cache hit" — is **wrong for
+five of them**, and that mischaracterisation is what this section exists to
+correct.
+
+## §10.1 What the delivery got right, including something we did not ask for
+
+**Cache-independent billing.** A memo hit now debits the MBU it originally
+consumed. Before, a warm cache left more fuel, so the horizon — and therefore
+the `#blur` CHS, and therefore its CAID — depended on whether the value had
+been observed before. `stage5_r1`'s own precondition (`warm > cold`) is the
+proof that cache state was observable in the fuel account. This is the O42
+defect class (identity depending on a runtime reading) in a place nobody had
+looked, and the delivery found and closed it unprompted.
+
+## §10.2 Arithmetic — a spec ambiguity, resolved by O41, not by this arc
+
+Measured: `1+1+…` at 10 terms and at 100 terms both cost 2. Literal arithmetic
+is unbilled, and the delivery says so explicitly — it removed the old
+`10 + 2n` charges on combo/tuple/poset construction as AST-bounded.
+
+The acceptor first read this as "the completeness rule was applied in reverse"
+and prepared to require the charges back. **That was wrong**, and the ruling
+that settles it already existed:
+
+> **O41 (user, 2026-08-09)**: every horizon knob defaults to `#_` **except
+> `%fuel`** — it is 「唯一一個『拿掉之後觀測不再必定終止』的旋鈕」.
+
+That is `%fuel`'s job description on the record: it guarantees **termination**,
+not CPU fairness. Work whose extent is fixed by the supplied AST always
+terminates, so it needs no charge; what can fail to terminate — recursion,
+self-reference, unbounded lifting — is billed. The delivery's reading is the
+correct one.
+
+It also completes a picture across three arcs, with no gap left:
+
+| bound | what it limits | in the CHS? |
+|---|---|---|
+| parser fences (v0.18.0) | how big and deep the **source** may be | n/a |
+| **`%fuel`** | what the source may **amplify into** | **yes** |
+| `%timeout` | wall clock | **no** |
+
+and it gives `%timeout`'s exclusion from the six CHS parameters a better
+reason than the one recorded in O43 ("the only non-discrete horizon
+parameter"): non-discreteness is the symptom. The reason is that **`%fuel`
+measures movement on the lattice and `%timeout` measures the machine**, and
+what measures the machine must not enter an identity. It is the same reason
+SPEC_08 §117 forbids minting a `#blur` on timeout at all.
+
+**Acceptor error recorded**: during this acceptance the acceptor claimed
+SPEC_09 declares `%timeout: 1000` as a normative default that the engine
+ignores. It does not — O41 changed the genesis default to `#_` and the engine
+matches it (verified: genesis `~%Config.timeout` = `#_`, `fuel` = `10000`).
+The claim came from reading a **stale table**; see §10.4.
+
+## §10.3 Granularity — no violation, and deliberately left interim
+
+Three of the nine (two controls and a pin, all on the same `<<_.>>` fixture)
+failed because exhaustion no longer collapses the whole structural observation
+into one blur. Mechanism: `eval.rs:915` went from `check_resources(1)` to
+`check_resources(0)`, so the generic AST walk stopped being the thing that ran
+out; the horizon is now reached inside each member.
+
+Nobody designed this. **A blur appears wherever `handle_resource_exhausted`
+happens to be called**, and moving the charge sites moved the report.
+
+Checked against the spec rather than assumed: **SPEC_08 §3.2.4** says 「當運算
+觸及視界邊緣…**節點**會根據 `%strategy` 進行語義坍縮」 — per node — and its
+`#blur` row describes keeping the universe 「在『部分觀測』的聯集狀態」. The
+new behaviour matches that wording more closely than the old one did. **No
+violation**, so this arc does not have to resolve it.
+
+Determinism verified, since the whole arc turns on it: the same program yields
+a byte-identical 61-blur result across five separate processes and two working
+directories.
+
+Accepted as **interim**. Where an observation reports "how it ended" is being
+redesigned separately (`~%Observe`), because that is a different question from
+where the meter ticks — today they are one code path, which is why this moved
+at all. The three probes have been re-pointed by the acceptor at the property
+that survives ("exhaustion still says fuel", and the CAID is the same in every
+process) rather than at the interim shape.
+
+## §10.4 Repair list
+
+1. **Restore memo coverage — the only must-fix.** Four tests
+   (`stage4_memo_reduces_fuel_on_second_observe`, `stage5_r1/r2/r3`) used the
+   fuel delta as their *only* instrument for "did the memo hit". The billing
+   change is right, so the instrument is gone and memo correctness — survives
+   an unrelated evolve, is invalidated by a related one — is now untested.
+   The contract is not obsolete; the instrument is. Provide a
+   cache-independent observable (an explicit hit counter or equivalent) and
+   re-point those four at it. **Do not** re-couple fuel to cache warmth.
+
+2. **Write ruling (乙) into the spec** so a second implementation does not have
+   to guess — the divergence §9 exists to prevent:
+   * REAL_01 §9.1: `算子應用` means **morphism application**, not any operator.
+   * SPEC_08 §107: add that work whose extent is already fixed by the supplied
+     AST is not MBU-billable, with O41's reason (`%fuel` guarantees
+     termination) stated, not just asserted.
+
+3. **Fix the stale row that misled the acceptor.** SPEC_09 has two tables that
+   disagree: §447 (genesis knobs) says `timeout` → `#_` (O41); §526 (horizon
+   parameters) still says `1000`. §526 is O41 residue. Editorial.
+
+4. **Stale engine comments**: `lib.rs:246` and `universe.rs:913` still say
+   "Genesis carries `timeout: 1000`". It carries `#_`.
+
+## §10.5 Acceptor-side changes already made
+
+Five tests re-pointed (delivery must not edit these; they are recorded here so
+the next reader sees why they moved):
+
+* `name_points_at_remedy::c1`, `::p2`, `knob_that_does_nothing::c1` — observe
+  `v` instead of `v.%cause` / `v.%caid`; property preserved (§10.3).
+* `cycle_test::test_fuel_exhausted_{strict,blur}_mode` — fixtures changed from
+  literal arithmetic to morphism application, because under (乙) arithmetic can
+  no longer reach the horizon and the tests had stopped testing exhaustion.
+
+**`p2`'s literal digest is deliberately not re-pinned yet** — a repair round is
+open and the schedule change moves every fuel-side blur address. It pins the
+cross-process relation for now and **the literal goes back at final
+acceptance**; that is an acceptance criterion, not a note.
+
+Workspace after these edits: **1879 passed / 4 failed**, the four being exactly
+the memo tests in item 1.
+
+## §10.6 Acceptance criteria for the repair
+
+* all 12 arc probes green; workspace green with **no** test edited by the
+  delivery;
+* the four memo tests test memo again, through an observable that cannot
+  depend on cache warmth;
+* `p2`'s literal digest re-pinned to the measured value;
+* conformance 143/143, genesis 11/11, ×5 repeat stability, cross-version.

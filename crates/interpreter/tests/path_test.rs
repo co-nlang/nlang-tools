@@ -18,7 +18,6 @@ fn field_name(key: &FieldKey) -> String {
 }
 
 #[test]
-#[ignore = "Known Issue: Sibling resolution in combos"]
 fn test_lexical_scoping_shadowing() {
     let input = "a: 1\ninner: {\na: 2\nb: a\n}\noutside_b: inner.b";
     let program = parse_program(input).unwrap();
@@ -56,7 +55,6 @@ fn test_lexical_scoping_shadowing() {
 }
 
 #[test]
-#[ignore = "Known Defect: Absolute path resolution in isolated evaluation context"]
 fn test_absolute_path() {
     let input = "a: 1\ninner: {\na: 2\nroot_a: _.a\n}";
     let program = parse_program(input).unwrap();

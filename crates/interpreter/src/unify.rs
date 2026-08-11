@@ -7,7 +7,7 @@ use crate::value::{
     normalize_union, primary_bottom_from_culled, BlurDetail, BottomCause, BottomDetail, ComboVal,
     EffectTag, MasaRef, Value,
 };
-use crate::{EvalContext, Ouroboros};
+use crate::{mbu, EvalContext, Ouroboros};
 use indexmap::IndexMap;
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
@@ -89,14 +89,6 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
 impl Ouroboros {
     pub fn unify(&self, a: Value, b: Value) -> Value {
         let mut ctx = self.eval_context();
-        if let Err(e) = ctx.check_resources(10) {
-            let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
-                Some(Value::Union(vec![a.clone(), b.clone()]))
-            } else {
-                None
-            };
-            return handle_resource_exhausted(e, ctx.strategy, &ctx, partial, EffectTag::Pure);
-        }
         self.unify_internal(a, b, &mut ctx)
     }
 
@@ -135,6 +127,18 @@ impl Ouroboros {
     }
 
     pub fn unify_internal(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
+        // A recursive distribution is still a sequence of semantic lattice
+        // intersections/unions.  Put the bill at the shared operation rather
+        // than only at surface `&` / `|`, so a runtime-sized union or spread
+        // cannot make additional merges free.
+        if let Err(e) = ctx.check_resources(mbu::ORTHOGONAL_MERGE) {
+            let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
+                Some(Value::Union(vec![a.clone(), b.clone()]))
+            } else {
+                None
+            };
+            return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, EffectTag::Pure);
+        }
         // Stage 2 (call-by-observation): lazy unify — CAID early-out, Top/Thunk
         // preserve thunk, force only when value-judgment needed.
         let id_a = a.content_hash();
@@ -396,9 +400,7 @@ impl Ouroboros {
             }
             // Blur unification rules
             // O46: merge blurs as a set of horizon records (not meet / not order).
-            (Value::Blur(ba), Value::Blur(bb)) => {
-                Value::Blur(BlurDetail::merge_set(&ba, &bb))
-            }
+            (Value::Blur(ba), Value::Blur(bb)) => Value::Blur(BlurDetail::merge_set(&ba, &bb)),
             (Value::Blur(_), b @ Value::Bottom(_)) => b,
             (a @ Value::Bottom(_), Value::Blur(_)) => a,
             (ba @ Value::Blur(_), Value::Top) => ba,

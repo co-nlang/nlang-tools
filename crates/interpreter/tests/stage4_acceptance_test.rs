@@ -53,6 +53,26 @@ fn fuel_after_observe(
     (result, ctx.fuel)
 }
 
+/// ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11). Same observation, also
+/// reporting how many force-memo entries were served.
+///
+/// The tests here used to detect a memo hit by "the second observe left more
+/// fuel". That instrument is gone on purpose: if a warm cache leaves more
+/// fuel, the horizon — and so the `#blur` CHS, and so its CAID — depends on
+/// whether a value happened to be observed before. `force_memo_hit_count` is
+/// diagnostic state that never touches fuel or identity, which is exactly what
+/// a memo detector has to be.
+fn observe_with_hits(
+    engine: &Ouroboros,
+    universe: &Universe,
+    path: &Path,
+    initial_fuel: u64,
+) -> (Value, u64, u64) {
+    let before = engine.force_memo_hit_count();
+    let (v, fuel) = fuel_after_observe(engine, universe, path, initial_fuel);
+    (v, fuel, engine.force_memo_hit_count() - before)
+}
+
 // Probe 1: same path observed twice — second fuel strictly less, same CAID
 #[test]
 fn stage4_memo_reduces_fuel_on_second_observe() {
@@ -65,17 +85,26 @@ fn stage4_memo_reduces_fuel_on_second_observe() {
         Value::Atom(AtomKind::Int(3.into()), EffectTag::Pure, None)
     );
 
-    let (v2, fuel2) = fuel_after_observe(&engine, &universe, &p, 1000);
+    let (v2, fuel2, hits) = observe_with_hits(&engine, &universe, &p, 1000);
     assert_eq!(
         v1.content_hash(),
         v2.content_hash(),
         "memo hit must return same value"
     );
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11). This asserted
+    // `fuel2 > fuel1` — the memo had to be CHEAPER. That is now forbidden, and
+    // the two assertions below say why in the right order:
     assert!(
-        fuel2 > fuel1,
-        "second observe should use less fuel: fuel1={}, fuel2={}",
-        fuel1,
-        fuel2
+        hits > 0,
+        "no memo entry was served on the second observe — the memo is not \
+         working, and the fuel assertion below would be vacuous"
+    );
+    assert_eq!(
+        fuel2, fuel1,
+        "a memo hit changed the fuel account (cold={fuel1}, warm={fuel2}) — \
+         cache warmth would then move the horizon, and with it the #blur CHS \
+         and its CAID: the same program would address differently depending on \
+         whether it had been observed before"
     );
 }
 

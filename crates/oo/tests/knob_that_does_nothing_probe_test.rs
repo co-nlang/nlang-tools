@@ -154,7 +154,13 @@ fn depth_threshold(knob: u64) -> usize {
 /// would notice.
 #[test]
 fn c1_the_working_knobs_keep_working() {
-    let low = run_src("c1a", "~%Config.fuel: 5\nv: <<_.>>\nout: v.%cause\n");
+    // ACCEPTOR EDIT (the_meter_reads_two, 2026-08-11): observes `v`, not
+    // `v.%cause`. Billing moved from the generic AST walk onto the semantic
+    // operations, so the horizon is now reached inside each member and `v` is a
+    // combo of named blurs rather than one blur — per-node collapse, which is
+    // what SPEC_08 §3.2.4 says. What this control is for is unchanged: a low
+    // fuel budget must still exhaust, and must still say so.
+    let low = run_src("c1a", "~%Config.fuel: 5\nv: <<_.>>\nout: v\n");
     assert!(
         low.contains("#fuel_exhausted"),
         "fuel: 5 no longer exhausts: {low}"

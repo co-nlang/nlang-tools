@@ -315,7 +315,6 @@ fn p2_the_corpus_worst_shape_fits_well_inside_the_default() {
 /// implementation visits, and a probe demanding a particular curve would be
 /// demanding more than the ruling grants.
 #[test]
-#[ignore = "red until the nesting walk is billed (rulings 1 & 3)"]
 fn r1_depth_is_billed() {
     let d = fresh("r1");
     let shallow = min_fuel(&d, &nest(2), "_.z");
@@ -333,7 +332,6 @@ fn r1_depth_is_billed() {
 /// The recon verified the 20-element case really lifts (`[2,3,…,21]`), so this
 /// is not measuring a pipe that did nothing.
 #[test]
-#[ignore = "red until lifting is billed per element (rulings 1 & 3)"]
 fn r2_width_is_billed() {
     let d = fresh("r2");
     let narrow = min_fuel(&d, &lift_over(1), "_.r");
@@ -355,7 +353,6 @@ fn r2_width_is_billed() {
 /// billed only the first stage, or only some of them, would satisfy strict
 /// monotonicity and fail here.
 #[test]
-#[ignore = "red until each pipe stage is billed (ruling 3)"]
 fn r3_every_application_is_billed_uniformly() {
     let d = fresh("r3");
     let c: Vec<u64> = [1usize, 2, 3, 4]
@@ -388,7 +385,6 @@ fn r3_every_application_is_billed_uniformly() {
 /// and the spec closure. If the marginal cannot reach 10, REPORT IT — the
 /// probe is the acceptor's and may not be adjusted to fit.
 #[test]
-#[ignore = "red until the engine's schedule is the spec's schedule (ruling 2)"]
 fn r4_an_application_costs_what_the_table_says() {
     let d = fresh("r4");
     let c: Vec<u64> = [1usize, 2, 3, 4]
@@ -418,7 +414,6 @@ fn r4_an_application_costs_what_the_table_says() {
 /// complete at the default budget, so a family failing the inequality is
 /// failing about cost and not because its program is broken.
 #[test]
-#[ignore = "red until no billable operation is charged zero (ruling 3)"]
 fn r5_every_growing_family_grows_the_bill() {
     let d = fresh("r5");
     let families: [(&str, String, String, &str); 4] = [
@@ -459,7 +454,6 @@ fn r5_every_growing_family_grows_the_bill() {
 /// a 300-line file exits 0 and proves nothing, which is why the fixture here
 /// is deliberately large.
 #[test]
-#[ignore = "red until SIGPIPE is not a panic (ride-along)"]
 fn r6_closing_a_pipe_early_does_not_panic() {
     let d = fresh("r6");
     let fields: Vec<String> = (0..20_000)
@@ -515,7 +509,6 @@ fn r6_closing_a_pipe_early_does_not_panic() {
 /// THE CONTROL RUNS FIRST, because this probe is a source scan and a scan that
 /// silently matches nothing would pass by finding no violations.
 #[test]
-#[ignore = "red until the draft module and the stale ignores are gone (ride-along)"]
 fn r7_draft_scaffolding_is_not_in_the_shipped_source() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
