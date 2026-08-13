@@ -11,6 +11,10 @@ pub struct Program {
 pub struct Field {
     pub key: FieldKey,
     pub value: Expr,
+    /// Source offsets are deliberately absent from format-2 CAS objects.
+    /// A deserialized `unknown()` span is a sentinel, never the believable
+    /// `{0, 0}` fabricated by `Span::default()`.
+    #[serde(default = "Span::unknown", skip_serializing_if = "Span::is_unknown")]
     pub span: Span,
 }
 
@@ -39,6 +43,8 @@ pub enum Prefix {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Expr {
     pub kind: ExprKind,
+    /// See [`Field::span`]: persisted values can have no source coordinate.
+    #[serde(default = "Span::unknown", skip_serializing_if = "Span::is_unknown")]
     pub span: Span,
 }
 
@@ -124,6 +130,7 @@ pub struct Relation {
     pub left: AtomKind,
     pub op: RelOp,
     pub right: AtomKind,
+    #[serde(default = "Span::unknown", skip_serializing_if = "Span::is_unknown")]
     pub span: Span,
 }
 
@@ -157,6 +164,7 @@ pub enum AtomKind {
 pub struct Path {
     pub anchor: PathAnchor,
     pub segments: Vec<String>,
+    #[serde(default = "Span::unknown", skip_serializing_if = "Span::is_unknown")]
     pub span: Span,
 }
 
@@ -231,6 +239,13 @@ impl Field {
         self.key.strip_spans();
         self.value.strip_spans();
     }
+    /// Mark source positions absent for the format-2 CAS projection. This is
+    /// distinct from `strip_spans()`: zero is a plausible source coordinate.
+    pub fn mark_spans_unknown(&mut self) {
+        self.span = Span::unknown();
+        self.key.mark_spans_unknown();
+        self.value.mark_spans_unknown();
+    }
     pub fn shape(&self) -> String {
         format!("{}:{}", self.key.shape(), self.value.shape())
     }
@@ -241,6 +256,13 @@ impl FieldKey {
         match self {
             FieldKey::Pattern(e) => e.strip_spans(),
             FieldKey::Path(p) => p.strip_spans(),
+            _ => {}
+        }
+    }
+    pub fn mark_spans_unknown(&mut self) {
+        match self {
+            FieldKey::Pattern(e) => e.mark_spans_unknown(),
+            FieldKey::Path(p) => p.mark_spans_unknown(),
             _ => {}
         }
     }
@@ -423,6 +445,91 @@ impl Expr {
                 end.strip_spans();
                 if let Some(s) = step {
                     s.strip_spans();
+                }
+            }
+        }
+    }
+    /// Mark every source coordinate absent for a typed persistence projection.
+    /// Serialization then omits these fields via `Span::is_unknown`; no JSON
+    /// field-name or object-shape inference is involved.
+    pub fn mark_spans_unknown(&mut self) {
+        self.span = Span::unknown();
+        match &mut self.kind {
+            ExprKind::Atom(_) | ExprKind::Context => {}
+            ExprKind::Path(p) => p.mark_spans_unknown(),
+            ExprKind::Apply(a, b)
+            | ExprKind::Pipe(a, b)
+            | ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b) => {
+                a.mark_spans_unknown();
+                b.mark_spans_unknown();
+            }
+            ExprKind::Morphism { param, body } => {
+                param.mark_spans_unknown();
+                body.mark_spans_unknown();
+            }
+            ExprKind::Combo {
+                fields, relations, ..
+            } => {
+                for f in fields {
+                    f.mark_spans_unknown();
+                }
+                for r in relations {
+                    r.mark_spans_unknown();
+                }
+            }
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                cond.mark_spans_unknown();
+                then_branch.mark_spans_unknown();
+                else_branch.mark_spans_unknown();
+            }
+            ExprKind::Unary { expr, .. }
+            | ExprKind::AnonSet(expr)
+            | ExprKind::Spread(expr)
+            | ExprKind::Structural(expr)
+            | ExprKind::Complement(expr) => expr.mark_spans_unknown(),
+            ExprKind::List(items) | ExprKind::Tuple(items) => {
+                for i in items {
+                    i.mark_spans_unknown();
+                }
+            }
+            ExprKind::Poset(relations) => {
+                for r in relations {
+                    r.mark_spans_unknown();
+                }
+            }
+            ExprKind::Interpolated(parts) => {
+                for part in parts {
+                    if let StringPart::Interpolated(e) = part {
+                        e.mark_spans_unknown();
+                    }
+                }
+            }
+            ExprKind::Range { start, end, step } => {
+                start.mark_spans_unknown();
+                end.mark_spans_unknown();
+                if let Some(s) = step {
+                    s.mark_spans_unknown();
                 }
             }
         }
@@ -807,6 +914,9 @@ impl Relation {
     pub fn strip_spans(&mut self) {
         self.span = Span::default();
     }
+    pub fn mark_spans_unknown(&mut self) {
+        self.span = Span::unknown();
+    }
     pub fn shape(&self) -> String {
         let os = match self.op {
             RelOp::Lt => "<",
@@ -822,6 +932,9 @@ impl Relation {
 impl Path {
     pub fn strip_spans(&mut self) {
         self.span = Span::default();
+    }
+    pub fn mark_spans_unknown(&mut self) {
+        self.span = Span::unknown();
     }
     pub fn shape(&self) -> String {
         format!("{:?}:{}", self.anchor, self.segments.join("."))
@@ -925,6 +1038,23 @@ impl FieldKey {
 }
 
 impl Span {
+    /// A persisted AST was intentionally detached from its source text.
+    ///
+    /// `usize::MAX` cannot be a source offset in a real input on supported
+    /// hosts, so it cannot be mistaken for the first byte of a source file.
+    /// This keeps format-2's omitted spans distinct from `Span::default()`,
+    /// which is still used by synthetic ASTs with a genuine zero coordinate.
+    pub fn unknown() -> Self {
+        Self {
+            start: usize::MAX,
+            end: usize::MAX,
+        }
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        self.start == usize::MAX && self.end == usize::MAX
+    }
+
     pub fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }

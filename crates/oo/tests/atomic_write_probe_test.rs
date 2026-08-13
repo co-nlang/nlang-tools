@@ -338,15 +338,32 @@ fn p1_nothing_under_oo_is_a_work_in_progress() {
     );
 }
 
-/// P2 — this arc changes how bytes land, not what they mean.
+/// P2 — the format moves only when a ruling says it moves.
+///
+/// ACCEPTOR EDIT (Q-010a, 2026-08-13). This asserted `1` because the atomic
+/// write arc changed how bytes land, not what they mean. **Q-010a changes what
+/// they mean**: the CAS projection drops AST spans, and v0.19.0's `ast.rs`
+/// requires that field, so a format-2 object is not readable by it. The bump
+/// is the declaration that makes an old engine refuse at the gate instead of
+/// failing later on a missing field.
+///
+/// The pin stays, because the property it guards is still live and is not
+/// "the number is 1" — it is **the number never drifts**. A version bump has
+/// to be somebody's ruling (here O48 plus the §4.1 correction), never a side
+/// effect. Whoever moves it next updates this line and says why in the work
+/// order; if this goes red without such a line, that is the finding.
 #[test]
-fn p2_format_is_not_bumped() {
+fn p2_format_moves_only_when_declared() {
     let d = workspace("p2");
     evolve_field(d.path(), 1);
     oo(d.path(), &["commit", "-m", "one"]);
 
     let fmt = fs::read_to_string(d.path().join(".oo").join("format")).unwrap();
-    assert_eq!(fmt.trim(), "1", ".oo/format moved");
+    assert_eq!(
+        fmt.trim(),
+        "2",
+        ".oo/format moved without a ruling saying it should"
+    );
 }
 
 /// P3 — a workspace written by one invocation still loads in the next: the

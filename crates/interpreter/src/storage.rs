@@ -1,5 +1,6 @@
 use crate::value::{CaidVersion, Commit, ContentHash, HashAlgorithm, Value};
 use anyhow::Result;
+use serde::Serialize;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -107,7 +108,12 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 
 /// On-disk layout version for `.oo/` (local_gc arc). Objects are self-describing
 /// via CAID `v1`/`v2`; this is the **layout** marker.
-pub const STORE_FORMAT_VERSION: u32 = 1;
+///
+/// Format 2 is the Q-010a CAS projection: compact, canonically ordered JSON
+/// with source spans omitted. Format 1 remains readable so an existing store
+/// can be inspected before its first format-2 write upgrades the declaration.
+pub const STORE_FORMAT_VERSION: u32 = 2;
+const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 pub struct ObjectStore {
     root: PathBuf,
@@ -125,15 +131,22 @@ impl ObjectStore {
         if path.exists() {
             let raw = fs::read_to_string(&path)?;
             let v = raw.trim();
-            if v != STORE_FORMAT_VERSION.to_string() {
+            let Ok(v) = v.parse::<u32>() else {
                 anyhow::bail!(
                     "store format version {v} is not supported by this engine \
-                     (understands format {STORE_FORMAT_VERSION}); refusing to open"
+                     (understands format {MIN_READABLE_STORE_FORMAT_VERSION} through {STORE_FORMAT_VERSION}); refusing to open"
+                );
+            };
+            if !(MIN_READABLE_STORE_FORMAT_VERSION..=STORE_FORMAT_VERSION).contains(&v) {
+                anyhow::bail!(
+                    "store format version {v} is not supported by this engine \
+                     (understands format {MIN_READABLE_STORE_FORMAT_VERSION} through {STORE_FORMAT_VERSION}); refusing to open"
                 );
             }
         } else {
-            // Every existing store is version 1; announce rather than refuse.
-            atomic_write(&path, format!("{STORE_FORMAT_VERSION}\n"))?;
+            // A format-less historical store is format 1. Announce rather
+            // than refuse; its objects retain their source spans.
+            atomic_write(&path, format!("{MIN_READABLE_STORE_FORMAT_VERSION}\n"))?;
         }
         Ok(())
     }
@@ -141,10 +154,17 @@ impl ObjectStore {
     pub fn init(base_dir: &Path) -> Result<Self> {
         Self::ensure_format(base_dir)?;
         let root = base_dir.join(".oo").join("objects");
-        if !root.exists() {
+        let new_store = !root.exists();
+        if new_store {
             fs::create_dir_all(&root)?;
-            // New store: ensure format after creating .oo/
-            Self::ensure_format(base_dir)?;
+            // A new store has no format-1 objects to preserve, so it starts
+            // at the writer's format. Existing format-less stores are still
+            // announced as v1 by `ensure_format` above and upgrade only when
+            // a format-2 CAS object is first installed.
+            atomic_write(
+                &base_dir.join(".oo").join("format"),
+                format!("{STORE_FORMAT_VERSION}\n"),
+            )?;
         }
         Ok(Self { root })
     }
@@ -215,7 +235,7 @@ impl ObjectStore {
 
     pub fn put_value(&self, value: &Value) -> Result<ContentHash> {
         let hash = value.content_hash();
-        let content = serde_json::to_string_pretty(value)?;
+        let content = canonical_cas_json(&value.for_cas_storage())?;
         self.write_object(&hash, content)?;
         Ok(hash)
     }
@@ -240,7 +260,7 @@ impl ObjectStore {
 
     pub fn put_commit(&self, commit: &Commit) -> Result<ContentHash> {
         let hash = commit.content_hash();
-        let content = serde_json::to_string_pretty(commit)?;
+        let content = canonical_cas_json(commit)?;
         self.write_object(&hash, content)?;
         Ok(hash)
     }
@@ -286,7 +306,6 @@ impl ObjectStore {
 
     // O42 R-1: get_horizon_salt removed — clock salt is forbidden in blur CAID.
 
-
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
         let path = self.hash_to_path(hash);
         // Content-addressed: same bytes → same path. Skip when already present
@@ -296,11 +315,37 @@ impl ObjectStore {
         if path.exists() {
             return Ok(());
         }
+        self.upgrade_format_for_cas_write()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         atomic_write(&path, content)?;
         Ok(())
+    }
+
+    /// A format-1 store stays readable without mutation. The first new CAS
+    /// object is format-2, so declare that fact before installing it; an old
+    /// engine then refuses at the format gate instead of failing later on a
+    /// missing AST `span` field.
+    fn upgrade_format_for_cas_write(&self) -> Result<()> {
+        let oo = self
+            .root
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("object store has no .oo parent"))?;
+        let path = oo.join("format");
+        let current = fs::read_to_string(&path)
+            .unwrap_or_else(|_| format!("{MIN_READABLE_STORE_FORMAT_VERSION}\n"));
+        match current.trim().parse::<u32>() {
+            Ok(STORE_FORMAT_VERSION) => Ok(()),
+            Ok(MIN_READABLE_STORE_FORMAT_VERSION) => {
+                atomic_write(&path, format!("{STORE_FORMAT_VERSION}\n"))
+            }
+            Ok(v) => anyhow::bail!(
+                "store format version {v} is not supported by this engine \
+                 (understands format {MIN_READABLE_STORE_FORMAT_VERSION} through {STORE_FORMAT_VERSION}); refusing to write"
+            ),
+            Err(_) => anyhow::bail!("store format file is not a version number; refusing to write"),
+        }
     }
 
     /// Read raw bytes at the digest path. Absence → `NotFound` (not IO prose).
@@ -355,4 +400,11 @@ impl ObjectStore {
         let hex = hex::encode(&hash.digest);
         self.root.join(algo_dir).join(&hex[0..2]).join(&hex[2..])
     }
+}
+
+/// Compact, lexically ordered CAS JSON. The typed format-2 `Value` projection
+/// is made before this function; `.oo/staged` never uses it. `serde_json`
+/// emits its default object map in lexical order, pinned by Q-010a P4.
+fn canonical_cas_json<T: Serialize>(value: &T) -> Result<String> {
+    Ok(serde_json::to_string(&serde_json::to_value(value)?)?)
 }
