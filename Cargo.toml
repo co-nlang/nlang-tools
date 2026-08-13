@@ -6,3 +6,20 @@ members = [
 ]
 resolver = "2"
 
+# Disk footprint of the acceptance protocol, measured 2026-08-13.
+#
+# 183 files under crates/*/tests each become their own crate and their own
+# statically linked binary. One full workspace run is therefore ~187 binaries;
+# at the default debug = 2, 77% of each one is DWARF (measured on refine_test:
+# 56.8 MB of 74 MB, with .debug_info and .debug_str alone accounting for 44 MB),
+# and the debug info for the shared dependencies is copied into every single
+# one of them. A single delivery day — baseline, delivery, repair, five repeat
+# runs, candidate re-run — left target/ at 22 GB, all of it under 24 hours old.
+#
+# line-tables-only keeps file:line in panics and backtraces, which is what a
+# failing probe is actually read for. Switch back to 2 if the engine ever needs
+# stepping under gdb/lldb.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
