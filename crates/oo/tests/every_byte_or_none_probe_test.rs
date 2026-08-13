@@ -388,7 +388,6 @@ fn c3_an_unknown_store_format_is_refused_by_name() {
 
 // ── R1 ── no unhashed field on disk ──────────────────────────────────────
 #[test]
-#[ignore = "Q-010a: `span` is stored today; removing it is the delivery"]
 fn r1_no_span_survives_into_a_cas_object() {
     let d = committed("r1", PROGRAM);
     let objs = objects(&d);
@@ -424,7 +423,6 @@ fn r1_no_span_survives_into_a_cas_object() {
 
 // ── R2 ── the same value is the same file ────────────────────────────────
 #[test]
-#[ignore = "Q-010a: serialization key order is per-process today"]
 fn r2_identical_source_gives_identical_bytes() {
     let a = committed("r2a", PROGRAM);
     let b = committed("r2b", PROGRAM);
@@ -453,7 +451,6 @@ fn r2_identical_source_gives_identical_bytes() {
 
 // ── R3 ── the same address is the same file ──────────────────────────────
 #[test]
-#[ignore = "Q-010a: spans differ under one address today"]
 fn r3_whitespace_does_not_change_the_stored_bytes() {
     let a = committed("r3a", PROGRAM);
     let b = committed("r3b", PROGRAM_SPACED);
@@ -486,7 +483,6 @@ fn r3_whitespace_does_not_change_the_stored_bytes() {
 
 // ── R4 ── no formatting bytes that no hash covers ────────────────────────
 #[test]
-#[ignore = "Q-010a: objects are written as pretty JSON today"]
 fn r4_no_unhashed_formatting_on_disk() {
     let d = committed("r4", PROGRAM);
     let objs = objects(&d);
@@ -507,6 +503,108 @@ fn r4_no_unhashed_formatting_on_disk() {
     );
 }
 
+// ── R6 ── a user field is not an AST node just because it is shaped like one ─
+// ACCEPTOR-ADDED (repair round 1, 2026-08-13). The first delivery stripped
+// spans by pattern-matching the SERIALIZED JSON: any object carrying a `span`
+// key alongside `kind`, or `key`+`value`, or `left`+`op`+`right`, or
+// `anchor`+`segments` was treated as an AST node and had its `span` removed.
+//
+// A user combo's field names land in exactly that position. Measured on the
+// first delivery — all four discriminator sets destroy user data:
+//
+//   app: { kind: 1, span: 2 }                  → stored keys [kind]
+//   app: { key: 1, value: 2, span: 3 }         → stored keys [key, value]
+//   app: { left: 1, op: 2, right: 3, span: 4 } → stored keys [left, op, right]
+//   app: { anchor: 1, segments: 2, span: 3 }   → stored keys [anchor, segments]
+//
+// The commit REPORTS SUCCESS and the object is then permanently unreadable
+// (`#caid_mismatch`: the address was computed over the value that still had
+// the field). Control: `app: { span: 2 }` alone survives — so the trigger is
+// the shape guess, not the name.
+//
+// The projection has to be driven by the TYPE being serialized, never by the
+// shape of the JSON it produced.
+#[test]
+fn r6_a_user_field_named_span_survives() {
+    let cases = [
+        ("kind", "app: { kind: 1, span: 2 }\n", vec!["kind", "span"]),
+        (
+            "keyvalue",
+            "app: { key: 1, value: 2, span: 3 }\n",
+            vec!["key", "span", "value"],
+        ),
+        (
+            "relation",
+            "app: { left: 1, op: 2, right: 3, span: 4 }\n",
+            vec!["left", "op", "right", "span"],
+        ),
+        (
+            "path",
+            "app: { anchor: 1, segments: 2, span: 3 }\n",
+            vec!["anchor", "segments", "span"],
+        ),
+        // Control FIRST in spirit: a lone `span` has never been at risk, so if
+        // this one is the only survivor the guess is still shape-based.
+        ("lone", "app: { span: 2 }\n", vec!["span"]),
+    ];
+
+    let mut lost = Vec::new();
+    for (tag, src, want) in cases {
+        let d = committed(&format!("r6-{tag}"), src);
+        let (path, bytes) = root_object(&d);
+        let text = String::from_utf8_lossy(&bytes);
+
+        let mut missing: Vec<&str> = want
+            .iter()
+            .filter(|k| !text.contains(&format!("\"{k}\"")))
+            .copied()
+            .collect();
+        missing.sort();
+        if !missing.is_empty() {
+            lost.push(format!("{tag}: fields {missing:?} are not on disk"));
+            continue;
+        }
+
+        // Stored is not enough — it has to read back. A value whose bytes lost
+        // a field no longer hashes to its own address.
+        let out = oo(&d, &["inspect", &caid_of(&path)]);
+        if out.contains("caid_mismatch") || out.contains("undecodable") {
+            lost.push(format!("{tag}: stored but unreadable — {}", &out[..out.len().min(120)]));
+        }
+    }
+
+    assert!(
+        lost.is_empty(),
+        "user data was destroyed by the span projection. A commit reported \
+         success and the object cannot be read back: {lost:#?}"
+    );
+}
+
+// ── P4 ── the ordering mechanism rests on a feature flag ─────────────────
+// ACCEPTOR-ADDED (repair round 1). R2's fix routes through `serde_json::Value`
+// because `serde_json::Map` is a `BTreeMap` — lexically ordered — in this
+// build. That holds only while nobody enables serde_json's `preserve_order`
+// feature; cargo unifies features across the graph, so a single new dependency
+// asking for it would silently restore per-process insertion order and R2
+// would start passing or failing by luck.
+//
+// This pin fails loudly at the mechanism instead.
+#[test]
+fn p4_serde_json_objects_are_lexically_ordered() {
+    let mut m = serde_json::Map::new();
+    m.insert("zeta".into(), serde_json::json!(1));
+    m.insert("alpha".into(), serde_json::json!(2));
+    m.insert("mid".into(), serde_json::json!(3));
+    let s = serde_json::to_string(&serde_json::Value::Object(m)).unwrap();
+    assert_eq!(
+        s, r#"{"alpha":2,"mid":3,"zeta":1}"#,
+        "serde_json is no longer emitting objects in lexical order — most \
+         likely something in the dependency graph turned on `preserve_order`. \
+         The canonical CAS projection depends on this and would go back to \
+         per-process order without any test saying so"
+    );
+}
+
 // ── R5 ── the format break is declared, not stumbled into ────────────────
 // Dropping `span` makes new objects unreadable by v0.19.0 — that is a fact
 // about `ast.rs`, not a choice. The choice is whether an old engine meets it
@@ -517,7 +615,6 @@ fn r4_no_unhashed_formatting_on_disk() {
 // compatibility and identity are two different axes, and the original work
 // order conflated them.
 #[test]
-#[ignore = "Q-010a: the store format is still 1; the bump is the delivery"]
 fn r5_the_store_format_says_it_changed() {
     let d = committed("r5", PROGRAM);
     let f = std::fs::read_to_string(d.join(".oo").join("format")).unwrap();
