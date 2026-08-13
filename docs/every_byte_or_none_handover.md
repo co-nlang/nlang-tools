@@ -229,6 +229,56 @@ A ＋ B **完全解釋**全部位元組分歧,沒有第三個原因:把兩份「
 
 ---
 
+## 6.6 驗收回合 2 ── 通過(2026-08-13)
+
+### 代修 1 已修,而且換了機制
+
+交付沒有補強形狀猜測,而是**整個換掉**:新增 `Value::for_cas_storage()`——
+**複製**一份值(不改原值),沿型別走訪把所有 AST 座標設為 `Span::unknown()`,
+再由 AST 的 serde 省略之。`mark_spans_unknown` 逐個 `Value` 變體遞迴
+(Combo 的六個槽＋`pending_spreads`／Union／Code／Thunk 的 expr＋閉包＋context／
+Ref／Bottom 的 expected/found／Range 的 start/end/step)。
+
+**使用者 Combo 的鍵是普通 `String`,走訪器從不檢查它們** ⟹ 形狀不再有機會被誤認。
+
+**我查過但不成立的兩個疑慮**(記下來,免得下次重查):`ComboVal.relations` 的元素是
+`ValRelation { left: String, op, right: String }`,**沒有 span**;`AtomKind` 十六個變體
+**也沒有**。所以 `relations` 未被走訪、`Value::Atom` 是 no-op,兩者都正確。
+
+### 量測
+
+| 項目 | 結果 |
+| :--- | :--- |
+| 本弧探針 | **14/14** |
+| 形狀覆蓋掃描 | 14 種值形(int／float／str／tag／range／union／⊥／⊤／三層巢狀／ref／list／tuple／函數／已施用)一次提交,**全樹 `"span"` 零命中**,且 **14/14 欄位讀得回來**,無完整性失敗 |
+| **全 workspace** | **1897 / 0 / 0**(零 ignored) |
+| **重複穩定 ×5** | 1897/0/0 **五次全同**(最終樹) |
+| **加性關鍵量測** | 根物件 **252,435 → 67,913 B(−73.1%)**,換行 **0**,**位址仍是 `16ba5683…`** |
+
+### 跨版本(真的 v0.19.0 二進位,git worktree ＋獨立 target)
+
+| 方向 | 結果 |
+| :--- | :--- |
+| **舊倉 → 新引擎** | format-1 倉(物件帶 span)：`oo log`／`oo status` 正常,`oo inspect` 讀回 `k1: 1` ✓ |
+| **新倉 → 舊引擎** | `Error: store format version 2 is not supported by this engine (understands format 1); refusing to open` ✓ **是誠實拒絕,不是 serde 錯誤** |
+| **(a) 裁定的行為** | 舊倉被新引擎寫入後 `format` 升到 2,而**舊物件原封不動**(1/4 仍帶 span)——與裁定一致 |
+
+### 驗收方在本回合又動了一支釘,而且是同一個疏漏的第二次
+
+`local_gc_probe_test.rs` 的 **R7** 也在絕對地釘 `.oo/format == "1"`,並且用 `"2"`
+當「未知格式」的對抗值——**而 O48 剛好把 2 變成現行值**,那一半在修好第一個 assert 之後
+也會壞。已改為:宣告值比對 `STORE_FORMAT_VERSION`(相對,不是字面),未知格式改用 `99`
+(遠離可讀區間,不必每次升版重訪)。
+
+**這是我的第二次同類疏漏。** 第一次(`atomic_write_probe_test`)出聲時,我修掉出聲的那一支
+就往前走,**沒有去 grep 它的兄弟**。掃描後發現另有兩支(`affiliation_claim`／`seat_order`)
+用的是**相對釘**(讀 before → 動作 → 斷言未變),所以全域升版動不到它們——**那是對的寫法**。
+
+> **新常設規則**:一支釘因為「刻意的變更」而變紅時,**下一個動作是 grep 它的兄弟**,
+> 不是修它。以及:**釘一個會演進的量時要釘相對關係,不要釘字面值。**
+
+---
+
 ## 7. 交付方要注意的一個陷阱
 
 `span` 的移除若用 `#[serde(skip)]`,讀回時會由 `Default` 填一個 `{0,0}`。那是一個

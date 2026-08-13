@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use nlang_parser::ast::{AtomKind, Expr, Path, PathAnchor};
+use nlang_parser::ast::{AtomKind, Expr, Path, PathAnchor, Span};
 use ring::{
     rand,
     signature::{self, KeyPair as _},
@@ -719,11 +719,7 @@ fn display_order_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
                 .cause
                 .as_str()
                 .cmp(bb.cause.as_str())
-                .then_with(|| {
-                    ba.horizon
-                        .strategy_byte()
-                        .cmp(&bb.horizon.strategy_byte())
-                })
+                .then_with(|| ba.horizon.strategy_byte().cmp(&bb.horizon.strategy_byte()))
                 .then_with(|| ba.blur_caid().digest.cmp(&bb.blur_caid().digest)),
             _ => Ordering::Equal,
         },
@@ -881,6 +877,30 @@ impl Default for ComboVal {
             legacy_fields: IndexMap::new(),
             legacy_local: IndexMap::new(),
         }
+    }
+}
+
+fn mark_combo_spans_unknown(combo: &mut ComboVal) {
+    for value in combo.data.values_mut() {
+        value.mark_spans_unknown();
+    }
+    for value in combo.types.values_mut() {
+        value.mark_spans_unknown();
+    }
+    for value in combo.rules.values_mut() {
+        value.mark_spans_unknown();
+    }
+    for value in combo.meta.values_mut() {
+        value.mark_spans_unknown();
+    }
+    for value in combo.system.values_mut() {
+        value.mark_spans_unknown();
+    }
+    for value in combo.local.values_mut() {
+        value.mark_spans_unknown();
+    }
+    for value in &mut combo.pending_spreads {
+        value.mark_spans_unknown();
     }
 }
 
@@ -1794,11 +1814,60 @@ impl BlurDetail {
 }
 
 impl Value {
+    /// Clone a value into the typed format-2 CAS projection: all and only AST
+    /// source coordinates become `Span::unknown()`, which AST serde omits.
+    /// User Combo keys are ordinary `String`s and are never inspected here.
+    pub fn for_cas_storage(&self) -> Self {
+        let mut projected = self.clone();
+        projected.mark_spans_unknown();
+        projected
+    }
+
+    fn mark_spans_unknown(&mut self) {
+        match self {
+            Value::Combo(combo) => mark_combo_spans_unknown(combo),
+            Value::Union(items) => {
+                for item in items {
+                    item.mark_spans_unknown();
+                }
+            }
+            Value::Code(expr) => expr.mark_spans_unknown(),
+            Value::Thunk {
+                expr,
+                closure,
+                context,
+                ..
+            } => {
+                expr.mark_spans_unknown();
+                for frame in closure {
+                    mark_combo_spans_unknown(std::sync::Arc::make_mut(frame));
+                }
+                if let Some(context) = context {
+                    context.mark_spans_unknown();
+                }
+            }
+            Value::Ref(path) => path.span = Span::unknown(),
+            Value::Bottom(detail) => {
+                if let Some(expected) = &mut detail.expected {
+                    expected.mark_spans_unknown();
+                }
+                if let Some(found) = &mut detail.found {
+                    found.mark_spans_unknown();
+                }
+            }
+            Value::Range { start, end, step } => {
+                start.mark_spans_unknown();
+                end.mark_spans_unknown();
+                if let Some(step) = step {
+                    step.mark_spans_unknown();
+                }
+            }
+            Value::Top | Value::TopCaused { .. } | Value::Atom(..) | Value::Blur(_) => {}
+        }
+    }
+
     /// Walk a value tree and CAS-write every blur partial body (evolve path).
-    pub fn persist_blur_partials(
-        &self,
-        store: &crate::storage::ObjectStore,
-    ) -> anyhow::Result<()> {
+    pub fn persist_blur_partials(&self, store: &crate::storage::ObjectStore) -> anyhow::Result<()> {
         match self {
             Value::Blur(bd) => bd.persist_partials(store)?,
             Value::Combo(c) => {

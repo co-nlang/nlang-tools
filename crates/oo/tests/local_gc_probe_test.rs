@@ -539,19 +539,32 @@ fn r6_gc_requires_its_grant() {
 /// R7 — the store announces its format, and an unknown one is refused.
 ///
 /// Baseline: `.oo/format` does not exist and nothing reads it.
+///
+/// ACCEPTOR EDIT (Q-010a, 2026-08-13). Two literals here were countdown
+/// timers, not invariants. The declared format was pinned to `"1"` and the
+/// "unknown" format used for the refusal half was `"2"` — the next number,
+/// which O48 has now made the *current* one. Both move with the ruling; the
+/// property does not, and the property is what this probe is for:
+///
+///   * the store SAYS what format it is, and
+///   * an engine that cannot read that format refuses AND CHANGES NOTHING.
+///
+/// The unknown-format fixture is now far outside the readable range so that
+/// it does not have to be revisited on every bump.
 #[test]
 fn r7_store_format_version_is_declared_and_enforced() {
     let d = repo_with_history("r7", 2);
     let fmt = d.join(".oo").join("format");
     assert!(fmt.exists(), "`.oo/format` was never written");
+    let declared = fs::read_to_string(&fmt).unwrap().trim().to_string();
     assert_eq!(
-        fs::read_to_string(&fmt).unwrap().trim(),
-        "1",
-        "unexpected declared format"
+        declared,
+        nlang_interpreter::storage::STORE_FORMAT_VERSION.to_string(),
+        "the store declared a format this engine does not write"
     );
 
     let before = store_map(&d);
-    fs::write(&fmt, "2\n").unwrap();
+    fs::write(&fmt, "99\n").unwrap();
     for args in [vec!["log"], vec!["status"], vec!["gc", "--grant", "gc"]] {
         let (out, ok) = oo_raw(&d, &args);
         assert!(
@@ -560,7 +573,7 @@ fn r7_store_format_version_is_declared_and_enforced() {
             args.join(" ")
         );
         assert!(
-            out.contains('2') && out.contains('1'),
+            out.contains("99") && out.contains(&declared),
             "the refusal names neither the store's format nor the engine's: {out}"
         );
     }
