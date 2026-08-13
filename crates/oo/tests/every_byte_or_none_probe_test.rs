@@ -365,6 +365,27 @@ fn p3_nothing_writes_the_skipped_fields() {
     );
 }
 
+// ── C3 ── the refusal mechanism is live ──────────────────────────────────
+// Added 2026-08-13 by the acceptor after model #4 correctly found that R1 and
+// the original §6.5 could not both hold: `ast.rs` declares `pub span: Span` in
+// four places with no serde attribute at all, so an object written without it
+// is not readable by v0.19.0 — no compatibility shim can recover a field that
+// is not there. The arc therefore bumps the store format, and this control
+// exists so that R5 below is not measuring a gate that never fires.
+#[test]
+fn c3_an_unknown_store_format_is_refused_by_name() {
+    let d = committed("c3", PROGRAM);
+    std::fs::write(d.join(".oo").join("format"), "99\n").unwrap();
+
+    let out = oo(&d, &["log"]);
+    assert!(
+        out.contains("99") && out.to_lowercase().contains("refus"),
+        "an unknown store format was not refused with its version named. The \
+         honest-refusal path is what makes a format bump better than letting \
+         an old engine hit a serde error, and R5 depends on it. Got: {out}"
+    );
+}
+
 // ── R1 ── no unhashed field on disk ──────────────────────────────────────
 #[test]
 #[ignore = "Q-010a: `span` is stored today; removing it is the delivery"]
@@ -483,5 +504,30 @@ fn r4_no_unhashed_formatting_on_disk() {
         "objects carry indentation no hash covers (measured at baseline: \
          252,435 B on disk against 67,971 B compact — ~184 KB of whitespace): \
          {offenders:#?}"
+    );
+}
+
+// ── R5 ── the format break is declared, not stumbled into ────────────────
+// Dropping `span` makes new objects unreadable by v0.19.0 — that is a fact
+// about `ast.rs`, not a choice. The choice is whether an old engine meets it
+// as an honest refusal (`.oo/format` says 2, "refusing to open") or as a serde
+// error about a missing field it has never heard of. This arc takes the first.
+//
+// The IDENTITY is untouched — P1 still pins the same root CAID. Read
+// compatibility and identity are two different axes, and the original work
+// order conflated them.
+#[test]
+#[ignore = "Q-010a: the store format is still 1; the bump is the delivery"]
+fn r5_the_store_format_says_it_changed() {
+    let d = committed("r5", PROGRAM);
+    let f = std::fs::read_to_string(d.join(".oo").join("format")).unwrap();
+    assert_eq!(
+        f.trim(),
+        "2",
+        "`.oo/format` still reads `{}`. New objects have no `span`, and \
+         v0.19.0's `ast.rs` requires it — an engine that opens this store \
+         without being told the format moved will fail on a missing field \
+         instead of saying which version it cannot read",
+        f.trim()
     );
 }
