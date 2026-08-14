@@ -211,15 +211,36 @@ externally-tagged enum 就解不開了。
   ⟹ **新常設規則:一弧若改變「根與 commit 誰比較大」,就會打掉每一個
   以大小找根的 fixture。「最大的物件就是根」是一個沒有人寫下來的假設。**
 
-## 7.6 一題要裁,不要自己決定
+## 7.6 已裁:標準根一個 digest(O52,2026-08-14 用戶)
 
 **交付剝掉的不只 `system`。** `project_standard_root` 對六個軸都做「與標準根相同就拿掉」,
-所以 72,555 → 1,387 B 遠超 `system` 佔的 85%。O50 只裁了 `system`。
+所以 72,555 → 1,387 B 遠超 O50 所裁的 `system`。〔量 v0.20.0〕標準根實際佔 **67,329 B,分佈三軸**:
 
-差別在:`system` 有 digest 守著(不合就指名拒絕,R4 就是釘這件事),
-**另外五軸沒有任何 digest**——只靠重算位址時對不上來發現。
-R4 的原則是「沒人解析的 digest 不是依賴,是裝飾」;這裡的對偶是
-**一個連 digest 都沒有的依賴**。兩條路:給整個標準根一個 digest,或退回只剝 `system`。
+| 軸 | 大小 | 內容 |
+| :--- | ---: | :--- |
+| `system` | 61,912 B | 26 個 `~%X`(`Io`／`Config`／`Discovery`…) |
+| `types` | 5,186 B | `list`／`option`／`result` |
+| `rules` | 231 B | 只有 `add`——**建構順序的孤兒**,見下 |
+
+**裁定:digest 覆蓋整個 `root_with_system()`,一個,不是三個。**
+理由是三軸**一起變動**(換 build 就一起換),而 SPEC_09 §2.5 的
+「所有符合規格的引擎必須內建其定義並對齊其 CAID」**要的就是這一個對象**
+——該表的 CAID 欄整欄是 `hash:sha256:v1:0001...` 佔位,今天沒有可對齊的東西。
+
+⟹ 交付要改的:`standard_table_digest` 已經算的是**整個 `standard: &ComboVal`**,
+但 `project_standard_root` 存進 `system` 軸的是 `system_table_digest(&standard.system)`
+(只有 `system` 子樹)。改成整根的 digest,且 `hydrate_system_table` 的指名拒絕訊息
+要說「這個標準根」而非「這張表」。**六軸剝除本身保留**——它現在有守衛了。
+
+### 7.6.1 兩筆順帶查到的既有帳(不屬本弧,已入 WORK_QUEUE Inbox)
+
+1. **`/add` 是使用者唯一不能在自己宇宙頂層定義的規則名。** `root_with_system` 只有
+   一次頂層 `fields.insert("/…")`,就是 `/add`;其餘 `/sub`／`/mul`… 只進 `~%Math`。
+   〔量〕`evolve` 一條 `/add: (p) -> 42` 失敗於 `#missing_key at /add.%kind`,
+   而 `/sub`／`/mul`／`/frobnicate` 皆成功。
+2. **標準型別:規格兩張表互不相容,引擎只兌現三個。** SPEC_09 §2.1 樹(~20 名)與
+   §2.5 下表(5 名)名單不同;引擎只有 `list`／`option`／`result` 是真的,
+   **其餘憑名字現造**——`@zzz` 與 `@int` 印出逐字同形的值,而兩者 `.%kind` 皆為 `_`。
 
 ## 7.7 下一輪
 
