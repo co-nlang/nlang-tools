@@ -106,66 +106,84 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
     requested.digest == recomputed.digest
 }
 
-/// On-disk layout version for `.oo/` (local_gc arc). Objects are self-describing
-/// via CAID `v1`/`v2`; this is the **layout** marker.
-///
-/// Format 2 is the Q-010a CAS projection: compact, canonically ordered JSON
-/// with source spans omitted. Format 3 additionally projects a committed
-/// root's standard-library table to its digest. Formats 1 and 2 remain
-/// readable so existing stores can be inspected without object migration.
-pub const STORE_FORMAT_VERSION: u32 = 3;
+/// The `.oo/` layout and the CAS encoding are independent declarations.
+/// Legacy stores used one bare number for both; new stores name each axis.
+pub const STORE_LAYOUT_VERSION: u32 = 2;
+pub const OBJECT_ENCODING_VERSION: u32 = 3;
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 pub struct ObjectStore {
     root: PathBuf,
 }
 
+fn ensure_supported_encoding(v: u32) -> Result<()> {
+    if (MIN_READABLE_STORE_FORMAT_VERSION..=OBJECT_ENCODING_VERSION).contains(&v) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "object encoding version {v} is not supported by this engine \
+             (understands encoding {MIN_READABLE_STORE_FORMAT_VERSION} through {OBJECT_ENCODING_VERSION}); refusing to open"
+        )
+    }
+}
+
+fn has_cas_objects(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else { return false };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.is_file() || (path.is_dir() && has_cas_objects(&path))
+    })
+}
+
 impl ObjectStore {
-    /// Ensure `.oo/format` is present and understood. Absent → write `1`.
-    /// Unknown version → refuse (do not read/write/GC the store).
+    /// Verify declarations without writing them. An absent declaration carries
+    /// no trustworthy information about a store the engine did not create.
     pub fn ensure_format(base_dir: &Path) -> Result<()> {
         let oo = base_dir.join(".oo");
         if !oo.exists() {
             return Ok(());
         }
-        let path = oo.join("format");
-        if path.exists() {
-            let raw = fs::read_to_string(&path)?;
-            let v = raw.trim();
-            let Ok(v) = v.parse::<u32>() else {
-                anyhow::bail!(
-                    "store format version {v} is not supported by this engine \
-                     (understands format {MIN_READABLE_STORE_FORMAT_VERSION} through {STORE_FORMAT_VERSION}); refusing to open"
-                );
+        let layout = oo.join("format");
+        let raw = fs::read_to_string(&layout).map_err(|_| anyhow::anyhow!(
+            "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
+        ))?;
+        let declaration = raw.trim();
+        if declaration == format!("layout={STORE_LAYOUT_VERSION}") {
+            let objects = fs::read_to_string(oo.join("objects.format")).map_err(|_| anyhow::anyhow!(
+                "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open"
+            ))?;
+            let Some(v) = objects.trim().strip_prefix("encoding=").and_then(|v| v.parse::<u32>().ok()) else {
+                anyhow::bail!("object encoding declaration {:?} is not supported; refusing to open", objects.trim());
             };
-            if !(MIN_READABLE_STORE_FORMAT_VERSION..=STORE_FORMAT_VERSION).contains(&v) {
-                anyhow::bail!(
-                    "store format version {v} is not supported by this engine \
-                     (understands format {MIN_READABLE_STORE_FORMAT_VERSION} through {STORE_FORMAT_VERSION}); refusing to open"
-                );
-            }
+            ensure_supported_encoding(v)?;
+        } else if let Ok(v) = declaration.parse::<u32>() {
+            // Legacy conflated declaration: layout 1, encoding N. Reading it
+            // is compatible and intentionally non-mutating.
+            ensure_supported_encoding(v)?;
         } else {
-            // A format-less historical store is format 1. Announce rather
-            // than refuse; its objects retain their source spans.
-            atomic_write(&path, format!("{MIN_READABLE_STORE_FORMAT_VERSION}\n"))?;
+            anyhow::bail!("store layout declaration {declaration:?} is not supported; refusing to open");
         }
         Ok(())
     }
 
     pub fn init(base_dir: &Path) -> Result<Self> {
-        Self::ensure_format(base_dir)?;
-        let root = base_dir.join(".oo").join("objects");
-        let new_store = !root.exists();
+        let oo = base_dir.join(".oo");
+        // An empty `.oo/` is often a home for pre-store configuration such as
+        // discovery.n. It contains no durable object whose shape could be
+        // misread, so it is safe to initialise. HEAD or a CAS file makes it a
+        // store someone may already have written and therefore needs a proven
+        // declaration before we open it.
+        let new_store = !oo.join("HEAD").exists() && !has_cas_objects(&oo.join("objects"));
         if new_store {
+            fs::create_dir_all(&oo)?;
+            atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;
+            atomic_write(&oo.join("objects.format"), format!("encoding={OBJECT_ENCODING_VERSION}\n"))?;
+        } else {
+            Self::ensure_format(base_dir)?;
+        }
+        let root = oo.join("objects");
+        if !root.exists() {
             fs::create_dir_all(&root)?;
-            // A new store has no format-1 objects to preserve, so it starts
-            // at the writer's format. Existing format-less stores are still
-            // announced as v1 by `ensure_format` above and upgrade only when
-            // a format-2 CAS object is first installed.
-            atomic_write(
-                &base_dir.join(".oo").join("format"),
-                format!("{STORE_FORMAT_VERSION}\n"),
-            )?;
         }
         Ok(Self { root })
     }
@@ -265,8 +283,13 @@ impl ObjectStore {
         let Value::Combo(ref mut root) = value else {
             anyhow::bail!("Invalid root");
         };
-        hydrate_system_table(root, standard)?;
-        hydrate_standard_root(root, standard);
+        // Formats 1 and 2 stored their roots self-contained. Only a format-3
+        // root carries the digest sentinel that authorises engine-owned table
+        // hydration (and therefore standard-root validation).
+        if root.system.contains_key(SYSTEM_DIGEST_KEY) {
+            hydrate_system_table(root, standard)?;
+            hydrate_standard_root(root, standard);
+        }
         let recomputed = value.content_hash();
         if !value_address_matches(hash, &recomputed) {
             return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
@@ -368,29 +391,19 @@ impl ObjectStore {
         Ok(())
     }
 
-    /// A format-1 store stays readable without mutation. The first new CAS
-    /// object is format-3, so declare that fact before installing it; an old
-    /// engine then refuses at the format gate instead of failing later on a
-    /// missing AST `span` field.
+    /// A write may declare the encoding it is about to install. Legacy stores
+    /// are migrated here, never by a read path.
     fn upgrade_format_for_cas_write(&self) -> Result<()> {
         let oo = self
             .root
             .parent()
             .ok_or_else(|| anyhow::anyhow!("object store has no .oo parent"))?;
-        let path = oo.join("format");
-        let current = fs::read_to_string(&path)
-            .unwrap_or_else(|_| format!("{MIN_READABLE_STORE_FORMAT_VERSION}\n"));
-        match current.trim().parse::<u32>() {
-            Ok(STORE_FORMAT_VERSION) => Ok(()),
-            Ok(v) if (MIN_READABLE_STORE_FORMAT_VERSION..STORE_FORMAT_VERSION).contains(&v) => {
-                atomic_write(&path, format!("{STORE_FORMAT_VERSION}\n"))
-            }
-            Ok(v) => anyhow::bail!(
-                "store format version {v} is not supported by this engine \
-                 (understands format {MIN_READABLE_STORE_FORMAT_VERSION} through {STORE_FORMAT_VERSION}); refusing to write"
-            ),
-            Err(_) => anyhow::bail!("store format file is not a version number; refusing to write"),
+        Self::ensure_format(oo.parent().ok_or_else(|| anyhow::anyhow!("object store has no base directory"))?)?;
+        let layout = fs::read_to_string(oo.join("format"))?;
+        if layout.trim() != format!("layout={STORE_LAYOUT_VERSION}") {
+            atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;
         }
+        atomic_write(&oo.join("objects.format"), format!("encoding={OBJECT_ENCODING_VERSION}\n"))
     }
 
     /// Read raw bytes at the digest path. Absence → `NotFound` (not IO prose).
