@@ -551,37 +551,59 @@ fn r6_gc_requires_its_grant() {
 ///
 /// The unknown-format fixture is now far outside the readable range so that
 /// it does not have to be revisited on every bump.
+// ACCEPTOR (Q-011, 2026-08-14). The property is unchanged — the store SAYS
+// what it is, and an engine that cannot read it refuses AND CHANGES NOTHING.
+// What changed is that there are now TWO declarations (O23): `.oo/format`
+// carries the layout, `.oo/objects.format` the object encoding. The old probe
+// compared the file to a constant named `STORE_FORMAT_VERSION`, which is gone
+// — and which by the end had become a lie: it read `3` while the file said
+// `layout=2`.
+//
+// The rewrite pins no literal. Each declaration must exist, must say which
+// axis it measures, and must be individually load-bearing: corrupting either
+// one alone has to stop the engine.
 #[test]
-fn r7_store_format_version_is_declared_and_enforced() {
+fn r7_both_declarations_are_present_and_each_one_is_enforced() {
     let d = repo_with_history("r7", 2);
-    let fmt = d.join(".oo").join("format");
-    assert!(fmt.exists(), "`.oo/format` was never written");
-    let declared = fs::read_to_string(&fmt).unwrap().trim().to_string();
-    assert_eq!(
-        declared,
-        nlang_interpreter::storage::STORE_FORMAT_VERSION.to_string(),
-        "the store declared a format this engine does not write"
-    );
+    let layout = d.join(".oo").join("format");
+    let encoding = d.join(".oo").join("objects.format");
 
-    let before = store_map(&d);
-    fs::write(&fmt, "99\n").unwrap();
-    for args in [vec!["log"], vec!["status"], vec!["gc", "--grant", "gc"]] {
-        let (out, ok) = oo_raw(&d, &args);
+    for (path, axis) in [(&layout, "layout"), (&encoding, "encoding")] {
+        let text = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("{axis} declaration is missing: {e}"));
         assert!(
-            !ok,
-            "`oo {}` proceeded against a store of unknown format: {out}",
-            args.join(" ")
-        );
-        assert!(
-            out.contains("99") && out.contains(&declared),
-            "the refusal names neither the store's format nor the engine's: {out}"
+            text.contains(axis),
+            "the {axis} declaration does not say which axis it measures: {text:?}"
         );
     }
-    assert_eq!(
-        store_map(&d),
-        before,
-        "an engine that could not read the store still changed it"
-    );
+
+    // Each declaration is enforced on its own. `99` is chosen to be outside
+    // any readable range on either axis, so it does not need revisiting on a
+    // bump.
+    for (path, axis) in [(&layout, "layout"), (&encoding, "encoding")] {
+        let before = store_map(&d);
+        let original = fs::read_to_string(path).unwrap();
+        fs::write(path, format!("{axis}=99\n")).unwrap();
+
+        for args in [vec!["log"], vec!["status"], vec!["gc", "--grant", "gc"]] {
+            let (out, ok) = oo_raw(&d, &args);
+            assert!(
+                !ok,
+                "`oo {}` proceeded against a store whose {axis} it cannot read: {out}",
+                args.join(" ")
+            );
+            assert!(
+                out.contains("99"),
+                "the refusal does not name what it could not read: {out}"
+            );
+        }
+        assert_eq!(
+            store_map(&d),
+            before,
+            "an engine that could not read the {axis} declaration still changed the store"
+        );
+        fs::write(path, original).unwrap();
+    }
 }
 
 /// R8 — idempotent.
@@ -799,7 +821,8 @@ fn p4_no_undeclared_durable_state() {
         "pin_pending",
         "effect_pending",
         "abandoned",
-        "format", // declared by local_gc
+        "format", // declared by local_gc; carries the LAYOUT axis since Q-011
+        "objects.format", // declared by Q-011 (O23): the object-encoding axis
         "peers",  // declared by advert_persistence (scheduled pin update)
     ];
     let mut unexpected = Vec::new();

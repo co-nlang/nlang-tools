@@ -684,18 +684,20 @@ fn p4_serde_json_objects_are_lexically_ordered() {
 fn r5_the_store_format_says_it_changed() {
     let d = committed("r5", PROGRAM);
     let f = std::fs::read_to_string(d.join(".oo").join("format")).unwrap();
-    // ACCEPTOR (Q-010b, 2026-08-14): 2 -> 3, declared in the Q-010b work
-    // order §5. Format 3 names the standard root by digest, so a v0.20.0
-    // engine reading it without the gate would resolve the root against its
-    // OWN builtin table and get a different universe — quieter than a missing
-    // field, and worse. Measured: v0.20.0 refuses with "understands format 1
-    // through 2".
+    // ACCEPTOR (Q-011, 2026-08-14): what R5 guards is the OBJECT ENCODING —
+    // "new objects have no span, and an old engine must be told" — and that
+    // axis moved out of `.oo/format` into its own file (O23). Reading the
+    // encoding from the layout declaration was only ever right by accident.
+    let encoding = std::fs::read_to_string(d.join(".oo").join("objects.format"))
+        .expect("`.oo/objects.format` is missing — the encoding has no declaration");
     assert_eq!(
-        f.trim(),
-        "3",
-        "`.oo/format` still reads `{}`. A format-3 root names its standard \
-         root by digest; an engine told nothing would silently substitute its \
-         own table instead of saying which version it cannot read",
-        f.trim()
+        encoding.trim(),
+        "encoding=3",
+        "the object encoding declaration reads `{}`. New objects have no \
+         `span`, and an engine that opens this store without being told the \
+         encoding moved will fail on a missing field instead of saying which \
+         version it cannot read",
+        encoding.trim()
     );
+    let _ = &f;
 }

@@ -1341,7 +1341,8 @@ fn p4_nothing_persisted() {
     // PROPERTY ("nothing durable appeared"), not one spelling of violating it.
     // SCHEDULED CHANGE (advert_persistence §6.1): allow-list, not absolute.
     // `peers/` is the durable peer directory; undeclared paths still fail.
-    let allowed = ["objects", "format", "peers"];
+    // Q-011 (O23): `objects.format` declares the object-encoding axis.
+    let allowed = ["objects", "format", "objects.format", "peers"];
     let mut unexpected: Vec<String> = Vec::new();
     for e in fs::read_dir(dir.join(".oo")).unwrap().flatten() {
         let name = e.file_name().to_string_lossy().to_string();

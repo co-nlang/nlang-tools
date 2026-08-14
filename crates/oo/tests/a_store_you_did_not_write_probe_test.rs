@@ -191,9 +191,16 @@ fn c3_gc_on_a_healthy_store_still_says_nothing_is_wrong() {
 fn p1_the_layout_is_a_short_and_known_list() {
     let d = committed("p1", SRC);
     let files = oo_files(&d);
+    // ACCEPTOR (Q-011, 2026-08-14): `.oo/objects.format` added. This pin fired
+    // exactly as its own comment predicted, and the work order still failed to
+    // list it among the scheduled changes — the same omission as the three
+    // other `.oo/` file-set assertions in the tree, which §7.6 waved at with
+    // "if any" instead of grepping. A pin written to fire on schedule is still
+    // a scheduled change and belongs in the work order.
     let expected = vec![
         ".oo/HEAD".to_string(),
-        ".oo/format".to_string(),
+        ".oo/format".to_string(),          // layout axis
+        ".oo/objects.format".to_string(),  // object-encoding axis (O23)
         ".oo/objects/sha256/<CAS>".to_string(),
     ];
     let extra: Vec<&String> = files.iter().filter(|f| !expected.contains(f)).collect();
@@ -246,7 +253,6 @@ fn p2_the_address_is_not_the_hash_of_the_file() {
 // Step 2 of the damage chain. Includes the existence half: the command has to
 // SUCCEED at nothing (a refusal), not fail to run at all.
 #[test]
-#[ignore = "Q-011: a read-only `oo log` stamps `1` on a store whose objects are format 3"]
 fn r1_a_read_only_command_writes_nothing() {
     let d = committed("r1", SRC);
     let before = read(&layout_file(&d)).expect("a fresh store must declare something");
@@ -275,7 +281,6 @@ fn r1_a_read_only_command_writes_nothing() {
 // say something, or "the encoding is not in it" would be true of a deleted
 // file.
 #[test]
-#[ignore = "Q-011: one counter carries both axes; `.oo/objects.format` does not exist"]
 fn r2_layout_and_encoding_are_two_declarations() {
     let d = committed("r2", SRC);
 
@@ -314,7 +319,6 @@ fn r2_layout_and_encoding_are_two_declarations() {
 // not be rewritten by the reading. The second half is the existence half: it
 // stops the whole thing being "satisfied" by refusing every legacy store.
 #[test]
-#[ignore = "Q-011: a fresh store still writes a bare number, so there is no legacy form to distinguish"]
 fn r3_a_bare_number_is_read_as_the_old_conflated_counter() {
     // Half one: the new form must be distinguishable from the old.
     let fresh_store = committed("r3-fresh", SRC);

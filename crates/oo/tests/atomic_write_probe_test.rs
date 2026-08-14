@@ -358,15 +358,29 @@ fn p2_format_moves_only_when_declared() {
     evolve_field(d.path(), 1);
     oo(d.path(), &["commit", "-m", "one"]);
 
-    // ACCEPTOR (Q-010b, 2026-08-14): 2 -> 3. The ruling is O52 (the standard
-    // root is one thing, named by one digest) and the declaration is the
-    // Q-010b work order §5. This line is the "says why" the comment above
-    // asks the next mover for.
-    let fmt = fs::read_to_string(d.path().join(".oo").join("format")).unwrap();
+    // ACCEPTOR (Q-011, 2026-08-14): the file no longer holds a bare number.
+    // O23 ruled that one counter was carrying two axes — `.oo/format` was
+    // declared (2026-07-28) as a LAYOUT marker and then turned twice for the
+    // object encoding. It now declares only the layout, and the encoding has
+    // its own file. The pin's property is unchanged and is not "the number is
+    // N": it is that neither declaration drifts without a ruling.
+    //
+    //   1            local_gc, 2026-07-28   (layout, conflated counter)
+    //   2 / 3        Q-010a / Q-010b        (encoding, on the same counter)
+    //   layout=2     Q-011                  (the axes split; a file was added
+    //                                        to `.oo/`, which IS a layout change)
+    let oo_dir = d.path().join(".oo");
+    let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
-        fmt.trim(),
-        "3",
+        layout.trim(),
+        "layout=2",
         ".oo/format moved without a ruling saying it should"
+    );
+    let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();
+    assert_eq!(
+        encoding.trim(),
+        "encoding=3",
+        ".oo/objects.format moved without a ruling saying it should"
     );
 }
 

@@ -706,6 +706,9 @@ fn r2_the_file_appears_where_declared_and_nowhere_else() {
         "effect_pending",
         "abandoned",
         "format",
+        // Q-011 (O23): the layout axis lives in `format`, the object-encoding
+        // axis in its own file. Adding a file to `.oo/` IS a layout change.
+        "objects.format",
         PEERS_DIR,
     ];
     let mut unexpected = Vec::new();
