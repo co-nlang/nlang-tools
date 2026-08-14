@@ -1,4 +1,4 @@
-use crate::value::{CaidVersion, Commit, ContentHash, HashAlgorithm, Value};
+use crate::value::{CaidVersion, ComboVal, Commit, ContentHash, EffectTag, HashAlgorithm, Value};
 use anyhow::Result;
 use serde::Serialize;
 use std::fs;
@@ -110,9 +110,10 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// via CAID `v1`/`v2`; this is the **layout** marker.
 ///
 /// Format 2 is the Q-010a CAS projection: compact, canonically ordered JSON
-/// with source spans omitted. Format 1 remains readable so an existing store
-/// can be inspected before its first format-2 write upgrades the declaration.
-pub const STORE_FORMAT_VERSION: u32 = 2;
+/// with source spans omitted. Format 3 additionally projects a committed
+/// root's standard-library table to its digest. Formats 1 and 2 remain
+/// readable so existing stores can be inspected without object migration.
+pub const STORE_FORMAT_VERSION: u32 = 3;
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 pub struct ObjectStore {
@@ -240,13 +241,57 @@ impl ObjectStore {
         Ok(hash)
     }
 
+    /// Persist a universe root. The standard-library axis is engine-owned and
+    /// immutable for one engine build, so history names that table by content
+    /// digest rather than copying its body into every root.
+    pub fn put_root(&self, root: &ComboVal, standard: &ComboVal) -> Result<ContentHash> {
+        let value = Value::Combo(root.clone());
+        let hash = value.content_hash();
+        let mut durable = value.for_cas_storage();
+        let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
+        project_standard_root(durable_root, standard);
+        self.write_object(&hash, canonical_cas_json(&durable)?)?;
+        Ok(hash)
+    }
+
+    /// Decode a universe root and resolve its format-3 standard-library
+    /// dependency against this engine's table. A digest mismatch is a refusal,
+    /// not a best-effort substitution with today's builtins.
+    pub fn get_root(&self, hash: &ContentHash, standard: &ComboVal) -> Result<ComboVal> {
+        let content = self.read_object_raw(hash)?;
+        let mut value: Value = serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+            requested: hash.clone(), detail: e.to_string(),
+        })?;
+        let Value::Combo(ref mut root) = value else {
+            anyhow::bail!("Invalid root");
+        };
+        hydrate_system_table(root, standard)?;
+        hydrate_standard_root(root, standard);
+        let recomputed = value.content_hash();
+        if !value_address_matches(hash, &recomputed) {
+            return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
+        }
+        let Value::Combo(root) = value else { unreachable!() };
+        Ok(root)
+    }
+
     pub fn get_value(&self, hash: &ContentHash) -> Result<Value> {
         let content = self.read_object_raw(hash)?;
-        let value: Value =
+        let mut value: Value =
             serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
             })?;
+        if let Value::Combo(root) = &mut value {
+            if root.system.contains_key(SYSTEM_DIGEST_KEY) {
+                // All ordinary readers use one decoder. A format-3 root has
+                // no valid standalone Value interpretation: resolve it before
+                // judging its address, rather than making every caller guess.
+                let standard = crate::Ouroboros::new_in_memory().root_with_system();
+                hydrate_system_table(root, &standard)?;
+                hydrate_standard_root(root, &standard);
+            }
+        }
         let recomputed = value.content_hash();
         if !value_address_matches(hash, &recomputed) {
             return Err(StoreReadError::CaidMismatch {
@@ -324,7 +369,7 @@ impl ObjectStore {
     }
 
     /// A format-1 store stays readable without mutation. The first new CAS
-    /// object is format-2, so declare that fact before installing it; an old
+    /// object is format-3, so declare that fact before installing it; an old
     /// engine then refuses at the format gate instead of failing later on a
     /// missing AST `span` field.
     fn upgrade_format_for_cas_write(&self) -> Result<()> {
@@ -337,7 +382,7 @@ impl ObjectStore {
             .unwrap_or_else(|_| format!("{MIN_READABLE_STORE_FORMAT_VERSION}\n"));
         match current.trim().parse::<u32>() {
             Ok(STORE_FORMAT_VERSION) => Ok(()),
-            Ok(MIN_READABLE_STORE_FORMAT_VERSION) => {
+            Ok(v) if (MIN_READABLE_STORE_FORMAT_VERSION..STORE_FORMAT_VERSION).contains(&v) => {
                 atomic_write(&path, format!("{STORE_FORMAT_VERSION}\n"))
             }
             Ok(v) => anyhow::bail!(
@@ -399,6 +444,80 @@ impl ObjectStore {
         };
         let hex = hex::encode(&hash.digest);
         self.root.join(algo_dir).join(&hex[0..2]).join(&hex[2..])
+    }
+}
+
+fn standard_table_digest(standard: &ComboVal) -> String {
+    hex::encode(Value::Combo(standard.clone()).content_hash().digest)
+}
+
+const SYSTEM_DIGEST_KEY: &str = "__nlang_system_digest";
+
+fn project_standard_root(root: &mut ComboVal, standard: &ComboVal) {
+    for (actual, base) in [
+        (&mut root.data, &standard.data), (&mut root.types, &standard.types),
+        (&mut root.rules, &standard.rules), (&mut root.meta, &standard.meta),
+        (&mut root.system, &standard.system), (&mut root.local, &standard.local),
+    ] {
+        actual.retain(|key, value| base.get(key) != Some(value));
+    }
+    root.system.clear();
+    root.system.insert(SYSTEM_DIGEST_KEY.to_string(), Value::Atom(
+        nlang_parser::ast::AtomKind::Str(standard_table_digest(standard)), EffectTag::Pure, None,
+    ));
+}
+
+fn hydrate_standard_root(root: &mut ComboVal, standard: &ComboVal) {
+    for (actual, base) in [
+        (&mut root.data, &standard.data), (&mut root.types, &standard.types),
+        (&mut root.rules, &standard.rules), (&mut root.meta, &standard.meta),
+        (&mut root.system, &standard.system), (&mut root.local, &standard.local),
+    ] {
+        for (key, value) in base { actual.entry(key.clone()).or_insert_with(|| value.clone()); }
+    }
+}
+
+fn hydrate_system_table(combo: &mut ComboVal, standard: &ComboVal) -> Result<()> {
+    if let Some(Value::Atom(nlang_parser::ast::AtomKind::Str(digest), _, _)) = combo.system.get(SYSTEM_DIGEST_KEY) {
+        let expected = standard_table_digest(standard);
+        if digest != &expected {
+            anyhow::bail!(
+                "refusing root: standard root digest {digest} is unavailable (this engine has {expected})"
+            );
+        }
+        combo.system = standard.system.clone();
+    }
+    for value in combo.data.values_mut()
+        .chain(combo.types.values_mut())
+        .chain(combo.rules.values_mut())
+        .chain(combo.meta.values_mut())
+        .chain(combo.system.values_mut())
+        .chain(combo.local.values_mut())
+        .chain(combo.pending_spreads.iter_mut())
+    {
+        hydrate_systems_in_value(value, standard)?;
+    }
+    Ok(())
+}
+
+fn hydrate_systems_in_value(value: &mut Value, standard: &ComboVal) -> Result<()> {
+    match value {
+        Value::Combo(combo) => hydrate_system_table(combo, standard),
+        Value::Union(values) => {
+            for value in values { hydrate_systems_in_value(value, standard)?; }
+            Ok(())
+        }
+        Value::Thunk { closure, context, .. } => {
+            for frame in closure { hydrate_system_table(std::sync::Arc::make_mut(frame), standard)?; }
+            if let Some(context) = context { hydrate_systems_in_value(context, standard)?; }
+            Ok(())
+        }
+        Value::Range { start, end, step } => {
+            hydrate_systems_in_value(start, standard)?; hydrate_systems_in_value(end, standard)?;
+            if let Some(step) = step { hydrate_systems_in_value(step, standard)?; }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 

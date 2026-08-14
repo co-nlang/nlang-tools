@@ -828,7 +828,10 @@ fn run_status() -> anyhow::Result<()> {
 
 fn run_log() -> anyhow::Result<()> {
     let engine = Ouroboros::init(&std::env::current_dir()?)?;
-    let _universe = load_universe(&engine, &std::env::current_dir()?)?;
+    // A historical root that names an unavailable standard table is not an
+    // empty universe. `log` is a read of that history, so surface the named
+    // refusal instead of silently falling back to genesis.
+    let _universe = Universe::load(&engine, &std::env::current_dir()?)?;
     // Surface CAS integrity failures distinctly (tampered commit chain).
     let history = engine
         .log()
@@ -1468,7 +1471,18 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
 
     // CAS holds both values and commits. Try value first; fall back to commit
     // so address re-verification works for survivors after GC (local_gc R12).
-    match engine.store.get_value(&hash) {
+    let value = match engine.store.get_value(&hash) {
+        Ok(value) => Ok(value),
+        // A format-3 root deliberately hashes its resolved standard-library
+        // table, not the compact digest marker on disk. Retry as a root before
+        // reporting an ordinary CAS mismatch.
+        Err(original) => engine
+            .store
+            .get_root(&hash, &engine.root_with_system())
+            .map(Value::Combo)
+            .map_err(|_| original),
+    };
+    match value {
         Ok(val) => {
             let val = val.solidify_effects();
             println!("CAID:   {}", caid_str);
