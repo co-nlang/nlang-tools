@@ -246,3 +246,62 @@ externally-tagged enum 就解不開了。
 
 修 D1／D2／D3;12 支預定改變由驗收方處理(探針修改權在驗收方),
 7.6 待裁。修完後仍走完整驗收:全 workspace ×5、conformance、genesis、跨版本雙向。
+
+---
+
+# 8. 驗收第二輪:D2／D3／O52 通過,D1 未修好(2026-08-14)
+
+**全 workspace 1896 / 12 / 0**,而這 12 支**正好是 §7.5 列的那 12 支預定改變/儀器失效,
+一支不多一支不少**。第一輪的十支真迴歸全部消失。
+
+## 8.1 通過的
+
+| | 量測 |
+| :--- | :--- |
+| **D2** | 五軸逐一實測全回 `6`(`u`／`%u`／`~u`／`/u`／`@u`);深層兄弟 `12`;相互遞迴 `isEven 4`→`#true`;`fact 30` 正確 |
+| **D2 收窄仍是真的** | `{ y, v2, v3, f }` 的閉包只有 `y`;`{ %secret, %used, f }` 只有 `%used` |
+| **D2 不動點沒有變成放棄** | `{ k, d, e, junk, f: x -> x + e }` 的閉包＝`{d, e, k}`,**`junk` 不在**——R2 的 fixture 沒有遞移鏈,抓不到「有 Thunk 就整片鏡射」這種解法,這支是額外量的 |
+| **D3** | `oo gc` 在健康倉上乾淨收場;十支真迴歸歸零。作法是**所有讀者共用一個解碼器**(`get_value` 自己認得 format-3 根),不是逐處補 `get_root` |
+| **O52** | `project_standard_root` 存的是 `standard_table_digest(standard)`＝**整個標準根**;拒絕訊息已改為 "standard root digest … is unavailable" |
+| **跨版本雙向** | 新倉→v0.20.0 在格式閘拒絕並說出版本;舊倉→新引擎讀得開(71,218 B 根),且**讀不升級 format** |
+
+## 8.2 D1 未修好:判準換窄了,沒有換掉
+
+交付把守衛改成 `object.len() == 1`,註解也寫對了診斷
+(「A user is free to name a data coordinate `Combo`; treating that map as a Value was
+the D1 shape-inference bug」)。**但 `len()==1` 不是那個區分。** 使用者的軸映射**剛好只有
+一個條目**時,它就是一個長度 1、鍵為 `Combo` 的物件——與 `Value::Combo` 的序列化形無法區分。
+
+〔量 v0.20.0＋本次交付〕
+
+| 源碼 | 結果 |
+| :--- | :--- |
+| `app: { Combo: 7 }` | **BROKEN** |
+| `app: { @Combo: 7 }`／`{ %Combo: 7 }`／`{ /Combo: 7 }`／`{ ~Combo: 7 }` | **BROKEN**(五軸全中) |
+| `Combo: 7`(根層) | **BROKEN** |
+| `app: { Combo: 7, z: 1 }` | ok ← **同軸加一個鄰居就遮住** |
+
+**這比第一輪更難發現**:同一個鍵名,加減一個無關欄位就在壞與不壞之間切換。
+`commit` 依然報成功,物件依然讀不回。
+
+### 8.2.1 建議:不要再找更窄的判準,把手術拿掉
+
+`compact_root_system_json`／`expand_root_system_json` 這一對**只做兩件事,兩件都是外觀**:
+
+1. 把 `{"__nlang_system_digest":{"Atom":[…]}}` 印成裸字串 `"<64hex>"`
+2. 拿掉巢狀 Combo 的空 `"system":{}`
+
+⟹ **把 sentinel 留在型別形(`Value` 上),兩個函式整個刪掉**,就沒有任何地方在猜形狀。
+這正是 Q-010a 的同一課:`strip_ast_spans` 的解法不是更聰明的 JSON 述詞,是
+`for_cas_storage()` 的型別導向投影。
+
+〔量〕代價:digest 欄 75 → 127 B(**+52 B**);空 `system` 每個 13 B,
+使用者子樹(3,755 B)裡有 **5 個**,合計 **+65 B**。**在 1,347 B 的根上約 +117 B,
+而本弧的收益是 72,555 → 1,347。**
+
+若堅持要保留外觀,唯一能真正區分的是**位置**而非形狀:只在**已知是 Value 的節點**上動手
+(即由型別走訪帶路),而那等價於做在 `Value` 上。
+
+## 8.3 下一輪
+
+只剩 D1。12 支預定改變仍由驗收方處理。修完後仍走完整驗收。
