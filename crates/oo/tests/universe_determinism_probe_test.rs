@@ -219,10 +219,33 @@ fn root_leaves(dir: &Path) -> BTreeMap<String, String> {
         serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
     let mut out = BTreeMap::new();
     leaves(&v, "", &mut out);
+    // ACCEPTOR (Q-010b, 2026-08-14). Was `out.len() > 1000`, which held only
+    // while the root inlined the standard library; Q-010b names it by digest
+    // and the root is now ~12 leaves. The threshold was a proxy for "the
+    // standard library is in here", and the honest replacement says so
+    // directly: exactly one leaf must be the 64-hex standard-root digest.
+    //
+    // This is not lost coverage. Before, the standard library's determinism
+    // was checked leaf by leaf; now it is checked as one digest, which either
+    // matches between the two processes or does not. The check got sharper.
     assert!(
-        out.len() > 1000,
+        out.len() >= 8,
         "root has only {} leaves — it was not parsed properly",
         out.len()
+    );
+    let digests: Vec<&str> = out
+        .values()
+        // `leaves` stores `Value::to_string()`, so a JSON string arrives quoted.
+        .map(|v| v.trim_matches('"'))
+        .filter(|v| v.len() == 64 && v.chars().all(|c| c.is_ascii_hexdigit()))
+        .collect();
+    assert_eq!(
+        digests.len(),
+        1,
+        "expected exactly one standard-root digest among the root's leaves, \
+         found {} — the standard library is where this probe's determinism \
+         claim mostly lives, and it must be visible to be compared: {digests:?}",
+        digests.len()
     );
     out
 }
