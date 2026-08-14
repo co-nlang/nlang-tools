@@ -20,6 +20,146 @@ enum MathOp {
     Rem,
 }
 
+/// Names bound by an arrow parameter. Only bare one-segment paths bind a
+/// lexical name; all other parameter shapes are dispatch patterns.
+fn morphism_parameter_names(param: &Expr) -> HashSet<String> {
+    let mut names = HashSet::new();
+    match &param.kind {
+        ExprKind::Path(p) if p.anchor == PathAnchor::Bare && p.segments.len() == 1 => {
+            names.insert(p.segments[0].trim().to_string());
+        }
+        ExprKind::Tuple(items) => {
+            for item in items {
+                names.extend(morphism_parameter_names(item));
+            }
+        }
+        _ => {}
+    }
+    names
+}
+
+/// Lexically free bare names in an expression. Combo fields form a
+/// simultaneous local scope, which preserves both self- and mutual recursion.
+fn free_bare_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
+    fn walk(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
+        match &expr.kind {
+            ExprKind::Path(p) if matches!(p.anchor, PathAnchor::Bare | PathAnchor::Parent(_)) => {
+                if let Some(name) = p.segments.first() {
+                    let name = name.trim();
+                    if !bound.contains(name) {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+            ExprKind::Morphism { param, body } => {
+                let mut nested = bound.clone();
+                nested.extend(morphism_parameter_names(param));
+                walk(body, &nested, out);
+            }
+            ExprKind::Combo { fields, .. } => {
+                let mut nested = bound.clone();
+                for field in fields {
+                    if let FieldKey::Named { name, .. } = &field.key {
+                        nested.insert(name.trim().to_string());
+                    }
+                }
+                for field in fields {
+                    walk(&field.value, &nested, out);
+                }
+            }
+            ExprKind::Apply(a, b) | ExprKind::Pipe(a, b) | ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b) | ExprKind::Diff(a, b) | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b) | ExprKind::Mul(a, b) | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b) | ExprKind::Eq(a, b) | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b) | ExprKind::Gt(a, b) | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b) | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b) | ExprKind::LatticeEq(a, b) | ExprKind::Probe(a, b) => {
+                walk(a, bound, out); walk(b, bound, out);
+            }
+            ExprKind::Ternary { cond, then_branch, else_branch } => {
+                walk(cond, bound, out); walk(then_branch, bound, out); walk(else_branch, bound, out);
+            }
+            ExprKind::Unary { expr, .. } | ExprKind::AnonSet(expr) | ExprKind::Spread(expr)
+            | ExprKind::Structural(expr) | ExprKind::Complement(expr) => walk(expr, bound, out),
+            ExprKind::List(items) | ExprKind::Tuple(items) => for item in items { walk(item, bound, out); },
+            ExprKind::Interpolated(parts) => for part in parts {
+                if let nlang_parser::ast::StringPart::Interpolated(expr) = part { walk(expr, bound, out); }
+            },
+            ExprKind::Range { start, end, step } => {
+                walk(start, bound, out); walk(end, bound, out);
+                if let Some(step) = step { walk(step, bound, out); }
+            }
+            _ => {}
+        }
+    }
+    let mut out = HashSet::new();
+    walk(expr, bound, &mut out);
+    out
+}
+
+fn captures(free: &HashSet<String>, prefix: &str, name: &str) -> bool {
+    free.contains(name) || free.contains(&format!("{prefix}{name}"))
+}
+
+fn value_dependencies(value: &Value) -> HashSet<String> {
+    match value {
+        Value::Thunk { expr, .. } | Value::Code(expr) => free_bare_names(expr, &HashSet::new()),
+        _ => HashSet::new(),
+    }
+}
+
+/// Follow value dependencies to a fixed point before taking the frame slice:
+/// a captured `e` whose recipe reads `d` is not usable unless `d` travels too.
+fn close_free_dependencies(scopes: &[std::sync::Arc<ComboVal>], free: &mut HashSet<String>) {
+    loop {
+        let before = free.len();
+        for scope in scopes {
+            for (name, value) in &scope.data {
+                if captures(free, "", name) { free.extend(value_dependencies(value)); }
+            }
+            for (name, value) in &scope.types {
+                if captures(free, "@", name) { free.extend(value_dependencies(value)); }
+            }
+            for (name, value) in &scope.rules {
+                if captures(free, "/", name) { free.extend(value_dependencies(value)); }
+            }
+            for (name, value) in &scope.meta {
+                if captures(free, "%", name) { free.extend(value_dependencies(value)); }
+            }
+            for (name, value) in &scope.system {
+                if captures(free, "~%", name) { free.extend(value_dependencies(value)); }
+            }
+            for (name, value) in &scope.local {
+                if captures(free, "~", name) { free.extend(value_dependencies(value)); }
+            }
+        }
+        if free.len() == before { break; }
+    }
+}
+
+fn capture_free_fields(scope: &ComboVal, free: &HashSet<String>) -> ComboVal {
+    let mut captured = ComboVal::default();
+    for (name, value) in &scope.data {
+        if captures(free, "", name) {
+            captured.data.insert(name.clone(), value.clone());
+        }
+    }
+    for (target, source, prefix) in [
+        (&mut captured.types, &scope.types, "@"), (&mut captured.rules, &scope.rules, "/"),
+        (&mut captured.meta, &scope.meta, "%"), (&mut captured.system, &scope.system, "~%"),
+        (&mut captured.local, &scope.local, "~"),
+    ] {
+        for (name, value) in source {
+            if captures(free, prefix, name) { target.insert(name.clone(), value.clone()); }
+        }
+    }
+    captured.closed = scope.closed;
+    captured.effect = scope.effect;
+    captured.relations = scope.relations.clone();
+    captured.masa_ref = scope.masa_ref.clone();
+    captured
+}
+
 /// G1 #12 / G6: value-context operand (math, atomic `==`/`!=`).
 /// Pure wrappers collapse; hybrid combos peel `%val` (recursively);
 /// non-collapsible combos (no `%val`) → Err (caller → ⊥ #conflict).
@@ -1412,10 +1552,17 @@ impl Ouroboros {
                 let te = self.predict_effect(body, ctx);
                 let mut rule_fields = IndexMap::new();
                 rule_fields.insert("%code".to_string(), Value::Code(Box::new(*body.clone())));
+                let mut free = free_bare_names(body, &morphism_parameter_names(param));
+                close_free_dependencies(&ctx.scopes, &mut free);
                 let mut closure_fields = IndexMap::new();
                 let current_scopes = ctx.scopes.clone();
                 for (i, s) in current_scopes.iter().enumerate() {
-                    closure_fields.insert(i.to_string(), Value::Combo((**s).clone()));
+                    let captured = capture_free_fields(s, &free);
+                    // Frame position is semantic for `^` navigation. Keep an
+                    // empty frame as an empty frame rather than compressing
+                    // the chain and turning a parent reference into another
+                    // coordinate.
+                    closure_fields.insert(i.to_string(), Value::Combo(captured));
                 }
                 rule_fields.insert(
                     "%closure".to_string(),

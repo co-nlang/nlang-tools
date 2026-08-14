@@ -99,6 +99,17 @@ fn verify_reachable_object(store: &ObjectStore, digest_hex: &str) -> VerifiedObj
     };
     let want = digest_hex.to_lowercase();
 
+    // Format-3 roots are decoded through the store's single value decoder;
+    // raw serde alone sees their compact dependency marker, not the logical
+    // root, and would falsely condemn a healthy reachable object.
+    if let Ok(bytes_digest) = hex::decode(digest_hex) {
+        if store.get_value(&ContentHash::v1(bytes_digest)).is_ok() {
+            if let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) {
+                return VerifiedObject::Ok(json);
+            }
+        }
+    }
+
     if let Ok(val) = serde_json::from_slice::<Value>(&bytes) {
         let recomputed = val.content_hash();
         if hex::encode(&recomputed.digest) == want {

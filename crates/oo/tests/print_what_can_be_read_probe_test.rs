@@ -457,7 +457,14 @@ fn p4_root_caid_does_not_move() {
     // lives on the SYSTEM axis; `serialize_combo` folds `cv.system` into the
     // CAID (W8′ M2). So changing one genesis default moves EVERY root.
     // Breaking entry #10.
-    const KNOWN: &str = "16ba56831ac26b8c4a9412840bbfc6eed7271f51f284c485c2e9c88f04db00d4";
+        // ACCEPTOR (Q-010b, 2026-08-14): moved again, on schedule this time.
+    // Q-010b is an epoch by declaration (work order §5, breaking entry #14 on
+    // the identity axis): forcing at commit, the closure narrowed to free
+    // variables, and the standard root named by digest all enter the hashed
+    // projection. Same value as `p1_the_root_caid_does_not_move` in
+    // every_byte_or_none, which pins this program through the other path —
+    // that they agree is itself worth having.
+    const KNOWN: &str = "6e5ad5e374ded76bfa3b3661acf8f9a5a310475c9bc2d9d1e6e25bcd19539352";
     let d = repo_staged("p4", "app: {\n  k1: 1\n}\n");
     let out = oo(&d, &["commit", "-m", "base"]);
     assert!(out.contains("hash:"), "LIVENESS: no commit: {out}");

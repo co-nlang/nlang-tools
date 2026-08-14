@@ -127,12 +127,35 @@ fn objects(dir: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
     out
 }
 
-/// The largest object — the root combo, as opposed to the commit record.
+/// The root combo, as opposed to the commit record.
+///
+/// ACCEPTOR (Q-010b, 2026-08-14). This was `max_by_key(len)` — "the largest
+/// object is the root". That held only while the root inlined the 61,912 B
+/// standard library. Q-010b names that table by digest, the root fell to
+/// ~1.4 KB, and every fixture here silently started measuring the COMMIT
+/// object: C0 reported "525 bytes, too small to be the root", R2 saw two
+/// commits disagree and called it nondeterminism, R6 read a commit and
+/// reported the user's fields destroyed. Nine of this arc's twelve pin
+/// failures were this one line.
+///
+/// A `Value::Combo` serialises with `Combo` as its sole top-level tag; a
+/// commit record does not. Exactly one such object is expected — if that stops
+/// being true the helper stops rather than guessing, which is the property the
+/// size heuristic never had.
 fn root_object(dir: &Path) -> (std::path::PathBuf, Vec<u8>) {
-    objects(dir)
+    let roots: Vec<_> = objects(dir)
         .into_iter()
-        .max_by_key(|(_, b)| b.len())
-        .expect("no objects at all — see C0")
+        .filter(|(_, b)| b.starts_with(br#"{"Combo":"#))
+        .collect();
+    assert_eq!(
+        roots.len(),
+        1,
+        "expected exactly one root combo among {} objects, found {} — the \
+         instrument must not guess which one to measure",
+        objects(dir).len(),
+        roots.len()
+    );
+    roots.into_iter().next().unwrap()
 }
 
 /// `hash:sha256:v1:<dir><file>` reconstructed from the store path.
@@ -185,13 +208,23 @@ fn c0_the_store_actually_has_objects() {
         "expected at least a root and a commit object, found {}",
         objs.len()
     );
+    // ACCEPTOR (Q-010b, 2026-08-14): was `root.len() > 1000`. Size was never
+    // the property — it was a proxy for "the root inlines the standard
+    // library", which Q-010b deliberately ended (72,555 B -> ~1.4 KB). What
+    // C0 actually needs is that the root is the root and carries the
+    // fixture's own coordinate, so R1/R4's absence assertions are not vacuous.
     let (_, root) = root_object(&d);
-    assert!(
-        root.len() > 1000,
-        "root object is {} bytes — too small to be the real root; the \
-         absence assertions in R1/R4 would be vacuous",
-        root.len()
-    );
+    let text = String::from_utf8_lossy(&root);
+    for want in ["\"app\"", "\"k1\""] {
+        assert!(
+            text.contains(want),
+            "the root object does not contain {want} — it is not this \
+             fixture's root, and the absence assertions in R1/R4 would be \
+             vacuous. Got {} bytes: {}",
+            root.len(),
+            &text[..text.len().min(200)]
+        );
+    }
 }
 
 // ── C1 ── detection works, so R-side "not detected" means something ──────
@@ -252,11 +285,24 @@ fn c2_the_value_survives_a_round_trip() {
     );
 }
 
-// ── P1 ── this arc moves no identity ─────────────────────────────────────
-// The whole reason Q-010a is separable from Q-010b. If this pin goes red,
-// the delivery has touched the hashed projection and the arc has silently
-// become epoch-level.
-const ROOT_CAID: &str = "16ba56831ac26b8c4a9412840bbfc6eed7271f51f284c485c2e9c88f04db00d4";
+// ── P1 ── identity moves only when a ruling says it does ─────────────────
+// Written for Q-010a, where the whole point was that the arc is separable
+// from Q-010b: if this went red, the delivery had touched the hashed
+// projection and had silently become epoch-level.
+//
+// ACCEPTOR (Q-010b, 2026-08-14): Q-010b IS that epoch, declared in its work
+// order §5 and carried as breaking entry #14 on the identity axis, so the pin
+// moved on schedule. Third recorded value; the previous move was W4‴/O41
+// (see the note on `p4_root_caid_does_not_move`, which pins the same program
+// through the printer). The pin stays for the same reason it survived that
+// one: what it guards is not the number, it is that the number never moves
+// without a ruling. Whoever moves it next edits this line and says why.
+//
+//   v0.2.55 .. v0.12.0   16ba5683…  (ten weeks, five builds)
+//   v0.20.0              16ba5683…  (Q-010a: span removed, identity untouched)
+//   v0.21.0              6e5ad5e3…  (Q-010b: forced at commit, closure
+//                                    narrowed, standard root by digest)
+const ROOT_CAID: &str = "6e5ad5e374ded76bfa3b3661acf8f9a5a310475c9bc2d9d1e6e25bcd19539352";
 
 #[test]
 fn p1_the_root_caid_does_not_move() {
@@ -265,9 +311,9 @@ fn p1_the_root_caid_does_not_move() {
     assert_eq!(
         caid_of(&path),
         format!("hash:sha256:v1:{ROOT_CAID}"),
-        "the root CAID for `{}` moved. Removing span and canonicalising key \
-         order MUST NOT touch the hashed projection — if it did, this arc is \
-         no longer non-breaking and cannot ship separately from Q-010b",
+        "the root CAID for `{}` moved. Identity is an epoch-level change: it \
+         moves when a ruling says it moves and never as a side effect. If no \
+         work order declared this, that is the finding",
         PROGRAM.trim()
     );
 }
@@ -394,26 +440,46 @@ fn r1_no_span_survives_into_a_cas_object() {
     assert!(!objs.is_empty(), "see C0");
 
     let mut with_span = Vec::new();
-    let mut thunk_seen = false;
+
+    // The existence half. R1 says something is ABSENT, so the scan has to be
+    // shown looking at content that COULD have carried it.
+    //
+    // ACCEPTOR (Q-010b, 2026-08-14). This used to require a `Thunk` on disk,
+    // reasoning that Q-010a does not force. Q-010b does force at commit, so
+    // that guard has now fired as designed — but reviewing it revealed it was
+    // weak from the start: `app: { k1: 1 }` never had a Thunk of its own. The
+    // Thunks it found belonged to the inlined standard library, so the guard
+    // was satisfied by content the arc did not control, and it would have
+    // stayed green for a delivery that dropped every span AND every value of
+    // the fixture.
+    //
+    // The replacement names the thing spans actually live on: an `Expr`. A
+    // forced morphism keeps its body as `%code` (`Value::Code`), which wraps
+    // an `Expr` and is exactly where a `span` would survive if the projection
+    // missed it. So commit a morphism and require the scan to find one.
+    let m = committed("r1-morphism", "app: { f: x -> x + 1 }\n");
+    let mut code_seen = false;
+    for (p, b) in objects(&m) {
+        let s = String::from_utf8_lossy(&b);
+        if s.contains("\"Code\"") {
+            code_seen = true;
+        }
+        if s.contains("\"span\"") {
+            with_span.push(p.display().to_string());
+        }
+    }
+    assert!(
+        code_seen,
+        "no `Code` in any object of the morphism fixture — nothing on disk \
+         carries an `Expr`, so `span` being absent proves nothing"
+    );
+
     for (p, b) in &objs {
         let s = String::from_utf8_lossy(b);
         if s.contains("\"span\"") {
             with_span.push(p.display().to_string());
         }
-        if s.contains("Thunk") {
-            thunk_seen = true;
-        }
     }
-
-    // The existence half. Q-010a does NOT force values, so a Thunk must still
-    // be there afterwards — if it is not, the delivery has done Q-010b's job
-    // and R1 would be passing for the wrong reason.
-    assert!(
-        thunk_seen,
-        "no Thunk in any object. This arc does not force values (that is \
-         Q-010b) — a store with no Thunks means the delivery overshot, and \
-         `span` being gone would then prove nothing"
-    );
     assert!(
         with_span.is_empty(),
         "`span` is on disk and is not covered by the hash — tampering with it \
@@ -618,13 +684,18 @@ fn p4_serde_json_objects_are_lexically_ordered() {
 fn r5_the_store_format_says_it_changed() {
     let d = committed("r5", PROGRAM);
     let f = std::fs::read_to_string(d.join(".oo").join("format")).unwrap();
+    // ACCEPTOR (Q-010b, 2026-08-14): 2 -> 3, declared in the Q-010b work
+    // order §5. Format 3 names the standard root by digest, so a v0.20.0
+    // engine reading it without the gate would resolve the root against its
+    // OWN builtin table and get a different universe — quieter than a missing
+    // field, and worse. Measured: v0.20.0 refuses with "understands format 1
+    // through 2".
     assert_eq!(
         f.trim(),
-        "2",
-        "`.oo/format` still reads `{}`. New objects have no `span`, and \
-         v0.19.0's `ast.rs` requires it — an engine that opens this store \
-         without being told the format moved will fail on a missing field \
-         instead of saying which version it cannot read",
+        "3",
+        "`.oo/format` still reads `{}`. A format-3 root names its standard \
+         root by digest; an engine told nothing would silently substitute its \
+         own table instead of saying which version it cannot read",
         f.trim()
     );
 }

@@ -358,10 +358,14 @@ fn p2_format_moves_only_when_declared() {
     evolve_field(d.path(), 1);
     oo(d.path(), &["commit", "-m", "one"]);
 
+    // ACCEPTOR (Q-010b, 2026-08-14): 2 -> 3. The ruling is O52 (the standard
+    // root is one thing, named by one digest) and the declaration is the
+    // Q-010b work order §5. This line is the "says why" the comment above
+    // asks the next mover for.
     let fmt = fs::read_to_string(d.path().join(".oo").join("format")).unwrap();
     assert_eq!(
         fmt.trim(),
-        "2",
+        "3",
         ".oo/format moved without a ruling saying it should"
     );
 }

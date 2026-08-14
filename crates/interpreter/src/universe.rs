@@ -278,12 +278,9 @@ impl Universe {
         match head {
             Some(h) => {
                 let commit = engine.store.get_commit(&h)?;
-                let root_val = engine.store.get_value(&commit.root)?;
-                if let Value::Combo(root) = root_val {
-                    Ok(Self::new(Some(h), root))
-                } else {
-                    Err(anyhow::anyhow!("Invalid root"))
-                }
+                let standard = engine.root_with_system();
+                let root = engine.store.get_root(&commit.root, &standard)?;
+                Ok(Self::new(Some(h), root))
             }
             None => Ok(Self::new(None, engine.root_with_system())),
         }
@@ -674,7 +671,16 @@ impl Universe {
                 _ => return Err(anyhow::anyhow!("Commit failed")),
             }
         };
-        let root_hash = engine.store.put_value(&Value::Combo(new_root.clone()))?;
+        // O35/O51: commit, not evolve, is the solidification boundary. The
+        // staged workset remains lazy; history receives its observation.
+        let mut commit_ctx = crate::EvalContext::new(new_root.clone());
+        commit_ctx.memo_enabled = false;
+        let new_root = match engine.force_recursive(Value::Combo(new_root), &mut commit_ctx) {
+            Value::Combo(root) => root,
+            _ => return Err(anyhow::anyhow!("Commit observation did not produce a root")),
+        };
+        let standard = engine.root_with_system();
+        let root_hash = engine.store.put_root(&new_root, &standard)?;
         // R1: next commit after a rollback records the abandoned head(s) in
         // meta — never in values. Consumed from `.oo/abandoned` and cleared.
         let mut meta = meta;
@@ -788,10 +794,8 @@ impl Universe {
         }
         // Target must exist as a commit object (any historical commit).
         let target_commit = engine.store.get_commit(target)?;
-        let root_val = engine.store.get_value(&target_commit.root)?;
-        let Value::Combo(new_root) = root_val else {
-            return Err(anyhow::anyhow!("Invalid root at rollback target"));
-        };
+        let standard = engine.root_with_system();
+        let new_root = engine.store.get_root(&target_commit.root, &standard)?;
         // Record the head we leave behind (if any and different from target).
         if let Some(ref old) = self.head {
             if old != target {
@@ -878,9 +882,8 @@ impl Universe {
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
         // Root value is the same as before; reload for consistency.
-        if let Value::Combo(r) = engine.store.get_value(&head_commit.root)? {
-            self.root = r;
-        }
+        let standard = engine.root_with_system();
+        self.root = engine.store.get_root(&head_commit.root, &standard)?;
         self.head = Some(commit_hash.clone());
         self.staged = ComboVal::default();
         self.is_dirty = false;
