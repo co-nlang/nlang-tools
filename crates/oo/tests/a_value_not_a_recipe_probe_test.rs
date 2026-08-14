@@ -155,6 +155,29 @@ fn field_slice(json: &str, key: &str, from: usize) -> Option<String> {
     None
 }
 
+/// Every maximal run of exactly `n` lowercase hex characters. "Maximal" so a
+/// 128-char run is not reported as two 64-char ones.
+fn hex_runs(s: &str, n: usize) -> Vec<String> {
+    let b = s.as_bytes();
+    let hex = |c: u8| c.is_ascii_digit() || (b'a'..=b'f').contains(&c);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if !hex(b[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && hex(b[i]) {
+            i += 1;
+        }
+        if i - start == n {
+            out.push(s[start..i].to_string());
+        }
+    }
+    out
+}
+
 fn app_slice(root: &str) -> String {
     field_slice(root, "app", 0).expect("no `app` field in the root object — fixture drifted")
 }
@@ -295,7 +318,6 @@ fn p3_the_format_2_guarantees_still_hold() {
 
 // ── R1 ── what is committed is an observation, not a program ─────────────
 #[test]
-#[ignore = "Q-010b: `1 + 2` is stored as an unforced Thunk today"]
 fn r1_a_committed_expression_is_stored_forced() {
     let d = committed("r1", SPREAD);
     let (_, root) = root_object(&d);
@@ -324,7 +346,6 @@ fn r1_a_committed_expression_is_stored_forced() {
 
 // ── R2 ── the closure carries only what the body needs ───────────────────
 #[test]
-#[ignore = "Q-010b: the closure mirrors the whole enclosing scope today"]
 fn r2_the_closure_captures_only_free_variables() {
     let d = committed("r2", SPREAD);
     let (_, root) = root_object(&d);
@@ -351,7 +372,6 @@ fn r2_the_closure_captures_only_free_variables() {
 
 // ── R3 ── the root names the builtin table, it does not carry it ─────────
 #[test]
-#[ignore = "Q-010b: the root inlines all 61,912 B of `system` today"]
 fn r3_the_root_carries_the_digest_of_system_not_its_body() {
     let d = committed("r3", SPREAD);
     let (_, root) = root_object(&d);
@@ -380,34 +400,44 @@ fn r3_the_root_carries_the_digest_of_system_not_its_body() {
 // The digest is only honest if the engine can say it does not have that table.
 // Without this, R3 could be satisfied by a root that names a table nobody
 // checks.
+// ACCEPTOR-REWRITTEN (repair round 3). The first instrument took the ROOT's
+// `system` slot as `field_slice(root, "system", 0)` — the FIRST occurrence.
+// That is the mirror mistake R2 was calibrated against, made a second time in
+// the same file: nested combos each carry their own `"system":{}`, and the
+// root's own slot is the LAST of seven, not the first. It passed two rounds
+// only because the delivery happened to compact the empty ones away, so the
+// instrument was measuring a coincidence of the implementation it was testing.
+//
+// The property does not mention field order or the sentinel's spelling: the
+// root names EXACTLY ONE standard-library table by digest, and corrupting
+// that name must produce a refusal that says which table is missing.
 #[test]
-#[ignore = "Q-010b: there is no table digest to be unable to resolve yet"]
 fn r4_an_unresolvable_table_digest_is_refused_by_name() {
     let d = committed("r4", SPREAD);
     let (path, root) = root_object(&d);
 
-    // The ROOT's own `system` slot — not one of the copies inside a closure
-    // mirror. Brace matching from the top of the object, same lesson as R2.
-    let marker = field_slice(&root, "system", 0).unwrap_or_default();
-    let digest: String = marker
-        .chars()
-        .skip_while(|c| !c.is_ascii_hexdigit())
-        .take_while(|c| c.is_ascii_hexdigit())
-        .collect();
-    assert!(
-        digest.len() >= 16,
-        "no table digest found next to `system` in the root: {marker}"
+    let digests = hex_runs(&root, 64);
+    assert_eq!(
+        digests.len(),
+        1,
+        "expected exactly one 64-hex table digest in the root, found {}. \
+         Zero means there is no digest to be unable to resolve; more than one \
+         means this instrument cannot tell which is the table, and it must \
+         stop rather than guess: {digests:?}",
+        digests.len()
     );
 
-    let broken = root.replace(&digest, &"0".repeat(digest.len()));
+    let zeroed = "0".repeat(64);
+    let broken = root.replace(&digests[0], &zeroed);
+    assert_ne!(broken, root, "the digest was not substituted");
     std::fs::write(&path, &broken).unwrap();
 
     let out = oo(&d, &["log"]);
     assert!(
-        out.to_lowercase().contains("refus") || out.contains("0000"),
+        out.contains(&zeroed),
         "a root naming a standard-library table this engine does not have was \
-         not refused by name. A digest nobody resolves is not a dependency, it \
-         is decoration. Got: {}",
+         not refused BY NAME — the message has to say which table is missing, \
+         or the digest is decoration rather than a dependency. Got: {}",
         out.trim()
     );
 }
