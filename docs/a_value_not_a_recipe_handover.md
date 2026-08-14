@@ -100,3 +100,121 @@ R2 首版在基線**錯誤地綠**。原因:我用「切到下一個兄弟鍵為
 2. **不收斂的值在 commit 時的行為未裁。** O51 給了方向(「不能當 head,除非你觀測出
    一個有限的陳述」),但**沒有裁定訊息形狀**。若交付撞到,**寫進交付紀錄並回報,
    不要自己決定**——那是一則新的 O 帳。
+
+---
+
+# 7. 驗收第一輪:不通過(2026-08-14)
+
+**探針 11/11,全 workspace 1886 / 22 / 0。** 三件必須修,外加一件我自己的工單缺漏。
+
+## 7.1 綠的部分先說清楚,因為它是真的
+
+| 項 | 量測 |
+| :--- | :--- |
+| diff 純度 | 探針檔只少四行 `#[ignore]`,零其他改動 |
+| 探針完整性 | 交付後 11/11 |
+| 強制確實發生 | 磁碟上 `1 + 2` 是 `3`;`.oo/staged` 仍留 Thunk |
+| 根縮減 | 72,555 → **1,387 B**(−98.1%) |
+| 跨版本(真二進位,雙向) | 新倉→v0.20.0:**在格式閘拒絕並說出「format 3 … understands 1 through 2」**;舊倉→新引擎:讀得開,且**讀不會升級 format** |
+| 根的決定性 | 同源碼三倉,根逐位元同一(364 B / 同雜湊) |
+
+## 7.2 D1 — 一個叫 `Combo` 的使用者鍵讓提交後的根讀不回來
+
+```
+app: { Combo: 7, other: 1 + 2 }
+→ commit：Commit successful
+→ log：   #object_undecodable … invalid value: map, expected map with a single key
+```
+
+**寫路徑是對的。** 磁碟上 `"Combo":{"Atom":[{"Int":[1,[7]]},0,null]}` 完好,`other` 也已強制成 `3`。
+壞的是讀路徑:`expand_root_system_json` 的 `None` 分支對**任何**位於 `"Combo"` 鍵下、
+缺 `"system"` 的物件插入 `"system": {}`。使用者的 Atom 因此長出第二個鍵,
+externally-tagged enum 就解不開了。
+
+- 半徑:實測六個標籤名,**只有 `Combo` 中彈**,值是 Atom 或 Combo 都中。
+- 基線 v0.20.0 同一份源碼 `log` 正常 ⟹ **本弧新造的迴歸**。
+- 類別:**JSON 形狀啟發式套在使用者可控的鍵上**——與 Q-010a 的 `strip_ast_spans`
+  同一類。那次的結論是改走**型別導向**(`for_cas_storage()`),這裡應同樣處理:
+  投影與還原都該在 `Value` 上做,不在序列化後的 JSON 上做。
+
+## 7.3 D2 — 閉包收窄漏捕捉,而且是靜默回 `_`
+
+四個證人,兩個機制。全部是**答案變成 `_`,不是報錯**。
+
+**機制 (a) 遞移依賴沒被跟上。** 只取本體的自由名,但被取的值自己還有依賴:
+
+| 表達式 | v0.20.0 | 交付 |
+| :--- | :--- | :--- |
+| `({ k: 5, d: k + 1, e: d + k, f: (x -> x + e) }).f 1` | `12` | **`_`** |
+| `isEven/isOdd` 相互遞迴,`isEven 2` 起 | `#true` | **`_`** |
+
+`red_morphism_on_deep_sibling`(倉裡既有探針)即此。相互遞迴**第一跳還活著**
+(`isEven 1` → `#false`),第二跳才斷——所以不是「相互遞迴不支援」,是**收窄沒有取到不動點**。
+自我遞迴任意深度都對(`fact 30` 正確),因為 `fact` 的自由名只有它自己。
+
+⟹ 修法:自由名的**遞移閉包**,對被捕捉的值再取其自由名,直到不動點。
+
+**機制 (b) 名字空間對不上。** 私有座標整個掉了:
+
+| 表達式 | v0.20.0 | 交付 |
+| :--- | :--- | :--- |
+| `{ used: 1, f: x -> x + used }.f 5` | `6` | `6` |
+| `{ %used: 1, f: x -> x + %used }.f 5` | `6` | **`_`** |
+
+`capture_free_fields` 的註解說「保留 `scope.local`」,但實測印出來的閉包是 `0: {}`
+——掃描產出的名與軸上的鍵不是同一個拼法,所以 `free.contains(name)` 永遠不成立。
+**註解描述的行為與程式實際的行為不一致**,這比缺功能更值得先修。
+
+## 7.4 D3 — 加了第二個解碼器,但只搬了四個讀者
+
+`get_root` 是對的,`Universe::load` / rollback / refine / `oo inspect` 也都搬了。
+**沒搬的仍在用 `get_value`,而 format-3 的根用 `get_value` 讀不出來。** 後果:
+
+| 讀者 | 實測 |
+| :--- | :--- |
+| `gc.rs:96 verify_reachable_object` | **`oo gc` 在健康倉上指控它自己損壞**並拒絕執行 |
+| `universe.rs:1082`(shadow scan) | `peer_fetch_verification` 兩支掛 |
+| `oodp.rs:382`(`#fetch` 服務) | `universe_determinism` 的跨引擎解析掛 |
+
+`oo gc: 6 objects, 6 reachable, 0 collectable` 之後接
+`integrity #object_undecodable: reachable digest … cannot be decoded`
+——這直接違反 **REAL_03 §6.6「裁決必須為真」**,也正是 v0.2.55 弧修掉的那一類
+(把協定/格式層的話當成完整性裁決)。方向是安全的(什麼都沒刪),但裁決是假的。
+
+**建議:不要逐處補 `get_root`。** 值得問的是為什麼會有兩個解碼器——
+`get_value` 對 format-3 的根**沒有正確答案**,那它就不該是可呼叫的路徑。
+
+## 7.5 我的工單缺漏:12 支必然被打掉的釘沒有被列為「預定改變」
+
+22 支失敗裡 **12 支不是交付的錯**,工單本來就該事先列出來:
+
+- **`.oo/format` 2→3**:`p2_format_moves_only_when_declared`、`r5_the_store_format_says_it_changed`。
+  §5 寫了要升,卻沒去 grep 誰在斷言它是 2。
+- **根 CAID 移動**:`p1_the_root_caid_does_not_move`、`p4_root_caid_does_not_move`。紀元弧的定義就是這個。
+- **`r1_no_span_survives_into_a_cas_object`**:它的守衛自己寫著「no Thunk 代表交付
+  overshot（that is Q-010b）」——**倒數計時器,而 Q-010b 就是它等的那一弧**。
+  既有規則已經說了這種釘到期時要列為預定改變,我還是漏了。
+- **儀器失效七支**(`c0`／`c1_a_semantic_tamper_is_caught`／`c2_the_value_survives_a_round_trip`／
+  `r2_identical_source_gives_identical_bytes`／`r3_whitespace_does_not_change_the_stored_bytes`／
+  `r6_a_user_field_named_span_survives`／`red_no_leaf_of_the_root_varies_between_processes`):
+  **`root_object` = `max_by_key(len)`**。根從 72,555 B 掉到小於 commit 物件,
+  於是這些 fixture 開始量 commit。逐一實測真正的根之後全是乾淨的——
+  含資料毀損哨兵 `r6`:四個案例的欄位全在磁碟上、全讀得回。
+
+  ⟹ **新常設規則:一弧若改變「根與 commit 誰比較大」,就會打掉每一個
+  以大小找根的 fixture。「最大的物件就是根」是一個沒有人寫下來的假設。**
+
+## 7.6 一題要裁,不要自己決定
+
+**交付剝掉的不只 `system`。** `project_standard_root` 對六個軸都做「與標準根相同就拿掉」,
+所以 72,555 → 1,387 B 遠超 `system` 佔的 85%。O50 只裁了 `system`。
+
+差別在:`system` 有 digest 守著(不合就指名拒絕,R4 就是釘這件事),
+**另外五軸沒有任何 digest**——只靠重算位址時對不上來發現。
+R4 的原則是「沒人解析的 digest 不是依賴,是裝飾」;這裡的對偶是
+**一個連 digest 都沒有的依賴**。兩條路:給整個標準根一個 digest,或退回只剝 `system`。
+
+## 7.7 下一輪
+
+修 D1／D2／D3;12 支預定改變由驗收方處理(探針修改權在驗收方),
+7.6 待裁。修完後仍走完整驗收:全 workspace ×5、conformance、genesis、跨版本雙向。
