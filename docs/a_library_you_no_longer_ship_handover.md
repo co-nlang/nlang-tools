@@ -74,6 +74,10 @@ refusing root: standard root digest {digest} is unavailable (this engine has {ex
 **放 `oo status` 不放 `--version` 的理由**：`oo --version` 的輸出被切版協議的
 末步檢查綁著（`oo --version` 對 git tag）。**不動它**。
 
+> **⚠ 本項後半「以及本引擎有沒有」在樹內無探針。** P1 只斷言 `status` 印出**本倉依賴的
+> 那個摘要**；「本引擎持有哪些」需要一個持有量 > 1 的引擎才測得到，與 §2.1 同一個限制。
+> **驗收時在 §5.2 的 PLUS+H 上看。** 你仍須實作它——**不要因為沒有探針就只做前半**。
+
 ### 2.4 O54 不得回歸
 
 pre-sentinel 的根（`v0.20.0` 及更早，根自足、無摘要）**必須**完全不被碰。
@@ -104,7 +108,10 @@ pre-sentinel 的根（`v0.20.0` 及更早，根自足、無摘要）**必須**�
 
 ## 4. 交付方自檢（做完再回報）
 
-1.  `cargo test --workspace --no-fail-fast` 零 `ignored`、零失敗（**`--no-fail-fast` 不可省**——不加會在第一個失敗的 suite 停下並給出一個看起來正常的假計數）。
+1.  `cargo test --workspace --no-fail-fast` 零 `ignored`、零失敗
+    （**`--no-fail-fast` 不可省**——不加會在第一個失敗的 suite 停下並給出一個看起來正常的假計數）。
+    **基線數字〔量 2026-08-15，本工單開單前〕：1919 passed／0 failed／2 ignored（195 suites）**，
+    那 2 個 ignored 就是 P1／P2。**交付後應為 1921／0／0。**
 2.  §2.1 的性質：**在不改動解析邏輯的前提下**，你能不能加進第二版？
     若答案需要「再加一個分支」，本項未完成。
 3.  §2.2：`grep -rn "is unavailable (this engine has" crates/ --include=*.rs` 應為 **0 命中**
@@ -122,9 +129,17 @@ pre-sentinel 的根（`v0.20.0` 及更早，根自足、無摘要）**必須**�
 
 > **⚠ 全跑一律加 `--no-fail-fast`**〔量 2026-08-15，本工單開單前的基線全跑〕：
 > 不加的話，`cargo test --workspace` 會在第一個失敗的 suite 停下——本次即停在
-> `affiliation_claim_probe_test`（已知的 `free_port()` TOCTOU，Inbox；單獨重跑
-> 3 次全綠），**只跑到 150 個 suite，計數因而失真**。
+> `affiliation_claim_probe_test`（埠綁定偶發失敗，Inbox；單獨重跑 3 次全綠），
+> **只跑到 150 個 suite，計數因而失真**。
 > 一個會中止全跑的偶發缺陷，會讓「五次重跑全同」這個判準本身失去意義。
+>
+> **該偶發缺陷的成因〔量 2026-08-15，同日更正〕不是原記的 TOCTOU**：隔離該空窗實測
+> 2800 次綁定 0 次 EADDRINUSE。成立的是 **(H1)** `free_port()` 探測 `127.0.0.1:0`
+> 而 `oo node serve` 綁 `0.0.0.0:{port}`——**碰撞對手不必是另一支測試**，機器上任何
+> 持有該埠的行程都算；**(H2)** `std::net::TcpListener::bind` 不設 `SO_REUSEADDR`。
+> ⟹ **它在交付方的控制範圍之外**。全跑若**只**掛在 `Address already in use`，
+> 據實記下並重跑該 suite，**不計為交付缺陷**（除非交付動了那些檔案）。
+> 這不是「用重試遮掉」——被遮掉的缺陷會是交付的，這一個不是，且它有自己的 Inbox 列。
 
 ### 5.2 三個真二進位（本弧的主證據）
 
@@ -147,6 +162,11 @@ pre-sentinel 的根（`v0.20.0` 及更早，根自足、無摘要）**必須**�
 
 `/home/gali/nlang-baselines/` 已有 `v0.20.0-target` 與 `v0.22.0-plus-target`（本次偵察所建），
 **基線二進位放該處，不要放 `/tmp`**。
+
+> **PLUS+H 怎麼建，本身就是 §2.1 的考題。** 驗收方會照你提供的機制加進第二版。
+> **若那件事需要改動解析邏輯、或需要新開一個分支，§2.1 當場不成立**——
+> 一張表的判準就是「加一列不必改讀表的人」。請確保「多持有一版」是一個
+> **資料層面的動作**，並在回報時寫清楚那個動作是什麼。
 
 ---
 
