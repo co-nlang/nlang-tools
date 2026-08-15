@@ -59,9 +59,11 @@ impl PeerDirectoryState {
 /// second for post-seat_order records). Tertiary: XOR of peer id against this
 /// receiver's id — **not** raw `node_id` ascending (victim-independent grind).
 pub fn cmp_admission_order(a: &PeerAdvert, b: &PeerAdvert, self_node_id: Option<&str>) -> Ordering {
-    a.received_at
+    (a.received_at_unparseable || a.admission_seq_unparseable)
+        .cmp(&(b.received_at_unparseable || b.admission_seq_unparseable))
+        .then_with(|| a.received_at
         .cmp(&b.received_at)
-        .then_with(|| a.admission_seq.cmp(&b.admission_seq))
+        .then_with(|| a.admission_seq.cmp(&b.admission_seq)))
         .then_with(|| {
             let ka = local_seat_rank(self_node_id, &a.node_id);
             let kb = local_seat_rank(self_node_id, &b.node_id);
@@ -197,16 +199,22 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         .unwrap_or_default();
     let listen_port = o.get("listen_port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
     let capacity = o.get("capacity").and_then(|x| x.as_i64()).unwrap_or(0);
+    let ts_unparseable = o.get("ts").is_some() && o.get("ts").and_then(|x| x.as_i64()).is_none();
     let ts = o.get("ts").and_then(|x| x.as_i64()).unwrap_or(0);
     let ttl = o.get("ttl").and_then(|x| x.as_i64()).unwrap_or(0);
 
-    let (observed_host, hops, received_at, addr, provenance, admission_seq) = if restore_asserted {
+    let (observed_host, hops, received_at, addr, provenance, admission_seq, received_at_unparseable, admission_seq_unparseable) = if restore_asserted {
         let host = o
             .get("observed_host")
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string();
         let hops = o.get("hops").and_then(|x| x.as_i64()).unwrap_or(0);
+        let received_at_unparseable = if o.get("received_at").is_none() {
+            ts_unparseable
+        } else {
+            o.get("received_at").and_then(|x| x.as_i64()).is_none()
+        };
         let ra = o.get("received_at").and_then(|x| x.as_i64()).unwrap_or(ts);
         let addr = o
             .get("addr")
@@ -227,6 +235,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
             .map(ObservationProvenance::parse)
             .unwrap_or(ObservationProvenance::Unknown);
         // Missing admission_seq → 0 (legacy v0.9.0 shape).
+        let admission_seq_unparseable = o.get("admission_seq").is_some() && o.get("admission_seq").and_then(|x| x.as_u64()).is_none();
         let admission_seq = o.get("admission_seq").and_then(|x| x.as_u64()).unwrap_or(0);
         (
             host,
@@ -234,7 +243,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
             system_time_from_secs(ra),
             addr,
             provenance,
-            admission_seq,
+            admission_seq, received_at_unparseable, admission_seq_unparseable,
         )
     } else {
         // Owner mismatch / copy: signed half only; clear observer half
@@ -245,7 +254,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
             system_time_from_secs(ts),
             String::new(),
             ObservationProvenance::Unknown,
-            0,
+            0, false, false,
         )
     };
 
@@ -266,6 +275,8 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         verified_operator_key: None,
         provenance,
         admission_seq,
+        received_at_unparseable,
+        admission_seq_unparseable,
     })
 }
 

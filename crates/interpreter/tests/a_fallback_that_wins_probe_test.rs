@@ -1,0 +1,362 @@
+// A fallback that wins (Q-027, pre-committed by work order:
+// docs/a_fallback_that_wins_handover.md).
+//
+// ── The claim ────────────────────────────────────────────────────────────
+//
+// When the engine cannot tell what a piece of data is, that data must not win
+// because of it.
+//
+// Measured 2026-08-16 on v0.23.1: every field of a durable peer record is
+// parsed with the same idiom, `…and_then(as_T).unwrap_or(X)`, and the same
+// idiom falls in opposite directions depending on what the value happens to
+// mean in that field:
+//
+//   ttl        -> 0   => ttl == 0 means "do not forward"          LOSES  (safe)
+//   services   -> []  => matches no service query                 LOSES
+//   provenance -> Unknown, with a comment "never promote to direct" LOSES
+//   ts         -> 0   => epoch, and received_at falls back to ts   WINS   (bug)
+//   received_at-> ts  => the PRIMARY sort key                      WINS   (bug)
+//   admission_seq -> 0 => the SECONDARY sort key, ahead of all     WINS   (bug)
+//
+// `provenance` is the only one anyone chose the direction for; it says so in
+// a comment. The rest is the same idiom meeting different field semantics,
+// and which way it falls is a coincidence. REAL_02 §4.3.5.1 has the phrase
+// for this: an accidental property is not a property.
+//
+// Measured behaviourally: five candidates, three seats, identical
+// received_at, differing only in admission_seq — one absent, one unparseable
+// ("abc"), three with real numbers 6/7/8. Seated: [absent, unparseable, 6].
+// The record that cannot say when it arrived took a seat ahead of two that
+// can. REAL_02 §5.1.2 forbids exactly that.
+//
+// ── Ruling A (user, 2026-08-16) ──────────────────────────────────────────
+//
+// Present-but-unparseable sorts LAST, and the record is still kept. The
+// signed half may be perfectly intact; what is damaged is our own asserted
+// half, and a peer should not vanish because our bookkeeping broke.
+//
+// ── What this file cannot witness ────────────────────────────────────────
+//
+// Nothing here reaches the entropy-failure path (§3.2/§3.3) — SystemRandom
+// does not fail on demand. That half needs an injectable source and a unit
+// test the delivery supplies. Four greens here do NOT mean this arc holds.
+//
+// ── Probe integrity ──────────────────────────────────────────────────────
+//
+// Reds are `#[ignore]`d and MUST be red at the baseline for the reason stated
+// in each. The delivery may remove `#[ignore]` and nothing else in this file.
+// C0 runs first: an assertion about load order is vacuous if nothing loaded.
+//
+// No signatures, processes or ports: `peers::load` does not verify signatures
+// (that is `verify_loaded`, a separate step), so a directory can be written
+// by hand and handed to the real parser and the real comparator.
+
+use nlang_interpreter::peers;
+use nlang_interpreter::PeerAdvert;
+
+const OWNER: &str = "hash:sha256:v1:0000000000000000000000000000000000000000000000000000000000000001";
+
+/// One durable record. `seq` and `recv` are written verbatim into the JSON,
+/// so a test can put a string, a null, or nothing at all where a number
+/// belongs.
+fn record(tag: &str, recv: &str, seq: &str) -> String {
+    let node_id = format!("hash:sha256:v1:{tag:0>64}");
+    let mut fields = vec![
+        format!("\"ad\":\"{{{{ node_id: \\\"{node_id}\\\" }}}}\""),
+        format!("\"node_id\":\"{node_id}\""),
+        format!("\"public_key\":\"{:0>64}\"", tag),
+        "\"services\":[]".to_string(),
+        "\"listen_port\":9000".to_string(),
+        "\"capacity\":10".to_string(),
+        "\"ts\":1700000000".to_string(),
+        "\"ttl\":15".to_string(),
+        "\"observed_host\":\"127.0.0.1\"".to_string(),
+        "\"hops\":0".to_string(),
+        "\"addr\":\"127.0.0.1:9000\"".to_string(),
+        "\"provenance\":\"direct\"".to_string(),
+    ];
+    if !recv.is_empty() {
+        fields.push(format!("\"received_at\":{recv}"));
+    }
+    if !seq.is_empty() {
+        fields.push(format!("\"admission_seq\":{seq}"));
+    }
+    format!("{{{}}}", fields.join(","))
+}
+
+/// Write a directory owned by OWNER, load it, and return the records in the
+/// engine's own admission order.
+fn loaded_in_order(tag: &str, records: &[String]) -> Vec<PeerAdvert> {
+    let dir = nlang_interpreter::ScratchDir::new(&format!("fallback-{tag}"));
+    let path = peers::directory_path(&dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut text = format!("# {} node_id={OWNER}\n", peers::FORMAT_TAG);
+    for r in records {
+        text.push_str(r);
+        text.push('\n');
+    }
+    std::fs::write(&path, text).unwrap();
+
+    let (by_id, _, _, _) = peers::load(&dir, Some(OWNER));
+    let mut v: Vec<PeerAdvert> = by_id.into_values().collect();
+    v.sort_by(|a, b| peers::cmp_admission_order(a, b, Some(OWNER)));
+    v
+}
+
+/// The `tag` each record was built with, in load order.
+fn tags(v: &[PeerAdvert]) -> Vec<String> {
+    v.iter()
+        .map(|a| a.node_id.rsplit(':').next().unwrap().trim_start_matches('0').to_string())
+        .collect()
+}
+
+// ── C0 — control, runs first ─────────────────────────────────────────────
+
+#[test]
+fn c0_parseable_sequence_numbers_sort_in_order() {
+    let v = loaded_in_order(
+        "c0",
+        &[
+            record("3", "1700000000", "8"),
+            record("1", "1700000000", "6"),
+            record("2", "1700000000", "7"),
+        ],
+    );
+    assert_eq!(
+        v.len(),
+        3,
+        "control failed: a hand-written directory did not load. \
+         Every probe in this file is vacuous until this passes."
+    );
+    assert_eq!(
+        tags(&v),
+        vec!["1", "2", "3"],
+        "control failed: parseable sequence numbers did not sort by value"
+    );
+}
+
+// ── C1 — control: legacy records must not be demoted by this arc ─────────
+// REAL_02 §5.1.2: absent means written by an older engine, and MAY sort
+// first. Only *unparseable* loses that.
+
+#[test]
+fn c1_an_absent_sequence_number_still_sorts_first() {
+    let v = loaded_in_order(
+        "c1",
+        &[
+            record("2", "1700000000", "6"),
+            record("1", "1700000000", ""), // absent — the v0.9.0 shape
+            record("3", "1700000000", "7"),
+        ],
+    );
+    assert_eq!(v.len(), 3, "C0 must pass first");
+    assert_eq!(
+        tags(&v)[0],
+        "1",
+        "an absent admission_seq is a legacy record and may still sort first; \
+         got {:?}",
+        tags(&v)
+    );
+}
+
+// ── P1 — red: unparseable must not inherit the legacy priority ───────────
+// Baseline red: `.and_then(as_u64).unwrap_or(0)` gives absent and
+// unparseable the same 0, and 0 sorts ahead of every real number.
+
+#[test]
+fn p1_an_unparseable_sequence_number_sorts_last() {
+    let v = loaded_in_order(
+        "p1",
+        &[
+            record("2", "1700000000", "6"),
+            record("9", "1700000000", "\"abc\""), // present, unparseable
+            record("3", "1700000000", "7"),
+        ],
+    );
+    assert_eq!(v.len(), 3, "C0 must pass first");
+    assert_eq!(
+        tags(&v).last().map(String::as_str),
+        Some("9"),
+        "a record that cannot say when it arrived must sort after every record \
+         that can. Order was {:?}",
+        tags(&v)
+    );
+}
+
+// ── P2 — red: the same for the primary key ───────────────────────────────
+// Baseline red: `received_at` falls back to `ts`, so an unparseable arrival
+// time silently becomes a real, early one.
+
+#[test]
+fn p2_an_unparseable_arrival_time_sorts_last() {
+    let v = loaded_in_order(
+        "p2",
+        &[
+            record("2", "1700000005", "6"),
+            record("9", "null", "7"), // present, unparseable
+            record("3", "1700000009", "8"),
+        ],
+    );
+    assert_eq!(v.len(), 3, "C0 must pass first");
+    assert_eq!(
+        tags(&v).last().map(String::as_str),
+        Some("9"),
+        "an unparseable received_at must not become an early one. Order was {:?}",
+        tags(&v)
+    );
+}
+
+// ── P3 — the other half of ruling A: demoted, not dropped ────────────────
+// P1 and P2 are both satisfied by throwing the damaged record away, and that
+// would violate the ruling: the signed half may be intact, and a peer must
+// not vanish because our own bookkeeping broke. Green today and must stay
+// green — it constrains the *fix*, not the current behaviour.
+
+#[test]
+fn p3_a_record_with_an_unparseable_field_is_still_kept() {
+    let v = loaded_in_order(
+        "p3",
+        &[
+            record("2", "1700000000", "6"),
+            record("9", "1700000000", "\"abc\""),
+            record("8", "null", "7"),
+        ],
+    );
+    assert_eq!(
+        v.len(),
+        3,
+        "a record whose ordering field is unparseable must be demoted, not \
+         dropped (ruling A). Kept: {:?}",
+        tags(&v)
+    );
+    let t = tags(&v);
+    assert!(
+        t.contains(&"9".to_string()) && t.contains(&"8".to_string()),
+        "both damaged records must still be present; got {t:?}"
+    );
+}
+
+// ── P4 — red, added at acceptance round 2 (2026-08-16) ───────────────────
+// `received_at` falls back to `ts`, and `ts` has its own fallback to 0. So a
+// record whose `ts` is unparseable and whose `received_at` is simply ABSENT
+// gets received_at = 0 = the epoch, and sorts first — without either
+// unparseable flag ever being set, because neither field is "present and
+// unparseable" on its own.
+//
+// Work order §3.1 lists three sites: ts, received_at, admission_seq. Round 2
+// covered the last two. This probe exists because the first one had no probe
+// of its own, which is why it survived a round.
+
+/// As [`record`], but with `ts` written verbatim too, and `received_at`
+/// omitted entirely when `recv` is empty.
+fn record_ts(tag: &str, ts: &str, recv: &str, seq: &str) -> String {
+    let node_id = format!("hash:sha256:v1:{tag:0>64}");
+    let mut fields = vec![
+        format!("\"ad\":\"{{{{ node_id: \\\"{node_id}\\\" }}}}\""),
+        format!("\"node_id\":\"{node_id}\""),
+        format!("\"public_key\":\"{:0>64}\"", tag),
+        "\"services\":[]".to_string(),
+        "\"listen_port\":9000".to_string(),
+        "\"capacity\":10".to_string(),
+        format!("\"ts\":{ts}"),
+        "\"ttl\":15".to_string(),
+        "\"observed_host\":\"127.0.0.1\"".to_string(),
+        "\"hops\":0".to_string(),
+        "\"addr\":\"127.0.0.1:9000\"".to_string(),
+        "\"provenance\":\"direct\"".to_string(),
+        format!("\"admission_seq\":{seq}"),
+    ];
+    if !recv.is_empty() {
+        fields.push(format!("\"received_at\":{recv}"));
+    }
+    format!("{{{}}}", fields.join(","))
+}
+
+#[test]
+fn p4_an_unparseable_ts_does_not_become_an_early_arrival() {
+    let v = loaded_in_order(
+        "p4",
+        &[
+            record_ts("2", "1700000000", "1700000000", "6"),
+            record_ts("9", "\"abc\"", "", "7"), // ts unparseable, received_at absent
+            record_ts("3", "1700000009", "1700000009", "8"),
+        ],
+    );
+    assert_eq!(v.len(), 3, "C0 must pass first");
+    assert_eq!(
+        tags(&v).last().map(String::as_str),
+        Some("9"),
+        "a record whose ts cannot be parsed must not inherit the epoch and \
+         sort first. Order was {:?}",
+        tags(&v)
+    );
+}
+
+// ── P5 — red, added at acceptance round 2 (2026-08-16) ───────────────────
+// The same disease on the wire, client side. `process_discover_reply` reads
+// `%status` with `.and_then(|v| v.as_str()).unwrap_or("#conflict")`, so a
+// reply whose status is ABSENT and one whose status is present but not a
+// string both become `#conflict` — and REAL_02's table maps `#conflict` with
+// any reason other than `#caid_mismatch` to `#peer_refused`.
+//
+// So the asker records "that peer refused me" when the truth is "I could not
+// tell what that peer said". REAL_02 already has the right answer in as many
+// words: an unrecognised `%status` is `#peer_unknown_status`, and it must NOT
+// be treated as damage — "a node newer than you is not a broken node".
+
+#[test]
+fn p5_an_unreadable_status_is_not_a_refusal() {
+    let engine = nlang_interpreter::Ouroboros::new_in_memory();
+
+    for (label, body) in [
+        ("absent", r#"{"%hops":0}"#),
+        ("not a string", r#"{"%status":7,"%hops":0}"#),
+        ("null", r#"{"%status":null,"%hops":0}"#),
+    ] {
+        let r = nlang_interpreter::oodp::process_discover_reply(&engine, body);
+        assert_ne!(
+            r.status, "conflict",
+            "a %status this engine could not read ({label}) must not be reported \
+             as #conflict — that becomes #peer_refused, a claim about the peer's \
+             willingness that nobody established. Body: {body}"
+        );
+    }
+}
+
+// ── P6 — red, added at acceptance round 3 (2026-08-16) ───────────────────
+// The other direction. Round 3 closed the ts hole by folding `ts_unparseable`
+// into `received_at_unparseable` — but `received_at` only falls back to `ts`
+// when it is ABSENT. When `received_at` is present and readable, `ts` plays
+// no part in ordering at all, and demoting the record says "I do not know
+// when this arrived" about a record whose arrival time is right there.
+//
+// This arc's claim is that a fallback must not make unknown data win. The
+// converse matters too and for the same reason: a value must say what is
+// true. A record the engine CAN place must not be reported as unplaceable.
+//
+// Note this is NOT in tension with P4. In P4 `received_at` is absent, so the
+// ordering key really is unknown. Here it is present, so it really is known.
+// The whole point is that those two cases must be told apart.
+
+#[test]
+fn p6_a_bad_ts_does_not_demote_a_readable_arrival_time() {
+    let v = loaded_in_order(
+        "p6",
+        &[
+            // ts is garbage, but received_at is present, readable, and earliest.
+            record_ts("9", "\"abc\"", "1700000001", "6"),
+            record_ts("2", "1700000005", "1700000005", "7"),
+            record_ts("3", "1700000009", "1700000009", "8"),
+        ],
+    );
+    assert_eq!(v.len(), 3, "C0 must pass first");
+    assert_eq!(
+        tags(&v),
+        vec!["9", "2", "3"],
+        "`received_at` is present and readable on every record here, so `ts` \
+         never enters the ordering. Record 9 arrived first and must be placed \
+         first; demoting it reports an unknown the engine does not have. \
+         Order was {:?}",
+        tags(&v)
+    );
+}
