@@ -292,3 +292,35 @@ fn p4_an_unparseable_ts_does_not_become_an_early_arrival() {
         tags(&v)
     );
 }
+
+// ── P5 — red, added at acceptance round 2 (2026-08-16) ───────────────────
+// The same disease on the wire, client side. `process_discover_reply` reads
+// `%status` with `.and_then(|v| v.as_str()).unwrap_or("#conflict")`, so a
+// reply whose status is ABSENT and one whose status is present but not a
+// string both become `#conflict` — and REAL_02's table maps `#conflict` with
+// any reason other than `#caid_mismatch` to `#peer_refused`.
+//
+// So the asker records "that peer refused me" when the truth is "I could not
+// tell what that peer said". REAL_02 already has the right answer in as many
+// words: an unrecognised `%status` is `#peer_unknown_status`, and it must NOT
+// be treated as damage — "a node newer than you is not a broken node".
+
+#[test]
+#[ignore = "Q-027 round 3: an unreadable %status still becomes #conflict (work order §3.4)"]
+fn p5_an_unreadable_status_is_not_a_refusal() {
+    let engine = nlang_interpreter::Ouroboros::new_in_memory();
+
+    for (label, body) in [
+        ("absent", r#"{"%hops":0}"#),
+        ("not a string", r#"{"%status":7,"%hops":0}"#),
+        ("null", r#"{"%status":null,"%hops":0}"#),
+    ] {
+        let r = nlang_interpreter::oodp::process_discover_reply(&engine, body);
+        assert_ne!(
+            r.status, "conflict",
+            "a %status this engine could not read ({label}) must not be reported \
+             as #conflict — that becomes #peer_refused, a claim about the peer's \
+             willingness that nobody established. Body: {body}"
+        );
+    }
+}
