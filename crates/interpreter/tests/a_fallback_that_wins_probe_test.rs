@@ -235,3 +235,60 @@ fn p3_a_record_with_an_unparseable_field_is_still_kept() {
         "both damaged records must still be present; got {t:?}"
     );
 }
+
+// ── P4 — red, added at acceptance round 2 (2026-08-16) ───────────────────
+// `received_at` falls back to `ts`, and `ts` has its own fallback to 0. So a
+// record whose `ts` is unparseable and whose `received_at` is simply ABSENT
+// gets received_at = 0 = the epoch, and sorts first — without either
+// unparseable flag ever being set, because neither field is "present and
+// unparseable" on its own.
+//
+// Work order §3.1 lists three sites: ts, received_at, admission_seq. Round 2
+// covered the last two. This probe exists because the first one had no probe
+// of its own, which is why it survived a round.
+
+/// As [`record`], but with `ts` written verbatim too, and `received_at`
+/// omitted entirely when `recv` is empty.
+fn record_ts(tag: &str, ts: &str, recv: &str, seq: &str) -> String {
+    let node_id = format!("hash:sha256:v1:{tag:0>64}");
+    let mut fields = vec![
+        format!("\"ad\":\"{{{{ node_id: \\\"{node_id}\\\" }}}}\""),
+        format!("\"node_id\":\"{node_id}\""),
+        format!("\"public_key\":\"{:0>64}\"", tag),
+        "\"services\":[]".to_string(),
+        "\"listen_port\":9000".to_string(),
+        "\"capacity\":10".to_string(),
+        format!("\"ts\":{ts}"),
+        "\"ttl\":15".to_string(),
+        "\"observed_host\":\"127.0.0.1\"".to_string(),
+        "\"hops\":0".to_string(),
+        "\"addr\":\"127.0.0.1:9000\"".to_string(),
+        "\"provenance\":\"direct\"".to_string(),
+        format!("\"admission_seq\":{seq}"),
+    ];
+    if !recv.is_empty() {
+        fields.push(format!("\"received_at\":{recv}"));
+    }
+    format!("{{{}}}", fields.join(","))
+}
+
+#[test]
+#[ignore = "Q-027 round 2: unparseable ts with absent received_at still sorts first (work order §3.1)"]
+fn p4_an_unparseable_ts_does_not_become_an_early_arrival() {
+    let v = loaded_in_order(
+        "p4",
+        &[
+            record_ts("2", "1700000000", "1700000000", "6"),
+            record_ts("9", "\"abc\"", "", "7"), // ts unparseable, received_at absent
+            record_ts("3", "1700000009", "1700000009", "8"),
+        ],
+    );
+    assert_eq!(v.len(), 3, "C0 must pass first");
+    assert_eq!(
+        tags(&v).last().map(String::as_str),
+        Some("9"),
+        "a record whose ts cannot be parsed must not inherit the epoch and \
+         sort first. Order was {:?}",
+        tags(&v)
+    );
+}
