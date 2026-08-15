@@ -1090,7 +1090,7 @@ fn serve_discover(
     // weighted, not asker-keyed (REAL_02 §3.2).
     let mut candidates = candidates;
     if sample_uniform_cap(&mut candidates, MAX_DISCOVER_PEERS, &SystemEntropy).is_err() {
-        let body = refuse(OodpStatus::Conflict, "entropy_unavailable", source_id);
+        let body = refuse(OodpStatus::Rejected, "entropy_unavailable", source_id);
         return (body, "OODP #discover entropy unavailable; no sample returned".into());
     }
 
@@ -1199,11 +1199,14 @@ pub fn process_discover_reply(engine: &Ouroboros, reply_body: &str) -> DiscoverP
         result.status = "undecodable".into();
         return result;
     };
-    let status = envelope
+    let Some(status) = envelope
         .get("%status")
         .or_else(|| envelope.get("status"))
         .and_then(|v| v.as_str())
-        .unwrap_or("#conflict");
+    else {
+        result.status = "peer_unknown_status".into();
+        return result;
+    };
     result.status = status.trim().trim_start_matches('#').to_string();
     result.envelope_hops = envelope.get("%hops").and_then(|v| v.as_i64()).unwrap_or(0);
 
@@ -1647,11 +1650,13 @@ pub fn remote_fetch_oodp(
         _ => return legacy_or_fail(oo, hash, &buffer, &source),
     };
 
-    let status = obj
+    let Some(status) = obj
         .get("%status")
         .or_else(|| obj.get("status"))
         .and_then(|v| v.as_str())
-        .unwrap_or("#conflict");
+    else {
+        return Err(BottomCause::PeerUnknownStatus);
+    };
     let status_tag = status.trim().trim_start_matches('#');
     let reason_tag = obj
         .get("%reason")

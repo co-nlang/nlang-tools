@@ -199,6 +199,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
         .unwrap_or_default();
     let listen_port = o.get("listen_port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
     let capacity = o.get("capacity").and_then(|x| x.as_i64()).unwrap_or(0);
+    let ts_unparseable = o.get("ts").is_some() && o.get("ts").and_then(|x| x.as_i64()).is_none();
     let ts = o.get("ts").and_then(|x| x.as_i64()).unwrap_or(0);
     let ttl = o.get("ttl").and_then(|x| x.as_i64()).unwrap_or(0);
 
@@ -209,7 +210,7 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
             .unwrap_or("")
             .to_string();
         let hops = o.get("hops").and_then(|x| x.as_i64()).unwrap_or(0);
-        let received_at_unparseable = o.get("received_at").is_some() && o.get("received_at").and_then(|x| x.as_i64()).is_none();
+        let received_at_unparseable = ts_unparseable || (o.get("received_at").is_some() && o.get("received_at").and_then(|x| x.as_i64()).is_none());
         let ra = o.get("received_at").and_then(|x| x.as_i64()).unwrap_or(ts);
         let addr = o
             .get("addr")

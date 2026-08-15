@@ -273,7 +273,6 @@ fn record_ts(tag: &str, ts: &str, recv: &str, seq: &str) -> String {
 }
 
 #[test]
-#[ignore = "Q-027 round 2: unparseable ts with absent received_at still sorts first (work order §3.1)"]
 fn p4_an_unparseable_ts_does_not_become_an_early_arrival() {
     let v = loaded_in_order(
         "p4",
@@ -306,7 +305,6 @@ fn p4_an_unparseable_ts_does_not_become_an_early_arrival() {
 // be treated as damage — "a node newer than you is not a broken node".
 
 #[test]
-#[ignore = "Q-027 round 3: an unreadable %status still becomes #conflict (work order §3.4)"]
 fn p5_an_unreadable_status_is_not_a_refusal() {
     let engine = nlang_interpreter::Ouroboros::new_in_memory();
 
