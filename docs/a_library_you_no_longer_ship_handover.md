@@ -104,7 +104,7 @@ pre-sentinel 的根（`v0.20.0` 及更早，根自足、無摘要）**必須**�
 
 ## 4. 交付方自檢（做完再回報）
 
-1.  `cargo test --workspace` 零 `ignored`、零失敗。
+1.  `cargo test --workspace --no-fail-fast` 零 `ignored`、零失敗（**`--no-fail-fast` 不可省**——不加會在第一個失敗的 suite 停下並給出一個看起來正常的假計數）。
 2.  §2.1 的性質：**在不改動解析邏輯的前提下**，你能不能加進第二版？
     若答案需要「再加一個分支」，本項未完成。
 3.  §2.2：`grep -rn "is unavailable (this engine has" crates/ --include=*.rs` 應為 **0 命中**
@@ -119,6 +119,12 @@ pre-sentinel 的根（`v0.20.0` 及更早，根自足、無摘要）**必須**�
 ### 5.1 樹內
 
 四支探針、全工作區五次重跑、conformance、genesis。
+
+> **⚠ 全跑一律加 `--no-fail-fast`**〔量 2026-08-15，本工單開單前的基線全跑〕：
+> 不加的話，`cargo test --workspace` 會在第一個失敗的 suite 停下——本次即停在
+> `affiliation_claim_probe_test`（已知的 `free_port()` TOCTOU，Inbox；單獨重跑
+> 3 次全綠），**只跑到 150 個 suite，計數因而失真**。
+> 一個會中止全跑的偶發缺陷，會讓「五次重跑全同」這個判準本身失去意義。
 
 ### 5.2 三個真二進位（本弧的主證據）
 
