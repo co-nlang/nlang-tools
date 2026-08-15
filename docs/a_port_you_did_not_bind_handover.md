@@ -138,3 +138,80 @@ seconds」）——**那不是缺陷，是一支拒絕真空通過的好探針**
 *   `grep -rln "mod common" crates/oo/tests/*.rs | wc -l` ⟹ **≥ 14**。
 *   橫幅前綴未變：`grep -c "n/ OODP node serving at port " crates/oo/src/main.rs` ⟹ **1**。
 *   `cargo test --workspace --no-fail-fast` ⟹ **1922／0／0**，五次全同。
+
+---
+
+## 7. 驗收第一輪 — 不通過（2026-08-15）
+
+**兩件代修，五次全紅，而它們是同一個根因的兩種形態。**
+
+〔量〕全工作區 `--no-fail-fast` ×5：run 1 為 `1921/3/0`，run 2–5 皆 `1922/2/0`（196 套件）。
+三支探針 3/3 綠；§6 的四項 grep 全過（`fn free_port` = 0、`mod common` = 14、
+橫幅前綴 = 1、預設 8080）；**測試函式 621 支前後不變，無斷言被刪**。
+
+### 根因：把每一個 `free_port()` 都當成「我要一個埠來綁」
+
+〔量〕本弧刪掉 **18 個呼叫點**。按**用途**分類（**這是本工單當初沒有要求做的事**）：
+
+| 用途 | 數量 | 交付的處置 |
+| :--- | ---: | :--- |
+| 取一個埠來**綁並服務** | 15 | ✅ 正確——改由 `common::serve` 以 `--port 0` 啟動並讀橫幅 |
+| 取一個**號碼放進簽名廣告當宣稱** | 1 | ❌ **D2** |
+| `os_chosen_port()`（新增的替代品） | 2 | 一個 ❌ **D1**，一個無害 |
+
+### D1 — 生產者換了，消費者沒換
+
+`crates/oo/tests/oodp_packet_format_probe_test.rs:134`：
+
+```rust
+fn os_chosen_port() -> u16 { 0 }
+```
+
+而 `red_the_node_command_is_oo_node_serve` 拿到那個 `0` 之後，**照舊去撥它**：
+`TcpStream::connect(("127.0.0.1", port))`。`0` 是一個請求，不是一個位址——
+**永遠連不上** ⟹ `up` 永遠是 false ⟹ `oo node serve did not come up`，五次全紅。
+
+**這正是本專案反覆抓到的同一個病**（Q-010b D1/D2/D3、Q-011 D1、Q-025 前身）：
+**在一個地方做了決定，別處還照舊。** 該處應改用 `common::serve`（或自行讀橫幅），
+**不得**再把傳出去的號碼當成可撥接的位址。
+
+> ⚠ 該檔另一處 `os_chosen_port()` 餵給 `oo serve --port …`（**已退休的舊拼法**，
+> 斷言它應該失敗）**無害**，因為那個命令本來就不該起得來。修 D1 時不必動它，
+> 但**若 `os_chosen_port` 整個移除，該處要換成一個字面數字**。
+
+### D2 — 那個號碼根本不是拿來綁的
+
+`crates/oo/tests/advertise_wire_probe_test.rs`：
+
+```diff
+-    let claimed = free_port(); // nobody is listening there; the claim stands alone
++    let claimed = 0;           // nobody is listening there; the claim stands alone
+```
+
+**`claimed` 是放進一份簽了名的廣告裡的 `listen_port`**——它是**對方宣稱自己在哪裡聽**，
+不是本地要綁的東西。註解逐字說了「nobody is listening there」，而交付保留了那句註解，
+只換掉了值。〔量〕引擎對 `listen_port: 0` 回 `#rejected` / `#malformed`，
+於是 r7 的**控制組斷言**（`status == "success"`）先垮掉，該探針的主張根本沒被測到。
+
+**修法**：`claimed` 需要一個**合理但無人監聽的埠號**。取得方式不限
+（字面常數即可，例如某個高位固定值），**但不得是 `0`，也不得是本行程真的綁著的埠**。
+
+### 本工單的缺陷（記在這裡）
+
+§3.2 逐字寫的是「**刪除全部 14 份 `free_port()`**」，而**沒有要求先把呼叫點按用途分類**。
+18 個呼叫點裡有 3 個不是「取埠來綁」，工單一句話也沒提。
+⟹ **常設規則追加**：**工單若要求移除一個被到處呼叫的助手，必須先列出呼叫點清單並逐一標註用途**；
+「全部刪掉」這種寫法把分類工作推給交付方，而交付方看不到它們原本為什麼在那裡。
+（同族前例：Q-010b 的 12 支預定改變也是事後才分類。）
+
+### 不計為交付缺陷
+
+`identity_persistence_probe_test::pin_concurrent_first_mint_yields_one_key`
+於 run 1 失敗（`not a valid PKCS#8 Ed25519 key`），run 2–5 皆綠。
+〔量〕該檔**本次逐位元組未動**，且成因是併發鑄鑰時的身分檔競爭，與埠無關 ⟹
+**另入 Inbox，不屬本弧**。
+
+### 第二輪要跑的
+
+D1、D2 修好後：三支探針、全工作區 `--no-fail-fast` ×5（**應為 1922/0/0**）、
+conformance、genesis，並重驗 §6 四項 grep。
