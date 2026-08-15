@@ -45,6 +45,8 @@
 // the answer to be unchanged. Shipping it is for observability and for the
 // advertise/discover arc; it is not authentication and nothing may depend on it.
 
+mod common;
+
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -120,14 +122,6 @@ fn write(dir: &Path, name: &str, src: &str) {
     fs::write(dir.join(name), src).unwrap();
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 fn store(dir: &Path, home: &Path, expr: &str) -> String {
     write(
         dir,
@@ -158,24 +152,8 @@ impl Drop for Node {
 }
 
 fn serve(dir: &Path, home: &Path) -> Node {
-    let port = free_port();
-    let child = oo_cmd(dir, home)
-        .args(["node", "serve", "--port", &port.to_string()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut node = Node { child, port };
-    for _ in 0..40 {
-        std::thread::sleep(Duration::from_millis(100));
-        if node.child.try_wait().unwrap().is_some() {
-            panic!("`oo node serve` exited immediately");
-        }
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return node;
-        }
-    }
-    panic!("`oo node serve` never came up");
+    let served = common::serve(oo_cmd(dir, home), dir.join("serve.log"));
+    Node { child: served.child, port: served.port }
 }
 
 /// Sends raw bytes to a node and reads the whole reply, bounded.

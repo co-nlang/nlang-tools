@@ -504,12 +504,13 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
     use nlang_interpreter::oodp;
     use std::io::BufReader;
     let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))?;
+    let bound_port = listener.local_addr()?.port();
     let current_dir = std::env::current_dir()?;
     let engine = Ouroboros::init(&current_dir)?;
     // %source = node id (CAID of the node public key), not the listen port.
     // Two ports on one workspace share one id; two workspaces do not.
     let source_id = engine.node_id()?.to_string();
-    println!("n/ OODP node serving at port {} (node {})", port, source_id);
+    println!("n/ OODP node serving at port {} (node {})", bound_port, source_id);
     // advert_persistence §3.2 — load report on the serve log (probes parse it).
     if let Some(ref rep) = engine.peers_load_report {
         if let Some(ref line) = rep.log_line {

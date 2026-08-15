@@ -11,6 +11,8 @@
 // the controls at the top are live now and make every absence assertion below
 // non-vacuous.
 
+mod common;
+
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -256,38 +258,9 @@ impl Node {
     }
 }
 
-fn free_port() -> u16 {
-    for _ in 0..64 {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        if port > 22000 {
-            return port;
-        }
-    }
-    panic!("no free port above 22000");
-}
-
 fn serve(dir: &Path) -> Node {
-    let port = free_port();
-    let log = dir.join(format!("serve-{port}.log"));
-    let file = fs::File::create(&log).unwrap();
-    let child = oo_cmd(dir)
-        .args(["node", "serve", "--port", &port.to_string()])
-        .stdout(Stdio::from(file.try_clone().unwrap()))
-        .stderr(Stdio::from(file))
-        .spawn()
-        .unwrap();
-    let mut node = Node { child, port, log };
-    for _ in 0..40 {
-        std::thread::sleep(Duration::from_millis(100));
-        if node.child.try_wait().unwrap().is_some() {
-            panic!("`oo node serve` exited: {}", node.log());
-        }
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return node;
-        }
-    }
-    panic!("`oo node serve` never came up: {}", node.log());
+    let served = common::serve(oo_cmd(dir), dir.join("serve.log"));
+    Node { child: served.child, port: served.port, log: served.log }
 }
 
 fn ask_raw(port: u16, payload: &str) -> String {
