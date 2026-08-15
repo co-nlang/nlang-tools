@@ -95,6 +95,8 @@
 // ones. So the field names, the domain string and the signed payload below
 // are normative, and the probe asserts them literally.
 
+mod common;
+
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -231,17 +233,6 @@ fn object_count(dir: &Path) -> usize {
     n
 }
 
-fn free_port() -> u16 {
-    for _ in 0..64 {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let p = l.local_addr().unwrap().port();
-        if p > 23000 {
-            return p;
-        }
-    }
-    panic!("no free port above 23000");
-}
-
 struct Node {
     child: Child,
     port: u16,
@@ -264,23 +255,8 @@ impl Node {
 }
 
 fn serve(dir: &Path) -> Node {
-    let port = free_port();
-    let log = dir.join(format!("serve-{port}.log"));
-    let f = fs::File::create(&log).unwrap();
-    let child = oo_cmd(dir)
-        .args(["node", "serve", "--port", &port.to_string()])
-        .stdout(Stdio::from(f.try_clone().unwrap()))
-        .stderr(Stdio::from(f))
-        .spawn()
-        .unwrap();
-    let node = Node { child, port, log };
-    for _ in 0..40 {
-        std::thread::sleep(Duration::from_millis(100));
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return node;
-        }
-    }
-    panic!("`oo node serve` never came up: {}", node.log());
+    let served = common::serve(oo_cmd(dir), dir.join("serve.log"));
+    Node { child: served.child, port: served.port, log: served.log }
 }
 
 fn ask_raw(port: u16, payload: &str) -> String {

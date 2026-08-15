@@ -148,7 +148,6 @@ fn c0_an_explicit_port_is_named_and_reachable() {
 // Baseline red: verbatim `n/ OODP node serving at port 0`.
 
 #[test]
-#[ignore = "Q-026: `--port 0` still prints `port 0` (work order §3.1)"]
 fn p1_port_zero_is_not_what_gets_reported() {
     let d = fresh("p1");
     let node = serve(&d, 0);
@@ -174,7 +173,6 @@ fn p1_port_zero_is_not_what_gets_reported() {
 // non-existence must assert an existence in the same run.
 
 #[test]
-#[ignore = "Q-026: `--port 0` reports no bindable port to connect to (work order §3.1)"]
 fn p2_the_reported_port_is_the_one_you_can_reach() {
     let d = fresh("p2");
     let node = serve(&d, 0);

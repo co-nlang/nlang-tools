@@ -86,6 +86,8 @@
 // peer, first-success-wins over `HashMap` order, 10 runs. Probability of a
 // vacuous baseline pass ≈ 3⁻¹⁰. Deterministic after the fix.
 
+mod common;
+
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -271,36 +273,18 @@ fn spawn_honest(dir: PathBuf) -> FakePeer {
     spawn_peer(move |req| fs::read(object_path(&dir, req)).ok())
 }
 
-fn free_port() -> u16 {
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    l.local_addr().unwrap().port()
-}
-
 /// Runs `oo node serve` against `dir`, sends one OODP `#fetch` envelope,
 /// returns (response body, the server's own console output).
 fn ndp_ask(dir: &Path, caid: &str) -> (String, String) {
-    let port = free_port();
     // Isolate node-key mint from the developer's real ~/.oo.
     let node_home = dir.join("node-home-for-tests");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_oo"))
-        .args(["node", "serve", "--port", &port.to_string()])
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oo"));
+    command
         .current_dir(dir)
         .env("OO_NODE_HOME", &node_home)
-        .env("OO_IDENTITY", dir.join("identity-for-tests"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let mut stream = None;
-    for _ in 0..60 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if let Ok(s) = TcpStream::connect(("127.0.0.1", port)) {
-            stream = Some(s);
-            break;
-        }
-    }
-    let mut stream = stream.expect("oo node serve never came up");
+        .env("OO_IDENTITY", dir.join("identity-for-tests"));
+    let mut node = common::serve(command, dir.join("serve.log"));
+    let mut stream = TcpStream::connect(("127.0.0.1", node.port)).unwrap();
     // Bare CAID retired (node_identity D5); use the envelope form.
     let req = format!("{{{{ %op: #fetch, %hash: \"{caid}\" }}}}\n");
     stream.write_all(req.as_bytes()).unwrap();
@@ -310,15 +294,11 @@ fn ndp_ask(dir: &Path, caid: &str) -> (String, String) {
     drop(stream);
 
     std::thread::sleep(std::time::Duration::from_millis(200));
-    child.kill().ok();
-    let out = child.wait_with_output().unwrap();
+    node.child.kill().ok();
+    node.child.wait().ok();
     (
         String::from_utf8_lossy(&buf).into_owned(),
-        format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        ),
+        common::read_log(&node.log),
     )
 }
 

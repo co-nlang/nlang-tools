@@ -53,6 +53,8 @@
 // SOLELY so the wire gates are not confounded by the rename. R5 is what decides
 // the name; nothing else in this file may be read as tolerating either spelling.
 
+mod common;
+
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -129,14 +131,6 @@ fn write(dir: &Path, name: &str, src: &str) {
     fs::write(dir.join(name), src).unwrap();
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 fn object_path(dir: &Path, caid: &str) -> PathBuf {
     let d = caid.rsplit(':').next().unwrap();
     dir.join(".oo")
@@ -182,30 +176,8 @@ impl Drop for Node {
 }
 
 fn serve(dir: &Path) -> Node {
-    for args in [vec!["node", "serve", "--port"], vec!["serve", "--port"]] {
-        let port = free_port();
-        let p = port.to_string();
-        let mut a = args.clone();
-        a.push(&p);
-        let child = oo_cmd(dir)
-            .args(&a)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut node = Node { child, port };
-        for _ in 0..40 {
-            std::thread::sleep(Duration::from_millis(100));
-            if node.child.try_wait().unwrap().is_some() {
-                break; // this spelling is not accepted; try the next
-            }
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return node;
-            }
-        }
-        node.child.kill().ok();
-    }
-    panic!("neither `oo node serve` nor `oo serve` came up");
+    let served = common::serve(oo_cmd(dir), dir.join("serve.log"));
+    Node { child: served.child, port: served.port }
 }
 
 /// Sends raw bytes to a node and reads the whole reply, bounded.
@@ -439,31 +411,14 @@ fn red_node_emits_the_response_envelope() {
 #[test]
 fn red_the_node_command_is_oo_node_serve() {
     let d = fresh_dir("r5");
-    let port = free_port();
-
-    let mut child = oo_cmd(&d)
-        .args(["node", "serve", "--port", &port.to_string()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut up = false;
-    for _ in 0..40 {
-        std::thread::sleep(Duration::from_millis(100));
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            up = true;
-            break;
-        }
-    }
-    child.kill().ok();
-    child.wait().ok();
+    let mut served = common::serve(oo_cmd(&d), d.join("r5-serve.log"));
+    let up = TcpStream::connect(("127.0.0.1", served.port)).is_ok();
+    served.child.kill().ok();
+    served.child.wait().ok();
     assert!(up, "`oo node serve` did not come up");
 
     // PAIR: the old spelling is retired, not aliased.
-    let old = oo(&d, &["serve", "--port", &free_port().to_string()]);
+    let old = oo(&d, &["serve", "--port", "0"]);
     assert!(
         old.contains("unrecognized") || old.contains("error"),
         "`oo serve` still works, so this is an alias and not a rename: {old:?}"
