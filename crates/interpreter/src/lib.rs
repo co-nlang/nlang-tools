@@ -635,6 +635,7 @@ pub struct PeerAdvert {
     /// this byte-for-byte — not a re-serialisation (discover_index §3.3).
     pub ad_source: String,
     pub received_at: std::time::SystemTime,
+    pub received_at_unparseable: bool,
     /// Derived affiliation operator public key (64 hex), if a claim verified.
     /// **Never persisted** — rebuilt from `ad_source` (affiliation_claim / #3c-a).
     pub verified_operator_key: Option<String>,
@@ -644,6 +645,7 @@ pub struct PeerAdvert {
     /// Durable optional key; `0` means absent/legacy. Totals arrival order when
     /// `received_at` only has one-second resolution.
     pub admission_seq: u64,
+    pub admission_seq_unparseable: bool,
 }
 
 /// Force-memo key (Stage 5): (expr CAID, frame CAID, context CAID | #open).

@@ -164,7 +164,6 @@ fn c1_an_absent_sequence_number_still_sorts_first() {
 // unparseable the same 0, and 0 sorts ahead of every real number.
 
 #[test]
-#[ignore = "Q-027: absent and unparseable admission_seq both fall to 0 (work order §3.1)"]
 fn p1_an_unparseable_sequence_number_sorts_last() {
     let v = loaded_in_order(
         "p1",
@@ -189,7 +188,6 @@ fn p1_an_unparseable_sequence_number_sorts_last() {
 // time silently becomes a real, early one.
 
 #[test]
-#[ignore = "Q-027: unparseable received_at falls back to ts (work order §3.1)"]
 fn p2_an_unparseable_arrival_time_sorts_last() {
     let v = loaded_in_order(
         "p2",

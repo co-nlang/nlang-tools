@@ -782,6 +782,8 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
             // Receiver-local: learned via #discover, even if envelope hops is 0.
             provenance: nlang_interpreter::ObservationProvenance::Relayed,
             admission_seq: 0, // assigned in record_peer_advert
+            received_at_unparseable: false,
+            admission_seq_unparseable: false,
         });
     }
     Ok(())

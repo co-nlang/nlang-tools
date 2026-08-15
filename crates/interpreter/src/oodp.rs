@@ -929,6 +929,8 @@ fn serve_advertise(
         verified_operator_key: verified_operator_key.clone(),
         provenance: crate::ObservationProvenance::Direct,
         admission_seq: 0, // assigned in record_peer_advert
+        received_at_unparseable: false,
+        admission_seq_unparseable: false,
     });
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);
@@ -1087,7 +1089,10 @@ fn serve_discover(
     // (discover_sampling / #3c-b1). Not HashMap iteration order, not capacity-
     // weighted, not asker-keyed (REAL_02 §3.2).
     let mut candidates = candidates;
-    sample_uniform_cap(&mut candidates, MAX_DISCOVER_PEERS);
+    if sample_uniform_cap(&mut candidates, MAX_DISCOVER_PEERS, &SystemEntropy).is_err() {
+        let body = refuse(OodpStatus::Conflict, "entropy_unavailable", source_id);
+        return (body, "OODP #discover entropy unavailable; no sample returned".into());
+    }
 
     let mut peers: Vec<(String, String)> = Vec::new();
     for adv in candidates {
@@ -1112,40 +1117,49 @@ fn serve_discover(
 /// Uniform sample without replacement down to at most `k` items, in place.
 /// When `items.len() <= k`, the vector is unchanged (every candidate returned).
 /// Partial Fisher–Yates; each query draws independently (ring SystemRandom).
-fn sample_uniform_cap<T>(items: &mut Vec<T>, k: usize) {
+trait RandomSource {
+    fn fill(&self, bytes: &mut [u8]) -> Result<(), ()>;
+}
+
+struct SystemEntropy;
+
+impl RandomSource for SystemEntropy {
+    fn fill(&self, bytes: &mut [u8]) -> Result<(), ()> {
+        SystemRandom::new().fill(bytes).map_err(|_| ())
+    }
+}
+
+fn sample_uniform_cap<T>(items: &mut Vec<T>, k: usize, rng: &impl RandomSource) -> Result<(), ()> {
     let n = items.len();
     if n <= k || k == 0 {
         if k == 0 {
             items.clear();
         }
-        return;
+        return Ok(());
     }
-    let rng = SystemRandom::new();
     for i in 0..k {
         // Uniform j in [i, n).
-        let j = i + random_below(&rng, n - i);
+        let j = i + random_below(rng, n - i)?;
         items.swap(i, j);
     }
     items.truncate(k);
+    Ok(())
 }
 
 /// Uniform integer in `0..bound` (rejection sampling so the modulus is unbiased).
-fn random_below(rng: &SystemRandom, bound: usize) -> usize {
+fn random_below(rng: &impl RandomSource, bound: usize) -> Result<usize, ()> {
     if bound <= 1 {
-        return 0;
+        return Ok(0);
     }
     let bound = bound as u64;
     // Largest multiple of `bound` that fits in u64.
     let max = u64::MAX - (u64::MAX % bound);
     loop {
         let mut buf = [0u8; 8];
-        // SystemRandom::fill is fallible only on OS entropy failure; treat as 0.
-        if rng.fill(&mut buf).is_err() {
-            return 0;
-        }
+        rng.fill(&mut buf)?;
         let v = u64::from_le_bytes(buf);
         if v < max {
-            return (v % bound) as usize;
+            return Ok((v % bound) as usize);
         }
     }
 }
@@ -1709,4 +1723,21 @@ fn legacy_or_fail(
         return Err(BottomCause::CaidMismatch);
     }
     Ok(val)
+}
+
+#[cfg(test)]
+mod entropy_tests {
+    use super::{sample_uniform_cap, RandomSource};
+
+    struct FailingEntropy;
+    impl RandomSource for FailingEntropy {
+        fn fill(&self, _: &mut [u8]) -> Result<(), ()> { Err(()) }
+    }
+
+    #[test]
+    fn entropy_failure_returns_no_sample() {
+        let mut items = vec![0, 1, 2, 3];
+        assert!(sample_uniform_cap(&mut items, 2, &FailingEntropy).is_err());
+        assert_eq!(items, vec![0, 1, 2, 3]);
+    }
 }
