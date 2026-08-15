@@ -1,4 +1,5 @@
 use crate::value::{CaidVersion, ComboVal, Commit, ContentHash, EffectTag, HashAlgorithm, Value};
+use crate::StandardRootSet;
 use anyhow::Result;
 use serde::Serialize;
 use std::fs;
@@ -275,7 +276,7 @@ impl ObjectStore {
     /// Decode a universe root and resolve its format-3 standard-library
     /// dependency against this engine's table. A digest mismatch is a refusal,
     /// not a best-effort substitution with today's builtins.
-    pub fn get_root(&self, hash: &ContentHash, standard: &ComboVal) -> Result<ComboVal> {
+    pub fn get_root(&self, hash: &ContentHash, standards: &StandardRootSet) -> Result<ComboVal> {
         let content = self.read_object_raw(hash)?;
         let mut value: Value = serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
             requested: hash.clone(), detail: e.to_string(),
@@ -287,7 +288,8 @@ impl ObjectStore {
         // root carries the digest sentinel that authorises engine-owned table
         // hydration (and therefore standard-root validation).
         if root.system.contains_key(SYSTEM_DIGEST_KEY) {
-            hydrate_system_table(root, standard)?;
+            let standard = resolve_standard_root(root, standards)?;
+            hydrate_system_table(root, standards)?;
             hydrate_standard_root(root, standard);
         }
         let recomputed = value.content_hash();
@@ -310,9 +312,10 @@ impl ObjectStore {
                 // All ordinary readers use one decoder. A format-3 root has
                 // no valid standalone Value interpretation: resolve it before
                 // judging its address, rather than making every caller guess.
-                let standard = crate::Ouroboros::new_in_memory().root_with_system();
-                hydrate_system_table(root, &standard)?;
-                hydrate_standard_root(root, &standard);
+                let engine = crate::Ouroboros::new_in_memory();
+                let standard = resolve_standard_root(root, &engine.standard_roots)?;
+                hydrate_system_table(root, &engine.standard_roots)?;
+                hydrate_standard_root(root, standard);
             }
         }
         let recomputed = value.content_hash();
@@ -324,6 +327,20 @@ impl ObjectStore {
             .into());
         }
         Ok(value)
+    }
+
+    /// Read the root's declared standard-library dependency without resolving
+    /// it. Used by `oo status` so availability is observable before a load.
+    pub fn root_standard_digest(&self, hash: &ContentHash) -> Result<Option<String>> {
+        let content = self.read_object_raw(hash)?;
+        let value: Value = serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+            requested: hash.clone(), detail: e.to_string(),
+        })?;
+        let Value::Combo(root) = value else { anyhow::bail!("Invalid root") };
+        Ok(match root.system.get(SYSTEM_DIGEST_KEY) {
+            Some(Value::Atom(nlang_parser::ast::AtomKind::Str(digest), _, _)) => Some(digest.clone()),
+            _ => None,
+        })
     }
 
     pub fn put_commit(&self, commit: &Commit) -> Result<ContentHash> {
@@ -490,14 +507,18 @@ fn hydrate_standard_root(root: &mut ComboVal, standard: &ComboVal) {
     }
 }
 
-fn hydrate_system_table(combo: &mut ComboVal, standard: &ComboVal) -> Result<()> {
-    if let Some(Value::Atom(nlang_parser::ast::AtomKind::Str(digest), _, _)) = combo.system.get(SYSTEM_DIGEST_KEY) {
-        let expected = standard_table_digest(standard);
-        if digest != &expected {
-            anyhow::bail!(
-                "refusing root: standard root digest {digest} is unavailable (this engine has {expected})"
-            );
-        }
+fn resolve_standard_root<'a>(combo: &ComboVal, standards: &'a StandardRootSet) -> Result<&'a ComboVal> {
+    let Some(Value::Atom(nlang_parser::ast::AtomKind::Str(digest), _, _)) = combo.system.get(SYSTEM_DIGEST_KEY) else {
+        anyhow::bail!("root does not name a standard root");
+    };
+    standards.get(digest).ok_or_else(|| anyhow::anyhow!(
+        "refusing root: standard root digest {digest} is unavailable"
+    ))
+}
+
+fn hydrate_system_table(combo: &mut ComboVal, standards: &StandardRootSet) -> Result<()> {
+    if combo.system.contains_key(SYSTEM_DIGEST_KEY) {
+        let standard = resolve_standard_root(combo, standards)?;
         combo.system = standard.system.clone();
     }
     for value in combo.data.values_mut()
@@ -508,26 +529,26 @@ fn hydrate_system_table(combo: &mut ComboVal, standard: &ComboVal) -> Result<()>
         .chain(combo.local.values_mut())
         .chain(combo.pending_spreads.iter_mut())
     {
-        hydrate_systems_in_value(value, standard)?;
+        hydrate_systems_in_value(value, standards)?;
     }
     Ok(())
 }
 
-fn hydrate_systems_in_value(value: &mut Value, standard: &ComboVal) -> Result<()> {
+fn hydrate_systems_in_value(value: &mut Value, standards: &StandardRootSet) -> Result<()> {
     match value {
-        Value::Combo(combo) => hydrate_system_table(combo, standard),
+        Value::Combo(combo) => hydrate_system_table(combo, standards),
         Value::Union(values) => {
-            for value in values { hydrate_systems_in_value(value, standard)?; }
+            for value in values { hydrate_systems_in_value(value, standards)?; }
             Ok(())
         }
         Value::Thunk { closure, context, .. } => {
-            for frame in closure { hydrate_system_table(std::sync::Arc::make_mut(frame), standard)?; }
-            if let Some(context) = context { hydrate_systems_in_value(context, standard)?; }
+            for frame in closure { hydrate_system_table(std::sync::Arc::make_mut(frame), standards)?; }
+            if let Some(context) = context { hydrate_systems_in_value(context, standards)?; }
             Ok(())
         }
         Value::Range { start, end, step } => {
-            hydrate_systems_in_value(start, standard)?; hydrate_systems_in_value(end, standard)?;
-            if let Some(step) = step { hydrate_systems_in_value(step, standard)?; }
+            hydrate_systems_in_value(start, standards)?; hydrate_systems_in_value(end, standards)?;
+            if let Some(step) = step { hydrate_systems_in_value(step, standards)?; }
             Ok(())
         }
         _ => Ok(()),

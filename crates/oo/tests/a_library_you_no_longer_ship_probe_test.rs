@@ -193,7 +193,6 @@ fn c1_a_digest_no_engine_ever_published_is_still_refused_by_name() {
 // and names no digest at all.
 
 #[test]
-#[ignore = "Q-025: `oo status` names no standard root yet (work order §2.3)"]
 fn p1_status_names_the_standard_root_this_store_depends_on() {
     let d = committed("p1");
     let actual = digest_in_store(&d).expect("C0 must pass first");
@@ -220,7 +219,6 @@ fn p1_status_names_the_standard_root_this_store_depends_on() {
 // turn it green.
 
 #[test]
-#[ignore = "Q-025: the refusal still says `this engine has <one>` (work order §2.2)"]
 fn p2_the_refusal_names_what_is_missing_without_claiming_a_single_holding() {
     let d = committed("p2");
     assert!(retarget_digest(&d, ABSENT), "could not retarget the digest");

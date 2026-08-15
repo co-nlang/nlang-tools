@@ -278,8 +278,7 @@ impl Universe {
         match head {
             Some(h) => {
                 let commit = engine.store.get_commit(&h)?;
-                let standard = engine.root_with_system();
-                let root = engine.store.get_root(&commit.root, &standard)?;
+                let root = engine.store.get_root(&commit.root, &engine.standard_roots)?;
                 Ok(Self::new(Some(h), root))
             }
             None => Ok(Self::new(None, engine.root_with_system())),
@@ -794,8 +793,7 @@ impl Universe {
         }
         // Target must exist as a commit object (any historical commit).
         let target_commit = engine.store.get_commit(target)?;
-        let standard = engine.root_with_system();
-        let new_root = engine.store.get_root(&target_commit.root, &standard)?;
+        let new_root = engine.store.get_root(&target_commit.root, &engine.standard_roots)?;
         // Record the head we leave behind (if any and different from target).
         if let Some(ref old) = self.head {
             if old != target {
@@ -882,8 +880,7 @@ impl Universe {
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
         // Root value is the same as before; reload for consistency.
-        let standard = engine.root_with_system();
-        self.root = engine.store.get_root(&head_commit.root, &standard)?;
+        self.root = engine.store.get_root(&head_commit.root, &engine.standard_roots)?;
         self.head = Some(commit_hash.clone());
         self.staged = ComboVal::default();
         self.is_dirty = false;

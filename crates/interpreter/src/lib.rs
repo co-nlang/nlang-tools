@@ -691,8 +691,43 @@ pub struct IntegrityIncident {
     pub kind: IntegrityKind,
 }
 
+/// Standard-library roots this engine can resolve by content digest.
+///
+/// This is deliberately a table, rather than a current-root comparison: a
+/// later engine adds a historical root as data and leaves root decoding alone.
+#[derive(Debug, Clone, Default)]
+pub struct StandardRootSet {
+    by_digest: IndexMap<String, ComboVal>,
+}
+
+impl StandardRootSet {
+    pub fn from_roots(roots: impl IntoIterator<Item = ComboVal>) -> Self {
+        let mut by_digest = IndexMap::new();
+        for root in roots {
+            let digest = hex::encode(Value::Combo(root.clone()).content_hash().digest);
+            by_digest.insert(digest, root);
+        }
+        Self { by_digest }
+    }
+
+    pub fn get(&self, digest: &str) -> Option<&ComboVal> {
+        self.by_digest.get(digest)
+    }
+
+    pub fn contains(&self, digest: &str) -> bool {
+        self.by_digest.contains_key(digest)
+    }
+
+    pub fn digests(&self) -> impl Iterator<Item = &str> {
+        self.by_digest.keys().map(String::as_str)
+    }
+}
+
 pub struct Ouroboros {
     pub store: ObjectStore,
+    /// All standard-library roots this binary ships, indexed by their CAID
+    /// digest. Historical compatibility is data in this table.
+    pub standard_roots: StandardRootSet,
     pub base_dir: Option<PathBuf>,
     /// Owns the temp tree for [`Self::new_in_memory`]. Drop removes its `.oo/`.
     _ephemeral_root: Option<tempfile::TempDir>,
@@ -816,8 +851,9 @@ impl Ouroboros {
         // Ephemeral identity only — never read/write the operator path.
         let identity = crate::value::Identity::new_random();
         // No self-appointment into architect_registry (universe_determinism).
-        Self {
+        let mut engine = Self {
             store,
+            standard_roots: StandardRootSet::default(),
             base_dir: None,
             _ephemeral_root: Some(ephemeral),
             unify_memo: RwLock::new(HashMap::new()),
@@ -841,7 +877,9 @@ impl Ouroboros {
             privilege: crate::value::Privilege::NONE,
             integrity_log: RwLock::new(Vec::new()),
             privileged_discharge_tags: std::sync::atomic::AtomicU8::new(0),
-        }
+        };
+        engine.standard_roots = engine.shipped_standard_roots();
+        engine
     }
 
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
@@ -876,6 +914,7 @@ impl Ouroboros {
         };
         let oo = Self {
             store,
+            standard_roots: StandardRootSet::default(),
             base_dir: Some(base_dir.to_path_buf()),
             _ephemeral_root: None,
             unify_memo: RwLock::new(HashMap::new()),
@@ -909,6 +948,7 @@ impl Ouroboros {
         // it does, check the signatures — a signed record that nobody checks
         // is an assertion wearing a signature.
         let mut oo = oo;
+        oo.standard_roots = oo.shipped_standard_roots();
         let unverifiable = crate::peers::verify_loaded(&oo);
         if let Some(ref mut r) = oo.peers_load_report {
             r.records = r.records.saturating_sub(unverifiable);
@@ -1267,7 +1307,9 @@ impl Ouroboros {
         }
     }
 
-    pub fn root_with_system(&self) -> ComboVal {
+    /// The v0.22 standard-library root. Keep this builder after a future
+    /// library change so that `shipped_standard_roots` can retain it as data.
+    fn v0_22_standard_root() -> ComboVal {
         let mut fields = IndexMap::new();
         let add_morph = Value::Combo(ComboVal::new(
             IndexMap::from_iter(vec![
@@ -2766,6 +2808,21 @@ impl Ouroboros {
         );
 
         ComboVal::new(fields, false, IndexMap::new(), EffectTag::Pure, vec![])
+    }
+
+    /// The standard root used for new universes written by this engine.
+    pub fn root_with_system(&self) -> ComboVal {
+        Self::v0_22_standard_root()
+    }
+
+    /// The table of roots this binary ships. Adding a historical root is a
+    /// row here, never a new decoding branch.
+    fn shipped_standard_roots(&self) -> StandardRootSet {
+        StandardRootSet::from_roots([self.root_with_system()])
+    }
+
+    pub fn supports_standard_root(&self, digest: &str) -> bool {
+        self.standard_roots.contains(digest)
     }
 
     pub fn eval_context(&self) -> EvalContext {

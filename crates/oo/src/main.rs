@@ -811,8 +811,21 @@ fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
 }
 
 fn run_status() -> anyhow::Result<()> {
-    let engine = Ouroboros::init(&std::env::current_dir()?)?;
-    let universe = load_universe(&engine, &std::env::current_dir()?)?;
+    let current_dir = std::env::current_dir()?;
+    let engine = Ouroboros::init(&current_dir)?;
+    if let Some(head) = engine.store.get_head(&current_dir)? {
+        let commit = engine.store.get_commit(&head)?;
+        match engine.store.root_standard_digest(&commit.root)? {
+            Some(digest) => println!(
+                "Standard root dependency: {digest} ({})",
+                if engine.supports_standard_root(&digest) { "available" } else { "unavailable" }
+            ),
+            None => println!("Standard root dependency: self-contained (pre-sentinel)"),
+        }
+    } else {
+        println!("Standard root dependency: current (no committed root yet)");
+    }
+    let universe = load_universe(&engine, &current_dir)?;
     if universe.is_dirty {
         println!("Staged changes:");
         println!("{}", Value::Combo(universe.staged.clone()).to_nlang(0));
@@ -1478,7 +1491,7 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
         // reporting an ordinary CAS mismatch.
         Err(original) => engine
             .store
-            .get_root(&hash, &engine.root_with_system())
+            .get_root(&hash, &engine.standard_roots)
             .map(Value::Combo)
             .map_err(|_| original),
     };
