@@ -322,3 +322,42 @@ fn p5_an_unreadable_status_is_not_a_refusal() {
         );
     }
 }
+
+// ── P6 — red, added at acceptance round 3 (2026-08-16) ───────────────────
+// The other direction. Round 3 closed the ts hole by folding `ts_unparseable`
+// into `received_at_unparseable` — but `received_at` only falls back to `ts`
+// when it is ABSENT. When `received_at` is present and readable, `ts` plays
+// no part in ordering at all, and demoting the record says "I do not know
+// when this arrived" about a record whose arrival time is right there.
+//
+// This arc's claim is that a fallback must not make unknown data win. The
+// converse matters too and for the same reason: a value must say what is
+// true. A record the engine CAN place must not be reported as unplaceable.
+//
+// Note this is NOT in tension with P4. In P4 `received_at` is absent, so the
+// ordering key really is unknown. Here it is present, so it really is known.
+// The whole point is that those two cases must be told apart.
+
+#[test]
+#[ignore = "Q-027 round 4: a bad ts demotes a record whose received_at is intact (work order §3.1)"]
+fn p6_a_bad_ts_does_not_demote_a_readable_arrival_time() {
+    let v = loaded_in_order(
+        "p6",
+        &[
+            // ts is garbage, but received_at is present, readable, and earliest.
+            record_ts("9", "\"abc\"", "1700000001", "6"),
+            record_ts("2", "1700000005", "1700000005", "7"),
+            record_ts("3", "1700000009", "1700000009", "8"),
+        ],
+    );
+    assert_eq!(v.len(), 3, "C0 must pass first");
+    assert_eq!(
+        tags(&v),
+        vec!["9", "2", "3"],
+        "`received_at` is present and readable on every record here, so `ts` \
+         never enters the ordering. Record 9 arrived first and must be placed \
+         first; demoting it reports an unknown the engine does not have. \
+         Order was {:?}",
+        tags(&v)
+    );
+}
