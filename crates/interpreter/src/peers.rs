@@ -210,7 +210,11 @@ fn decode_record_line(line: &str, restore_asserted: bool) -> Option<PeerAdvert> 
             .unwrap_or("")
             .to_string();
         let hops = o.get("hops").and_then(|x| x.as_i64()).unwrap_or(0);
-        let received_at_unparseable = ts_unparseable || (o.get("received_at").is_some() && o.get("received_at").and_then(|x| x.as_i64()).is_none());
+        let received_at_unparseable = if o.get("received_at").is_none() {
+            ts_unparseable
+        } else {
+            o.get("received_at").and_then(|x| x.as_i64()).is_none()
+        };
         let ra = o.get("received_at").and_then(|x| x.as_i64()).unwrap_or(ts);
         let addr = o
             .get("addr")

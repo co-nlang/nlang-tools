@@ -339,7 +339,6 @@ fn p5_an_unreadable_status_is_not_a_refusal() {
 // The whole point is that those two cases must be told apart.
 
 #[test]
-#[ignore = "Q-027 round 4: a bad ts demotes a record whose received_at is intact (work order §3.1)"]
 fn p6_a_bad_ts_does_not_demote_a_readable_arrival_time() {
     let v = loaded_in_order(
         "p6",
