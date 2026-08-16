@@ -65,13 +65,31 @@ fn oo_cmd(dir: &Path) -> Command {
 }
 
 fn oo(dir: &Path, args: &[&str]) -> String {
+    oo_ok(dir, args).0
+}
+
+/// Output plus whether the command succeeded.
+///
+/// The probes below assert on BEHAVIOUR, never on the wording of a refusal.
+/// The first draft of this file asserted `contains("Invalid CAID")`, which the
+/// messages did not contain, and the delivery changed the messages to match --
+/// a probe steering the product. Pin what the command DID: it failed, it never
+/// reached the store, it did not panic.
+fn oo_ok(dir: &Path, args: &[&str]) -> (String, bool) {
     let o = oo_cmd(dir).args(args).output().expect("oo runs");
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
+    (
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        o.status.success(),
     )
 }
+
+/// A malformed CAID must be rejected before any lookup happens. A well-formed
+/// but absent one produces this line; a malformed one must not.
+const REACHED_THE_STORE: &str = "not found in local store";
 
 /// A store with one commit in it, so every probe below asks a live store.
 fn store(tag: &str) -> nlang_interpreter::ScratchDir {
@@ -209,14 +227,15 @@ fn p3_no_cli_entry_panics_on_an_empty_digest() {
         ),
     ];
     for (name, args) in cases {
-        let out = oo(&d, &args);
+        let (out, ok) = oo_ok(&d, &args);
         assert!(
             !out.contains("panicked"),
             "`oo {name}` must not panic, got: {out}"
         );
+        assert!(!ok, "`oo {name}` must fail, got: {out}");
         assert!(
-            out.contains("Invalid CAID"),
-            "`oo {name}` must reject the CAID by name, got: {out}"
+            !out.contains(REACHED_THE_STORE),
+            "`oo {name}` must reject before any lookup, got: {out}"
         );
     }
 }
@@ -234,13 +253,14 @@ fn p4_a_digest_of_the_wrong_length_is_not_a_sha256_caid() {
     let d = store("p4");
     let good = oo(&d, &["inspect", GOOD_V1]);
     assert!(
-        good.contains("not found in local store"),
+        good.contains(REACHED_THE_STORE),
         "presence: a full-length digest must still reach the store, got: {good}"
     );
-    let short = oo(&d, &["inspect", SHORT_V1]);
+    let (short, ok) = oo_ok(&d, &["inspect", SHORT_V1]);
+    assert!(!ok, "a one-byte digest must fail, got: {short}");
     assert!(
-        short.contains("Invalid CAID"),
-        "a one-byte digest must be rejected as malformed, got: {short}"
+        !short.contains(REACHED_THE_STORE),
+        "a one-byte digest is not a sha256 CAID and must never be looked up, got: {short}"
     );
 }
 
@@ -249,11 +269,12 @@ fn p4_a_digest_of_the_wrong_length_is_not_a_sha256_caid() {
 #[test]
 fn p5_the_v2_form_rejects_an_empty_digest_too() {
     let d = store("p5");
-    let out = oo(&d, &["inspect", EMPTY_V2]);
+    let (out, ok) = oo_ok(&d, &["inspect", EMPTY_V2]);
     assert!(!out.contains("panicked"), "v2 must not panic, got: {out}");
+    assert!(!ok, "v2 must fail, got: {out}");
     assert!(
-        out.contains("Invalid CAID"),
-        "v2 must reject an empty digest by name, got: {out}"
+        !out.contains(REACHED_THE_STORE),
+        "v2 must reject before any lookup, got: {out}"
     );
 }
 
@@ -267,15 +288,16 @@ fn p5_the_v2_form_rejects_an_empty_digest_too() {
 fn c1_the_forms_that_already_work_keep_working() {
     let d = store("c1");
     for bad in ["hash:sha256:v1:a", "hash:sha256:v1:zz", "hash:md5:v1:abcd"] {
-        let out = oo(&d, &["inspect", bad]);
+        let (out, ok) = oo_ok(&d, &["inspect", bad]);
+        assert!(!ok, "`{bad}` must stay rejected, got: {out}");
         assert!(
-            out.contains("Invalid CAID") || out.contains("Unknown CAID"),
-            "`{bad}` must stay rejected, got: {out}"
+            !out.contains(REACHED_THE_STORE),
+            "`{bad}` must stay rejected before any lookup, got: {out}"
         );
     }
     let out = oo(&d, &["inspect", GOOD_V1]);
     assert!(
-        out.contains("not found in local store"),
+        out.contains(REACHED_THE_STORE),
         "a well-formed absent CAID must stay a store miss, got: {out}"
     );
     // The store's own real CAID must still resolve -- the strongest control:
@@ -283,9 +305,9 @@ fn c1_the_forms_that_already_work_keep_working() {
     let head = std::fs::read_to_string(d.join(".oo/HEAD")).unwrap_or_default();
     let head = head.trim();
     assert!(head.starts_with("hash:sha256:"), "presence: HEAD is a CAID");
-    let out = oo(&d, &["inspect", head]);
+    let (out, ok) = oo_ok(&d, &["inspect", head]);
     assert!(
-        !out.contains("Invalid CAID"),
-        "the store's own HEAD must stay a valid CAID, got: {out}"
+        ok,
+        "the store's own HEAD must stay a CAID this engine can resolve, got: {out}"
     );
 }
