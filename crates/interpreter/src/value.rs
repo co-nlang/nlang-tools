@@ -1985,6 +1985,13 @@ impl ContentHash {
     }
 
     pub fn parse(s: &str) -> anyhow::Result<Self> {
+        fn parse_sha256_digest(hex_digest: &str) -> anyhow::Result<Vec<u8>> {
+            let digest = hex::decode(hex_digest)?;
+            if digest.len() != 32 {
+                anyhow::bail!("Invalid sha256 CAID digest length: expected 32 bytes, got {}", digest.len());
+            }
+            Ok(digest)
+        }
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() < 4 || parts[0] != "hash" || parts[1] != "sha256" {
             return Err(anyhow::anyhow!("Invalid CAID format"));
@@ -1995,7 +2002,7 @@ impl ContentHash {
                 version: CaidVersion::V1,
                 masa_ref: MasaRef::Top,
                 lattice_sketch: String::new(),
-                digest: hex::decode(parts[3])?,
+                digest: parse_sha256_digest(parts[3])?,
             }),
             "v2" => {
                 if parts.len() < 6 {
@@ -2013,7 +2020,7 @@ impl ContentHash {
                     version: CaidVersion::V2,
                     masa_ref,
                     lattice_sketch: parts[4].to_string(),
-                    digest: hex::decode(parts[5])?,
+                    digest: parse_sha256_digest(parts[5])?,
                 })
             }
             _ => Err(anyhow::anyhow!("Unknown CAID version: {}", parts[2])),
