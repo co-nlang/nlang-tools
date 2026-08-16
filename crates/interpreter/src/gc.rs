@@ -38,7 +38,12 @@ pub fn refs_of(v: &JsonValue, follow_abandoned: bool, out: &mut Vec<String>) {
                 if k == "abandoned" && !follow_abandoned {
                     continue;
                 }
-                if k == "digest" {
+                if k == "__nlang_system_digest" {
+                    // O58: this is a real CAS edge to the packed standard
+                    // root object.  It is intentionally a plain string inside
+                    // a typed Atom, not a ContentHash-shaped `digest` field.
+                    refs_of_standard_digest(x, out);
+                } else if k == "digest" {
                     match x {
                         JsonValue::String(s) if s.len() == 64 && is_hex64(s) => {
                             out.push(s.to_lowercase());
@@ -69,6 +74,23 @@ pub fn refs_of(v: &JsonValue, follow_abandoned: bool, out: &mut Vec<String>) {
                 if d.len() == 64 && is_hex64(d) {
                     out.push(d.to_lowercase());
                 }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn refs_of_standard_digest(v: &JsonValue, out: &mut Vec<String>) {
+    match v {
+        JsonValue::String(s) if is_hex64(s) => out.push(s.to_lowercase()),
+        JsonValue::Object(m) => {
+            for value in m.values() {
+                refs_of_standard_digest(value, out);
+            }
+        }
+        JsonValue::Array(values) => {
+            for value in values {
+                refs_of_standard_digest(value, out);
             }
         }
         _ => {}

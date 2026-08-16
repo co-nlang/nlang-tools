@@ -126,6 +126,113 @@ snapshot_not_a_reading_probe_test    verdict_must_gate_probe_test
 *   §6.5 四項量測：拆開後根物件的實際形／`#cached` 固化在定義側還是觀測側／
     **`#blur` 的 CAID 是否真的含視界參數**／新舊標準根 digest
 
+### 3.1 交付方回填（2026-08-17；Repair 1 完成）
+
+以下是最終樹的自檢證據。第一次受限環境全跑出現的 TCP `Operation not permitted` 不列入
+產品結果；最終輪以可 bind 本機 TCP 的同一棵樹重跑。
+
+#### §6.1 全跑原始結果
+
+本輪接單時的原始基線就是 §2 所載；Repair 1 最終輪：
+
+```
+$ cargo test --workspace --no-fail-fast --quiet
+[exit 0]
+
+$ awk '/^test result:/ { suites += 1; passed += $4; failed += $6; ignored += $8 }
+       END { print suites, passed, failed, ignored }' <raw-output>
+201 1964 0 0
+```
+
+完整原始輸出共 3,421 行／102,128 bytes，施工環境留於
+`/tmp/nlang-q032-repair1-workspace.out`。
+
+#### §6.3 genesis seed 對照
+
+```
+$ cargo test -p nlang-interpreter --test genesis_test --quiet
+running 11 tests
+...........
+test result: ok. 11 passed; 0 failed
+```
+
+以 `a71a69b^..a71a69b` 的 `crates/interpreter/src/genesis.rs` 為新舊對照；26 個 seed 中 8 個因
+新的標準根投影而移動，另外 18 個未變：
+
+| seed | 舊 CAID digest | 新 CAID digest |
+| :-- | :-- | :-- |
+| `~%Math` | `480f9e87d91fe53267b719ddfa33522486d9fdf1bb51456892ad9804dc6b2d6f` | `cc23f6843cb0b7c0f3c0dcfe2e9917e06bf1c52a2891d9ad34670d95bd76362a` |
+| `~%Discovery` | `1cfb41b083aeedd1c0acbe2c6a153809006ee30f8af6aa7b12f7aef7cb34d295` | `b65ddfc504fa3c5cc2f5b8bb8d91070b768eb96a0b6b22cbf9cfa6c6ead34e6e` |
+| `~%Time` | `783cf3bba9a6c40b8c5c123fd9c19167da88b4e6ba2d6cbca5d6563644761e50` | `ca9e5210723da6734b4639b97a198e73a33e193410b20db6a906f457a8475ec8` |
+| `~%Io` | `e620bfad72ec3142d4ffbb7d37955496d831e47566551a3609df61d1a47f7590` | `34b279849f01015b68bb7b41455c073b52e7aded96deec8b835b6d6c9b70da89` |
+| `~%Env` | `361d79419a1f56a72f923115812360c8aee25a35f47163068223f13acfcef334` | `94e3cad273f361c3565773a3aa47580553e6e0da5c44d7cbc68b1f090e0b80fa` |
+| `~%Process` | `e2720f7dd95ce94e03f1d33b724d13a16c1075dcb95b794ebe79f29c5cb25ada` | `2a984173c4d44439b7af4c09c548a53e9ac85bfc9bc63454ac3b9a4942346a35` |
+| `~%Query` | `ed1e83ba547dd53732d265531fd219627d5e24bd9583f3255b8a255cac173c3c` | `8461756f5bd6cc7a35eb63021a6a82cc8734fc2a598f2fd101d9d31cabe84028` |
+| `~%Csv` | `e27bde26d0e45265e5fe7e6d95828e9b1844fc7b1063b0e54334a6cd74332f8a` | `a0c4b42e10550f6c77ff36d00331e2390ac6912d9afb65913d52a73ba824c681` |
+
+#### §6.4 受影響測試分類（最終）
+
+| 基線失敗／受影響處 | 類 | 原先鎖住的行為 | 本輪處置／結論 |
+| :-- | :-- | :-- | :-- |
+| `every_byte_or_none` 的 `p1_the_root_caid_does_not_move` | A | 根 CAID 為拆開前的定值 | 根已改為殘差位址；fixture 改為新值 `7d15268e…`。 |
+| `print_what_can_be_read` 的 `p4_root_caid_does_not_move` | A | 同一拆開前根 CAID | 同上，fixture 改為 `7d15268e…`。 |
+| `every_byte_or_none` 的 `r5_the_store_format_says_it_changed`、`atomic_write` 的 format fixture | A | 新倉仍宣告 `encoding=3` | O63 首次撥動容器編碼軸，預期為 `encoding=4`。 |
+| `a_value_not_a_recipe` 的根物件挑選 helper | A | 「最大物件」必是使用者根 | 拆開後標準根的 packed 物件可更大；改由 HEAD commit 的 `root.digest` 指到真正根。原有 11 項斷言仍全綠。 |
+| `held_but_unopenable` 的 `p2_refine_aborts_when_the_shadow_scan_meets_a_root_it_cannot_open` | A（已證明） | `!contains("Combo")` 必是 commit 物件 | packed 標準根使此推論失效，導致測試把字串物件當 commit；改以 JSON `root` 欄位辨識 commit，Q-031 的 6 項斷言全綠。 |
+| `knob_that_does_nothing`、`limit_you_cannot_choose` 的 plain-root literal | A | O41 後的舊根定值 `8698d297…` | O58 刻意拆根；更新為最終值 `fcfcf264…`，其餘關係斷言不動。 |
+| `snapshot_not_a_reading` 的 value-only／morphism root literal | A | O42/M4 後的舊根定值 | O58 刻意拆根；更新為 `483a1b42…`／`76ae74dd…`。 |
+| `name_points_at_remedy::p2_fuel_blur_caid_holds` | A | 拆根前的固定 blur CAID | §6.5 證實視界參數與根上下文在身分裡；更新 literal 為 `de65bce3…`，跨程序相等關係保留。 |
+| `slash_shadow_cli::red_cli_slash_add_shadow_is_loud` | A | `/add` 與內嵌標準根衝突、必須 loud fail | O58 §2.4 明裁四個孤兒可遮蔽；改釘使用者 overlay 成功，未加名字特例。 |
+| `verdict_must_gate` 的 6-object literals | A | 倉只有 3 commits ＋ 3 roots | O58 使被指名標準根成為第 7 個真物件；改釘 7/7/0，權限與 verdict 斷言不動。 |
+| `a_store_you_did_not_write::r3` 的「先寫 encoding-4、再改標籤為 3」fixture | A | 改宣告即可構造舊倉 | 那會構造說謊容器；fixture 改為在第一筆值寫入前選 encoding 3，並釘讀不改宣告。真舊倉另由 §3.2 證明。 |
+| `effect_cached::red_fetch_multi_active_collapses` | B | 觀測投影只需改 `ComboVal.effect` | O61 新增耐久 `%effect` 後也須在觀測側移除其耐久拼法，否則它冒充顯式欄位而被再次傳染。修後 11/11。 |
+| `local_gc` 的 reachability control／clean-store test | B（含 harness 同步） | walker 只認一般 `digest` 邊 | O58 sentinel 是到標準根物件的真 CAS 邊；產品 walker 與獨立量測器都補上該邊，標準根不再被當垃圾。 |
+| 真 v0.25.0 舊倉 CAID mismatch | B | 只補回頂層標準座標就是完整舊讀法 | encoding 3 還須遞迴 hydrate system table，寫入亦須走 O61 前的 legacy CAS 投影；修後見 §3.2。 |
+
+最終沒有 C 類；上述修改後全 workspace `0 failed`。
+
+#### §6.5 四項量測
+
+* 根物件實際形：新根物件是使用者殘差的 `Combo`，帶有
+  `__nlang_system_digest = 2da5b71371649291cfa5dc5d0cd019464d248e98645b3901938e1c08d2172c2c`
+  的指名依賴；標準根本體不再內嵌於它。
+* `#cached`：`solidify_effects` 是**觀測投影側**使用的正規化；`#cached` 不可被當成
+  `#pure` 一併抹除，仍保有 §4.2.4 的固化語義。
+* `#blur`：其 `blur_caid` 納入 `HorizonParams::encode_chs` 的 digest，故 CAID **含** fuel、
+  strategy、max branches、max unification depth、max lifting、max pattern 等視界參數；
+  `fuel_remaining` 不在該編碼中。
+* 標準根 digest：舊 `65f52e2da48baa550d7340c0fdc214fd1f9925577a96ffec59bc34f8b2bcbe72`；
+  新 `2da5b71371649291cfa5dc5d0cd019464d248e98645b3901938e1c08d2172c2c`。
+
+補記：當前二進位版本為 `oo v0.25.0-611-g5b9a04e`。
+
+其餘原始自檢輸出：
+
+```
+$ python3 scripts/run-conformance.py --engine /home/gali/nlang/nlang-tools/target/debug/oo \
+    --corpus /home/gali/nlang/nlang-spec/conformance
+143 vectors, 143 pass, 0 fail
+
+$ cargo test -p nlang-interpreter --test genesis_test --quiet
+test result: ok. 11 passed; 0 failed; 0 ignored
+
+$ cargo test -p oo --test the_half_that_was_never_written_probe_test --quiet
+test result: ok. 8 passed; 0 failed; 0 ignored
+```
+
+### 3.2 O63 真二進位跨版本矩陣
+
+儀器：舊 `/home/gali/nlang-baselines/v0.25.0-verify-target/debug/oo`（`oo v0.25.0`）；
+新 `/home/gali/nlang/nlang-tools/target/debug/oo`（`oo v0.25.0-611-g5b9a04e`）。
+
+| 步驟 | 結果 |
+| :-- | :-- |
+| 舊引擎建倉、提交 | commit `4bcfdb0f…`，root `7a6a82df…`，標準根 `65f52e2d…`。 |
+| 新引擎讀舊倉 | `status` 回 `(available)` 且 static；`log` 正常列出舊提交，零 CAID mismatch。 |
+| 新引擎寫舊倉 | 追加 commit `f11d64fd…` 成功；容器明確遷為 `layout=2`／`encoding=3`，沒有冒充 encoding 4。 |
+| 位址不動 | 舊 root `7a6a82df…` 的物件路徑仍在；新引擎 `log` 同時讀回新舊兩筆。 |
+| 反向控制 | 舊 v0.25.0 再讀新引擎追加後的倉，`status` 與兩筆 `log` 仍全綠。 |
+
 ---
 
 ## 4. 完成條件（本輪）
@@ -136,6 +243,9 @@ snapshot_not_a_reading_probe_test    verdict_must_gate_probe_test
 3.  本弧探針仍 **8/8、0 ignored**，該檔仍**只少四個 `#[ignore]`**。
 4.  §3 四項自檢補齊，附原始輸出。
 5.  `git diff` 不含任何 `spec/` 或 `meta/` 下的檔案。
+
+**交付方最終自檢：1–5 全部達成。** 探針相對 `a71a69b^` 的唯一變更仍是四行
+`#[ignore]` 被移除；Repair 1 沒有再碰該檔。`git diff --check` 通過，diff 無 `spec/`／`meta/`。
 
 ---
 

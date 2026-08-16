@@ -123,11 +123,12 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// The `.oo/` layout and the CAS encoding are independent declarations.
 /// Legacy stores used one bare number for both; new stores name each axis.
 pub const STORE_LAYOUT_VERSION: u32 = 2;
-pub const OBJECT_ENCODING_VERSION: u32 = 3;
+pub const OBJECT_ENCODING_VERSION: u32 = 4;
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 pub struct ObjectStore {
     root: PathBuf,
+    encoding: u32,
 }
 
 fn ensure_supported_encoding(v: u32) -> Result<()> {
@@ -150,6 +151,30 @@ fn has_cas_objects(path: &Path) -> bool {
 }
 
 impl ObjectStore {
+    pub fn encoding_version(&self) -> u32 {
+        self.encoding
+    }
+
+    fn declared_encoding(base_dir: &Path) -> Result<u32> {
+        let oo = base_dir.join(".oo");
+        let raw = fs::read_to_string(oo.join("format")).map_err(|_| anyhow::anyhow!(
+            "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
+        ))?;
+        let declaration = raw.trim();
+        if declaration == format!("layout={STORE_LAYOUT_VERSION}") {
+            let objects = fs::read_to_string(oo.join("objects.format")).map_err(|_| anyhow::anyhow!(
+                "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open"
+            ))?;
+            objects.trim().strip_prefix("encoding=").and_then(|v| v.parse::<u32>().ok()).ok_or_else(|| {
+                anyhow::anyhow!("object encoding declaration {:?} is not supported", objects.trim())
+            })
+        } else if let Ok(v) = declaration.parse::<u32>() {
+            Ok(v)
+        } else {
+            anyhow::bail!("store layout declaration {declaration:?} is not supported")
+        }
+    }
+
     /// Verify declarations without writing them. An absent declaration carries
     /// no trustworthy information about a store the engine did not create.
     pub fn ensure_format(base_dir: &Path) -> Result<()> {
@@ -195,11 +220,16 @@ impl ObjectStore {
         } else {
             Self::ensure_format(base_dir)?;
         }
+        let encoding = if new_store {
+            OBJECT_ENCODING_VERSION
+        } else {
+            Self::declared_encoding(base_dir)?
+        };
         let root = oo.join("objects");
         if !root.exists() {
             fs::create_dir_all(&root)?;
         }
-        Ok(Self { root })
+        Ok(Self { root, encoding })
     }
 
     /// Digest path for an object (sha256/ab/cdef…).
@@ -267,7 +297,11 @@ impl ObjectStore {
     }
 
     pub fn put_value(&self, value: &Value) -> Result<ContentHash> {
-        let durable = value.for_cas_storage();
+        let durable = if self.encoding < 4 {
+            value.for_legacy_cas_storage()
+        } else {
+            value.for_cas_storage()
+        };
         let hash = durable.content_hash();
         let content = canonical_cas_json(&durable)?;
         self.write_object(&hash, content)?;
@@ -278,6 +312,19 @@ impl ObjectStore {
     /// immutable for one engine build, so history names that table by content
     /// digest rather than copying its body into every root.
     pub fn put_root(&self, root: &ComboVal, standard: &ComboVal) -> Result<ContentHash> {
+        if self.encoding < 4 {
+            // Encoding 3 named roots by their hydrated body.  The container
+            // declaration, not the standard-root table, selects this rule.
+            let mut logical_root = root.clone();
+            hydrate_standard_root(&mut logical_root, standard);
+            let value = Value::Combo(logical_root);
+            let hash = value.content_hash();
+            let mut durable = value.for_legacy_cas_storage();
+            let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
+            project_standard_root(durable_root, standard);
+            self.write_object(&hash, canonical_cas_json(&durable)?)?;
+            return Ok(hash);
+        }
         // The named table is a first-class CAS object.  Its digest is the
         // sentinel's dependency and it must be fetchable on a fresh store.
         let standard = Value::Combo(standard.clone()).for_cas_storage();
@@ -317,23 +364,24 @@ impl ObjectStore {
             let Value::Combo(root) = &value else { unreachable!() };
             resolve_standard_root(root, standards, hash)?;
         }
+        if self.encoding < 4 && has_standard {
+            let mut hydrated = value.clone();
+            let Value::Combo(ref mut hydrated_root) = hydrated else { unreachable!() };
+            let standard = resolve_standard_root(hydrated_root, standards, hash)?.clone();
+            // Encoding 3's logical value had every nested system table
+            // hydrated before its address was computed.  Restoring only the
+            // top-level standard coordinates is not the historical rule.
+            hydrate_system_table(hydrated_root, standards, hash)?;
+            hydrate_standard_root(hydrated_root, &standard);
+            let recomputed = hydrated.content_hash();
+            if !value_address_matches(hash, &recomputed) {
+                return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
+            }
+            let Value::Combo(root) = hydrated else { unreachable!() };
+            return Ok(root);
+        }
         let recomputed = value.content_hash();
         if !value_address_matches(hash, &recomputed) {
-            // Format-3 before O58 wrote the projected bytes but named them by
-            // the hydrated value.  Keep that historical read path only when
-            // re-hydration actually proves the requested old address; new
-            // roots are accepted above without ever receiving these fields.
-            if has_standard {
-                let mut hydrated = value.clone();
-                let Value::Combo(ref mut hydrated_root) = hydrated else { unreachable!() };
-                let standard = resolve_standard_root(hydrated_root, standards, hash)?;
-                hydrate_standard_root(hydrated_root, standard);
-                let hydrated_hash = hydrated.content_hash();
-                if value_address_matches(hash, &hydrated_hash) {
-                    let Value::Combo(root) = hydrated else { unreachable!() };
-                    return Ok(root);
-                }
-            }
             return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
         }
         let Value::Combo(root) = value else { unreachable!() };
@@ -366,21 +414,24 @@ impl ObjectStore {
                 resolve_standard_root(root, &engine.standard_roots, hash)?;
             }
         }
-        let recomputed = value.content_hash();
-        if !value_address_matches(hash, &recomputed) {
-            if let Value::Combo(root) = &value {
+        if self.encoding < 4 {
+            if let Value::Combo(root) = &mut value {
                 if root.system.contains_key(SYSTEM_DIGEST_KEY) {
                     let engine = crate::Ouroboros::new_in_memory();
-                    let mut hydrated = value.clone();
-                    let Value::Combo(ref mut hydrated_root) = hydrated else { unreachable!() };
-                    let standard = resolve_standard_root(hydrated_root, &engine.standard_roots, hash)?;
-                    hydrate_standard_root(hydrated_root, standard);
-                    let hydrated_hash = hydrated.content_hash();
-                    if value_address_matches(hash, &hydrated_hash) {
-                        return Ok(hydrated);
+                    let standard =
+                        resolve_standard_root(root, &engine.standard_roots, hash)?.clone();
+                    hydrate_system_table(root, &engine.standard_roots, hash)?;
+                    hydrate_standard_root(root, &standard);
+                    let recomputed = value.content_hash();
+                    if !value_address_matches(hash, &recomputed) {
+                        return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
                     }
+                    return Ok(value);
                 }
             }
+        }
+        let recomputed = value.content_hash();
+        if !value_address_matches(hash, &recomputed) {
             return Err(StoreReadError::CaidMismatch {
                 requested: hash.clone(),
                 recomputed,
@@ -481,7 +532,7 @@ impl ObjectStore {
         if layout.trim() != format!("layout={STORE_LAYOUT_VERSION}") {
             atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;
         }
-        atomic_write(&oo.join("objects.format"), format!("encoding={OBJECT_ENCODING_VERSION}\n"))
+        atomic_write(&oo.join("objects.format"), format!("encoding={}\n", self.encoding))
     }
 
     /// Read raw bytes at the digest path. Absence → `NotFound` (not IO prose).
@@ -588,6 +639,70 @@ fn resolve_standard_root<'a>(
         }
         .into()
     })
+}
+
+/// Encoding 3 represented every Combo system table by a digest sentinel on
+/// disk but computed the address from the recursively hydrated logical value.
+/// This is deliberately selected by the container gate, never by which
+/// standard-root digest happens to be named.
+fn hydrate_system_table(
+    combo: &mut ComboVal,
+    standards: &StandardRootSet,
+    requested: &ContentHash,
+) -> Result<()> {
+    if combo.system.contains_key(SYSTEM_DIGEST_KEY) {
+        let standard = resolve_standard_root(combo, standards, requested)?;
+        combo.system = standard.system.clone();
+    }
+    for value in combo
+        .data
+        .values_mut()
+        .chain(combo.types.values_mut())
+        .chain(combo.rules.values_mut())
+        .chain(combo.meta.values_mut())
+        .chain(combo.system.values_mut())
+        .chain(combo.local.values_mut())
+        .chain(combo.pending_spreads.iter_mut())
+    {
+        hydrate_systems_in_value(value, standards, requested)?;
+    }
+    Ok(())
+}
+
+fn hydrate_systems_in_value(
+    value: &mut Value,
+    standards: &StandardRootSet,
+    requested: &ContentHash,
+) -> Result<()> {
+    match value {
+        Value::Combo(combo) => hydrate_system_table(combo, standards, requested),
+        Value::Union(values) => {
+            for value in values {
+                hydrate_systems_in_value(value, standards, requested)?;
+            }
+            Ok(())
+        }
+        Value::Thunk {
+            closure, context, ..
+        } => {
+            for frame in closure {
+                hydrate_system_table(std::sync::Arc::make_mut(frame), standards, requested)?;
+            }
+            if let Some(context) = context {
+                hydrate_systems_in_value(context, standards, requested)?;
+            }
+            Ok(())
+        }
+        Value::Range { start, end, step } => {
+            hydrate_systems_in_value(start, standards, requested)?;
+            hydrate_systems_in_value(end, standards, requested)?;
+            if let Some(step) = step {
+                hydrate_systems_in_value(step, standards, requested)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Compact, lexically ordered CAS JSON. The typed format-2 `Value` projection

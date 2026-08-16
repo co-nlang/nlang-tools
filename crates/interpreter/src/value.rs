@@ -1848,6 +1848,16 @@ impl Value {
         projected
     }
 
+    /// Encoding 1--3 projection, before O61 made propagated effects durable.
+    /// The container format selects this path; using the current projection
+    /// while retaining an old encoding declaration would make the declaration
+    /// lie and would move addresses in an existing store.
+    pub(crate) fn for_legacy_cas_storage(&self) -> Self {
+        let mut projected = self.clone();
+        projected.mark_spans_unknown();
+        projected
+    }
+
     /// The propagated effect is runtime state, but durable identity records it
     /// as the ordinary hashed `%effect` meta field.  An absent field is the
     /// canonical spelling of `#pure`; every other tag, including `#cached`,
@@ -2602,6 +2612,7 @@ impl Value {
         match self {
             Value::Atom(k, e, r) => Value::Atom(k, Self::solidify_active_effect(e), r),
             Value::Combo(mut c) => {
+                let was_active = c.effect.has_active();
                 c.effect = Self::solidify_active_effect(c.effect);
                 for map in [
                     &mut c.data,
@@ -2614,6 +2625,15 @@ impl Value {
                     for (_, v) in map.iter_mut() {
                         *v = std::mem::replace(v, Value::Top).solidify_effects();
                     }
+                }
+                // O61's `%effect` field is the durable identity spelling.
+                // Once decoded for observation, ComboVal.effect is again the
+                // runtime source of truth and the field must not masquerade as
+                // an explicit user override (which navigation would re-taint
+                // with the carrier's effect). The `.%effect` lens below then
+                // returns one pure `#cached` tag as §4.2.4 requires.
+                if was_active || c.effect.contains(EffectTag::Cached) {
+                    c.meta.shift_remove("effect");
                 }
                 for v in c.pending_spreads.iter_mut() {
                     *v = std::mem::replace(v, Value::Top).solidify_effects();

@@ -708,7 +708,14 @@ impl Universe {
             Value::Combo(root) => root,
             _ => return Err(anyhow::anyhow!("Commit observation did not produce a root")),
         };
-        let standard = engine.root_with_system();
+        // O63: the container encoding selects the root-address rule.  An
+        // encoding-3 store keeps the standard table it already names; a new
+        // encoding-4 store begins with this engine's current table.
+        let standard = if engine.store.encoding_version() < 4 {
+            self.standard_root.clone()
+        } else {
+            engine.root_with_system()
+        };
         let root_hash = engine.store.put_root(&new_root, &standard)?;
         // R1: next commit after a rollback records the abandoned head(s) in
         // meta — never in values. Consumed from `.oo/abandoned` and cleared.

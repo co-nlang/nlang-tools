@@ -298,13 +298,14 @@ fn p2_a_horizon_knob_belongs_to_the_snapshot() {
 
 /// P3 — the breaking scope is bounded: a universe with no blur does not move.
 ///
-/// This arc changes the identity encoding of `Value::Blur` (bn_serial 0xFD)
-/// and nothing else. The digest is the measured v0.16.0 value.
+/// This arc changes the identity encoding of `Value::Blur` (bn_serial 0xFD).
+/// Q-032 later separated the standard root and intentionally moved every root;
+/// the digest is the measured post-Q-032 value.
 #[test]
 fn p3_a_universe_without_a_blur_keeps_its_root() {
     assert_eq!(
         committed_root("p3", "x: 1\ny: {{a: 2}}\n"),
-        "4c45e486d3a90cd75fad533a77e7ad3ae831ed2dbdae3bbe8d5d19c93720069f",
+        "483a1b42236b90586131aae5d200ba3412026bab8521ab2cb7969a57ba5cb069",
         "a universe containing no blur changed its root CAID; this arc's \
          breaking scope is blur-bearing universes only"
     );
@@ -546,7 +547,7 @@ fn p4_a_unify_side_blur_has_a_literal_address() {
 fn p5_a_morphism_bearing_universe_has_its_new_root() {
     assert_eq!(
         committed_root("p5", "inc: (x) -> x + 1\nv: 5\n"),
-        "5529bc46ab585d95efe0684e4747a23182646484828f892dbc0b4edbca4fc6d2",
+        "76ae74ddfbd21a5eb244f42cc10bd74d2baf1b020d7c5ead640df095a617006e",
         "a universe holding a morphism moved again — M4's span-free Code \
          identity is the last change that was allowed to move it"
     );

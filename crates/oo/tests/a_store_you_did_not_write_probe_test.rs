@@ -328,13 +328,29 @@ fn r3_a_bare_number_is_read_as_the_old_conflated_counter() {
         "a fresh store still writes the bare number {fresh_decl:?}. Then a bare          number cannot mean \"written by the old scheme\", and the legacy rule          has nothing to key on"
     );
 
-    // Half two: a store written by v0.21.0 — one bare number, no sibling file —
-    // still opens, by a STATED rule (layout 1, encoding N), and reading it does
-    // not rewrite it.
-    let d = committed("r3-legacy", SRC);
+    // Half two: enter the legacy route before any value is written. Relabelling
+    // encoding-4 bytes after the fact would not construct an old store; it
+    // would construct a lying container and a CAID mismatch. The non-CAS
+    // anchor makes `init` treat this as an existing declared container, then
+    // the ordinary CLI writes its first commit through encoding 3.
+    let d = fresh("r3-legacy");
+    std::fs::create_dir_all(d.join(".oo").join("objects")).unwrap();
     std::fs::write(layout_file(&d), "3\n").unwrap();
     let _ = std::fs::remove_file(encoding_file(&d));
+    std::fs::write(d.join(".oo").join("objects").join(".legacy-fixture-anchor"), b"")
+        .unwrap();
+    std::fs::write(d.join("u.n"), SRC).unwrap();
+    oo(&d, &["evolve", "u.n"]);
+    let commit = oo(&d, &["commit", "-m", "legacy probe"]);
+    assert!(
+        commit.contains("Commit successful"),
+        "the legacy write path could not create its fixture: {commit}"
+    );
 
+    // The write is allowed to split the declaration into its named axes; it
+    // must retain encoding 3. The following read must then be non-mutating.
+    assert_eq!(read(&encoding_file(&d)).as_deref(), Some("encoding=3"));
+    let declaration_before_read = read(&layout_file(&d));
     let out = oo(&d, &["log"]);
     assert!(
         out.contains("commit hash:") && !out.to_lowercase().contains("error"),
@@ -342,8 +358,8 @@ fn r3_a_bare_number_is_read_as_the_old_conflated_counter() {
 stores is not optional — every store in existence today is one: {out}"
     );
     assert_eq!(
-        read(&layout_file(&d)).as_deref(),
-        Some("3"),
+        read(&layout_file(&d)),
+        declaration_before_read,
         "reading a legacy store rewrote its declaration. Reading is not \
 migrating (O53)"
     );

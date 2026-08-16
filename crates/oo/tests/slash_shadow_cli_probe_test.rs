@@ -33,18 +33,14 @@ fn run_observe(content: &str, observe: &str) -> (i32, String, String) {
 }
 
 #[test]
-fn red_cli_slash_add_shadow_is_loud() {
-    // today: exit 0, stdout "_|_ (%cause: #conflict)", stderr silent
-    let (code, _stdout, stderr) = run_observe("/add: (x -> (y -> x + y))\nz: 42\n", "z");
-    assert_ne!(code, 0, "root-builtin shadow must not exit 0");
-    assert!(
-        stderr.contains("Evolution Conflict"),
-        "stderr must use the same loud label as data conflicts, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("add"),
-        "stderr must name the colliding coordinate, got: {stderr}"
-    );
+fn q032_root_builtin_shadow_is_now_an_overlay() {
+    // O58 puts the user root before the separate standard-root lookup layer.
+    // `/add` is therefore an ordinary user overlay, not a collision with a
+    // coordinate inherited into the same Combo.
+    let (code, stdout, stderr) =
+        run_observe("/add: (x -> (y -> x + y))\nz: 42\n", "z");
+    assert_eq!(code, 0, "the user overlay was refused: {stderr}");
+    assert_eq!(stdout.trim(), "42");
 }
 
 #[test] // ACTIVE pin: data-axis conflict UX — the shape G2-S aligns with

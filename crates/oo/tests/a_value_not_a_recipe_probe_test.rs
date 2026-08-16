@@ -103,11 +103,15 @@ fn objects(dir: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 }
 
 fn root_object(dir: &Path) -> (std::path::PathBuf, String) {
-    let (p, b) = objects(dir)
-        .into_iter()
-        .max_by_key(|(_, b)| b.len())
-        .expect("no objects at all — see C0");
-    (p, String::from_utf8_lossy(&b).into_owned())
+    let head = std::fs::read_to_string(dir.join(".oo/HEAD")).expect("HEAD exists");
+    let digest = head.trim().rsplit(':').next().expect("HEAD is a CAID");
+    let commit_path = dir.join(".oo/objects/sha256").join(&digest[..2]).join(&digest[2..]);
+    let commit: serde_json::Value = serde_json::from_slice(&std::fs::read(&commit_path).unwrap()).unwrap();
+    let root = commit["root"]["digest"].as_array().expect("commit root digest");
+    let digest: String = root.iter().map(|n| format!("{:02x}", n.as_u64().unwrap())).collect();
+    let path = dir.join(".oo/objects/sha256").join(&digest[..2]).join(&digest[2..]);
+    let body = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+    (path, body)
 }
 
 /// The balanced JSON value that follows `"<key>":`, starting at `from`.
