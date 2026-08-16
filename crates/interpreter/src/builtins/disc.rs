@@ -175,19 +175,26 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 // (observation projection). Store remains raw (get_value).
                 let observe = |val: Value| val.solidify_effects();
 
-                /// Classify a store/peer read: verified value, mismatch (record), or absence.
+                /// Classify a store/peer read without conflating a held root
+                /// that this engine cannot open with an absent object.
+                enum LocalRead {
+                    Mismatch,
+                    Absent,
+                    StandardRootUnavailable,
+                }
+
                 fn try_local(
                     oo: &Ouroboros,
                     store: &ObjectStore,
                     hash: &ContentHash,
                     source: &str,
-                ) -> Result<Value, bool /* saw_mismatch */> {
+                ) -> Result<Value, LocalRead> {
                     match store.get_value(hash) {
                         Ok(v) => Ok(v),
                         Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
                             Some(crate::storage::StoreReadError::CaidMismatch { .. }) => {
                                 oo.record_integrity(hash, source, crate::IntegrityKind::Mismatch);
-                                Err(true)
+                                Err(LocalRead::Mismatch)
                             }
                             Some(crate::storage::StoreReadError::ObjectUndecodable { .. }) => {
                                 oo.record_integrity(
@@ -195,10 +202,13 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                     source,
                                     crate::IntegrityKind::Undecodable,
                                 );
-                                Err(true)
+                                Err(LocalRead::Mismatch)
                             }
                             Some(crate::storage::StoreReadError::NotFound { .. }) | None => {
-                                Err(false)
+                                Err(LocalRead::Absent)
+                            }
+                            Some(crate::storage::StoreReadError::StandardRootUnavailable { .. }) => {
+                                Err(LocalRead::StandardRootUnavailable)
                             }
                         },
                     }
@@ -216,8 +226,9 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             Peer::Local(store) => {
                                 match try_local(oo, &store, &hash, &format!("peer:{name}")) {
                                     Ok(val) => return observe(val),
-                                    Err(true) => return BottomCause::CaidMismatch.into(),
-                                    Err(false) => {}
+                                    Err(LocalRead::Mismatch) => return BottomCause::CaidMismatch.into(),
+                                    Err(LocalRead::StandardRootUnavailable) => return BottomCause::Conflict.into(),
+                                    Err(LocalRead::Absent) => {}
                                 }
                             }
                             Peer::Remote(addr) => {
@@ -236,6 +247,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     // Sweep: continue past lying sources (Q1); only verified bytes win.
                     let mut results = Vec::new();
                     let mut saw_mismatch = false;
+                    let mut saw_standard_root_unavailable = false;
                     // Peer said #not_found (honest absence). Distinct from a peer
                     // that refused / does not implement / spoke an unknown dialect.
                     let mut saw_peer_not_found = false;
@@ -243,8 +255,9 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
 
                     match try_local(oo, &oo.store, &hash, "local") {
                         Ok(val) => results.push(observe(val)),
-                        Err(true) => saw_mismatch = true,
-                        Err(false) => {}
+                        Err(LocalRead::Mismatch) => saw_mismatch = true,
+                        Err(LocalRead::StandardRootUnavailable) => saw_standard_root_unavailable = true,
+                        Err(LocalRead::Absent) => {}
                     }
 
                     // Drop automatic slots that are no longer exact-ad eligible
@@ -264,8 +277,9 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             Peer::Local(store) => {
                                 match try_local(oo, &store, &hash, &format!("peer:{pname}")) {
                                     Ok(val) => results.push(observe(val)),
-                                    Err(true) => saw_mismatch = true,
-                                    Err(false) => {}
+                                    Err(LocalRead::Mismatch) => saw_mismatch = true,
+                                    Err(LocalRead::StandardRootUnavailable) => saw_standard_root_unavailable = true,
+                                    Err(LocalRead::Absent) => {}
                                 }
                             }
                             Peer::Remote(addr) => {
@@ -324,6 +338,8 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         // then a lone protocol answer from the other end; else miss.
                         return if saw_mismatch {
                             BottomCause::CaidMismatch.into()
+                        } else if saw_standard_root_unavailable {
+                            BottomCause::Conflict.into()
                         } else if saw_peer_not_found {
                             BottomCause::MissingKey.into()
                         } else if let Some(c) = peer_protocol {

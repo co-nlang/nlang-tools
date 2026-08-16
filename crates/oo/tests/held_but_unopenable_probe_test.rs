@@ -275,7 +275,6 @@ fn c1_an_operand_that_is_genuinely_absent_still_lets_refine_proceed() {
 /// it took the "not held, opaque" arm and the geometric monotonicity check
 /// never ran -- the fail-open that site's own comment names.
 #[test]
-#[ignore = "baseline: `Refine commit: …` and HEAD moves — measured 2026-08-16 on v0.24.1"]
 fn p1_refine_refuses_an_operand_it_holds_but_cannot_open() {
     let d = store("p1");
     let planted = plant_unopenable_root(&d);
@@ -304,7 +303,6 @@ fn p1_refine_refuses_an_operand_it_holds_but_cannot_open() {
 /// O59-B: abort the whole operation and say so. A scan that cannot finish
 /// gives an answer that is wrong in a way its caller cannot see.
 #[test]
-#[ignore = "baseline: `Refine commit: …`, HEAD moves, nothing said — measured 2026-08-16 on v0.24.1"]
 fn p2_refine_aborts_when_the_shadow_scan_meets_a_root_it_cannot_open() {
     let d = store("p2");
     let _head_caid = mixed_history(&d);
@@ -338,7 +336,6 @@ fn p2_refine_aborts_when_the_shadow_scan_meets_a_root_it_cannot_open() {
 /// The assertion is the difference itself, not either answer -- naming what
 /// each should be would pin a spelling this arc has not ruled on.
 #[test]
-#[ignore = "baseline: both answers are identical — measured 2026-08-16"]
 fn p3_a_local_fetch_tells_unopenable_apart_from_absent() {
     use nlang_interpreter::Ouroboros;
     let d = store("p3");
@@ -374,7 +371,6 @@ fn p3_a_local_fetch_tells_unopenable_apart_from_absent() {
 /// The status must NOT change -- REAL_02 §130 forbids the status set growing,
 /// and the caller's remedy really is to ask a different node.
 #[test]
-#[ignore = "baseline: answers `#not_held` — measured 2026-08-16 on v0.24.1"]
 fn p4_the_wire_does_not_claim_absence_for_bytes_the_node_holds() {
     use std::io::{Read, Write};
     use std::net::TcpStream;
