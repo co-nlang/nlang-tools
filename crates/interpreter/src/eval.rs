@@ -766,6 +766,16 @@ impl Ouroboros {
                         }
                     }
                 }
+                if found.is_none() {
+                    if let Some(v) = ctx.standard_root.get_field(first) {
+                        found = Some(v.clone());
+                    } else {
+                        let ln = format!("/{}", first);
+                        if let Some(v) = ctx.standard_root.get_field(&ln) {
+                            found = Some(v.clone());
+                        }
+                    }
+                }
                 if let Some(ref s) = ctx.staged {
                     if let Some(v) = s.get_field(first) {
                         found = Some(v.clone());

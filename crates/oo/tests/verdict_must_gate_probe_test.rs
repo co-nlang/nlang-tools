@@ -235,12 +235,16 @@ fn inode(p: &Path) -> u64 {
 fn c1_untouched_store_is_whole_and_gc_collects_nothing() {
     let d = repo_with_history("c1", 3);
     let before = digests(&d);
-    assert_eq!(before.len(), 6, "expected 3 commits + 3 roots: {before:?}");
+    assert_eq!(
+        before.len(),
+        7,
+        "expected 3 commits + 3 roots + the named standard root: {before:?}"
+    );
 
     let (out, ok) = oo_raw(&d, &["gc", "--grant", "gc"]);
     assert!(ok, "gc failed on a healthy store: {out}");
     assert!(
-        out.contains("6 objects, 6 reachable, 0 collectable"),
+        out.contains("7 objects, 7 reachable, 0 collectable"),
         "healthy store did not read as fully reachable: {out}"
     );
     assert_eq!(
@@ -546,7 +550,7 @@ fn p4_gc_still_requires_its_grant() {
     );
     assert_eq!(
         digests(&d).len(),
-        6,
+        7,
         "an ungranted gc removed objects anyway"
     );
 }

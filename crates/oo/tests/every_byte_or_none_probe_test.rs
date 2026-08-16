@@ -302,7 +302,7 @@ fn c2_the_value_survives_a_round_trip() {
 //   v0.20.0              16ba5683…  (Q-010a: span removed, identity untouched)
 //   v0.21.0              6e5ad5e3…  (Q-010b: forced at commit, closure
 //                                    narrowed, standard root by digest)
-const ROOT_CAID: &str = "6e5ad5e374ded76bfa3b3661acf8f9a5a310475c9bc2d9d1e6e25bcd19539352";
+const ROOT_CAID: &str = "7d15268ec4e9381faf732cf6a62c88678d335c523f695315c524f2ddcf038f14";
 
 #[test]
 fn p1_the_root_caid_does_not_move() {
@@ -692,7 +692,7 @@ fn r5_the_store_format_says_it_changed() {
         .expect("`.oo/objects.format` is missing — the encoding has no declaration");
     assert_eq!(
         encoding.trim(),
-        "encoding=3",
+        "encoding=4",
         "the object encoding declaration reads `{}`. New objects have no \
          `span`, and an engine that opens this store without being told the \
          encoding moved will fail on a missing field instead of saying which \

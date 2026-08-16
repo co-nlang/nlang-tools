@@ -363,7 +363,10 @@ fn p2_fuel_blur_caid_holds() {
     // the same program at the same horizon must address the same blur in every
     // process. The literal only says which blur that is today.
     const SRC: &str = "~%Config.fuel: 5\nv: <<_.>>\nout: v\n";
-    const KNOWN: &str = "3e731e0788ac0f47dec9db218007fe87ad3831687fea2b2dfc4adb54d83fd102";
+    // Q-032 separated the standard root and intentionally moved the horizon
+    // context that participates in this CAID. The cross-process relation
+    // above remains the load-bearing assertion.
+    const KNOWN: &str = "de65bce3aa8a3e59c5bb70a55b95ab858dbcb89fb6b4901b41c57f307d8576bc";
     let a = oo_run("p2a", SRC);
     let b = oo_run("p2b", SRC);
     let caid = |s: &str| -> String {

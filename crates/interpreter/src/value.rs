@@ -118,6 +118,30 @@ impl std::ops::BitOr for EffectTag {
     }
 }
 
+/// Canonical value spelling for an effect set.  Kept beside `EffectTag` so
+/// CAS projection can write `%effect` without depending on the evaluator.
+pub fn effect_tag_value(e: EffectTag) -> Value {
+    if e.is_pure() {
+        return Value::Atom(AtomKind::Tag("pure".to_string()), EffectTag::Pure, None);
+    }
+    let mut atoms = Vec::new();
+    for (tag, member) in [
+        ("io", EffectTag::IO),
+        ("nondet", EffectTag::NonDet),
+        ("state", EffectTag::State),
+        ("cached", EffectTag::Cached),
+    ] {
+        if e.contains(member) {
+            atoms.push(Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::Pure, None));
+        }
+    }
+    if atoms.len() == 1 {
+        atoms.pop().unwrap()
+    } else {
+        Value::Union(atoms)
+    }
+}
+
 impl fmt::Display for EffectTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let names = self.tag_names();
@@ -1820,7 +1844,82 @@ impl Value {
     pub fn for_cas_storage(&self) -> Self {
         let mut projected = self.clone();
         projected.mark_spans_unknown();
+        projected.materialize_effect_fields();
         projected
+    }
+
+    /// Encoding 1--3 projection, before O61 made propagated effects durable.
+    /// The container format selects this path; using the current projection
+    /// while retaining an old encoding declaration would make the declaration
+    /// lie and would move addresses in an existing store.
+    pub(crate) fn for_legacy_cas_storage(&self) -> Self {
+        let mut projected = self.clone();
+        projected.mark_spans_unknown();
+        projected
+    }
+
+    /// The propagated effect is runtime state, but durable identity records it
+    /// as the ordinary hashed `%effect` meta field.  An absent field is the
+    /// canonical spelling of `#pure`; every other tag, including `#cached`,
+    /// is written down.
+    fn materialize_effect_fields(&mut self) {
+        match self {
+            Value::Combo(combo) => {
+                for value in combo
+                    .data
+                    .values_mut()
+                    .chain(combo.types.values_mut())
+                    .chain(combo.rules.values_mut())
+                    .chain(combo.meta.values_mut())
+                    .chain(combo.system.values_mut())
+                    .chain(combo.local.values_mut())
+                    .chain(combo.pending_spreads.iter_mut())
+                {
+                    value.materialize_effect_fields();
+                }
+                if combo.effect.is_pure() {
+                    if matches!(combo.meta.get("effect"), Some(Value::Atom(AtomKind::Tag(tag), _, _)) if tag == "pure") {
+                        combo.meta.shift_remove("effect");
+                    }
+                } else {
+                    combo.meta.insert("effect".to_string(), effect_tag_value(combo.effect));
+                }
+            }
+            Value::Union(values) => {
+                for value in values {
+                    value.materialize_effect_fields();
+                }
+            }
+            Value::Range { start, end, step } => {
+                start.materialize_effect_fields();
+                end.materialize_effect_fields();
+                if let Some(step) = step {
+                    step.materialize_effect_fields();
+                }
+            }
+            Value::Blur(blur) => {
+                if let Some(body) = blur.partial_body.as_mut() {
+                    body.materialize_effect_fields();
+                }
+                for horizon in &mut blur.co_horizons {
+                    if let Some(body) = horizon.partial_body.as_mut() {
+                        body.materialize_effect_fields();
+                    }
+                }
+            }
+            Value::Thunk { closure, context, .. } => {
+                for frame in closure {
+                    let mut value = Value::Combo(std::sync::Arc::make_mut(frame).clone());
+                    value.materialize_effect_fields();
+                    let Value::Combo(combo) = value else { unreachable!() };
+                    *std::sync::Arc::make_mut(frame) = combo;
+                }
+                if let Some(context) = context {
+                    context.materialize_effect_fields();
+                }
+            }
+            _ => {}
+        }
     }
 
     fn mark_spans_unknown(&mut self) {
@@ -2513,6 +2612,7 @@ impl Value {
         match self {
             Value::Atom(k, e, r) => Value::Atom(k, Self::solidify_active_effect(e), r),
             Value::Combo(mut c) => {
+                let was_active = c.effect.has_active();
                 c.effect = Self::solidify_active_effect(c.effect);
                 for map in [
                     &mut c.data,
@@ -2525,6 +2625,15 @@ impl Value {
                     for (_, v) in map.iter_mut() {
                         *v = std::mem::replace(v, Value::Top).solidify_effects();
                     }
+                }
+                // O61's `%effect` field is the durable identity spelling.
+                // Once decoded for observation, ComboVal.effect is again the
+                // runtime source of truth and the field must not masquerade as
+                // an explicit user override (which navigation would re-taint
+                // with the carrier's effect). The `.%effect` lens below then
+                // returns one pure `#cached` tag as §4.2.4 requires.
+                if was_active || c.effect.contains(EffectTag::Cached) {
+                    c.meta.shift_remove("effect");
                 }
                 for v in c.pending_spreads.iter_mut() {
                     *v = std::mem::replace(v, Value::Top).solidify_effects();

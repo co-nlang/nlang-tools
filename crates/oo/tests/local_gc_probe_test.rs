@@ -137,7 +137,9 @@ fn refs_of(v: &serde_json::Value, follow_abandoned: bool, out: &mut Vec<String>)
                 if k == "abandoned" && !follow_abandoned {
                     continue;
                 }
-                if k == "digest" {
+                if k == "__nlang_system_digest" {
+                    refs_of_standard_digest(x, out);
+                } else if k == "digest" {
                     match x {
                         serde_json::Value::String(s) if s.len() == 64 => out.push(s.clone()),
                         serde_json::Value::Array(a) => {
@@ -163,6 +165,30 @@ fn refs_of(v: &serde_json::Value, follow_abandoned: bool, out: &mut Vec<String>)
         }
         serde_json::Value::String(s) if s.starts_with("hash:sha256:") => {
             out.push(digest_of_caid(s));
+        }
+        _ => {}
+    }
+}
+
+fn refs_of_standard_digest(v: &serde_json::Value, out: &mut Vec<String>) {
+    match v {
+        serde_json::Value::String(s)
+            if s.len() == 64
+                && s
+                    .bytes()
+                    .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) =>
+        {
+            out.push(s.to_lowercase())
+        }
+        serde_json::Value::Object(m) => {
+            for value in m.values() {
+                refs_of_standard_digest(value, out);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                refs_of_standard_digest(value, out);
+            }
         }
         _ => {}
     }

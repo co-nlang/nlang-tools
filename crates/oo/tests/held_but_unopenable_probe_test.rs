@@ -164,7 +164,12 @@ fn mixed_history(dir: &Path) -> String {
 
     let commit_path = objects(dir)
         .into_iter()
-        .find(|p| !std::fs::read_to_string(p).unwrap_or_default().contains("\"Combo\""))
+        .find(|p| {
+            serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(p).unwrap_or_default())
+                .ok()
+                .and_then(|v| v.get("root").cloned())
+                .is_some()
+        })
         .expect("harness: the store must have a commit object");
     let commit: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&commit_path).unwrap()).unwrap();
