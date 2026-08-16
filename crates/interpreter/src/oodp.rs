@@ -389,6 +389,14 @@ pub fn serve_request(
                         let body = refuse(OodpStatus::NotFound, "not_held", source_id);
                         (body, format!("OODP Miss: {hash}"))
                     }
+                    Some(StoreReadError::StandardRootUnavailable { .. }) => {
+                        let body = refuse(
+                            OodpStatus::NotFound,
+                            "standard_root_unavailable",
+                            source_id,
+                        );
+                        (body, format!("OODP unavailable standard root: {hash}"))
+                    }
                     Some(StoreReadError::CaidMismatch {
                         requested,
                         recomputed,
