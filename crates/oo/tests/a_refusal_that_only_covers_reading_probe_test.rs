@@ -199,7 +199,6 @@ fn c2_log_and_inspect_still_refuse_by_name() {
 /// root is unavailable. §6.8 third MUST says the root must not be opened;
 /// staging opens it.
 #[test]
-#[ignore = "baseline: evolve succeeds silently — measured 2026-08-16"]
 fn p1_evolve_refuses_when_the_standard_root_is_unavailable() {
     let d = unreadable("p1", "app: { k1: 1 }\n");
     std::fs::write(d.join("n.n"), "app: { k1: 1, NEW: 42 }\n").unwrap();
@@ -218,7 +217,6 @@ fn p1_evolve_refuses_when_the_standard_root_is_unavailable() {
 /// RED at the baseline: `oo commit` reports "Commit successful" on a store
 /// whose standard root is unavailable.
 #[test]
-#[ignore = "baseline: commit succeeds — measured 2026-08-16"]
 fn p2_commit_refuses_when_the_standard_root_is_unavailable() {
     let d = unreadable("p2", "app: { k1: 1 }\n");
     std::fs::write(d.join("n.n"), "app: { k1: 1, NEW: 42 }\n").unwrap();
@@ -241,7 +239,6 @@ fn p2_commit_refuses_when_the_standard_root_is_unavailable() {
 /// The red asserts an absence, so it also asserts a presence in the same run:
 /// the ORIGINAL root must still be there and still name 0000….
 #[test]
-#[ignore = "baseline: a second root appears, naming this build's own standard root — measured 2026-08-16"]
 fn p3_no_root_is_written_under_this_engines_own_standard_root() {
     let d = unreadable("p3", "app: { k1: 1 }\n");
     std::fs::write(d.join("n.n"), "app: { k1: 1, NEW: 42 }\n").unwrap();
@@ -266,7 +263,6 @@ fn p3_no_root_is_written_under_this_engines_own_standard_root() {
 /// to write. Separate from P3 because a store can gain an orphan object
 /// without losing its head, and losing the head is the data-loss half.
 #[test]
-#[ignore = "baseline: HEAD moves to the foreign commit — measured 2026-08-16"]
 fn p4_head_does_not_move_on_a_store_this_engine_cannot_open() {
     let d = unreadable("p4", "app: { k1: 1 }\n");
     let head_before = std::fs::read_to_string(d.join(".oo/HEAD")).unwrap_or_default();
@@ -316,7 +312,6 @@ fn c3_rollback_already_refuses_and_leaves_head_alone() {
 /// that visibly has a HEAD. The sentence is true of the phantom Universe the
 /// fallback built and false of the store, which is the defect.
 #[test]
-#[ignore = "baseline: answers `no HEAD to squash` — measured 2026-08-16"]
 fn p5_squash_refuses_by_name_instead_of_denying_the_head_exists() {
     let d = unreadable("p5", "app: { k1: 1 }\n");
     let head = std::fs::read_to_string(d.join(".oo/HEAD")).unwrap_or_default();
@@ -342,7 +337,6 @@ fn p5_squash_refuses_by_name_instead_of_denying_the_head_exists() {
 /// "pretending it passed is the fail-open this arc exists to close" —
 /// and an unavailable standard root lands in exactly that `| None` arm.
 #[test]
-#[ignore = "baseline: `Refine commit: …` and HEAD moves — measured 2026-08-16"]
 fn p6_refine_refuses_when_the_standard_root_is_unavailable() {
     let d = unreadable("p6", "app: { k1: 1 }\n");
     let head_before = std::fs::read_to_string(d.join(".oo/HEAD")).unwrap_or_default();

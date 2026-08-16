@@ -828,7 +828,13 @@ fn run_status() -> anyhow::Result<()> {
     } else {
         println!("Standard root dependency: current (no committed root yet)");
     }
-    let universe = load_universe(&engine, &current_dir)?;
+    let universe = match load_universe(&engine, &current_dir) {
+        Ok(universe) => universe,
+        Err(error) => {
+            println!("Universe unavailable: {error}");
+            return Ok(());
+        }
+    };
     if universe.is_dirty {
         println!("Staged changes:");
         println!("{}", Value::Combo(universe.staged.clone()).to_nlang(0));
@@ -1536,10 +1542,7 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
 }
 
 fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {
-    let mut u = match Universe::load(engine, path) {
-        Ok(u) => u,
-        Err(_) => Universe::new(None, engine.root_with_system()),
-    };
+    let mut u = Universe::load(engine, path)?;
     let _ = u.load_staged(path);
     Ok(u)
 }
