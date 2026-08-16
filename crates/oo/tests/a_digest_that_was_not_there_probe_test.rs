@@ -139,7 +139,6 @@ fn c0_a_node_answers_a_well_formed_fetch_and_stays_up() {
 /// contains it. A repair that reaches that branch passes; one that invents a
 /// different answer has changed the protocol instead of fixing the parser.
 #[test]
-#[ignore = "baseline: the node process dies (rc=101), no reply — measured 2026-08-16"]
 fn p1_an_empty_digest_over_the_wire_is_refused_and_the_node_survives() {
     let d = store("p1");
     let mut node = common::serve(oo_cmd(&d), d.join("serve.log"));
@@ -172,7 +171,6 @@ fn p1_an_empty_digest_over_the_wire_is_refused_and_the_node_survives() {
 /// request the node must still serve the NEXT caller. Separate from P1
 /// because a node can answer one request and then die.
 #[test]
-#[ignore = "baseline: the node is gone before the second request — measured 2026-08-16"]
 fn p2_a_node_still_serves_the_next_caller_after_a_malformed_digest() {
     let d = store("p2");
     let mut node = common::serve(oo_cmd(&d), d.join("serve.log"));
@@ -200,7 +198,6 @@ fn p2_a_node_still_serves_the_next_caller_after_a_malformed_digest() {
 /// `hash_to_path` through the store. The assertion is per-command so the
 /// failure message names which one.
 #[test]
-#[ignore = "baseline: inspect / rollback / refine panic at storage.rs:476 — measured 2026-08-16"]
 fn p3_no_cli_entry_panics_on_an_empty_digest() {
     let d = store("p3");
     let cases: [(&str, Vec<&str>); 3] = [
@@ -233,7 +230,6 @@ fn p3_no_cli_entry_panics_on_an_empty_digest() {
 /// The red asserts a rejection, so it asserts an acceptance in the same run:
 /// a full-length digest must still be looked up normally.
 #[test]
-#[ignore = "baseline: answers `CAID not found in local store` — measured 2026-08-16"]
 fn p4_a_digest_of_the_wrong_length_is_not_a_sha256_caid() {
     let d = store("p4");
     let good = oo(&d, &["inspect", GOOD_V1]);
@@ -251,7 +247,6 @@ fn p4_a_digest_of_the_wrong_length_is_not_a_sha256_caid() {
 /// RED at the baseline: the v2 arm has the same hole, and it is a separate
 /// `hex::decode` call on a separate field, so fixing v1 alone leaves it.
 #[test]
-#[ignore = "baseline: panics at storage.rs:476 — measured 2026-08-16"]
 fn p5_the_v2_form_rejects_an_empty_digest_too() {
     let d = store("p5");
     let out = oo(&d, &["inspect", EMPTY_V2]);

@@ -33,7 +33,10 @@ fn test_project_down_adds_blur_tag() {
             (
                 "masa".to_string(),
                 Value::Atom(
-                    AtomKind::Str("hash:sha256:v1:00".to_string()),
+                    AtomKind::Str(
+                        "hash:sha256:v1:0000000000000000000000000000000000000000000000000000000000000000"
+                            .to_string(),
+                    ),
                     EffectTag::Pure,
                     None,
                 ),
@@ -64,7 +67,10 @@ fn test_project_down_noncombo_target() {
             (
                 "masa".to_string(),
                 Value::Atom(
-                    AtomKind::Str("hash:sha256:v1:00".to_string()),
+                    AtomKind::Str(
+                        "hash:sha256:v1:0000000000000000000000000000000000000000000000000000000000000000"
+                            .to_string(),
+                    ),
                     EffectTag::Pure,
                     None,
                 ),
@@ -147,7 +153,10 @@ fn test_project_down_top_masa() {
             (
                 "masa".to_string(),
                 Value::Atom(
-                    AtomKind::Str("hash:sha256:v1:00".to_string()),
+                    AtomKind::Str(
+                        "hash:sha256:v1:0000000000000000000000000000000000000000000000000000000000000000"
+                            .to_string(),
+                    ),
                     EffectTag::Pure,
                     None,
                 ),
@@ -206,7 +215,10 @@ fn test_project_down_filters_fields() {
             (
                 "masa".to_string(),
                 Value::Atom(
-                    AtomKind::Str("hash:sha256:v1:ff".to_string()),
+                    AtomKind::Str(
+                        "hash:sha256:v1:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                            .to_string(),
+                    ),
                     EffectTag::Pure,
                     None,
                 ),

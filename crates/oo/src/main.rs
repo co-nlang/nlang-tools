@@ -953,7 +953,7 @@ fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::
         );
     }
     let target = ContentHash::parse(&caid)
-        .map_err(|e| anyhow::anyhow!("Invalid rollback CAID '{}': {}", caid, e))?;
+        .map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", caid, e))?;
     let mut universe = load_universe(&engine, &cur)?;
     universe.rollback(&engine, &cur, &target)?;
     println!("Rolled back to {}", target);
@@ -1082,14 +1082,14 @@ fn run_refine(
     let source_caids: Vec<ContentHash> = sources
         .iter()
         .map(|s| {
-            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid source CAID '{}': {}", s, e))
+            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", s, e))
         })
         .collect::<anyhow::Result<_>>()?;
 
     let target_caids: Vec<ContentHash> = targets
         .iter()
         .map(|s| {
-            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid target CAID '{}': {}", s, e))
+            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", s, e))
         })
         .collect::<anyhow::Result<_>>()?;
 
