@@ -171,7 +171,6 @@ fn c3_the_engine_still_supports_the_pre_split_standard_root() {
 ///
 /// This is the `/add` orphan, and the orphan was never one name.
 #[test]
-#[ignore = "baseline: all four answer #missing_key — measured 2026-08-16 on v0.25.0"]
 fn p1_a_user_can_define_the_four_names_the_standard_root_occupies() {
     for n in ["/add", "@list", "@option", "@result"] {
         let d = scratch("p1");
@@ -190,7 +189,6 @@ fn p1_a_user_can_define_the_four_names_the_standard_root_occupies() {
 /// It is the only thing in the system with an address that cannot be
 /// addressed -- measured, a fresh store holds two objects and neither is it.
 #[test]
-#[ignore = "baseline: `CAID not found in local store` — measured 2026-08-16 on v0.25.0"]
 fn p2_the_standard_root_is_an_object_you_can_ask_for() {
     let d = scratch("p2");
     commit_root(&d, "app: { k1: 1 }\n");
@@ -224,7 +222,6 @@ fn p2_the_standard_root_is_an_object_you_can_ask_for() {
 /// The red asserts a difference, so it asserts a sameness in the same run:
 /// two genuinely identical pure programs must still agree on one address.
 #[test]
-#[ignore = "baseline: both commit to 84ad4804… — measured 2026-08-16 on v0.25.0"]
 fn p3_a_value_that_came_from_outside_does_not_get_a_pure_address() {
     const VAL: &str = "written-down";
     let literal = {
@@ -278,7 +275,6 @@ fn p3_a_value_that_came_from_outside_does_not_get_a_pure_address() {
 /// are the same value, so REAL_03 §6.7 -- bytes are a function of the value --
 /// is violated today. This is the probe that closes it.
 #[test]
-#[ignore = "baseline: d48f4deb… vs b25bfaf… — measured 2026-08-16 on v0.25.0"]
 fn p4_writing_pure_explicitly_is_the_same_value_as_not_writing_it() {
     let a = scratch("p4a");
     let b = scratch("p4b");

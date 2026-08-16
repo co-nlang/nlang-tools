@@ -96,6 +96,9 @@ pub struct EvalContext {
     // O(depth x N_fields x |root|) amplifier in self-referential observation.
     // Reads deref transparently; the engine never mutates root mid-eval.
     pub root: Arc<ComboVal>,
+    /// Engine-supplied standard table.  It is deliberately a lookup layer,
+    /// not fields hydrated into `root`: user coordinates therefore win.
+    pub standard_root: Arc<ComboVal>,
     /// Stage 4: lazily computed CAID of `root`, shared through sub_context
     /// clones. Sound because the engine never mutates root mid-observation
     /// (tests that mutate via Arc::make_mut do so before any force).
@@ -171,6 +174,7 @@ impl EvalContext {
         let salt = ContentHash::v1(hasher.finalize().to_vec());
         Self {
             root: Arc::new(root),
+            standard_root: Arc::new(ComboVal::default()),
             root_caid_cache: None,
             scopes: Vec::new(),
             staged: None,
@@ -203,6 +207,11 @@ impl EvalContext {
             disc_routing_hops: 0,
             privilege: crate::value::Privilege::NONE,
         }
+    }
+
+    pub fn with_standard_root(mut self, standard_root: ComboVal) -> Self {
+        self.standard_root = Arc::new(standard_root);
+        self
     }
     /// Root CAID for memo keys — computed once per root version, then cached
     /// (the cache rides along sub_context clones). Avoids the per-force
@@ -2814,13 +2823,16 @@ impl Ouroboros {
 
     /// The standard root used for new universes written by this engine.
     pub fn root_with_system(&self) -> ComboVal {
-        Self::v0_22_standard_root()
+        match Value::Combo(Self::v0_22_standard_root()).for_cas_storage() {
+            Value::Combo(root) => root,
+            _ => unreachable!(),
+        }
     }
 
     /// The table of roots this binary ships. Adding a historical root is a
     /// row here, never a new decoding branch.
     fn shipped_standard_roots(&self) -> StandardRootSet {
-        StandardRootSet::from_roots([self.root_with_system()])
+        StandardRootSet::from_roots([self.root_with_system(), Self::v0_22_standard_root()])
     }
 
     pub fn supports_standard_root(&self, digest: &str) -> bool {
@@ -2829,7 +2841,7 @@ impl Ouroboros {
 
     pub fn eval_context(&self) -> EvalContext {
         let sys_root = self.root_with_system();
-        let mut ctx = EvalContext::new(sys_root.clone());
+        let mut ctx = EvalContext::new(ComboVal::default()).with_standard_root(sys_root.clone());
         ctx.memo_enabled = false; // engine-internal: wrong root for memo (see field doc)
         ctx.privilege = self.privilege;
         // Initial horizon from ~%Config (bare names). Runtime override of
@@ -3490,12 +3502,18 @@ impl Ouroboros {
                             // sources (evolve-phase Top) must survive the rebuild.
                             new_c.pending_spreads = c.pending_spreads.clone();
                             for (k, v) in c.all_fields_iter() {
-                                new_c.insert_field(&k, self.force_recursive(v, ctx));
+                                let forced = self.force_recursive(v, ctx);
+                                if !c.closed {
+                                    new_c.effect = new_c.effect.union(forced.effect());
+                                }
+                                new_c.insert_field(&k, forced);
                             }
                             for (k, v) in c.local.iter() {
-                                new_c
-                                    .local
-                                    .insert(k.clone(), self.force_recursive(v.clone(), ctx));
+                                let forced = self.force_recursive(v.clone(), ctx);
+                                if !c.closed {
+                                    new_c.effect = new_c.effect.union(forced.effect());
+                                }
+                                new_c.local.insert(k.clone(), forced);
                             }
                             Value::Combo(new_c)
                         }
@@ -3617,7 +3635,11 @@ impl Ouroboros {
             // SPEC_09 §6: ~%Config binding = effective (genesis ∧ overrides),
             // never the staged fragment alone (display + path reads).
             if name == "~%Config" {
-                if let Some(eff) = crate::universe::effective_config(&ctx.root, ctx.staged.as_ref())
+                if let Some(eff) = crate::universe::effective_config(
+                    &ctx.root,
+                    &ctx.standard_root,
+                    ctx.staged.as_ref(),
+                )
                 {
                     self.record_dep(ctx, "~%Config");
                     return Value::Combo(eff);
@@ -3669,6 +3691,32 @@ impl Ouroboros {
                     return return_or_force(self, &alt_name, val.clone(), ctx, true);
                 }
                 if let Some(val) = ctx.root.get_local_field(&alt_name) {
+                    return return_or_force(self, &alt_name, val.clone(), ctx, false);
+                }
+            }
+
+            // Standard names are a final lookup layer.  They are not
+            // hydrated into the user root, so a user definition above wins.
+            if let Some(val) = ctx.standard_root.get_field(name) {
+                let v = val.clone();
+                self.record_dep(ctx, name);
+                return return_or_force(self, name, v, ctx, true);
+            }
+            if let Some(val) = ctx.standard_root.get_local_field(name) {
+                let v = val.clone();
+                self.record_dep(ctx, name);
+                return return_or_force(self, name, v, ctx, false);
+            }
+            for p in ["/", "@", "~", "~%"] {
+                let alt_name = if name.starts_with(p) {
+                    name.trim_start_matches(p).to_string()
+                } else {
+                    format!("{}{}", p, name)
+                };
+                if let Some(val) = ctx.standard_root.get_field(&alt_name) {
+                    return return_or_force(self, &alt_name, val.clone(), ctx, true);
+                }
+                if let Some(val) = ctx.standard_root.get_local_field(&alt_name) {
                     return return_or_force(self, &alt_name, val.clone(), ctx, false);
                 }
             }
@@ -3725,7 +3773,11 @@ impl Ouroboros {
                 // multi-segment reads (~%Config.timeout) need genesis ∧ override.
                 if found.is_none() && name == "~%Config" {
                     if let Some(eff) =
-                        crate::universe::effective_config(&ctx.root, ctx.staged.as_ref())
+                        crate::universe::effective_config(
+                            &ctx.root,
+                            &ctx.standard_root,
+                            ctx.staged.as_ref(),
+                        )
                     {
                         found = Some(Value::Combo(eff));
                         self.record_dep(ctx, "~%Config");
@@ -3752,6 +3804,33 @@ impl Ouroboros {
                                     self.record_dep(ctx, &alt_name);
                                     break;
                                 }
+                            }
+                        }
+                    }
+                }
+                if found.is_none() {
+                    if let Some(val) = ctx
+                        .standard_root
+                        .get_field(name)
+                        .or_else(|| ctx.standard_root.get_local_field(name))
+                    {
+                        found = Some(val.clone());
+                        self.record_dep(ctx, name);
+                    } else {
+                        for p in ["/", "@", "~", "~%"] {
+                            let alt_name = if name.starts_with(p) {
+                                name.trim_start_matches(p).to_string()
+                            } else {
+                                format!("{}{}", p, name)
+                            };
+                            if let Some(val) = ctx
+                                .standard_root
+                                .get_field(&alt_name)
+                                .or_else(|| ctx.standard_root.get_local_field(&alt_name))
+                            {
+                                found = Some(val.clone());
+                                self.record_dep(ctx, &alt_name);
+                                break;
                             }
                         }
                     }

@@ -267,8 +267,9 @@ impl ObjectStore {
     }
 
     pub fn put_value(&self, value: &Value) -> Result<ContentHash> {
-        let hash = value.content_hash();
-        let content = canonical_cas_json(&value.for_cas_storage())?;
+        let durable = value.for_cas_storage();
+        let hash = durable.content_hash();
+        let content = canonical_cas_json(&durable)?;
         self.write_object(&hash, content)?;
         Ok(hash)
     }
@@ -277,11 +278,22 @@ impl ObjectStore {
     /// immutable for one engine build, so history names that table by content
     /// digest rather than copying its body into every root.
     pub fn put_root(&self, root: &ComboVal, standard: &ComboVal) -> Result<ContentHash> {
+        // The named table is a first-class CAS object.  Its digest is the
+        // sentinel's dependency and it must be fetchable on a fresh store.
+        let standard = Value::Combo(standard.clone()).for_cas_storage();
+        let standard_hash = standard.content_hash();
+        // A table is a real CAS Combo, stored without the root Value envelope.
+        // `get_value` accepts this representation under the same CAID.
+        let Value::Combo(standard_combo) = &standard else { unreachable!() };
+        let raw_combo = canonical_cas_json(standard_combo)?;
+        let packed = format!("standard-root:{}", hex::encode(raw_combo));
+        self.write_object(&standard_hash, canonical_cas_json(&packed)?)?;
+
         let value = Value::Combo(root.clone());
-        let hash = value.content_hash();
         let mut durable = value.for_cas_storage();
         let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
-        project_standard_root(durable_root, standard);
+        project_standard_root(durable_root, match &standard { Value::Combo(root) => root, _ => unreachable!() });
+        let hash = durable.content_hash();
         self.write_object(&hash, canonical_cas_json(&durable)?)?;
         Ok(hash)
     }
@@ -291,22 +303,37 @@ impl ObjectStore {
     /// not a best-effort substitution with today's builtins.
     pub fn get_root(&self, hash: &ContentHash, standards: &StandardRootSet) -> Result<ComboVal> {
         let content = self.read_object_raw(hash)?;
-        let mut value: Value = serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+        let value: Value = serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
             requested: hash.clone(), detail: e.to_string(),
         })?;
-        let Value::Combo(ref mut root) = value else {
-            anyhow::bail!("Invalid root");
+        let has_standard = match &value {
+            Value::Combo(root) => root.system.contains_key(SYSTEM_DIGEST_KEY),
+            _ => anyhow::bail!("Invalid root"),
         };
         // Formats 1 and 2 stored their roots self-contained. Only a format-3
         // root carries the digest sentinel that authorises engine-owned table
         // hydration (and therefore standard-root validation).
-        if root.system.contains_key(SYSTEM_DIGEST_KEY) {
-            let standard = resolve_standard_root(root, standards, hash)?;
-            hydrate_system_table(root, standards, hash)?;
-            hydrate_standard_root(root, standard);
+        if has_standard {
+            let Value::Combo(root) = &value else { unreachable!() };
+            resolve_standard_root(root, standards, hash)?;
         }
         let recomputed = value.content_hash();
         if !value_address_matches(hash, &recomputed) {
+            // Format-3 before O58 wrote the projected bytes but named them by
+            // the hydrated value.  Keep that historical read path only when
+            // re-hydration actually proves the requested old address; new
+            // roots are accepted above without ever receiving these fields.
+            if has_standard {
+                let mut hydrated = value.clone();
+                let Value::Combo(ref mut hydrated_root) = hydrated else { unreachable!() };
+                let standard = resolve_standard_root(hydrated_root, standards, hash)?;
+                hydrate_standard_root(hydrated_root, standard);
+                let hydrated_hash = hydrated.content_hash();
+                if value_address_matches(hash, &hydrated_hash) {
+                    let Value::Combo(root) = hydrated else { unreachable!() };
+                    return Ok(root);
+                }
+            }
             return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
         }
         let Value::Combo(root) = value else { unreachable!() };
@@ -315,24 +342,45 @@ impl ObjectStore {
 
     pub fn get_value(&self, hash: &ContentHash) -> Result<Value> {
         let content = self.read_object_raw(hash)?;
-        let mut value: Value =
-            serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
-                requested: hash.clone(),
-                detail: e.to_string(),
-            })?;
+        let mut value: Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(value_error) => match serde_json::from_str::<String>(&content)
+                .ok()
+                .and_then(|packed| packed.strip_prefix("standard-root:").map(str::to_owned))
+                .and_then(|hex| hex::decode(hex).ok())
+                .and_then(|raw| serde_json::from_slice::<ComboVal>(&raw).ok())
+            {
+                Some(combo) => Value::Combo(combo),
+                None => return Err(StoreReadError::ObjectUndecodable {
+                    requested: hash.clone(),
+                    detail: value_error.to_string(),
+                }.into()),
+            },
+        };
         if let Value::Combo(root) = &mut value {
             if root.system.contains_key(SYSTEM_DIGEST_KEY) {
                 // All ordinary readers use one decoder. A format-3 root has
                 // no valid standalone Value interpretation: resolve it before
                 // judging its address, rather than making every caller guess.
                 let engine = crate::Ouroboros::new_in_memory();
-                let standard = resolve_standard_root(root, &engine.standard_roots, hash)?;
-                hydrate_system_table(root, &engine.standard_roots, hash)?;
-                hydrate_standard_root(root, standard);
+                resolve_standard_root(root, &engine.standard_roots, hash)?;
             }
         }
         let recomputed = value.content_hash();
         if !value_address_matches(hash, &recomputed) {
+            if let Value::Combo(root) = &value {
+                if root.system.contains_key(SYSTEM_DIGEST_KEY) {
+                    let engine = crate::Ouroboros::new_in_memory();
+                    let mut hydrated = value.clone();
+                    let Value::Combo(ref mut hydrated_root) = hydrated else { unreachable!() };
+                    let standard = resolve_standard_root(hydrated_root, &engine.standard_roots, hash)?;
+                    hydrate_standard_root(hydrated_root, standard);
+                    let hydrated_hash = hydrated.content_hash();
+                    if value_address_matches(hash, &hydrated_hash) {
+                        return Ok(hydrated);
+                    }
+                }
+            }
             return Err(StoreReadError::CaidMismatch {
                 requested: hash.clone(),
                 recomputed,
@@ -512,11 +560,16 @@ fn project_standard_root(root: &mut ComboVal, standard: &ComboVal) {
 
 fn hydrate_standard_root(root: &mut ComboVal, standard: &ComboVal) {
     for (actual, base) in [
-        (&mut root.data, &standard.data), (&mut root.types, &standard.types),
-        (&mut root.rules, &standard.rules), (&mut root.meta, &standard.meta),
-        (&mut root.system, &standard.system), (&mut root.local, &standard.local),
+        (&mut root.data, &standard.data),
+        (&mut root.types, &standard.types),
+        (&mut root.rules, &standard.rules),
+        (&mut root.meta, &standard.meta),
+        (&mut root.system, &standard.system),
+        (&mut root.local, &standard.local),
     ] {
-        for (key, value) in base { actual.entry(key.clone()).or_insert_with(|| value.clone()); }
+        for (key, value) in base {
+            actual.entry(key.clone()).or_insert_with(|| value.clone());
+        }
     }
 }
 
@@ -535,53 +588,6 @@ fn resolve_standard_root<'a>(
         }
         .into()
     })
-}
-
-fn hydrate_system_table(
-    combo: &mut ComboVal,
-    standards: &StandardRootSet,
-    requested: &ContentHash,
-) -> Result<()> {
-    if combo.system.contains_key(SYSTEM_DIGEST_KEY) {
-        let standard = resolve_standard_root(combo, standards, requested)?;
-        combo.system = standard.system.clone();
-    }
-    for value in combo.data.values_mut()
-        .chain(combo.types.values_mut())
-        .chain(combo.rules.values_mut())
-        .chain(combo.meta.values_mut())
-        .chain(combo.system.values_mut())
-        .chain(combo.local.values_mut())
-        .chain(combo.pending_spreads.iter_mut())
-    {
-        hydrate_systems_in_value(value, standards, requested)?;
-    }
-    Ok(())
-}
-
-fn hydrate_systems_in_value(
-    value: &mut Value,
-    standards: &StandardRootSet,
-    requested: &ContentHash,
-) -> Result<()> {
-    match value {
-        Value::Combo(combo) => hydrate_system_table(combo, standards, requested),
-        Value::Union(values) => {
-            for value in values { hydrate_systems_in_value(value, standards, requested)?; }
-            Ok(())
-        }
-        Value::Thunk { closure, context, .. } => {
-            for frame in closure { hydrate_system_table(std::sync::Arc::make_mut(frame), standards, requested)?; }
-            if let Some(context) = context { hydrate_systems_in_value(context, standards, requested)?; }
-            Ok(())
-        }
-        Value::Range { start, end, step } => {
-            hydrate_systems_in_value(start, standards, requested)?; hydrate_systems_in_value(end, standards, requested)?;
-            if let Some(step) = step { hydrate_systems_in_value(step, standards, requested)?; }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
 }
 
 /// Compact, lexically ordered CAS JSON. The typed format-2 `Value` projection

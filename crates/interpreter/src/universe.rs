@@ -133,8 +133,15 @@ pub fn staged_has_committable_content(staged: &ComboVal) -> bool {
 }
 
 /// Genesis ∧ staged overrides — effective closed config (display + resolve).
-pub(crate) fn effective_config(root: &ComboVal, staged: Option<&ComboVal>) -> Option<ComboVal> {
-    let mut base = match root.get_field("~%Config") {
+pub(crate) fn effective_config(
+    root: &ComboVal,
+    standard_root: &ComboVal,
+    staged: Option<&ComboVal>,
+) -> Option<ComboVal> {
+    let mut base = match root
+        .get_field("~%Config")
+        .or_else(|| standard_root.get_field("~%Config"))
+    {
         Some(Value::Combo(c)) => c.clone(),
         _ => return None,
     };
@@ -147,6 +154,19 @@ pub(crate) fn effective_config(root: &ComboVal, staged: Option<&ComboVal>) -> Op
     }
     base.closed = true;
     Some(base)
+}
+
+fn standard_for_root(engine: &Ouroboros, root: &ContentHash) -> Result<ComboVal> {
+    match engine.store.root_standard_digest(root)? {
+        Some(digest) => engine
+            .standard_roots
+            .get(&digest)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("root names unavailable standard root {digest}")),
+        // Formats 1/2 were self-contained; keeping the standard layer empty
+        // preserves that shape rather than adding today's library to history.
+        None => Ok(ComboVal::default()),
+    }
 }
 
 /// User LHS write to engine-minted `~%` axis (ownership; not Config.bare).
@@ -185,6 +205,9 @@ fn is_literal_top(expr: &Expr) -> bool {
 pub struct Universe {
     pub head: Option<ContentHash>,
     pub root: ComboVal,
+    /// The table named by the loaded root.  New universes keep it separate
+    /// from user content from their first write onward.
+    pub standard_root: ComboVal,
     pub staged: ComboVal,
     pub is_dirty: bool,
     /// Request flag for this evolve session (`oo evolve --pin`). Capability
@@ -213,9 +236,14 @@ pub struct Universe {
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
+        Self::new_with_standard(head, root, ComboVal::default())
+    }
+
+    pub fn new_with_standard(head: Option<ContentHash>, root: ComboVal, standard_root: ComboVal) -> Self {
         Self {
             head,
             root,
+            standard_root,
             staged: ComboVal::default(),
             is_dirty: false,
             pin_mode: false,
@@ -279,9 +307,10 @@ impl Universe {
             Some(h) => {
                 let commit = engine.store.get_commit(&h)?;
                 let root = engine.store.get_root(&commit.root, &engine.standard_roots)?;
-                Ok(Self::new(Some(h), root))
+                let standard_root = standard_for_root(engine, &commit.root)?;
+                Ok(Self::new_with_standard(Some(h), root, standard_root))
             }
-            None => Ok(Self::new(None, engine.root_with_system())),
+            None => Ok(Self::new_with_standard(None, ComboVal::default(), engine.root_with_system())),
         }
     }
 
@@ -302,7 +331,7 @@ impl Universe {
             });
         }
 
-        let mut ctx = EvalContext::new(self.root.clone());
+        let mut ctx = EvalContext::new(self.root.clone()).with_standard_root(self.standard_root.clone());
         ctx.staged = Some(self.staged.clone());
         // O42: no clock salt — blur identity is CHS (budgets + partial).
         // EvalContext keeps a fixed disc tie-break salt from ::new only.
@@ -314,7 +343,7 @@ impl Universe {
         // parameters flow into any resulting blur's CHS just as they do at
         // observe (REAL_01 §9 / meter_reads_two).
         if let Some(Value::Combo(ref staged_cfg)) = self.staged.get_field("~%Config") {
-            if let Some(eff) = effective_config(&self.root, Some(&self.staged)) {
+            if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged)) {
                 let apply_timeout = staged_cfg.get_field("timeout").is_some();
                 ctx.apply_horizon_config(&eff, true, apply_timeout);
             }
@@ -672,7 +701,8 @@ impl Universe {
         };
         // O35/O51: commit, not evolve, is the solidification boundary. The
         // staged workset remains lazy; history receives its observation.
-        let mut commit_ctx = crate::EvalContext::new(new_root.clone());
+        let mut commit_ctx = crate::EvalContext::new(new_root.clone())
+            .with_standard_root(self.standard_root.clone());
         commit_ctx.memo_enabled = false;
         let new_root = match engine.force_recursive(Value::Combo(new_root), &mut commit_ctx) {
             Value::Combo(root) => root,
@@ -700,6 +730,7 @@ impl Universe {
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
         self.root = new_root;
+        self.standard_root = standard;
         // Retain ~%Config as session state; everything else left history.
         if let Some(cfg) = retained_config {
             let mut restaged = ComboVal::default();
@@ -794,6 +825,7 @@ impl Universe {
         // Target must exist as a commit object (any historical commit).
         let target_commit = engine.store.get_commit(target)?;
         let new_root = engine.store.get_root(&target_commit.root, &engine.standard_roots)?;
+        let standard_root = standard_for_root(engine, &target_commit.root)?;
         // Record the head we leave behind (if any and different from target).
         if let Some(ref old) = self.head {
             if old != target {
@@ -803,6 +835,7 @@ impl Universe {
         engine.store.set_head(base_dir, target)?;
         self.head = Some(target.clone());
         self.root = new_root;
+        self.standard_root = standard_root;
         self.staged = ComboVal::default();
         self.is_dirty = false;
         self.pin_pending = false;
@@ -881,6 +914,7 @@ impl Universe {
         engine.store.set_head(base_dir, &commit_hash)?;
         // Root value is the same as before; reload for consistency.
         self.root = engine.store.get_root(&head_commit.root, &engine.standard_roots)?;
+        self.standard_root = standard_for_root(engine, &head_commit.root)?;
         self.head = Some(commit_hash.clone());
         self.staged = ComboVal::default();
         self.is_dirty = false;
@@ -898,7 +932,7 @@ impl Universe {
         let mut root_for_obs = self.root.clone();
         let mut staged_for_obs = self.staged.clone();
         if staged_for_obs.get_field("~%Config").is_some() {
-            if let Some(eff) = effective_config(&self.root, Some(&self.staged)) {
+            if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged)) {
                 root_for_obs.insert_field("~%Config", Value::Combo(eff));
             }
             // Strip Config from staged so unify does not re-meet overrides.
@@ -906,7 +940,7 @@ impl Universe {
         }
         let current = engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
         if let Value::Combo(r) = current {
-            let mut ctx = EvalContext::new(r.clone());
+            let mut ctx = EvalContext::new(r.clone()).with_standard_root(self.standard_root.clone());
             ctx.privilege = engine.privilege;
             // Apply ~%Config horizon params from the observation root
             // (includes staged overrides — SPEC_08 §3.1). Timeout only when

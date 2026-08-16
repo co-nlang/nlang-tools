@@ -1335,7 +1335,11 @@ fn run_one_shot(
     // (cas_integrity R-2): it forced recursive types into multi-MB orphans
     // (SPEC_04 §158 / SPEC_12 #recursive_lazy) and contradicted "pure one-shot".
     // Explicit persistence remains `~%Engine./save`.
-    let mut universe = Universe::new(None, engine.root_with_system());
+    let mut universe = Universe::new_with_standard(
+        None,
+        nlang_interpreter::value::ComboVal::default(),
+        engine.root_with_system(),
+    );
 
     for file in files {
         let input = fs::read_to_string(&file)?;
@@ -1396,7 +1400,11 @@ fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Resu
     let mut engine = Ouroboros::init(&cur).unwrap_or_else(|_| Ouroboros::new_in_memory());
     apply_cli_privilege(&mut engine, privileged, &grants)?;
 
-    let mut universe = Universe::new(None, engine.root_with_system());
+    let mut universe = Universe::new_with_standard(
+        None,
+        nlang_interpreter::value::ComboVal::default(),
+        engine.root_with_system(),
+    );
 
     let parsed_expr = match nlang_parser::parse_expr_only(expr.trim()) {
         Ok(expr) => expr,
@@ -1582,7 +1590,11 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
             }
         };
 
-        let mut universe = Universe::new(None, engine.root_with_system());
+        let mut universe = Universe::new_with_standard(
+            None,
+            nlang_interpreter::value::ComboVal::default(),
+            engine.root_with_system(),
+        );
 
         let mut evolve_failed = false;
         for f in &program.fields {
