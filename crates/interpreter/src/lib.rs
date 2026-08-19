@@ -3810,33 +3810,6 @@ impl Ouroboros {
                 }
                 if found.is_none() {
                     if let Some(val) = ctx
-                        .standard_root
-                        .get_field(name)
-                        .or_else(|| ctx.standard_root.get_local_field(name))
-                    {
-                        found = Some(val.clone());
-                        self.record_dep(ctx, name);
-                    } else {
-                        for p in ["/", "@", "~", "~%"] {
-                            let alt_name = if name.starts_with(p) {
-                                name.trim_start_matches(p).to_string()
-                            } else {
-                                format!("{}{}", p, name)
-                            };
-                            if let Some(val) = ctx
-                                .standard_root
-                                .get_field(&alt_name)
-                                .or_else(|| ctx.standard_root.get_local_field(&alt_name))
-                            {
-                                found = Some(val.clone());
-                                self.record_dep(ctx, &alt_name);
-                                break;
-                            }
-                        }
-                    }
-                }
-                if found.is_none() {
-                    if let Some(val) = ctx
                         .root
                         .get_field(name)
                         .or_else(|| ctx.root.get_local_field(name))
@@ -3855,6 +3828,37 @@ impl Ouroboros {
                                 .root
                                 .get_field(&alt_name)
                                 .or_else(|| ctx.root.get_local_field(&alt_name))
+                            {
+                                found = Some(val.clone());
+                                self.record_dep(ctx, &alt_name);
+                                break;
+                            }
+                        }
+                    }
+                }
+                // Standard names are a final lookup layer here too: the
+                // bare-name path above consults ctx.root first, and a
+                // projection of the same name must mean the same thing by it
+                // (O58 work order §2.1 -- the direction must not change).
+                if found.is_none() {
+                    if let Some(val) = ctx
+                        .standard_root
+                        .get_field(name)
+                        .or_else(|| ctx.standard_root.get_local_field(name))
+                    {
+                        found = Some(val.clone());
+                        self.record_dep(ctx, name);
+                    } else {
+                        for p in ["/", "@", "~", "~%"] {
+                            let alt_name = if name.starts_with(p) {
+                                name.trim_start_matches(p).to_string()
+                            } else {
+                                format!("{}{}", p, name)
+                            };
+                            if let Some(val) = ctx
+                                .standard_root
+                                .get_field(&alt_name)
+                                .or_else(|| ctx.standard_root.get_local_field(&alt_name))
                             {
                                 found = Some(val.clone());
                                 self.record_dep(ctx, &alt_name);
