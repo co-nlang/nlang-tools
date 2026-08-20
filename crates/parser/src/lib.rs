@@ -152,6 +152,7 @@ fn parse_field_key(pair: pest::iterators::Pair<Rule>) -> Result<FieldKey, Box<dy
         Rule::quoted_key => Ok(FieldKey::Quoted(
             inner.as_str()[1..inner.as_str().len() - 1].to_string(),
         )),
+        Rule::multiline_str => Ok(FieldKey::Quoted(parse_multiline_body(inner.as_str()))),
         Rule::tag => Ok(FieldKey::Pattern(Expr::new(
             ExprKind::Atom(AtomKind::Tag(inner.as_str()[1..].to_string())),
             Span::new(inner.as_span().start(), inner.as_span().end()),
@@ -591,11 +592,16 @@ fn parse_atom(pair: pest::iterators::Pair<Rule>) -> Result<AtomKind, Box<dyn Err
         Rule::time_lit => Ok(AtomKind::Time(
             pair.as_str()[2..pair.as_str().len() - 1].to_string(),
         )),
-        Rule::multiline_str => Ok(AtomKind::MultilineStr(
-            pair.as_str()[3..pair.as_str().len() - 3].to_string(),
-        )),
+        Rule::multiline_str => Ok(AtomKind::MultilineStr(parse_multiline_body(pair.as_str()))),
         _ => Err(format!("Unexpected atom rule: {:?}", pair.as_rule()).into()),
     }
+}
+
+/// Inner text of a `"""…"""` literal. The only escape is `\"""` → `"""`
+/// (SYNTAX_02 §106 #11).
+fn parse_multiline_body(raw: &str) -> String {
+    let inner = &raw[3..raw.len() - 3];
+    inner.replace("\\\"\"\"", "\"\"\"")
 }
 
 fn parse_complex(s: &str) -> Result<AtomKind, Box<dyn Error>> {
@@ -1187,6 +1193,18 @@ pub fn parse_program(input: &str) -> Result<Program, Box<dyn Error>> {
 #[cfg(test)]
 mod nesting_gate_tests {
     use super::*;
+
+    #[test]
+    fn quoted_at_is_quoted_not_type_prefix() {
+        let p = parse_program("app: { \"@t\": 1 }\n").unwrap();
+        match &p.fields[0].value.kind {
+            ExprKind::Combo { fields, .. } => match &fields[0].key {
+                FieldKey::Quoted(s) => assert_eq!(s, "@t"),
+                other => panic!("expected Quoted(@t), got {other:?}"),
+            },
+            other => panic!("expected combo, got {other:?}"),
+        }
+    }
 
     #[test]
     fn ignores_delimiters_inside_comments_and_string_bodies() {

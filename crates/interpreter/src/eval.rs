@@ -1151,6 +1151,7 @@ impl Ouroboros {
                     );
                 }
                 let mut rf = IndexMap::new();
+                let mut quoted_data: IndexMap<String, Value> = IndexMap::new();
                 let mut rl = IndexMap::new();
                 let mut me = EffectTag::Pure;
                 let mut rv = Vec::new();
@@ -1278,7 +1279,15 @@ impl Ouroboros {
                             if !*closed {
                                 me = me.union(te);
                             }
-                            self.merge_field_into(&mut rf, name.trim().to_string(), thunk, ctx);
+                            // Q1: quoted characters belong to the name, prefixes
+                            // included. Must not pass through insert_field's
+                            // sigil routing (data `@t` ≠ type-axis `t`).
+                            self.merge_field_into(
+                                &mut quoted_data,
+                                name.trim().to_string(),
+                                thunk,
+                                ctx,
+                            );
                         }
                         FieldKey::Pattern(pe) => {
                             let pk = self.eval(pe, ctx).to_string_plain().trim().to_string();
@@ -1391,6 +1400,9 @@ impl Ouroboros {
                     }
                 }
                 let mut combo = ComboVal::new(rf, *closed, rl, me, rv);
+                for (k, v) in quoted_data {
+                    self.merge_field_into(&mut combo.data, k, v, ctx);
+                }
                 combo.pending_spreads = pending_spreads;
                 // SPEC_04 §2.1 / §3.1: bare names resolve through the defining
                 // combo as a scope frame (public + private).

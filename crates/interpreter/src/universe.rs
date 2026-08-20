@@ -179,7 +179,6 @@ fn is_system_axis_lhs_forbidden(key: &FieldKey) -> bool {
             prefix: Some(Prefix::System),
             ..
         } => true,
-        FieldKey::Quoted(name) if name.trim().starts_with("~%") => true,
         FieldKey::Path(p)
             if p.anchor == PathAnchor::Bare
                 && !p.segments.is_empty()
@@ -391,6 +390,7 @@ impl Universe {
         let val_effect = val.effect();
 
         let mut rf = IndexMap::new();
+        let mut quoted_data: Option<(String, Value)> = None;
         let mut rl = IndexMap::new();
         // Stage 5 (§5b): collect field keys for per-coordinate invalidation.
         let mut evolved_coords: Vec<String> = Vec::new();
@@ -537,7 +537,7 @@ impl Universe {
                 }
             }
             FieldKey::Quoted(name) => {
-                rf.insert(name.trim().to_string(), val);
+                quoted_data = Some((name.trim().to_string(), val));
             }
             FieldKey::Path(p) if p.segments.len() == 1 && p.anchor == PathAnchor::Bare => {
                 rf.insert(p.segments[0].trim().to_string(), val);
@@ -545,7 +545,10 @@ impl Universe {
             _ => unreachable!("coords already filtered non-writable keys"),
         };
 
-        let incoming = ComboVal::new(rf, false, rl, val_effect, vec![]);
+        let mut incoming = ComboVal::new(rf, false, rl, val_effect, vec![]);
+        if let Some((k, v)) = quoted_data {
+            incoming.data.insert(k, v);
+        }
         // Stage 5 (§5b): invalidate memo entries that depend on the evolved
         // coordinates. Called before the merge succeeds so entries reading
         // staged values are cleared.

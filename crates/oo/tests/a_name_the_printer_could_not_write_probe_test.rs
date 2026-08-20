@@ -132,14 +132,12 @@ fn c4_control_a_bare_prefix_still_selects_its_axis() {
 /// RED, and the severe one: today this prints bare and reads back as TWO
 /// coordinates with no error.
 #[test]
-#[ignore = "RED: a quoted dotted key prints bare and reads back as nesting"]
 fn r1_a_dotted_key_round_trips() {
     assert_round_trips("r1", "app: { \"a.b\": 1 }", "one coordinate named a.b");
 }
 
 /// RED: prints bare, reads back as a parse error. Loud, but the same rule.
 #[test]
-#[ignore = "RED: a quoted key with a space prints bare and will not reparse"]
 fn r2_a_spaced_key_round_trips() {
     assert_round_trips("r2", "app: { \"a b\": 1 }", "a key containing a space");
 }
@@ -147,7 +145,6 @@ fn r2_a_spaced_key_round_trips() {
 /// RED: quotes hold the whole name, prefixes included (Q1). Today the
 /// quotes are a complete no-op and these two share an address.
 #[test]
-#[ignore = "RED: quotes are a no-op for prefixes -- both are the type axis"]
 fn r3_a_quoted_prefix_is_part_of_the_name() {
     let quoted = id_of("r3-q", "app: { \"@t\": 1 }");
     let bare = id_of("r3-b", "app: { @t: 1 }");
@@ -162,7 +159,6 @@ fn r3_a_quoted_prefix_is_part_of_the_name() {
 /// RED: the same rule on the value side -- a multiline string prints as a
 /// Rust debug form carrying escapes this language does not have.
 #[test]
-#[ignore = "RED: multiline strings print as MultilineStr(..) and cannot reparse"]
 fn r4_a_multiline_string_value_round_trips() {
     assert_round_trips(
         "r4",
@@ -175,7 +171,6 @@ fn r4_a_multiline_string_value_round_trips() {
 /// multiline form for content needing a quote -- but `field_key` has no
 /// multiline alternative, so the route the spec prescribes does not exist.
 #[test]
-#[ignore = "RED: field_key has no multiline form, so this key cannot be written"]
 fn r5_a_name_holding_a_quote_can_be_written() {
     let id = id_of("r5", "app: { \"\"\"a\"b\"\"\": 1 }");
     assert!(
@@ -188,7 +183,6 @@ fn r5_a_name_holding_a_quote_can_be_written() {
 /// in the standard root needs quoting at all. Pins the PROPERTY, not the
 /// new names: a delivery may choose any spelling that is a plain name.
 #[test]
-#[ignore = "RED: /%differential.1/.2/.3 are not plain names"]
 fn r6_no_standard_root_key_needs_quoting() {
     let d = scratch("r6");
     let engine = nlang_interpreter::Ouroboros::init(&d).unwrap();

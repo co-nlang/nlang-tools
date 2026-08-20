@@ -463,107 +463,120 @@ impl Ouroboros {
             }
         }
 
-        let mut rf = IndexMap::new();
-        let mut rl = IndexMap::new();
-        let all_keys: HashSet<_> = a
-            .field_keys()
-            .into_iter()
-            .chain(b.field_keys().into_iter())
-            .collect();
-        for key in all_keys {
-            let va = a.get_field(&key).cloned().unwrap_or(Value::Top);
-            let vb = b.get_field(&key).cloned().unwrap_or(Value::Top);
-            let va_is_top = va.is_top();
-            let vb_is_top = vb.is_top();
-            // SPEC_03 §1.2 #2: closed-key rejection only for NON-TOP extras.
-            // `b: _` is often Thunk(Top) — force before judging "no constraint".
-            let is_no_constraint =
-                |v: &Value, is_top: bool, engine: &Self, ctx: &mut EvalContext| -> bool {
-                    if is_top {
-                        return true;
-                    }
-                    let f = engine.force(v.clone(), ctx).collapse().clone();
-                    f.is_top()
-                };
-            if a.closed && !a.contains_key(&key) && !is_no_constraint(&vb, vb_is_top, self, ctx) {
-                return Value::Bottom(Box::new(BottomDetail {
-                    cause: BottomCause::MissingKey,
-                    path: Some(key.clone()),
-                    message: Some(format!("Key '{}' missing in closed Cocoon", key)),
-                    expected: None,
-                    found: Some(vb.clone()),
-                    involved: vec![],
-                    ..Default::default()
-                }));
-            }
-            if b.closed && !b.contains_key(&key) && !is_no_constraint(&va, va_is_top, self, ctx) {
-                return Value::Bottom(Box::new(BottomDetail {
-                    cause: BottomCause::MissingKey,
-                    path: Some(key.clone()),
-                    message: Some(format!("Key '{}' missing in incoming closed Cocoon", key)),
-                    expected: Some(va.clone()),
-                    found: None,
-                    involved: vec![],
-                    ..Default::default()
-                }));
-            }
-            let merged = self.unify_internal(va, vb, ctx);
-            if let Value::Bottom(mut detail) = merged {
-                // L2-17: Top & ⊥ at a single field stores the Bottom binding
-                // (divergent / no_context coordinates) instead of aborting the
-                // whole combo — so `a: a + 1` can be observed as _|_ #divergent
-                // rather than failing evolve before observe. Real conflicts
-                // (neither side Top) still abort the merge.
-                if va_is_top || vb_is_top {
-                    rf.insert(key.clone(), Value::Bottom(detail));
-                    continue;
+        // Merge each axis by stored name. Flattening through field_keys()
+        // + insert_field re-routes a data key `@t` onto the type axis (Q1).
+        let merge_axis = |left: &IndexMap<String, Value>,
+                          right: &IndexMap<String, Value>,
+                          display: &str,
+                          engine: &Self,
+                          ctx: &mut EvalContext|
+         -> Result<IndexMap<String, Value>, BottomDetail> {
+            let mut out = IndexMap::new();
+            let keys: HashSet<&String> = left.keys().chain(right.keys()).collect();
+            for key in keys {
+                let va = left.get(key).cloned().unwrap_or(Value::Top);
+                let vb = right.get(key).cloned().unwrap_or(Value::Top);
+                let va_is_top = va.is_top();
+                let vb_is_top = vb.is_top();
+                let shown = format!("{display}{key}");
+                let is_no_constraint =
+                    |v: &Value, is_top: bool, engine: &Self, ctx: &mut EvalContext| -> bool {
+                        if is_top {
+                            return true;
+                        }
+                        let f = engine.force(v.clone(), ctx).collapse().clone();
+                        f.is_top()
+                    };
+                if a.closed
+                    && !left.contains_key(key)
+                    && !is_no_constraint(&vb, vb_is_top, engine, ctx)
+                {
+                    return Err(BottomDetail {
+                        cause: BottomCause::MissingKey,
+                        path: Some(shown.clone()),
+                        message: Some(format!("Key '{}' missing in closed Cocoon", shown)),
+                        expected: None,
+                        found: Some(vb.clone()),
+                        involved: vec![],
+                        ..Default::default()
+                    });
                 }
-                let cp = detail
-                    .path
-                    .as_ref()
-                    .map(|p| format!("{}.{}", key, p))
-                    .unwrap_or_else(|| key.clone());
-                detail.path = Some(cp);
-                return Value::Bottom(detail);
+                if b.closed
+                    && !right.contains_key(key)
+                    && !is_no_constraint(&va, va_is_top, engine, ctx)
+                {
+                    return Err(BottomDetail {
+                        cause: BottomCause::MissingKey,
+                        path: Some(shown.clone()),
+                        message: Some(format!(
+                            "Key '{}' missing in incoming closed Cocoon",
+                            shown
+                        )),
+                        expected: Some(va.clone()),
+                        found: None,
+                        involved: vec![],
+                        ..Default::default()
+                    });
+                }
+                let merged = engine.unify_internal(va, vb, ctx);
+                if let Value::Bottom(mut detail) = merged {
+                    if va_is_top || vb_is_top {
+                        out.insert(key.clone(), Value::Bottom(detail));
+                        continue;
+                    }
+                    let cp = detail
+                        .path
+                        .as_ref()
+                        .map(|p| format!("{shown}.{p}"))
+                        .unwrap_or_else(|| shown.clone());
+                    detail.path = Some(cp);
+                    return Err(*detail);
+                }
+                if !matches!(&merged, Value::Top) {
+                    out.insert(key.clone(), merged);
+                }
             }
-            // Drop bare Top (open miss); keep TopCaused (static-cycle provenance).
-            if !matches!(&merged, Value::Top) {
-                rf.insert(key.clone(), merged);
-            }
-        }
-        let all_lkeys: HashSet<_> = a
-            .local_keys()
-            .into_iter()
-            .chain(b.local_keys().into_iter())
+            Ok(out)
+        };
+        let data = match merge_axis(&a.data, &b.data, "", self, ctx) {
+            Ok(m) => m,
+            Err(d) => return Value::Bottom(Box::new(d)),
+        };
+        let types = match merge_axis(&a.types, &b.types, "@", self, ctx) {
+            Ok(m) => m,
+            Err(d) => return Value::Bottom(Box::new(d)),
+        };
+        let rules = match merge_axis(&a.rules, &b.rules, "/", self, ctx) {
+            Ok(m) => m,
+            Err(d) => return Value::Bottom(Box::new(d)),
+        };
+        let meta = match merge_axis(&a.meta, &b.meta, "%", self, ctx) {
+            Ok(m) => m,
+            Err(d) => return Value::Bottom(Box::new(d)),
+        };
+        let system = match merge_axis(&a.system, &b.system, "~%", self, ctx) {
+            Ok(m) => m,
+            Err(d) => return Value::Bottom(Box::new(d)),
+        };
+        let local = match merge_axis(&a.local, &b.local, "~", self, ctx) {
+            Ok(m) => m,
+            Err(d) => return Value::Bottom(Box::new(d)),
+        };
+        let mut out = ComboVal::default();
+        out.closed = a.closed || b.closed;
+        out.effect = a.effect.union(b.effect);
+        out.relations = a
+            .relations
+            .iter()
+            .chain(b.relations.iter())
+            .cloned()
             .collect();
-        for key in all_lkeys {
-            let key_stripped = key.trim_start_matches('~');
-            let va = a.local.get(key_stripped).cloned().unwrap_or(Value::Top);
-            let vb = b.local.get(key_stripped).cloned().unwrap_or(Value::Top);
-            let merged = self.unify_internal(va, vb, ctx);
-            if let Value::Bottom(mut detail) = merged {
-                let cp = detail
-                    .path
-                    .map(|p| format!("~{}.{}", key, p))
-                    .unwrap_or(format!("~{}", key));
-                detail.path = Some(cp);
-                return Value::Bottom(detail);
-            }
-            if !matches!(&merged, Value::Top) {
-                rl.insert(key.clone(), merged);
-            }
-        }
-        let mut out = ComboVal::new(
-            rf,
-            a.closed || b.closed,
-            rl,
-            a.effect.union(b.effect),
-            a.relations
-                .iter()
-                .chain(b.relations.iter())
-                .cloned()
-                .collect(),
-        );
+        out.data = data;
+        out.types = types;
+        out.rules = rules;
+        out.meta = meta;
+        out.system = system;
+        out.local = local;
         // Preserve deferred spreads that expand could not resolve yet
         // (forward_spread: evolve/observe-entry unify vs system root).
         out.pending_spreads = pending_spreads;
