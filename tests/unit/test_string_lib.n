@@ -2,4 +2,4 @@
 ;; @expect: "n-slash"
 ;; 測試字串長度與修剪
 ~s: "  n-slash  "
-res: ~%String./trim ~s
+res: ~%Str./trim ~s

@@ -102,7 +102,7 @@ fn c0_the_system_names_still_resolve_after_the_root_stops_carrying_them() {
     let d = scratch("c0");
     std::fs::write(
         d.join("r.n"),
-        "a: ~%Math./add(1, 2)\nb: /add(1, 2)\nc: ~%List./len([1, 2, 3])\n",
+        "a: ~%Math./add(1, 2)\nb: ~%Math./add(1, 2)\nc: ~%List./len([1, 2, 3])\n",
     )
     .unwrap();
     for (k, want) in [("a", "3"), ("b", "3"), ("c", "3")] {

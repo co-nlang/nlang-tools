@@ -155,18 +155,18 @@ fn red_multiparam_equiv_explicit_curry() {
 
 #[test]
 fn red_shadow_builtin_add_morphism_errs_at_evolve() {
-    // today: [true, true] — silent evolve, whole universe ⊥ at observe
+    // O65: `/add` is no longer a standard-root coordinate, so a user
+    // `/add:` is an ordinary overlay (same as `/myadd`).
     let st = evolve_statuses("/add: (x -> (y -> x + y))\nz: 42");
-    assert!(!st[0], "colliding /add def must Err at its own evolve");
+    assert!(st[0], "user /add is a free name after O65");
     assert!(st[1], "unrelated field z must not be blamed");
 }
 
 #[test]
 fn red_shadow_builtin_add_atom_errs_at_evolve() {
-    // G2-C via the same boundary: /add: 7 today silently grows the closed
-    // builtin cocoon a %val key
+    // O65: no standard-root `/add` cocoon remains to collide with.
     let st = evolve_statuses("/add: 7\nz: 42");
-    assert!(!st[0], "atom shadow of builtin /add must Err at evolve");
+    assert!(st[0], "user /add is a free name after O65");
     assert!(st[1]);
 }
 
@@ -215,10 +215,9 @@ fn pin_bare_add_def_shadows_nothing() {
     assert_obs("add: (x -> (y -> x * 100 + y))\nout: add 3 5", "305");
 }
 
-#[test] // ACTIVE pin: with no user def, bare `add` falls through the
-        // lookup chain to the root builtin rules axis (math.add)
+#[test] // ACTIVE pin: arithmetic lives in `~%Math`; top-level `/add` is gone (O65).
 fn pin_bare_lookup_falls_to_builtin() {
-    assert_obs("out: add 3 5", "8");
+    assert_obs("out: ~%Math./add 3 5", "8");
 }
 
 #[test] // ACTIVE pin: combo-local /add never touches root — no collision

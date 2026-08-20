@@ -151,7 +151,6 @@ fn c5_control_the_prefix_fallback_still_reaches_a_users_add() {
 /// `complex`→`~%Complex` -- and `String` is the TitleCase of a type that
 /// does not exist.
 #[test]
-#[ignore = "RED: the module is spelled ~%String today"]
 fn r1_the_string_module_is_spelled_str() {
     let out = observe("r1", "app: { v: ~%Str./len }\n");
     assert!(
@@ -163,7 +162,6 @@ fn r1_the_string_module_is_spelled_str() {
 /// RED (O64 + closed world): the old spelling is gone, and gone on the
 /// system axis means `⊥ #missing_key`, not silence.
 #[test]
-#[ignore = "RED: ~%String still resolves"]
 fn r2_the_old_spelling_answers_missing_key() {
     let out = observe("r2", "app: { c: (~%String).%cause }\n");
     assert!(
@@ -176,7 +174,6 @@ fn r2_the_old_spelling_answers_missing_key() {
 /// standard root. The rules axis is open-world, so this is `_` -- the
 /// closed-world ruling is about `~%` only.
 #[test]
-#[ignore = "RED: the standard root still provides a top-level /add"]
 fn r3_the_top_level_add_is_no_longer_provided() {
     let out = observe("r3", "app: { v: /add }\n");
     assert!(
@@ -190,7 +187,6 @@ fn r3_the_top_level_add_is_no_longer_provided() {
 /// stands in its place, which the clause calls another thing borrowing
 /// its name.
 #[test]
-#[ignore = "RED: ~%Official is a synthesised empty combo"]
 fn r4_official_answers_missing_key() {
     let out = observe("r4", "app: { c: (~%Official).%cause }\n");
     assert!(
@@ -203,7 +199,6 @@ fn r4_official_answers_missing_key() {
 /// name. `~%` is engine-minted only, so the engine knows exactly what it
 /// holds; answering `_` there claims an ignorance it does not have.
 #[test]
-#[ignore = "RED: an absent ~% name answers _ today"]
 fn r5_any_absent_system_name_answers_missing_key() {
     let out = observe("r5", "app: { c: (~%NoSuchModule).%cause }\n");
     assert!(
