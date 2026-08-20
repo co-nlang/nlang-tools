@@ -151,7 +151,6 @@ fn c4_control_a_single_field_blur_already_has_one_address() {
 /// RED: commit says success; status, log, evolve and commit then all fail
 /// with #object_undecodable. Fuel plays no part -- there is none here.
 #[test]
-#[ignore = "RED: committing a root self-quote leaves an undecodable object"]
 fn r1_a_universe_that_quotes_its_root_stays_readable() {
     assert_store_readable(
         "r1",
@@ -164,7 +163,6 @@ fn r1_a_universe_that_quotes_its_root_stays_readable() {
 /// cannot be continued. Separate from r1 because "can still be read" and
 /// "can still be written" are different promises.
 #[test]
-#[ignore = "RED: the store is bricked, so no further commit is possible"]
 fn r2_history_can_continue_after_a_root_self_quote() {
     let d = scratch("r2");
     std::fs::write(d.join("a.n"), "v: <<_.>>\napp: { k: 1 }\n").unwrap();
@@ -187,7 +185,6 @@ fn r2_history_can_continue_after_a_root_self_quote() {
 /// RED: same program, same fuel, twelve fresh processes. At the baseline
 /// this yields two addresses in roughly even proportion.
 #[test]
-#[ignore = "RED: which field becomes the blur is drawn per process"]
 fn r3_the_same_program_addresses_the_same_blur_in_every_process() {
     let first = blur_caid("r3", TWO_FIELDS).expect("harness: this program must blur");
     for i in 0..12 {
@@ -204,7 +201,6 @@ fn r3_the_same_program_addresses_the_same_blur_in_every_process() {
 /// identity. Twelve fresh stores, one source, and the committed root
 /// address must not depend on which way the draw went.
 #[test]
-#[ignore = "RED: the committed root address varies per process"]
 fn r4_the_committed_root_address_does_not_depend_on_the_draw() {
     let src = "~%Config.fuel: 5\nv: <<_.>>\napp: { k: 1 }\n";
     let first = committed_root("r4", src);

@@ -322,7 +322,7 @@ impl ObjectStore {
             let mut durable = value.for_legacy_cas_storage();
             let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
             project_standard_root(durable_root, standard);
-            self.write_object(&hash, canonical_cas_json(&durable)?)?;
+            self.write_object(&hash, encode_readable_cas_json(&durable)?)?;
             return Ok(hash);
         }
         // The named table is a first-class CAS object.  Its digest is the
@@ -341,7 +341,8 @@ impl ObjectStore {
         let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
         project_standard_root(durable_root, match &standard { Value::Combo(root) => root, _ => unreachable!() });
         let hash = durable.content_hash();
-        self.write_object(&hash, canonical_cas_json(&durable)?)?;
+        let content = encode_readable_cas_json(&durable)?;
+        self.write_object(&hash, content)?;
         Ok(hash)
     }
 
@@ -710,4 +711,15 @@ fn hydrate_systems_in_value(
 /// emits its default object map in lexical order, pinned by Q-010a P4.
 fn canonical_cas_json<T: Serialize>(value: &T) -> Result<String> {
     Ok(serde_json::to_string(&serde_json::to_value(value)?)?)
+}
+
+/// Encode a universe root and refuse the write if this engine cannot decode
+/// the bytes (REAL_03 §6.6 family). Self-nested `<<_.>>` trees fail here
+/// instead of reporting Commit successful and bricking the store.
+fn encode_readable_cas_json(value: &Value) -> Result<String> {
+    let content = canonical_cas_json(value)?;
+    serde_json::from_str::<Value>(&content).map_err(|e| {
+        anyhow::anyhow!("refusing to store a root this engine cannot read back: {e}")
+    })?;
+    Ok(content)
 }

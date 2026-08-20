@@ -707,6 +707,7 @@ impl Universe {
         let mut commit_ctx = crate::EvalContext::new(new_root.clone())
             .with_standard_root(self.standard_root.clone());
         commit_ctx.memo_enabled = false;
+        commit_ctx.preserve_refs = true;
         let new_root = match engine.force_recursive(Value::Combo(new_root), &mut commit_ctx) {
             Value::Combo(root) => root,
             _ => return Err(anyhow::anyhow!("Commit observation did not produce a root")),

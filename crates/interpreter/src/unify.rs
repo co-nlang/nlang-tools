@@ -8,12 +8,11 @@ use crate::value::{
     EffectTag, MasaRef, Value,
 };
 use crate::{mbu, EvalContext, Ouroboros};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 use std::cmp::Ordering;
-use std::collections::HashSet;
 
 const EPSILON_COHERENT: f64 = 0.1;
 
@@ -472,7 +471,13 @@ impl Ouroboros {
                           ctx: &mut EvalContext|
          -> Result<IndexMap<String, Value>, BottomDetail> {
             let mut out = IndexMap::new();
-            let keys: HashSet<&String> = left.keys().chain(right.keys()).collect();
+            // Content order, not the process-seeded hasher: left's insertion
+            // order, then right-only keys in right's order. REAL_03 §6.7's
+            // ban on hash-table iteration for serialization applies to
+            // evaluation order the same way — fuel makes that order an address.
+            let mut keys = IndexSet::new();
+            keys.extend(left.keys());
+            keys.extend(right.keys());
             for key in keys {
                 let va = left.get(key).cloned().unwrap_or(Value::Top);
                 let vb = right.get(key).cloned().unwrap_or(Value::Top);
