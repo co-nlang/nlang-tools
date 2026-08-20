@@ -2840,27 +2840,38 @@ impl Ouroboros {
 
     /// The standard root used for new universes written by this engine.
     pub fn root_with_system(&self) -> ComboVal {
-        match Value::Combo(Self::current_standard_root()).for_cas_storage() {
-            Value::Combo(root) => root,
-            _ => unreachable!(),
-        }
+        Self::as_shipped(Self::current_standard_root())
     }
 
-    /// Current standard root: v0.22 library with the three arity-overload
-    /// keys renamed to plain identifiers (quoted-names ruling B).
+    /// Current library: v0.22 contents with the three arity-overload keys
+    /// renamed to plain identifiers (quoted-names ruling B).
     fn current_standard_root() -> ComboVal {
         let mut root = Self::v0_22_standard_root();
         Self::rename_engine_differential_keys(&mut root);
         root
     }
 
-    /// The table of roots this binary ships. Adding a historical root is a
-    /// row here, never a new decoding branch.
+    /// Projection a given engine actually wrote: `for_cas_storage` sits
+    /// between the builder and the bytes on disk (v0.26.0+). Historical
+    /// rows must be this form, not the builder return value.
+    fn as_shipped(root: ComboVal) -> ComboVal {
+        match Value::Combo(root).for_cas_storage() {
+            Value::Combo(root) => root,
+            _ => unreachable!(),
+        }
+    }
+
+    /// The table of roots this binary ships. Each row is a form some
+    /// released `root_with_system()` actually returned.
     fn shipped_standard_roots(&self) -> StandardRootSet {
         StandardRootSet::from_roots([
+            // This engine (ruling B rename, then CAS projection).
             self.root_with_system(),
+            // v0.26.0 ..= v0.26.1: `for_cas_storage(v0_22_standard_root())`.
+            Self::as_shipped(Self::v0_22_standard_root()),
+            // Before v0.26.0, `root_with_system()` returned the builder
+            // without `for_cas_storage` (Q-032 C3: `65f52e2d…`).
             Self::v0_22_standard_root(),
-            Self::current_standard_root(),
         ])
     }
 
