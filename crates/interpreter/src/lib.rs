@@ -1318,6 +1318,34 @@ impl Ouroboros {
         }
     }
 
+    /// Ruling B: `/ %differential.1/.2/.3` are not plain identifiers.
+    /// Rename in-place on a clone of the v0.22 root so the historical
+    /// spelling stays loadable.
+    fn rename_engine_differential_keys(root: &mut ComboVal) {
+        let Some(Value::Combo(eng)) = root.system.get_mut("Engine") else {
+            return;
+        };
+        for i in 1u8..=3 {
+            let old = format!("%differential.{i}");
+            if let Some(v) = eng.rules.shift_remove(&old) {
+                eng.rules.insert(format!("differential_{i}"), v);
+            }
+        }
+    }
+
+    /// O64 / O65 / O66 on a clone of the quoted-names root. The v0.22
+    /// builder and the quoted-names spelling stay loadable as history.
+    fn apply_shelf_rulings(root: &mut ComboVal) {
+        // O64: the module for type `str` is `~%Str`.
+        if let Some(v) = root.system.shift_remove("String") {
+            root.system.insert("Str".to_string(), v);
+        }
+        // O65: `/add` is not a top-level rule; it lives in `~%Math`.
+        root.rules.shift_remove("add");
+        // O66: do not synthesise an empty `~%Official` shell.
+        root.system.shift_remove("Official");
+    }
+
     /// The v0.22 standard-library root. Keep this builder after a future
     /// library change so that `shipped_standard_roots` can retain it as data.
     fn v0_22_standard_root() -> ComboVal {
@@ -2659,6 +2687,8 @@ impl Ouroboros {
         );
 
         // ~%Engine: observe, save, /%differential.{1,2,3}
+        // (historical spelling; current root renames these — see
+        // rename_engine_differential_keys)
         fn engine_morph(name: &str, builtin: &str, effect: EffectTag) -> Value {
             Value::Combo(ComboVal::new(
                 IndexMap::from_iter(vec![
@@ -2823,16 +2853,49 @@ impl Ouroboros {
 
     /// The standard root used for new universes written by this engine.
     pub fn root_with_system(&self) -> ComboVal {
-        match Value::Combo(Self::v0_22_standard_root()).for_cas_storage() {
+        Self::as_shipped(Self::current_standard_root())
+    }
+
+    /// Quoted-names era library: v0.22 plus the three arity-overload keys
+    /// renamed to plain identifiers (ruling B). Historical row `229be911…`.
+    fn quoted_names_standard_root() -> ComboVal {
+        let mut root = Self::v0_22_standard_root();
+        Self::rename_engine_differential_keys(&mut root);
+        root
+    }
+
+    /// Current library: quoted-names root plus O64/O65/O66.
+    fn current_standard_root() -> ComboVal {
+        let mut root = Self::quoted_names_standard_root();
+        Self::apply_shelf_rulings(&mut root);
+        root
+    }
+
+    /// Projection a given engine actually wrote: `for_cas_storage` sits
+    /// between the builder and the bytes on disk (v0.26.0+). Historical
+    /// rows must be this form, not the builder return value.
+    fn as_shipped(root: ComboVal) -> ComboVal {
+        match Value::Combo(root).for_cas_storage() {
             Value::Combo(root) => root,
             _ => unreachable!(),
         }
     }
 
-    /// The table of roots this binary ships. Adding a historical root is a
-    /// row here, never a new decoding branch.
+    /// The table of roots this binary ships. Each row is a form some
+    /// released `root_with_system()` actually returned.
     fn shipped_standard_roots(&self) -> StandardRootSet {
-        StandardRootSet::from_roots([self.root_with_system(), Self::v0_22_standard_root()])
+        StandardRootSet::from_roots([
+            // This engine (shelf rulings, then CAS projection).
+            self.root_with_system(),
+            // Quoted-names arc: ruling B rename, then CAS projection
+            // (`229be911…`).
+            Self::as_shipped(Self::quoted_names_standard_root()),
+            // v0.26.0 ..= v0.26.1: `for_cas_storage(v0_22_standard_root())`.
+            Self::as_shipped(Self::v0_22_standard_root()),
+            // Before v0.26.0, `root_with_system()` returned the builder
+            // without `for_cas_storage` (Q-032 C3: `65f52e2d…`).
+            Self::v0_22_standard_root(),
+        ])
     }
 
     pub fn supports_standard_root(&self, digest: &str) -> bool {
@@ -3493,27 +3556,59 @@ impl Ouroboros {
                     // forward_spread: expand deferred sources before solidifying fields.
                     let expanded = self.expand_combo_pending(c, ctx);
                     match expanded {
-                        Value::Combo(c) => {
+                        Value::Combo(mut c) => {
                             let mut new_c = ComboVal::default();
                             new_c.closed = c.closed;
                             new_c.effect = c.effect;
-                            new_c.relations = c.relations.clone();
+                            new_c.relations = std::mem::take(&mut c.relations);
                             // forward_spread acceptance repair: re-queued pending
                             // sources (evolve-phase Top) must survive the rebuild.
-                            new_c.pending_spreads = c.pending_spreads.clone();
-                            for (k, v) in c.all_fields_iter() {
+                            new_c.pending_spreads = std::mem::take(&mut c.pending_spreads);
+                            let closed = c.closed;
+                            // Copy per axis. Flattening through insert_field
+                            // re-routes a data key named `@t` onto the type
+                            // axis (Q1).
+                            for (k, v) in std::mem::take(&mut c.data) {
                                 let forced = self.force_recursive(v, ctx);
-                                if !c.closed {
+                                if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
-                                new_c.insert_field(&k, forced);
+                                new_c.data.insert(k, forced);
                             }
-                            for (k, v) in c.local.iter() {
-                                let forced = self.force_recursive(v.clone(), ctx);
-                                if !c.closed {
+                            for (k, v) in std::mem::take(&mut c.types) {
+                                let forced = self.force_recursive(v, ctx);
+                                if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
-                                new_c.local.insert(k.clone(), forced);
+                                new_c.types.insert(k, forced);
+                            }
+                            for (k, v) in std::mem::take(&mut c.rules) {
+                                let forced = self.force_recursive(v, ctx);
+                                if !closed {
+                                    new_c.effect = new_c.effect.union(forced.effect());
+                                }
+                                new_c.rules.insert(k, forced);
+                            }
+                            for (k, v) in std::mem::take(&mut c.meta) {
+                                let forced = self.force_recursive(v, ctx);
+                                if !closed {
+                                    new_c.effect = new_c.effect.union(forced.effect());
+                                }
+                                new_c.meta.insert(k, forced);
+                            }
+                            for (k, v) in std::mem::take(&mut c.system) {
+                                let forced = self.force_recursive(v, ctx);
+                                if !closed {
+                                    new_c.effect = new_c.effect.union(forced.effect());
+                                }
+                                new_c.system.insert(k, forced);
+                            }
+                            for (k, v) in std::mem::take(&mut c.local) {
+                                let forced = self.force_recursive(v, ctx);
+                                if !closed {
+                                    new_c.effect = new_c.effect.union(forced.effect());
+                                }
+                                new_c.local.insert(k, forced);
                             }
                             Value::Combo(new_c)
                         }
@@ -3726,6 +3821,11 @@ impl Ouroboros {
             if TypeConstraint::is_type_constraint_path(name) {
                 return TypeConstraint::marker_value(name.trim_start_matches('@'));
             }
+            // Closed world on `~%` only: the engine minted every name on
+            // this axis, so an absent one is `#missing_key`, not `_`.
+            if name.starts_with("~%") {
+                return BottomCause::MissingKey.into();
+            }
         }
         self.resolve_path_internal(path, ctx)
     }
@@ -3868,6 +3968,9 @@ impl Ouroboros {
                     }
                 }
                 match found {
+                    None if name.starts_with("~%") => {
+                        return BottomCause::MissingKey.into();
+                    }
                     Some(v) => {
                         let is_ref = matches!(&v, Value::Ref(_));
                         // force_coord only for public root/staged coordinates;

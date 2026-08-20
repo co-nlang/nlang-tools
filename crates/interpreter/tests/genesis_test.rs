@@ -17,7 +17,7 @@ fn seed_caids_are_stable() {
         ("~%Math", nlang_interpreter::genesis::SEED_MATH),
         ("~%List", nlang_interpreter::genesis::SEED_LIST),
         ("~%Cond", nlang_interpreter::genesis::SEED_COND),
-        ("~%String", nlang_interpreter::genesis::SEED_STRING),
+        ("~%Str", nlang_interpreter::genesis::SEED_STRING),
         ("~%Complex", nlang_interpreter::genesis::SEED_COMPLEX),
         ("~%Reflection", nlang_interpreter::genesis::SEED_REFL),
         ("~%Time", nlang_interpreter::genesis::SEED_TIME),

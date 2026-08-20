@@ -414,19 +414,12 @@ fn red_sign_refine_is_off_the_language_surface() {
         fuel.out
     );
 
-    // CONTROL 2: `~%Official` is still mounted. It becomes an EMPTY module,
-    // which is the honest cold-start shape: the spec names the trust root
-    // `~%Official.architects` (ORDER_01 §117) and nobody has declared one.
-    //
-    // The assertion is `{{`, not "not bottom", and the difference is the
-    // whole point. Measured: a module removed from the (open) system root
-    // evaluates to `_`, not `_|_` — so "not bottom" would pass for a module
-    // that had vanished entirely, and would not be a control at all.
+    // CONTROL 2: O66 — no locally synthesised `~%Official` shell. An absent
+    // system name is `#missing_key` (closed world on `~%`).
     let module = oo(&d, &ident, &["eval", "~%Official"]);
     assert!(
-        module.has("{{"),
-        "control: ~%Official must stay mounted as a closed combo, not vanish \
-         into Top: {}",
+        module.has("missing_key"),
+        "control: ~%Official must answer #missing_key, not a synthesised shell: {}",
         module.out
     );
 

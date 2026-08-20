@@ -323,18 +323,12 @@ fn red_no_leaf_of_the_root_varies_between_processes() {
 fn red_engine_does_not_mint_a_governance_root() {
     let d = fresh_dir();
 
-    // LIVENESS / CONTROL: `~%Official` is still mounted, so a missing
-    // `architects` means removal and not a broken module.
-    //
-    // Rewritten by the ACCEPTOR during the identity_persistence arc, which
-    // retires `/sign_refine` from the language surface — this control used
-    // to name that morphism and would otherwise have become a false red for
-    // that delivery. `{{` and not "not bottom": a module removed from the
-    // (open) system root evaluates to `_`, so "not bottom" is not a control.
+    // O66: the module itself is absent. A missing `architects` cannot be a
+    // minted key on a synthesised shell.
     let module = oo(&d, &["eval", "~%Official"]);
     assert!(
-        module.contains("{{"),
-        "control: ~%Official must still be mounted: {module}"
+        module.contains("missing_key"),
+        "control: ~%Official must answer #missing_key, not a synthesised shell: {module}"
     );
 
     let got = oo(&d, &["eval", "~%Official.architects"]);
@@ -558,21 +552,14 @@ fn pin_value_caids_are_deterministic_across_processes() {
     assert_eq!(caids.len(), 1, "value CAIDs diverged: {caids:#?}");
 }
 
-/// `~%Official` stays mounted.
-///
-/// Was `pin_official_module_still_signs`, which asserted `/sign_refine` was
-/// usable. The identity_persistence arc retires that morphism deliberately
-/// (a persistent operator key turns "any n/ program can get a signature"
-/// from harmless into the trust root), so the ACCEPTOR narrowed this pin to
-/// the part that survives, rather than leaving the delivery a red it was
-/// asked to cause.
+/// O66: `~%Official` is not a locally synthesised empty combo.
 #[test]
 fn pin_official_module_stays_mounted() {
     let d = fresh_dir();
     let out = oo(&d, &["eval", "~%Official"]);
     assert!(
-        out.contains("{{"),
-        "~%Official is no longer a mounted closed combo: {out}"
+        out.contains("missing_key"),
+        "~%Official must answer #missing_key, not a synthesised shell: {out}"
     );
 }
 

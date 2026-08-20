@@ -5,7 +5,7 @@ type_ok: 100 @ 100
 
 ;; 2. 標準庫態射（tuple 傳參）
 list_len: ~%List./len [10, 20, 30]
-str_len: ~%String./len "Ouroboros"
+str_len: ~%Str./len "Ouroboros"
 
 ;; 3. 前綴原子
 my_regex: r"^[0-9]+$"

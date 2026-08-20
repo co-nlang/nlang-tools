@@ -535,8 +535,8 @@ fn red_add_architect_is_off_the_language_surface() {
     history(&d, 1);
     let sign = oo(&d, &["eval", "~%Official"]);
     assert!(
-        sign.contains("{{"),
-        "control: ~%Official must still be mounted: {sign:?}"
+        sign.contains("missing_key"),
+        "control: ~%Official must answer #missing_key, not a synthesised shell: {sign:?}"
     );
     let got = oo(&d, &["eval", r#"~%Official./add_architect("x")"#]);
     assert!(

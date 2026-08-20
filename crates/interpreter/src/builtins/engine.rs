@@ -147,7 +147,7 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }) as Arc<BuiltinFn>,
     );
 
-    // Phase NEW: /%differential.{1,2,3}
+    // Phase NEW: /differential_{1,2,3}
     m.insert(
         "engine.differential".to_string(),
         Arc::new(

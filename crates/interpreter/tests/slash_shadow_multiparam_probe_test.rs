@@ -154,21 +154,43 @@ fn red_multiparam_equiv_explicit_curry() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn red_shadow_builtin_add_morphism_errs_at_evolve() {
-    // today: [true, true] — silent evolve, whole universe ⊥ at observe
+fn retired_by_o65_shadow_builtin_add_morphism_no_longer_collides() {
+    // RETIRED by O65 (2026-08-20), renamed so the name stops describing a
+    // rule that no longer exists. It pinned: defining `/add:` collides with
+    // the standard root's builtin and must Err at its own evolve. O65 takes
+    // `/add` off the top-level rules axis, so there is nothing to collide
+    // with and `/add` is an ordinary name like `/myadd`.
+    //
+    // The COLLISION RULE ITSELF IS NOT RETIRED -- see
+    // `pin_shadow_of_a_live_builtin_still_errs` below, which keeps it under
+    // test on a coordinate the standard root does still carry.
     let st = evolve_statuses("/add: (x -> (y -> x + y))\nz: 42");
-    assert!(!st[0], "colliding /add def must Err at its own evolve");
+    assert!(st[0], "after O65 `/add` is a free name, so its evolve succeeds");
     assert!(st[1], "unrelated field z must not be blamed");
 }
 
 #[test]
-fn red_shadow_builtin_add_atom_errs_at_evolve() {
-    // G2-C via the same boundary: /add: 7 today silently grows the closed
-    // builtin cocoon a %val key
+fn retired_by_o65_shadow_builtin_add_atom_no_longer_collides() {
+    // RETIRED by O65, same reason as above. NOTE: docs/
+    // g2_shadow_multiparam_handover.md §R-C cites this test by its former
+    // name `red_shadow_builtin_add_atom_errs_at_evolve`.
     let st = evolve_statuses("/add: 7\nz: 42");
-    assert!(!st[0], "atom shadow of builtin /add must Err at evolve");
+    assert!(st[0], "after O65 `/add` is a free name, so its evolve succeeds");
     assert!(st[1]);
 }
+
+// WARNING: THE COLLISION RULE LOSES ITS ONLY WITNESS HERE.
+//
+// The two tests above pinned "a user definition colliding with a
+// standard-root RULES coordinate must Err at its own evolve". `/add` was
+// the ONLY entry on that axis -- measured after O65, the standard root's
+// rules axis is EMPTY -- so no instance of the rule remains to test.
+//
+// The rule is not repealed; it is unwitnessed. Re-witnessing it on the
+// types axis fails for a different reason: `@list: 7` evolves fine (that
+// axis was never governed by this rule; v0.26.1 measured the same).
+// Recorded rather than papered over: if the rules axis ever gains a
+// standard-root coordinate again, this pin must come back with it.
 
 // ─────────────────────────────────────────────────────────────────────────
 // RED GATE — G2-C atom × morphism = ⊥ (unify-level observable)
@@ -215,10 +237,16 @@ fn pin_bare_add_def_shadows_nothing() {
     assert_obs("add: (x -> (y -> x * 100 + y))\nout: add 3 5", "305");
 }
 
-#[test] // ACTIVE pin: with no user def, bare `add` falls through the
-        // lookup chain to the root builtin rules axis (math.add)
-fn pin_bare_lookup_falls_to_builtin() {
-    assert_obs("out: add 3 5", "8");
+#[test] // RETIRED by O65: the fallback this pinned no longer exists. It
+        // asserted that with no user def, bare `add` reaches the root
+        // builtin rules axis (math.add) -> 8. O65 removes that coordinate,
+        // so the fallback has nothing to land on. Asserts the NEW truth
+        // rather than rewriting the input to `~%Math./add`, which would
+        // leave a test whose name outlived what it tests.
+fn retired_by_o65_bare_lookup_no_longer_reaches_a_builtin() {
+    assert_obs("out: add 3 5", "_");
+    // The arithmetic itself did not move -- only the top-level alias.
+    assert_obs("out: ~%Math./add 3 5", "8");
 }
 
 #[test] // ACTIVE pin: combo-local /add never touches root — no collision

@@ -63,7 +63,7 @@ pub fn all_seeds() -> Vec<(&'static str, &'static str)> {
         ("~%List", SEED_LIST),
         ("~%Cond", SEED_COND),
         ("~%Discovery", SEED_DISCOVERY),
-        ("~%String", SEED_STRING),
+        ("~%Str", SEED_STRING),
         ("~%Complex", SEED_COMPLEX),
         ("~%Reflection", SEED_REFL),
         ("~%Time", SEED_TIME),

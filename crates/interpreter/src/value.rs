@@ -536,6 +536,45 @@ fn is_engine_scaffold_field(key: &str, val: &Value) -> bool {
     key == "_" && matches!(val, Value::Top | Value::TopCaused { .. })
 }
 
+/// SYNTAX_03 §104 #6 inverse: a stored name is a plain identifier
+/// (`named_key` = ident | numeric_key).
+fn is_plain_ident(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if name.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let mut cs = name.chars();
+    matches!(cs.next(), Some(c) if c.is_alphabetic() || c == '_')
+        && cs.all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
+
+fn quote_nlang_multiline(s: &str) -> String {
+    format!("\"\"\"{}\"\"\"", s.replace("\"\"\"", "\\\"\"\""))
+}
+
+fn quote_nlang_string(s: &str) -> String {
+    if s.contains('"') || s.contains('\n') || s.contains('\r') {
+        quote_nlang_multiline(s)
+    } else {
+        format!("\"{}\"", s)
+    }
+}
+
+/// Print a field key. `prefix` is the axis sigil (`""`, `"@"`, `"/"`, …);
+/// `name` is the stored map key (no sigil). Non-plain names are quoted so
+/// the printed form parses back as the same coordinate (Q3).
+fn quote_nlang_field_key(prefix: &str, name: &str) -> String {
+    if is_plain_ident(name) {
+        format!("{prefix}{name}")
+    } else if name.contains('"') || name.contains('\n') || name.contains('\r') {
+        format!("{prefix}{}", quote_nlang_multiline(name))
+    } else {
+        format!("{prefix}\"{name}\"")
+    }
+}
+
 /// G6: collapsed-observation projection (SYNTAX_06 §4 #6 value-context).
 /// Peels hybrid/pure-wrapper `%val` for display; recurses into combo fields
 /// and list elements. Structural-view markers unwrap to the full node without
@@ -555,13 +594,26 @@ pub fn project_value_context(v: Value) -> Value {
                 return project_value_context(inner);
             }
             // Plain combo / list: project each public field; drop local axis.
+            // Per-axis copy: insert_field would re-route data `@t` to types (Q1).
             let mut new_c = ComboVal::default();
             new_c.closed = c.closed;
             new_c.effect = c.effect;
             new_c.relations = c.relations.clone();
             new_c.masa_ref = c.masa_ref.clone();
-            for (k, fv) in c.all_fields_iter() {
-                new_c.insert_field(&k, project_value_context(fv));
+            for (k, fv) in c.data {
+                new_c.data.insert(k, project_value_context(fv));
+            }
+            for (k, fv) in c.types {
+                new_c.types.insert(k, project_value_context(fv));
+            }
+            for (k, fv) in c.rules {
+                new_c.rules.insert(k, project_value_context(fv));
+            }
+            for (k, fv) in c.meta {
+                new_c.meta.insert(k, project_value_context(fv));
+            }
+            for (k, fv) in c.system {
+                new_c.system.insert(k, project_value_context(fv));
             }
             Value::Combo(new_c)
         }
@@ -2821,6 +2873,7 @@ impl Value {
                     }
                 }
                 AtomKind::Str(s) => s.clone(),
+                AtomKind::MultilineStr(s) => s.clone(),
                 AtomKind::Tag(t) => format!("#{}", t),
                 AtomKind::TagStart => "#_|_".to_string(),
                 AtomKind::TagEnd => "#_".to_string(),
@@ -2871,7 +2924,8 @@ impl Value {
                             format!("{}-{}i", r, i.abs())
                         }
                     }
-                    AtomKind::Str(s) => format!("\"{}\"", s),
+                    AtomKind::Str(s) => quote_nlang_string(s),
+                    AtomKind::MultilineStr(s) => quote_nlang_multiline(s),
                     AtomKind::Tag(t) => format!("#{}", t),
                     AtomKind::TagStart => "#_|_".to_string(),
                     AtomKind::TagEnd => "#_".to_string(),
@@ -2922,28 +2976,37 @@ impl Value {
                     };
                 }
                 s.push('\n');
-                let fields = c.fields();
-                let mut keys: Vec<_> = fields.keys().collect();
-                keys.sort();
-                for k in keys {
-                    let v = fields.get(k).unwrap();
-                    // Engine anti-peel scaffolding (`_: _` / `_`→Top) is not
-                    // user-visible (REAL_04 cocoon_shape law 3). User data
-                    // fields named `_` with a non-Top value still print.
-                    if is_engine_scaffold_field(k, v) {
-                        continue;
-                    }
-                    s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1)));
+                // Per-axis spelling, then sort displayed keys so `%val`
+                // still precedes `name` (same order as the old flattened
+                // `fields()` sort). Data `@t` quotes; type-axis `t` stays `@t`.
+                let mut rows: Vec<(String, Value)> = Vec::new();
+                let push = |rows: &mut Vec<(String, Value)>, prefix: &str, k: &str, v: &Value| {
+                    rows.push((quote_nlang_field_key(prefix, k), v.clone()));
+                };
+                for (k, v) in &c.data {
+                    push(&mut rows, "", k, v);
                 }
-                let local = c.local_fields();
-                let mut lkeys: Vec<_> = local.keys().collect();
-                lkeys.sort();
-                for k in lkeys {
-                    let v = local.get(k).unwrap();
-                    if is_engine_scaffold_field(k, v) {
+                for (k, v) in &c.types {
+                    push(&mut rows, "@", k, v);
+                }
+                for (k, v) in &c.rules {
+                    push(&mut rows, "/", k, v);
+                }
+                for (k, v) in &c.meta {
+                    push(&mut rows, "%", k, v);
+                }
+                for (k, v) in &c.system {
+                    push(&mut rows, "~%", k, v);
+                }
+                for (k, v) in &c.local {
+                    push(&mut rows, "~", k, v);
+                }
+                rows.sort_by(|a, b| a.0.cmp(&b.0));
+                for (disp, v) in rows {
+                    if is_engine_scaffold_field(&disp, &v) {
                         continue;
                     }
-                    s.push_str(&format!("{}  {}: {}\n", pad, k, v.to_nlang(indent + 1)));
+                    s.push_str(&format!("{}  {}: {}\n", pad, disp, v.to_nlang(indent + 1)));
                 }
                 s.push_str(&format!("{}}}", pad));
                 if c.closed {
@@ -3123,15 +3186,40 @@ impl Value {
                 hasher.update([0x02]);
                 hasher.update([if c.closed { 1 } else { 0 }]);
                 hasher.update([c.effect.to_serial_byte()]);
-                let fields = c.fields();
-                let mut keys: Vec<_> = fields.keys().collect();
-                keys.sort();
-                for k in keys {
+                // Same flattened spelling as `fields()`, except a data key
+                // that looks like an axis sigil (`@t`) must not hash as the
+                // type-axis key `t` (Q1). Ordinary data keys keep the old
+                // bytes so existing `%id` pins do not move.
+                let mut entries: Vec<(String, &Value)> = Vec::new();
+                for (k, v) in &c.data {
+                    let hk = if k.starts_with("~%")
+                        || k.starts_with('~')
+                        || k.starts_with('@')
+                        || k.starts_with('/')
+                        || k.starts_with('%')
+                    {
+                        format!("\0data:{k}")
+                    } else {
+                        k.clone()
+                    };
+                    entries.push((hk, v));
+                }
+                for (k, v) in &c.rules {
+                    entries.push((format!("/{k}"), v));
+                }
+                for (k, v) in &c.types {
+                    entries.push((format!("@{k}"), v));
+                }
+                for (k, v) in &c.meta {
+                    entries.push((format!("%{k}"), v));
+                }
+                for (k, v) in &c.system {
+                    entries.push((format!("~%{k}"), v));
+                }
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                for (k, v) in entries {
                     hasher.update(k.as_bytes());
-                    fields
-                        .get(k)
-                        .unwrap()
-                        .hash_recursive_with_salt(hasher, salt);
+                    v.hash_recursive_with_salt(hasher, salt);
                 }
                 let local = c.local_fields();
                 let mut lkeys: Vec<_> = local.keys().collect();

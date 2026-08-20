@@ -1030,7 +1030,13 @@ impl FieldKey {
                 };
                 format!("{}{}", p, name)
             }
-            FieldKey::Quoted(s) => format!("\"{}\"", s),
+            FieldKey::Quoted(s) => {
+                if s.contains('"') || s.contains('\n') || s.contains('\r') {
+                    format!("\"\"\"{}\"\"\"", s.replace("\"\"\"", "\\\"\"\""))
+                } else {
+                    format!("\"{}\"", s)
+                }
+            }
             FieldKey::Pattern(e) => e.to_nlang(0),
             FieldKey::Path(p) => format!("{}", p),
         }
