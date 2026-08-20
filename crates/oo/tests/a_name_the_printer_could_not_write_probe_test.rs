@@ -219,3 +219,35 @@ fn r6_no_standard_root_key_needs_quoting() {
         "every standard-root coordinate must be writable without quotes; these are not: {bad:#?}"
     );
 }
+
+// ── C5 ── added at repair 1 (acceptance side) ────────────────────────────
+//
+// Ruling B moves the standard root's digest, so every store written before
+// this arc names a digest this binary must still SUPPORT. The v0.26.1
+// shipped root is `for_cas_storage(v0_22_standard_root())` -- the BUILDER
+// is not what shipped, the normalised form is, and `shipped_standard_roots`
+// must carry the shipped form.
+//
+// This control was missing from the original file. Repair 1 measured the
+// consequence with two real binaries: a v0.26.1 store was refused by the
+// delivered engine with `standard root digest 2da5b713… is unavailable`.
+//
+// ⚠ Like Q-032's C3, this cannot prove an old store opens -- that needs a
+// binary whose standard root differs, which no in-tree test can build. It
+// asserts the one thing a test CAN: this binary still supports the digest.
+// The real evidence is the cross-version matrix at acceptance.
+
+/// The standard root every store written by v0.21.0..=v0.26.1 names.
+const SHIPPED_THROUGH_V0_26_1: &str =
+    "2da5b71371649291cfa5dc5d0cd019464d248e98645b3901938e1c08d2172c2c";
+
+#[test]
+fn c5_control_the_previously_shipped_standard_root_stays_supported() {
+    let d = scratch("c5");
+    let engine = nlang_interpreter::Ouroboros::init(&d).unwrap();
+    assert!(
+        engine.supports_standard_root(SHIPPED_THROUGH_V0_26_1),
+        "every store written before this arc names {SHIPPED_THROUGH_V0_26_1}; \
+         dropping it from the shipped set makes all of them unopenable"
+    );
+}
