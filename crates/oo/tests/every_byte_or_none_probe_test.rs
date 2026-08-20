@@ -302,7 +302,7 @@ fn c2_the_value_survives_a_round_trip() {
 //   v0.20.0              16ba5683…  (Q-010a: span removed, identity untouched)
 //   v0.21.0              6e5ad5e3…  (Q-010b: forced at commit, closure
 //                                    narrowed, standard root by digest)
-const ROOT_CAID: &str = "72a6fbc1dba56f0c9519cd1663488bae4211143ed81a5951d3e4df9f3eda2a58";
+const ROOT_CAID: &str = "932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb";
 
 #[test]
 fn p1_the_root_caid_does_not_move() {

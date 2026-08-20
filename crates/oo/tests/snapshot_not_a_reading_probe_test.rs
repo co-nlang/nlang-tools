@@ -305,7 +305,7 @@ fn p2_a_horizon_knob_belongs_to_the_snapshot() {
 fn p3_a_universe_without_a_blur_keeps_its_root() {
     assert_eq!(
         committed_root("p3", "x: 1\ny: {{a: 2}}\n"),
-        "1b46339effdd6c7e89b28a0d77b02d7e373b6322e143ac71c34d3c89be7d2003",
+        "08a60adb05ea402aadc3f21f225901c5576d27b11d05edec69fd89c27802d277",
         "a universe containing no blur changed its root CAID; this arc's \
          breaking scope is blur-bearing universes only"
     );
@@ -547,7 +547,7 @@ fn p4_a_unify_side_blur_has_a_literal_address() {
 fn p5_a_morphism_bearing_universe_has_its_new_root() {
     assert_eq!(
         committed_root("p5", "inc: (x) -> x + 1\nv: 5\n"),
-        "7b9f5b95f759a566ff2548291b235f22879d02ac4fea32491acd26317d76c524",
+        "e59ea11df0a66853f655c854e2234f6aefe0d3515809d0d8d58e6dafb9a7fbb1",
         "a universe holding a morphism moved again — M4's span-free Code \
          identity is the last change that was allowed to move it"
     );

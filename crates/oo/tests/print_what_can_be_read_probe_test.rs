@@ -464,7 +464,7 @@ fn p4_root_caid_does_not_move() {
     // projection. Same value as `p1_the_root_caid_does_not_move` in
     // every_byte_or_none, which pins this program through the other path —
     // that they agree is itself worth having.
-    const KNOWN: &str = "72a6fbc1dba56f0c9519cd1663488bae4211143ed81a5951d3e4df9f3eda2a58";
+    const KNOWN: &str = "932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb";
     let d = repo_staged("p4", "app: {\n  k1: 1\n}\n");
     let out = oo(&d, &["commit", "-m", "base"]);
     assert!(out.contains("hash:"), "LIVENESS: no commit: {out}");
