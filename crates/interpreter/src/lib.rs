@@ -165,6 +165,11 @@ pub struct EvalContext {
     /// SPEC_08 §6 capability lattice (selective_discharge). Cloned via
     /// sub_context — no special inheritance.
     pub privilege: crate::value::Privilege,
+    /// Commit solidification stores quotes as quotes. Unfolding `<<_.>>`
+    /// into the combo that contains it writes a self-nested JSON object
+    /// this engine cannot read back (`#object_undecodable`). Observation
+    /// still dereferences; only the durable projection keeps the Ref.
+    pub preserve_refs: bool,
 }
 
 impl EvalContext {
@@ -206,6 +211,7 @@ impl EvalContext {
             disc_routing_visited: std::collections::HashSet::new(),
             disc_routing_hops: 0,
             privilege: crate::value::Privilege::NONE,
+            preserve_refs: false,
         }
     }
 
@@ -3421,6 +3427,7 @@ impl Ouroboros {
                 res
             }
             Value::Blur(_) => val,
+            Value::Ref(_) if ctx.preserve_refs => val,
             Value::Ref(path) => {
                 // Stage 3 (§3a): dereference — resolve path against ctx.root
                 // at observation time. fuel charged here (force = observation
@@ -3513,6 +3520,12 @@ impl Ouroboros {
                 None
             };
             return handle_resource_exhausted(e, ctx.strategy, &*ctx, partial, EffectTag::Pure);
+        }
+        // A quote of the combo that contains it must stay a quote in the
+        // durable projection (`preserve_refs`). Unfolding it writes a
+        // self-nested object that serde cannot read back.
+        if matches!(&val, Value::Ref(_)) && ctx.preserve_refs {
+            return val;
         }
         // F1 (§3-fix): when force_recursive deref's a Ref, the resolved value
         // becomes the $ binding for all thunks forced in the subtree (SYNTAX_07
