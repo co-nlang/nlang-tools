@@ -284,3 +284,61 @@ fn r6_an_address_literal_prints_back_as_itself() {
         "fmt must print the address literal back as itself, got: {out}"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// REPAIR 1 (acceptance side, 2026-08-22)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// R7  A failure to resolve must say WHICH failure. The delivery collapses
+/// every `StoreReadError` into `#missing_key` with a single `Err(_)`, so a
+/// corrupt object -- present on disk, unreadable -- is reported as absent.
+///
+/// This is the class Q-031 (v0.24.0) closed: "the gate is on the universe,
+/// and the five call sites underneath still fold `held but unopenable` into
+/// another answer." The fix there was a new `StoreReadError` variant so the
+/// COMPILER would find all five. `Err(_)` walks around that check.
+///
+/// Measured on the delivery: the same store, the same object, two answers --
+/// `oo inspect` says `#object_undecodable: object present … but cannot be
+/// decoded`, while `_{addr}.k` says `#missing_key`.
+///
+/// No new state: `#object_undecodable`, `#caid_mismatch`, `#not_found` and
+/// `#standard_root_unavailable` are all already in ERROR_CODES.
+///
+/// Pins the PROPERTY, not the wording: a present-but-corrupt object must not
+/// be reported as missing, and the answer must still name the address.
+#[test]
+#[ignore]
+fn r7_a_corrupt_object_is_not_reported_as_absent() {
+    let (d, addr) = universe_with("r7", "k: 7\n");
+    assert!(
+        oo(&d, &["eval", &format!("_{{{addr}}}.k")]).contains('7'),
+        "precondition: the address must resolve before corruption means anything"
+    );
+
+    // Corrupt the payload in place: the bytes change, the path does not.
+    let hex = addr.trim_start_matches("sha256:");
+    let obj = d
+        .join(".oo")
+        .join("objects")
+        .join("sha256")
+        .join(&hex[..2])
+        .join(&hex[2..]);
+    let body = std::fs::read_to_string(&obj).expect("the object is on disk");
+    // `k: 7` is stored as `{"Int":[1,[7]]}`. Change the magnitude only: the
+    // JSON stays well-formed and decodable, so the store must catch this by
+    // RECOMPUTING the address (REAL_03 6.6), not by failing to parse.
+    let corrupt = body.replacen("[1,[7]]", "[1,[9]]", 1);
+    assert_ne!(corrupt, body, "the corruption must actually change the bytes");
+    std::fs::write(&obj, corrupt).unwrap();
+
+    let out = oo(&d, &["eval", &format!("_{{{addr}}}.k")]);
+    assert!(
+        !out.contains("missing_key"),
+        "a present-but-corrupt object must not be reported as missing, got: {out}"
+    );
+    assert!(
+        out.contains(&hex[..16]),
+        "the refusal must still name the address, got: {out}"
+    );
+}
