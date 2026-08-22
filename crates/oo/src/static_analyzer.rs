@@ -474,15 +474,7 @@ impl StaticAnalyzer {
 }
 
 fn path_to_string(path: &Path) -> String {
-    let anchor = match path.anchor {
-        PathAnchor::Root => "_.",
-        PathAnchor::Bare => "",
-        PathAnchor::Parent(n) => return format!("{}.", "^".repeat(n as usize)),
-        PathAnchor::Current => "~.",
-    };
-
-    let segments = path.segments.join(".");
-    format!("{}{}", anchor, segments)
+    format!("{}", path)
 }
 
 /// 測試結果（靜態部分）

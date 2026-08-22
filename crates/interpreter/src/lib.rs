@@ -1,6 +1,6 @@
 pub mod universe;
 use indexmap::IndexMap;
-use nlang_parser::ast::{AtomKind, Expr, ExprKind, Path, PathAnchor};
+use nlang_parser::ast::{AddressAlgo, AtomKind, Expr, ExprKind, Path, PathAnchor};
 use nlang_parser::tier::{classify_tier, Tier};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -4051,6 +4051,51 @@ impl Ouroboros {
                     Value::Combo((**top).clone())
                 } else {
                     Value::Combo((*ctx.root).clone())
+                }
+            }
+            // Local store only (this arc). Missing address is a named
+            // refusal, never silent `_` (§4.2). The act of resolving is
+            // pure (§4.3 / O70 ④): do not tag IO onto whatever came back.
+            PathAnchor::Address {
+                algo: AddressAlgo::Sha256,
+                digest,
+            } => {
+                let hex = hex::encode(digest);
+                let addr_label = format!("sha256:{hex}");
+                let hash = crate::value::ContentHash::v1(digest.to_vec());
+                match self.store.get_value(&hash) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // Q-031 class: do not fold "held but unopenable" into
+                        // absence. The four StoreReadError variants already
+                        // name the four answers; `Err(_)` was the only
+                        // spelling the compiler could not see.
+                        use crate::storage::StoreReadError;
+                        let (cause, message) = match e.downcast_ref::<StoreReadError>() {
+                            Some(StoreReadError::NotFound { .. }) => {
+                                (BottomCause::MissingKey, addr_label.clone())
+                            }
+                            Some(err @ StoreReadError::CaidMismatch { .. }) => {
+                                (BottomCause::CaidMismatch, err.to_string())
+                            }
+                            Some(err @ StoreReadError::ObjectUndecodable { .. }) => {
+                                (BottomCause::ObjectUndecodable, err.to_string())
+                            }
+                            Some(err @ StoreReadError::StandardRootUnavailable { .. }) => {
+                                (BottomCause::StandardRootUnavailable, err.to_string())
+                            }
+                            None => (BottomCause::Conflict, e.to_string()),
+                        };
+                        Value::Bottom(Box::new(crate::value::BottomDetail {
+                            cause,
+                            path: Some(addr_label.clone()),
+                            message: Some(message),
+                            expected: None,
+                            found: None,
+                            involved: vec![],
+                            ..Default::default()
+                        }))
+                    }
                 }
             }
         };

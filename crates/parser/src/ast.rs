@@ -174,6 +174,17 @@ pub enum PathAnchor {
     Current,
     Parent(u32),
     Bare,
+    /// `_{sha256:<64 hex>}.` — that universe's root (O67). Copy-sized:
+    /// algorithm tag plus a 32-byte digest, no heap.
+    Address { algo: AddressAlgo, digest: [u8; 32] },
+}
+
+/// Digest algorithm named in an address literal. REAL_03 §30 lists blake3
+/// as a peer; it is not implemented, and a bare 64-hex digest would collide
+/// with sha256 the day it lands, so the algorithm stays in the spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AddressAlgo {
+    Sha256,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1076,14 +1087,36 @@ impl fmt::Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Grammar: anchor_root = "_." ; anchor_parent = "^"+ ~ "."
         // Parent(0) ⇔ `^.`, Parent(1) ⇔ `^^.`, …
+        // Address ⇔ `_{sha256:<hex>}.` (trailing `.` belongs to the anchor).
         match self.anchor {
             PathAnchor::Root => write!(f, "_.")?,
             PathAnchor::Current => write!(f, "^.")?,
             PathAnchor::Parent(n) => write!(f, "{}.", "^".repeat(n as usize + 1))?,
             PathAnchor::Bare => {}
+            PathAnchor::Address { algo, digest } => {
+                write!(f, "_{{{}:{}}}.", algo, encode_digest_hex(&digest))?;
+            }
         }
         write!(f, "{}", self.segments.join("."))
     }
+}
+
+impl fmt::Display for AddressAlgo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AddressAlgo::Sha256 => write!(f, "sha256"),
+        }
+    }
+}
+
+fn encode_digest_hex(digest: &[u8; 32]) -> String {
+    const HEX: &[u8] = b"0123456789abcdef";
+    let mut s = String::with_capacity(64);
+    for &b in digest {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0xf) as usize] as char);
+    }
+    s
 }
 
 impl Path {

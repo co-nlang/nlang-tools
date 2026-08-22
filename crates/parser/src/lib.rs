@@ -13,8 +13,8 @@ pub struct NParser;
 pub mod ast;
 pub mod tier;
 use crate::ast::{
-    AtomKind, Expr, ExprKind, Field, FieldKey, Path, PathAnchor, Prefix, Program, RelOp, Relation,
-    Span, StringPart, UnaryOp,
+    AddressAlgo, AtomKind, Expr, ExprKind, Field, FieldKey, Path, PathAnchor, Prefix, Program,
+    RelOp, Relation, Span, StringPart, UnaryOp,
 };
 
 /// A parser crash-fence tripped before pest is allowed to recurse on the native
@@ -739,6 +739,14 @@ fn parse_path(pair: pest::iterators::Pair<Rule>) -> Result<Path, Box<dyn Error>>
                 anchor =
                     PathAnchor::Parent((p.as_str().matches('^').count() as u32).saturating_sub(1))
             }
+            Rule::anchor_addr => {
+                let s = p.as_str();
+                let body = s
+                    .strip_prefix("_{")
+                    .and_then(|x| x.strip_suffix("}."))
+                    .ok_or("malformed address anchor")?;
+                anchor = parse_address_body(body)?;
+            }
             Rule::path_segments => {
                 for seg_pair in p.into_inner() {
                     segments.push(seg_pair.as_str().trim().to_string());
@@ -752,6 +760,34 @@ fn parse_path(pair: pest::iterators::Pair<Rule>) -> Result<Path, Box<dyn Error>>
         segments,
         span,
     })
+}
+
+/// §4.1: `sha256:` + exactly 64 hex digits. A body with no algorithm
+/// (bare digest) is refused as "address missing algorithm" — C2's
+/// right reason, not a malformed combo.
+fn parse_address_body(body: &str) -> Result<PathAnchor, Box<dyn Error>> {
+    match body.split_once(':') {
+        None => Err("address missing algorithm".into()),
+        Some(("sha256", hex)) => {
+            let digest = decode_digest_hex(hex).ok_or("invalid address digest")?;
+            Ok(PathAnchor::Address {
+                algo: AddressAlgo::Sha256,
+                digest,
+            })
+        }
+        Some((algo, _)) => Err(format!("address missing algorithm (unknown {algo})").into()),
+    }
+}
+
+fn decode_digest_hex(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

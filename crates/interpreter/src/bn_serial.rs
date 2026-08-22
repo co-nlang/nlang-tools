@@ -88,6 +88,13 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
                     buf.extend_from_slice(&n.to_le_bytes());
                 }
                 nlang_parser::ast::PathAnchor::Current => buf.push(0x03),
+                nlang_parser::ast::PathAnchor::Address { algo, digest } => {
+                    buf.push(0x04);
+                    buf.push(match algo {
+                        nlang_parser::ast::AddressAlgo::Sha256 => 0,
+                    });
+                    buf.extend_from_slice(&digest);
+                }
             }
             encode_unsigned_leb128(path.segments.len() as u64, buf);
             for seg in &path.segments {

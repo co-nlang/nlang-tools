@@ -243,6 +243,41 @@ fn expr_is_pure_circular_spread(expr: &Expr, ctx: &EvalContext) -> bool {
     }
 }
 
+/// Stage-2 combo fields are thunks of their **source**. An address path
+/// `_{sha256:…}.k` therefore hashes as that spelling, not as the 7 it
+/// names — so `identify { v: _{addr}.k }` ≠ `identify { v: 7 }` even when
+/// both observe as `{ v: 7 }` (measured; `=` is `#true` and `engine.save`
+/// writes the same object).
+///
+/// Resolution is pure (§4.3): once the address has been reached, a pure
+/// atom is the same value as the literal. Re-quote it as that atom so the
+/// enclosing combo's lazy identity does not move. Non-atoms (morphisms)
+/// stay the resolved value — they are not a literal `7`.
+fn combo_field_from_expr(oo: &Ouroboros, expr: &Expr, ctx: &mut EvalContext) -> Value {
+    let te = oo.predict_effect(expr, ctx);
+    if let ExprKind::Path(p) = &expr.kind {
+        if matches!(p.anchor, PathAnchor::Address { .. }) {
+            match oo.eval(expr, ctx) {
+                Value::Atom(kind, e, _) => {
+                    return Value::Thunk {
+                        expr: Box::new(Expr::new(ExprKind::Atom(kind), expr.span)),
+                        closure: ctx.scopes.clone(),
+                        context: ctx.context_value.clone().map(Box::new),
+                        effect: e,
+                    };
+                }
+                other => return other,
+            }
+        }
+    }
+    Value::Thunk {
+        expr: Box::new(expr.clone()),
+        closure: ctx.scopes.clone(),
+        context: ctx.context_value.clone().map(Box::new),
+        effect: te,
+    }
+}
+
 /// Atom-spread shell: `{%val: v}` plus a data-axis `_ : _` so evolve unify
 /// does not peel the pure-wrapper (same anti-peel as ⊥ %cause cocoon).
 /// Collapsed observation still projects via `%val` when appropriate.
@@ -1225,12 +1260,7 @@ impl Ouroboros {
                                 // (avoids force_recursive runaway nesting).
                                 BottomCause::Divergent.into()
                             } else {
-                                Value::Thunk {
-                                    expr: Box::new(f.value.clone()),
-                                    closure: ctx.scopes.clone(),
-                                    context: ctx.context_value.clone().map(Box::new),
-                                    effect: te,
-                                }
+                                combo_field_from_expr(self, &f.value, ctx)
                             };
                             if matches!(prefix, Some(Prefix::Logic)) {
                                 val = Value::Combo(ComboVal::new(
@@ -1341,12 +1371,7 @@ impl Ouroboros {
                             } else if expr_is_pure_circular_spread(&f.value, ctx) {
                                 BottomCause::Divergent.into()
                             } else {
-                                Value::Thunk {
-                                    expr: Box::new(f.value.clone()),
-                                    closure: ctx.scopes.clone(),
-                                    context: ctx.context_value.clone().map(Box::new),
-                                    effect: te,
-                                }
+                                combo_field_from_expr(self, &f.value, ctx)
                             };
                             // Effect: open tracks predicted; closed takes max after force.
                             if !*closed {

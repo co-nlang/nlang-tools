@@ -1329,6 +1329,8 @@ impl BottomDetail {
             BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
             BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
             BottomCause::StackOverflow => "#stack_overflow",
+            BottomCause::ObjectUndecodable => "#object_undecodable",
+            BottomCause::StandardRootUnavailable => "#standard_root_unavailable",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1549,6 +1551,14 @@ pub enum BottomCause {
     /// Incapacity — the native stack cannot go further — not the operator's
     /// policy (`#max_depth_exceeded`). Never minted as `#blur`.
     StackOverflow,
+    /// Object present but cannot be deserialized (REAL_03 §6.6;
+    /// ERROR_CODES #object_undecodable). Append-only tail. Distinct from
+    /// absence (`#missing_key`) and from a decoded-but-lying object
+    /// (`#caid_mismatch`).
+    ObjectUndecodable,
+    /// Object is held, but its format-3 standard root is not shipped by
+    /// this engine (REAL_03 §6.8). Append-only tail. Distinct from absence.
+    StandardRootUnavailable,
 }
 
 impl BottomCause {
@@ -1581,6 +1591,8 @@ impl BottomCause {
             BottomCause::RoutingBudgetExceeded => "routing_budget_exceeded",
             BottomCause::MaxDepthExceeded => "max_depth_exceeded",
             BottomCause::StackOverflow => "stack_overflow",
+            BottomCause::ObjectUndecodable => "object_undecodable",
+            BottomCause::StandardRootUnavailable => "standard_root_unavailable",
         }
     }
 
@@ -1596,7 +1608,9 @@ impl BottomCause {
             | BottomCause::EffectViolation
             | BottomCause::PrivilegedRequired
             | BottomCause::StoreBoundary
-            | BottomCause::CaidMismatch => 1,
+            | BottomCause::CaidMismatch
+            | BottomCause::ObjectUndecodable
+            | BottomCause::StandardRootUnavailable => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split
@@ -3300,6 +3314,13 @@ impl Value {
                         hasher.update(&n.to_le_bytes());
                     }
                     PathAnchor::Current => hasher.update([0x03]),
+                    PathAnchor::Address { algo, digest } => {
+                        hasher.update([0x04]);
+                        hasher.update([match algo {
+                            nlang_parser::ast::AddressAlgo::Sha256 => 0u8,
+                        }]);
+                        hasher.update(&digest);
+                    }
                 }
                 // length-delimited: <<a.bc>> and <<ab.c>> are different geometry
                 // and must not collide (CAID equality drives lazy-unify early-out)
