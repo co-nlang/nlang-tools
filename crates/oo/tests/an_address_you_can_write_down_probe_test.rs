@@ -185,7 +185,6 @@ fn c4_an_address_is_not_a_definition_site() {
 /// Baseline: `_{sha256:…}.` is a parse error at the trailing `.`, and
 /// `_{sha256:…}.x` parses as `_` applied to a combo and answers `_`.
 #[test]
-#[ignore]
 fn r1_an_address_reaches_the_value_it_names() {
     let (d, addr) = universe_with("r1", "k: 7\n");
     let out = oo(&d, &["eval", &format!("_{{{addr}}}.k")]);
@@ -198,7 +197,6 @@ fn r1_an_address_reaches_the_value_it_names() {
 /// R2  The whole value, with no path segments. `_{addr}.` is an anchor,
 /// so the trailing `.` is part of it and must parse.
 #[test]
-#[ignore]
 fn r2_an_address_with_no_segments_is_the_whole_value() {
     let (d, addr) = universe_with("r2", "k: 7\n");
     let out = oo(&d, &["eval", &format!("_{{{addr}}}.")]);
@@ -215,7 +213,6 @@ fn r2_an_address_with_no_segments_is_the_whole_value() {
 /// R3  A missing address is a NAMED refusal, never a silent `_` (§4.2).
 /// The engine must be able to say which address it could not resolve.
 #[test]
-#[ignore]
 fn r3_a_missing_address_is_named_not_silent() {
     let d = scratch("r3");
     let out = oo(&d, &["eval", &format!("_{{sha256:{HEX}}}.k")]);
@@ -233,7 +230,6 @@ fn r3_a_missing_address_is_named_not_silent() {
 /// the enclosing combo with `#io`, and effects have entered the address
 /// since v0.26.0, so importing changes the importer.
 #[test]
-#[ignore]
 fn r4_reaching_a_pure_value_does_not_move_the_reacher() {
     let (d, addr) = universe_with("r4", "k: 7\n");
     // Guard: the reach must actually happen, or this proves nothing.
@@ -260,7 +256,6 @@ fn r4_reaching_a_pure_value_does_not_move_the_reacher() {
 /// acceptance side got wrong first time round: "the fetched value is
 /// still pure" is false -- it is whatever it is.
 #[test]
-#[ignore]
 fn r5_the_value_keeps_its_own_effect() {
     let (d, addr) = universe_with("r5", "f: ~%Math./random\n");
     let reached = oo(&d, &["eval", &format!("_{{{addr}}}.f")]);
@@ -279,7 +274,6 @@ fn r5_the_value_keeps_its_own_effect() {
 /// program holding an address literal must round-trip through `oo fmt`
 /// as the same literal -- not as a combo with a `sha256` field.
 #[test]
-#[ignore]
 fn r6_an_address_literal_prints_back_as_itself() {
     let d = scratch("r6");
     let src = format!("out: _{{sha256:{HEX}}}.k\n");

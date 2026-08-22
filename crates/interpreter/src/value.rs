@@ -3300,6 +3300,13 @@ impl Value {
                         hasher.update(&n.to_le_bytes());
                     }
                     PathAnchor::Current => hasher.update([0x03]),
+                    PathAnchor::Address { algo, digest } => {
+                        hasher.update([0x04]);
+                        hasher.update([match algo {
+                            nlang_parser::ast::AddressAlgo::Sha256 => 0u8,
+                        }]);
+                        hasher.update(&digest);
+                    }
                 }
                 // length-delimited: <<a.bc>> and <<ab.c>> are different geometry
                 // and must not collide (CAID equality drives lazy-unify early-out)

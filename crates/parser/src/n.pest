@@ -186,8 +186,12 @@ interp_literal = @{ (!("`" | "${") ~ ANY)+ }
 
 // anchored: segments optional — bare `_.` is the root universe, `^.` one parent up.
 // Tried before `atom` in primary (otherwise top `_` shadows `_.`); bare paths after.
-anchored_path = { (anchor_root | anchor_parent) ~ path_segments? }
+// Third branch (O67): `_{sha256:<hex>}.` is compound-atomic — a space after `_`
+// is juxtaposition, not an address. Inner body is lexically inert (`@`).
+anchored_path = { (anchor_root | anchor_parent | anchor_addr) ~ path_segments? }
 path = { path_segments }
 path_segments = { (named_key | tag_start | tag_end | tag) ~ ( "." ~ (named_key | tag_start | tag_end | tag) )* }
 anchor_root = { "_." }
 anchor_parent = @{ "^"+ ~ "." }
+anchor_addr = ${ "_" ~ "{" ~ addr_body ~ "}" ~ "." }
+addr_body = @{ (!"}" ~ ANY)* }
