@@ -308,7 +308,6 @@ fn r6_an_address_literal_prints_back_as_itself() {
 /// Pins the PROPERTY, not the wording: a present-but-corrupt object must not
 /// be reported as missing, and the answer must still name the address.
 #[test]
-#[ignore]
 fn r7_a_corrupt_object_is_not_reported_as_absent() {
     let (d, addr) = universe_with("r7", "k: 7\n");
     assert!(

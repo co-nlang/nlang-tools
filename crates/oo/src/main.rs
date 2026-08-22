@@ -63,6 +63,8 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
         BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
         BottomCause::StackOverflow => "#stack_overflow",
+        BottomCause::ObjectUndecodable => "#object_undecodable",
+        BottomCause::StandardRootUnavailable => "#standard_root_unavailable",
     }
 }
 

@@ -4065,15 +4065,37 @@ impl Ouroboros {
                 let hash = crate::value::ContentHash::v1(digest.to_vec());
                 match self.store.get_value(&hash) {
                     Ok(v) => v,
-                    Err(_) => Value::Bottom(Box::new(crate::value::BottomDetail {
-                        cause: BottomCause::MissingKey,
-                        path: Some(addr_label.clone()),
-                        message: Some(addr_label),
-                        expected: None,
-                        found: None,
-                        involved: vec![],
-                        ..Default::default()
-                    })),
+                    Err(e) => {
+                        // Q-031 class: do not fold "held but unopenable" into
+                        // absence. The four StoreReadError variants already
+                        // name the four answers; `Err(_)` was the only
+                        // spelling the compiler could not see.
+                        use crate::storage::StoreReadError;
+                        let (cause, message) = match e.downcast_ref::<StoreReadError>() {
+                            Some(StoreReadError::NotFound { .. }) => {
+                                (BottomCause::MissingKey, addr_label.clone())
+                            }
+                            Some(err @ StoreReadError::CaidMismatch { .. }) => {
+                                (BottomCause::CaidMismatch, err.to_string())
+                            }
+                            Some(err @ StoreReadError::ObjectUndecodable { .. }) => {
+                                (BottomCause::ObjectUndecodable, err.to_string())
+                            }
+                            Some(err @ StoreReadError::StandardRootUnavailable { .. }) => {
+                                (BottomCause::StandardRootUnavailable, err.to_string())
+                            }
+                            None => (BottomCause::Conflict, e.to_string()),
+                        };
+                        Value::Bottom(Box::new(crate::value::BottomDetail {
+                            cause,
+                            path: Some(addr_label.clone()),
+                            message: Some(message),
+                            expected: None,
+                            found: None,
+                            involved: vec![],
+                            ..Default::default()
+                        }))
+                    }
                 }
             }
         };
