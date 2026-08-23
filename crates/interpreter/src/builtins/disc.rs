@@ -486,7 +486,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             loop {
                 // Safety: hard hop budget (Phase 41)
                 if ctx.disc_routing_hops >= MAX_ROUTING_HOPS {
-                    // ERROR_CODES §2.7.1: a spent hop budget is not an attack.
+                    // TAG_REGISTRY §2.7.1: a spent hop budget is not an attack.
                     // Mint #routing_budget_exceeded; keep SemanticEclipse
                     // readable for stored universes only (no longer minted).
                     return Value::Bottom(Box::new(BottomDetail {

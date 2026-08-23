@@ -2,7 +2,7 @@
 
 **開弧日**:2026-08-09
 **基線**:`dev 72c5fa8`(= `top e36706d`,v0.13.0)
-**來源**:`nlang-spec` **ERROR_CODES §2.7.1 / §2.7.2**(規範已落,`local e758c46`);
+**來源**:`nlang-spec` **TAG_REGISTRY §2.7.1 / §2.7.2**(規範已落,`local e758c46`);
 `meta/oo/STATUS.md` W4′;ENGINE_SYNC 2026-08-09 盤點
 **性質**:**純符合性**——規格條文已在,引擎未跟上。**引擎側走 minor**(見 §2.3:動到 CAID)
 **破壞性**:**是**(條目 #9)。只影響**由深度耗盡產生的 `#blur` 值**之 CAID,範圍已量,見 §2.3
@@ -57,7 +57,7 @@ out: {  a: #blur { %cause: #fuel_exhausted, %caid: "hash:sha256:v1:6ebb46d7…" 
 
 `value.rs` 的 `PeerTimeout` 變體上有一段前任驗收方寫的註解:
 
-> ERROR_CODES gives `#timeout` the remedy 「請優化性能、減少嵌套,或放寬時間限制」,
+> TAG_REGISTRY gives `#timeout` the remedy 「請優化性能、減少嵌套,或放寬時間限制」,
 > which is **not merely unhelpful for a silent peer, it points the reader at their own code**.
 
 **那正是本弧的論旨,只是上一次只修了一個實例。** 本弧修另外兩個。
@@ -204,7 +204,7 @@ R2 綠掉的那一刻,`6ebb46d7…` 就不再是那個值的位址。**這是本
   把測試名 `test_find_hop_budget_exceeded_returns_semantic_eclipse` 改為指向新標籤的名字;
   把 `assert_eq!(BottomCause::SemanticEclipse.as_tag(), …)` 改為對應的新斷言。
 * **不准**:刪除任何測試、弱化任何斷言、把測試標 `#[ignore]`。
-* **理由要寫在該檔的檔頭註解裡**,並指向 ERROR_CODES §2.7.1。
+* **理由要寫在該檔的檔頭註解裡**,並指向 TAG_REGISTRY §2.7.1。
 
 〔規則:探針修改權在驗收方。本節是**逐項的例外授權**,不是通則的放寬——
 因為那支測試編碼的是規格已經改掉的東西,留著它會使交付**必然**失敗。〕

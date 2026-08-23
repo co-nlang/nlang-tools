@@ -13,13 +13,13 @@
 //      §4 #2: the query must not mint a fresh conflict). Combos already
 //      open-miss; only atoms fell into the poisoned catch-all.
 //   F4 #invalid_path ABOLISHED — never legislated (absent from REAL_04
-//      taxonomy and ERROR_CODES; G4's ruling text copied the engine's
+//      taxonomy and TAG_REGISTRY; G4's ruling text copied the engine's
 //      spelling). Mint sites redirect:
 //        nav catch-all (atom/Top)  → `_` (open world: an atom's data
 //          axis can grow fields via `&` hybridization — "definitely
 //          absent" is an overclaim);
 //        ^ overflow                → ⊥ #out_of_horizon (canonical tag,
-//          ERROR_CODES §1 — honest even while ^ resolution in
+//          TAG_REGISTRY §1 — honest even while ^ resolution in
 //          observation contexts remains unwired, separate case);
 //        union all-⊥ survivors     → primary cause per REAL_04 §4.
 //      G4 clause revised: `({a:1}|7).a` = `1 | _` (honest superposition,
@@ -187,7 +187,7 @@ fn red_union_atom_branch_open_miss() {
 
 #[test]
 fn red_parent_overflow_out_of_horizon() {
-    // Canonical tag on ^ depth overflow (ERROR_CODES §1). Valid parent
+    // Canonical tag on ^ depth overflow (TAG_REGISTRY §1). Valid parent
     // shapes resolve on the sealed container chain (caret ascent arc);
     // only true overshoot (past root) lands here.
     let got = observe_nlang("out: ^^^.x", "out");

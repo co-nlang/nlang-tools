@@ -149,7 +149,7 @@ must keep deserializing):
 ```rust
 /// Filesystem access from the language layer to a path inside the engine
 /// store (`.oo`). Unconditional — no capability unlocks it.
-/// SPEC_08 §6.3; ERROR_CODES #store_boundary.
+/// SPEC_08 §6.3; TAG_REGISTRY #store_boundary.
 StoreBoundary,
 ```
 

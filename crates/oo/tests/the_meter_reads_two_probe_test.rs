@@ -230,7 +230,7 @@ fn c0_ordinary_programs_still_evaluate_at_the_default_budget() {
 ///
 /// The arc changes WHEN the horizon is reached, and must not change WHAT
 /// reaching it produces: `#blur` carrying `%cause: #fuel_exhausted`, per
-/// ERROR_CODES §1.2 and SPEC_08 §3.2.2 clause 3 (the cause must name the
+/// TAG_REGISTRY §1.2 and SPEC_08 §3.2.2 clause 3 (the cause must name the
 /// resource that actually ran out).
 #[test]
 fn c1_exhaustion_still_looks_like_exhaustion() {

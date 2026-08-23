@@ -1,4 +1,4 @@
-// Updated under the_name_points_at_the_remedy handover §7 (ERROR_CODES §2.7.1).
+// Updated under the_name_points_at_the_remedy handover §7 (TAG_REGISTRY §2.7.1).
 // Hop-budget exhaustion used to mint `#semantic_eclipse`; the registry
 // renamed that situation to `#routing_budget_exceeded` so the tag points at
 // the remedy (budget/topology), not at an attack. Expectations and the
@@ -81,7 +81,7 @@ fn test_find_adds_to_visited() {
     );
 }
 
-// ─── 3. Budget exceeded → RoutingBudgetExceeded (ERROR_CODES §2.7.1) ──────────
+// ─── 3. Budget exceeded → RoutingBudgetExceeded (TAG_REGISTRY §2.7.1) ──────────
 
 #[test]
 fn test_find_hop_budget_exceeded_returns_routing_budget_exceeded() {
@@ -108,7 +108,7 @@ fn test_routing_budget_exceeded_as_tag() {
         BottomCause::RoutingBudgetExceeded.as_tag(),
         "routing_budget_exceeded"
     );
-    // Retained for stored-universe read (ERROR_CODES §2.7.1); not minted.
+    // Retained for stored-universe read (TAG_REGISTRY §2.7.1); not minted.
     assert_eq!(BottomCause::SemanticEclipse.as_tag(), "semantic_eclipse");
 }
 

@@ -70,7 +70,7 @@ fn assert_obs(src: &str, expect: &str) {
 
 /// Horizon verdict: a #blur snapshot with depth-exhaustion cause.
 /// Unbounded recursion and flat_chain(4000) both hit max_unification_depth
-/// before fuel under default budgets (ERROR_CODES §2.7.2 /
+/// before fuel under default budgets (TAG_REGISTRY §2.7.2 /
 /// the_name_points_at_the_remedy). The CAID is salted per engine instance —
 /// only the form and cause are normative.
 fn assert_blur_horizon(src: &str) {

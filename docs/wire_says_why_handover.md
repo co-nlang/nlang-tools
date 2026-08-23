@@ -55,7 +55,7 @@ every peer failure collapses to that cause, a peer that merely does not
 implement the op sets `saw_mismatch`, and the scan's final answer becomes
 `⊥ #caid_mismatch` instead of "nobody has it".
 
-**ERROR_CODES §`#caid_mismatch` already forbids this**: 「純粹『無人持有』不適用此碼」.
+**TAG_REGISTRY §`#caid_mismatch` already forbids this**: 「純粹『無人持有』不適用此碼」.
 So this is a conformance violation, not only a design wart.
 
 ### 1.4 The mechanism for saying why already exists, and is fenced off
@@ -137,7 +137,7 @@ answer is `⊥ #missing_key`, not `⊥ #caid_mismatch`.
 `#peer_not_implemented`, `#peer_unknown_status`, `#peer_refused` — three, on
 the `#peer_timeout` pattern: the `peer_` prefix marks a condition of the other
 end, whose remedy points away from the reader's own program. Acceptance writes
-ERROR_CODES; **delivery does not touch the spec**.
+TAG_REGISTRY; **delivery does not touch the spec**.
 
 ---
 
@@ -157,7 +157,7 @@ ERROR_CODES; **delivery does not touch the spec**.
 * Signing, delegation, node endorsement.
 * The CAID-path fix (`~%Discovery./identify` returns the argument pack's CAID,
   measured 2026-07-29) — a separate breaking arc.
-* Spec edits, ERROR_CODES entries, CHANGELOG. Acceptance does those.
+* Spec edits, TAG_REGISTRY entries, CHANGELOG. Acceptance does those.
 
 ## 6. Gates
 
@@ -276,7 +276,7 @@ ignore. Acceptance must run this both ways rather than assume it.
   answer surfaces that peer cause (R5–R7); refusing + honest miss →
   `#missing_key` (R9).
 - **Scheduled pin**: advertise_wire `p4` unknown op → `#not_implemented`.
-- **Spec / ERROR_CODES / CHANGELOG**: not edited (acceptance).
+- **Spec / TAG_REGISTRY / CHANGELOG**: not edited (acceptance).
 
 ### Seven-case matrix (this build)
 
@@ -325,5 +325,5 @@ ignore. Acceptance must run this both ways rather than assume it.
 
 ### Left
 
-Ledger §8 unchanged. Spec ERROR_CODES for the three `peer_*` causes are
+Ledger §8 unchanged. Spec TAG_REGISTRY for the three `peer_*` causes are
 acceptance's.

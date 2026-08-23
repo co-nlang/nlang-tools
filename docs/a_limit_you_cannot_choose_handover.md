@@ -55,7 +55,7 @@ depth horizon engages**」——**這個類別以前就被認出來過,而緩解
 `max_unification_depth` 是**操作者設的政策**:「我選擇在這裡停」。
 堆疊耗盡是**實作的無能**:「我到不了那裡」。
 
-**用政策的名字回報一個無能為力,正是 ERROR_CODES §2.7.1 上週才裁掉的東西**,
+**用政策的名字回報一個無能為力,正是 TAG_REGISTRY §2.7.1 上週才裁掉的東西**,
 只是換了個位置。而且:
 
 > **`§2.7.2` 當時判斷「`#stack_overflow` 與 `#max_depth_exceeded` 說的是同一件事,
@@ -214,7 +214,7 @@ R1 因此直接看 `oo` 的退出狀態與 stderr。
 | 誰 | 做什麼 |
 | :-- | :-- |
 | #3 | §4「做」三項 ＋ 移除 `#[ignore]` ＋ 回報 §6.3 |
-| 驗收方 | 全套驗收;**規格側**:更正 ERROR_CODES §2.7.2(`#stack_overflow` 與 `#max_depth_exceeded` **不是**同一件事)、登記硬界的因、SPEC_09 §6 旋鈕表改 `timeout` 預設與型別 |
+| 驗收方 | 全套驗收;**規格側**:更正 TAG_REGISTRY §2.7.2(`#stack_overflow` 與 `#max_depth_exceeded` **不是**同一件事)、登記硬界的因、SPEC_09 §6 旋鈕表改 `timeout` 預設與型別 |
 
 ---
 

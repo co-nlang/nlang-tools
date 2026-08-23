@@ -79,7 +79,7 @@ fn flat_chain(n: usize) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// RED GATES — open miss becomes a caused Top (ERROR_CODES #no_coordinate)
+// RED GATES — open miss becomes a caused Top (TAG_REGISTRY #no_coordinate)
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]

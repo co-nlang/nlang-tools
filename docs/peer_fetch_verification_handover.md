@@ -330,7 +330,7 @@ vacuous baseline pass ≈ 3⁻¹⁰. After the fix it is deterministic.
 Classification is expected to be **修正** (an existing normative clause was not
 implemented), not 增量 — but that is the acceptor's call at closure, and the new
 `BottomCause` tail may move it. Do not write the CHANGELOG entry; spec closure is
-the acceptor's step. (v0.2.43's delivery committed `ERROR_CODES.md` itself; the
+the acceptor's step. (v0.2.43's delivery committed `TAG_REGISTRY.md` itself; the
 content was right and the order was ambiguous. This order is not: **do not touch
 `nlang-spec`.**)
 

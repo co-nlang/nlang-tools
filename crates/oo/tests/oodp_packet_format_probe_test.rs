@@ -486,7 +486,7 @@ fn pin_a_lying_peer_is_still_refused() {
 ///
 /// ACCEPTOR REPAIR pin. The delivery reused `BottomCause::Timeout`, which
 /// pre-exists for a computation that outran `%timeout` (`observation.rs:63`).
-/// ERROR_CODES gives `#timeout` the remedy 「請優化性能、減少嵌套,或放寬時間
+/// TAG_REGISTRY gives `#timeout` the remedy 「請優化性能、減少嵌套,或放寬時間
 /// 限制」 — advice that, for a peer holding a socket open and saying nothing,
 /// points the reader at their own code. An arc whose thesis is that four
 /// situations must be separable cannot ship a fifth that is not.

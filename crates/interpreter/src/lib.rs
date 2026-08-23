@@ -75,7 +75,7 @@ pub enum ResourceExhausted {
     /// (`max_unification_depth`). Always becomes ⊥ `#stack_overflow`, never
     /// `#blur` (W4‴ / a_limit_you_cannot_choose).
     StackOverflow,
-    /// Unification / observation depth budget exhausted (ERROR_CODES §2.7.2).
+    /// Unification / observation depth budget exhausted (TAG_REGISTRY §2.7.2).
     /// Distinct from FuelExhausted — different operator knob.
     DepthExceeded,
 }
@@ -347,7 +347,7 @@ impl EvalContext {
     }
 
     pub fn check_resources(&mut self, cost: u64) -> Result<(), ResourceExhausted> {
-        // G3 R3 / ERROR_CODES §2.7.2: depth gate is observation-budget
+        // G3 R3 / TAG_REGISTRY §2.7.2: depth gate is observation-budget
         // exhaustion, not a cycle and not fuel. Report DepthExceeded so
         // Blur %cause / Strict ⊥ share #max_depth_exceeded (L2-21/22;
         // #divergent reserved for L2-17 in_flight / coordinate self-ref;

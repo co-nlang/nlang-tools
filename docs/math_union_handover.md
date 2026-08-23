@@ -99,7 +99,7 @@ value_context 剝殼後,Union 落原子 match 的 Conflict catch-all。
   peel≤32+支級 ⊥/Blur+Union 臂/分配 helper 左主序+
   `primary_bottom_from_culled`+normalize+truncate=unify 紀律);
   探針檔僅 10 個 `#[ignore]` 移除。**越單變更審核通過**:整除/取餘
-  除零靜默 `0` → ⊥ `#numerical_error` = ERROR_CODES 明文(「發生
+  除零靜默 `0` → ⊥ `#numerical_error` = TAG_REGISTRY 明文(「發生
   除以零…」)引擎追法,舊 special_float_test 釘的是謊,改寫附法源
   註解,合法;float Inf/`#_` 路徑實測不動。
 - **獨立重跑** ✓:探針 17/17、workspace **1168/0/3**、conformance

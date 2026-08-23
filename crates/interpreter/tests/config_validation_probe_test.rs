@@ -6,7 +6,7 @@
 // name membership and value type are now law (SPEC_09 §6 knob table):
 // unknown names (incl. typos), wrong types, ⊥ and Top all die LOUDLY at
 // the evolve boundary (same machinery as G2-S / system-axis root
-// writes; CLI exit 1; ERROR_CODES #invalid_config — a named error
+// writes; CLI exit 1; TAG_REGISTRY #invalid_config — a named error
 // class, never a node-level ⊥). Future knobs go through the spec
 // evolution process; third-party engine designs go through ~%Engine —
 // nobody privately extends ~%Config.

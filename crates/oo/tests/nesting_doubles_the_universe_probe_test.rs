@@ -391,7 +391,7 @@ fn r4_a_timeout_always_terminates_the_observation() {
 /// and the O42 binaries, ledgered during the O42 acceptance — it was simply
 /// unreachable while the exponential and then the hang stood in front of it.
 ///
-/// It is also a live violation of ERROR_CODES §2.7.3: an implementation
+/// It is also a live violation of TAG_REGISTRY §2.7.3: an implementation
 /// ceiling must exist strictly below the native stack cliff and must report,
 /// not abort. Deliberately NOT probed here — fixing it is a separate arc and
 /// an ignored red for an unopened arc is a countdown timer, not a pin. See

@@ -244,7 +244,7 @@ pub enum Value {
     /// provenance. Display / unify / PartialEq treat as bare Top;
     /// consumption evaporates the cause (operations yield plain Top).
     /// Diagnostic member under absorption — never absorbs / never absorbed.
-    /// `cause`: `"static_cycle"` | `"no_coordinate"` (ERROR_CODES tags).
+    /// `cause`: `"static_cycle"` | `"no_coordinate"` (TAG_REGISTRY tags).
     TopCaused {
         /// Provenance tag body (no leading `#`).
         cause: String,
@@ -1497,24 +1497,24 @@ pub enum BottomCause {
     H2Split,
     SemanticEclipse,
     NoContext,
-    /// `^` parent-anchor overflow (ERROR_CODES §1 #out_of_horizon).
+    /// `^` parent-anchor overflow (TAG_REGISTRY §1 #out_of_horizon).
     OutOfHorizon,
     /// User LHS write to engine-minted `~%` system axis (SPEC_09 ownership;
-    /// ERROR_CODES §1.4 #system_reserved). Append-only tail.
+    /// TAG_REGISTRY §1.4 #system_reserved). Append-only tail.
     SystemReserved,
     /// Root `~%Config.<bare>` name/type violation (SPEC_09 §6 closed knob
-    /// family; ERROR_CODES #invalid_config). Evolve-boundary named error —
+    /// family; TAG_REGISTRY #invalid_config). Evolve-boundary named error —
     /// never a node-level ⊥. Append-only tail (fmt discipline).
     InvalidConfig,
     /// Declared `%effect: #pure` contradicted by active contagion
-    /// (SPEC_08 §4.3; ERROR_CODES #effect_violation). Append-only tail.
+    /// (SPEC_08 §4.3; TAG_REGISTRY #effect_violation). Append-only tail.
     EffectViolation,
     /// Privileged op invoked without horizon privilege (SPEC_08 §6.1.2;
-    /// ERROR_CODES #privileged_required). Append-only tail.
+    /// TAG_REGISTRY #privileged_required). Append-only tail.
     PrivilegedRequired,
     /// Filesystem access from the language layer to a path inside the engine
     /// store (`.oo`). Unconditional — no capability unlocks it.
-    /// SPEC_08 §6.3; ERROR_CODES #store_boundary. Append-only tail.
+    /// SPEC_08 §6.3; TAG_REGISTRY #store_boundary. Append-only tail.
     StoreBoundary,
     /// Content address does not match requested CAID (REAL_03 §6.6 peer/store
     /// read path). Append-only tail. Distinct from absence (`#conflict` /
@@ -1525,7 +1525,7 @@ pub enum BottomCause {
     ///
     /// ACCEPTOR REPAIR (oodp_packet_format): the delivery reused `Timeout`,
     /// which pre-exists for `ResourceExhausted::Timeout` — a COMPUTATION that
-    /// outran `%timeout` (`observation.rs:63`). ERROR_CODES gives `#timeout`
+    /// outran `%timeout` (`observation.rs:63`). TAG_REGISTRY gives `#timeout`
     /// the remedy 「請優化性能、減少嵌套,或放寬時間限制」, which is not merely
     /// unhelpful for a silent peer, it points the reader at their own code.
     /// An arc whose entire thesis is that four situations must be separable
@@ -1538,13 +1538,13 @@ pub enum BottomCause {
     /// Peer answered `#conflict` without a substantiated integrity reason
     /// (older peer, or non-integrity conflict). Not an integrity incident.
     PeerRefused,
-    /// disc.find hop budget exhausted (ERROR_CODES §2.7.1). Append-only tail.
+    /// disc.find hop budget exhausted (TAG_REGISTRY §2.7.1). Append-only tail.
     /// Replaces minting `#semantic_eclipse` for a spent routing budget —
     /// that tag named an attack; the remedy for a far peer is budget/topology,
     /// not eclipse defence. `#semantic_eclipse` remains readable for stored
     /// universes (same retention as `#invalid_path`).
     RoutingBudgetExceeded,
-    /// Unification / observation depth budget exhausted (ERROR_CODES §2.7.2).
+    /// Unification / observation depth budget exhausted (TAG_REGISTRY §2.7.2).
     /// Append-only tail. Distinct from `#fuel_exhausted` — different knob.
     MaxDepthExceeded,
     /// Implementation recursion ceiling (W4‴). Append-only tail.
@@ -1552,7 +1552,7 @@ pub enum BottomCause {
     /// policy (`#max_depth_exceeded`). Never minted as `#blur`.
     StackOverflow,
     /// Object present but cannot be deserialized (REAL_03 §6.6;
-    /// ERROR_CODES #object_undecodable). Append-only tail. Distinct from
+    /// TAG_REGISTRY #object_undecodable). Append-only tail. Distinct from
     /// absence (`#missing_key`) and from a decoded-but-lying object
     /// (`#caid_mismatch`).
     ObjectUndecodable,
@@ -1684,7 +1684,7 @@ pub enum BlurCause {
     Timeout,
     StackOverflow,
     MathSingularity(String),
-    /// Depth budget exhausted (ERROR_CODES §2.7.2). Append-only tail.
+    /// Depth budget exhausted (TAG_REGISTRY §2.7.2). Append-only tail.
     /// Enters blur CAID via `as_bytes` (bn_serial path). StackOverflow is
     /// retained for CAID table / stored decode but is no longer minted by
     /// `handle_resource_exhausted`.

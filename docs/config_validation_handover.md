@@ -8,7 +8,7 @@
 - **SPEC_09 所有權條款豁免收窄**:root `~%Config.<裸名欄>` 合法
   ——但**名必屬創世旋鈕表、值必合旋鈕型**。違者(未知名含
   typo/錯型/⊥/Top)於 **evolve 邊界帶名報錯**(同 root 大聲死
-  機構,CLI exit 1;ERROR_CODES `#invalid_config`=錯誤類名,
+  機構,CLI exit 1;TAG_REGISTRY `#invalid_config`=錯誤類名,
   **不鑄節點級 ⊥**)。旋鈕家封閉:未來旋鈕走規格書演化流程,
   第三方引擎走 `~%Engine`。
 - **SPEC_09 §6 旋鈕表**:`fuel`/`timeout`/`max_branches`/
@@ -33,7 +33,7 @@
   一帶):名籍檢查可於 RHS 求值前;型別檢查於**求值後**
   (`fuel: 40 + 10` 合法=50,已釘)。違者
   `Err(BottomCause::InvalidConfig)`(**新變體,枚舉尾端追加**
-  =fmt 紀律;ERROR_CODES 已登記)。
+  =fmt 紀律;TAG_REGISTRY 已登記)。
 - **顯示面**=observe 之 `~%Config` 綁定(universe.rs 觀測
   overlay 一帶):回傳創世 ∧ 覆寫合成之完整 combo,非殘片。
   逐鈕讀已健康,勿動其機構。

@@ -17,7 +17,7 @@
 //
 // LAW (REAL_04 §1 rewritten 2026-07-19 + SPEC_08 §3.2.2 #4 sync):
 //   1. Cocoon core = %val (sole duality core); diagnostics optional,
-//      %-prefixed, vary by ERROR_CODES class.
+//      %-prefixed, vary by TAG_REGISTRY class.
 //   2. %type ABOLISHED: cocoon field gone; `.%type` read retired —
 //      on ⊥ it passes the ⊥ through verbatim (F1 compositionality),
 //      on #blur it is absorbed (coordinate absorption #5).

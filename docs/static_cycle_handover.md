@@ -21,7 +21,7 @@ Top。變換形釘(`a: b+1` 等)全留紅線。
 
 ## 0. 法(裁定 2026-07-16 已批入法)
 
-SPEC_12 §1.1 修訂+SYNTAX_08 §4 #2 例外+ERROR_CODES #static_cycle:
+SPEC_12 §1.1 修訂+SYNTAX_08 §4 #2 例外+TAG_REGISTRY #static_cycle:
 
 1. **靜止循環**=閉環每跳皆**純引用**(裸名或純路徑;投影不增
    資訊)→ **Top**(解集=全集)。
