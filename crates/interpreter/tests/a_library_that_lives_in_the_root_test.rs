@@ -51,7 +51,6 @@ fn evolve_and_read(oo: &Ouroboros, u: &mut Universe, src: &str, coord: &str) -> 
 }
 
 #[test]
-#[ignore = "repair 1 baseline (4d047f4): gives BOTTOM #unprojected_builtin, was 7"]
 fn a_legacy_root_still_dispatches_its_own_library() {
     let oo = Ouroboros::new_in_memory();
     let mut u = legacy_universe(&oo);

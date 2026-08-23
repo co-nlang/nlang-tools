@@ -1194,6 +1194,30 @@ impl ComboVal {
         out
     }
 
+    /// True when every axis is empty. Format 1/2 load the standard layer as
+    /// this shape: self-contained, library inlined on the user root.
+    pub fn is_blank(&self) -> bool {
+        self.data.is_empty()
+            && self.types.is_empty()
+            && self.rules.is_empty()
+            && self.meta.is_empty()
+            && self.system.is_empty()
+            && self.local.is_empty()
+    }
+
+    /// `%builtin` names under this combo's library axes (`system` / `rules`)
+    /// only. Format 1/2 credentials live here; user `data` is not a table
+    /// (Q-035 repair 1). Nested combos under those axes are walked in full.
+    pub fn collect_projected_builtins_from_library_axes(&self) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for map in [&self.system, &self.rules] {
+            for v in map.values() {
+                collect_projected_builtins_in_value(v, &mut out);
+            }
+        }
+        out
+    }
+
     pub fn bits(&self) -> u64 {
         let mut b = 64u64;
         for (k, v) in &self.data {

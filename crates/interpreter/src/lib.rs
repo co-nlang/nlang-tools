@@ -225,7 +225,16 @@ impl EvalContext {
     }
 
     pub fn with_standard_root(mut self, standard_root: ComboVal) -> Self {
-        self.projected_builtins = standard_root.collect_projected_builtins();
+        // An empty layer is how formats 1/2 are loaded (self-contained:
+        // the library lives on this universe's own `~%` / `rules` axes).
+        // Collecting from that empty combo would project nothing and
+        // refuse the library itself. Do not walk `data` — that is user
+        // fields, not the table (Q-035 repair 1).
+        self.projected_builtins = if standard_root.is_blank() {
+            self.root.collect_projected_builtins_from_library_axes()
+        } else {
+            standard_root.collect_projected_builtins()
+        };
         self.standard_root = Arc::new(standard_root);
         self.standard_root_installed = true;
         self
