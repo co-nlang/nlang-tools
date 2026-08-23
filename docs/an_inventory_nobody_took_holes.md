@@ -131,7 +131,7 @@ out: { %effect: #pure, v: ~%List./filter([1,2,3], (x -> #true)) }
 
 *   **SPEC_08 §4.3** 逐字：「**靜態守護**：在預設的純粹上下文 (`#pure`) 中，若意外
     觸發了 `#io` 觀測，引擎將其阻擋並坍縮為 `_|_`」
-*   **ERROR_CODES `#effect_violation`** 逐字：「顯式 `%effect: #pure` 宣告被
+*   **TAG_REGISTRY `#effect_violation`** 逐字：「顯式 `%effect: #pure` 宣告被
     **值的實際活動傳染效應**矛盾……（**SPEC_08 §4.3 靜態守護**，裁定 A；2026-07-24）」
 
 後者在**同一句話裡**既說「值的實際傳染效應」（動態判準）又引「靜態守護」（靜態機制）。

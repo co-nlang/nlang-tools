@@ -71,7 +71,7 @@ fn assert_obs(src: &str, expect: &str) {
 
 /// Horizon verdict: #blur form with depth-exhaustion cause.
 /// `flat_chain(4000)` exceeds `max_unification_depth` (default 256) long
-/// before fuel runs out. ERROR_CODES §2.7.2 (the_name_points_at_the_remedy):
+/// before fuel runs out. TAG_REGISTRY §2.7.2 (the_name_points_at_the_remedy):
 /// that situation must report `#max_depth_exceeded`, not `#fuel_exhausted`.
 /// CAID is salted per engine instance — only form and cause are normative.
 fn assert_blur_horizon(src: &str) {

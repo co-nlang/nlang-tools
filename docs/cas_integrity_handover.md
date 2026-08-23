@@ -176,7 +176,7 @@ that happen to differ.
 Any other caller that maps store errors to a single message needs the same
 treatment — enumerate them; do not fix only the one the probes exercise.
 
-Error codes: add to **ERROR_CODES** and REAL_03 §8. Suggested tags —
+Error codes: add to **TAG_REGISTRY** and REAL_03 §8. Suggested tags —
 `#caid_mismatch` (bytes do not match the address) and `#object_undecodable`
 (present, cannot be decoded, integrity unknown). Naming is yours to propose;
 the *distinctness* is the requirement.
@@ -246,7 +246,7 @@ back to me is always the correct move.**
 - **Surfacing**: `run_inspect` and `run_log` use `format_store_read_error` —
   no flattening to "not found".
 - **Store-put loop**: removed from `run_one_shot` (R-2). `~%Engine./save` kept.
-- **ERROR_CODES**: `#caid_mismatch` note updated; `#object_undecodable` added
+- **TAG_REGISTRY**: `#caid_mismatch` note updated; `#object_undecodable` added
   (spec repo).
 - **Probe**: only 8 `#[ignore]` removed.
 - **Gates**: cas probe **11/12** (see below); genesis **11/11**; conf **143/143**;

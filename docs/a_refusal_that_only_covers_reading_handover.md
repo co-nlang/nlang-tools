@@ -108,7 +108,7 @@ fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {
 *   **狀態不變**（`#not_found`）：O57-C 已裁「理由集得增長；狀態集不得」，
     且請求方的補救確實是「換一台問」。
 *   **不得**改用 `#rejected`——那是「理解了但拒絕受理」，而這裡不是不願意，是做不到。
-*   `ERROR_CODES` 的登記由**驗收方**負責，交付方不必動規格。
+*   `TAG_REGISTRY` 的登記由**驗收方**負責，交付方不必動規格。
 
 ⚠ **本格為讀碼推得，偵察未以真封包實測**（CLI 無 `fetch` 子命令）。
 **交付方必須實測它並回報實際線上回應**，見 §4。

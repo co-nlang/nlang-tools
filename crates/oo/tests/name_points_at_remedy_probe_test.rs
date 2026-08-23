@@ -28,7 +28,7 @@
 //
 // From the acceptor comment on `BottomCause::PeerTimeout` in value.rs:
 //
-//   ERROR_CODES gives `#timeout` the remedy 「請優化性能、減少嵌套…」, which
+//   TAG_REGISTRY gives `#timeout` the remedy 「請優化性能、減少嵌套…」, which
 //   is not merely unhelpful for a silent peer, it points the reader at
 //   their own code.
 //
@@ -39,7 +39,7 @@
 // Not an implementation of `#semantic_isolation`. Real eclipse detection
 // needs the meet of two trust paths (APP_05 §7.3) and does not exist.
 //
-// Not a claim that `#semantic_eclipse` disappears from the tree. ERROR_CODES
+// Not a claim that `#semantic_eclipse` disappears from the tree. TAG_REGISTRY
 // §2.7.1 lets an engine keep *reading* an abolished tag for stored
 // universes — exactly as `#invalid_path` is kept. R4 therefore asserts that
 // nothing *mints* it, not that the name is gone.
@@ -272,7 +272,7 @@ fn r3_hop_budget_is_not_an_attack() {
 
 /// R4 — nothing mints `#semantic_eclipse` any more.
 ///
-/// Not "the name is gone": ERROR_CODES §2.7.1 lets an engine keep *reading*
+/// Not "the name is gone": TAG_REGISTRY §2.7.1 lets an engine keep *reading*
 /// an abolished tag for stored universes, as `#invalid_path` already is.
 /// So this scans for *construction* sites outside the enum's own file.
 #[test]

@@ -9,7 +9,7 @@
 //     are culled from union results; #blur branches SURVIVE (guarded by
 //     blur_boundary_probe_test::red_union_nav_blur_branch_survives);
 //     Top branches survive (honest superposition, `1 | _`).
-//   - ERROR_CODES note + REAL_04 §4: all-⊥ union → single ⊥ carrying
+//   - TAG_REGISTRY note + REAL_04 §4: all-⊥ union → single ⊥ carrying
 //     the PRIMARY cause (five-rank priority: #divergent > violations >
 //     lattice family > resource family > #missing_key).
 //   - Engineering supplement (blur-absorb verbatim + cause-canon T3

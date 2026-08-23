@@ -143,7 +143,7 @@ protocol right — which is the split this ruling rejected.
 * Any change to `oodp.rs`'s signing/verifying helpers.
 * Making `to_nlang` round-trip lazy containers (standing L1 ledger item).
 * Anything about `%reason`, peers, or storage.
-* Spec, ERROR_CODES, CHANGELOG — acceptance.
+* Spec, TAG_REGISTRY, CHANGELOG — acceptance.
 
 ## 6. Gates
 

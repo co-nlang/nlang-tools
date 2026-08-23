@@ -99,7 +99,7 @@
 *   **`%reason` 不得重用 `#malformed` 或 `#rejected`**——〔量〕現有詞彙為
     `#conflict／#malformed／#rejected／#stack_overflow／#success`，前兩者都是
     **請求方錯誤**，而這是**實作說「我做不到」**，屬 `#stack_overflow` 那一族
-    （ERROR_CODES §2.7.3 已立此分野）。**須新增一個標籤**；
+    （TAG_REGISTRY §2.7.3 已立此分野）。**須新增一個標籤**；
     **最終拼法於規格收尾定案，探針只釘性質不釘字面**。
 *   **不得**在此路徑上退回任何樣本，亦**不得**回一個空的 `#success`
     ——那會與「目錄真的是空的」無法區分。
@@ -291,8 +291,8 @@ P3 把它釘死在「降級但保留」。
 
 *   〔量〕`#conflict` 在本檔的既有用途全是**請求方錯誤**：`malformed`、
     `unparseable_caid`、`missing_field`、`caid_mismatch`。
-*   〔量〕ERROR_CODES 定義 `#conflict` ＝「**靜態邏輯不相容**」。
-*   〔量〕**ERROR_CODES §`#peer_refused` 逐字規定**：對端回 `#conflict` 而其 `%reason`
+*   〔量〕TAG_REGISTRY 定義 `#conflict` ＝「**靜態邏輯不相容**」。
+*   〔量〕**TAG_REGISTRY §`#peer_refused` 逐字規定**：對端回 `#conflict` 而其 `%reason`
     **非** `#caid_mismatch` 時，詢問方記為 **`#peer_refused`**（「對等點拒絕受理」）。
 
 ⟹ **詢問方會記下「那個節點拒絕服務我」，而事實是「那個節點的宿主取不到隨機性」。**
@@ -306,7 +306,7 @@ P3 把它釘死在「降級但保留」。
 
 **待裁**：〔量〕`OodpStatus` 只有五個值（`Success`／`NotFound`／`Conflict`／
 `NotImplemented`／`Rejected`），**沒有一個表示「我做不到」**。修法需要一個新的 status，
-而那是**線上格式的擴充**，牽動 REAL_02 §3.2 與 ERROR_CODES ⟹ **交回用戶裁定後再做**。
+而那是**線上格式的擴充**，牽動 REAL_02 §3.2 與 TAG_REGISTRY ⟹ **交回用戶裁定後再做**。
 
 ### 驗收方在本輪弄壞過交付一次
 
@@ -340,7 +340,7 @@ conformance、genesis，並逐一確認 §1.1 表中「輸」與「中性」七�
 **用戶另提的「跨版本相容條款」規格已有，且比 `#rejected` 更好**：
 〔量〕REAL_02 的表已列「**本引擎不認得的 `%status` ⟹ `#peer_unknown_status`**，
 **不記入完整性紀錄**」，理由逐字為「**一個比你新的節點不是一個被弄壞的節點**」；
-`ERROR_CODES` 亦有同名條目；引擎 `oodp.rs:1677` **已經實作**。
+`TAG_REGISTRY` 亦有同名條目；引擎 `oodp.rs:1677` **已經實作**。
 ⟹ **不需要新增條款**；本弧要做的是讓「讀不出形狀」的情況也走到那個已經正確的答案。
 
 **用戶第 4 點（對使用者的表達應與引擎間的溝通分開）成立且已是現況**：

@@ -74,7 +74,7 @@ fn red_top_alias_test_fails() {
 #[test]
 fn red_blur_test_fails() {
     // Runaway recursion blurs at the horizon — undetermined, not proof.
-    // Default budgets hit max_unification_depth before fuel (ERROR_CODES §2.7.2).
+    // Default budgets hit max_unification_depth before fuel (TAG_REGISTRY §2.7.2).
     let (ok, text) = run_test_cmd("/rec: x -> /rec (x + 1)\ntest_runaway: /rec 1\n");
     assert!(!ok, "blur test must fail the run: {text}");
     assert!(
@@ -123,7 +123,7 @@ fn pin_bottom_fails_with_cause() {
 #[test]
 fn pin_migrated_depth_test_genuinely_true() {
     // The open-migration twin: the .%cause respelling decides a fact.
-    // Runaway under default budgets is #max_depth_exceeded (ERROR_CODES §2.7.2).
+    // Runaway under default budgets is #max_depth_exceeded (TAG_REGISTRY §2.7.2).
     let (ok, text) = run_test_cmd(
         "/rec: x -> /rec (x + 1)\n~e: (/rec 1).%cause\ntest_depth: ~e == #max_depth_exceeded\n",
     );

@@ -28,7 +28,7 @@
 //
 // `max_unification_depth` is a POLICY the operator sets: "stop here."
 // A stack overflow is an INCAPACITY: "I cannot go there."
-// Reporting an incapacity under a policy's name is exactly what ERROR_CODES
+// Reporting an incapacity under a policy's name is exactly what TAG_REGISTRY
 // §2.7.1 ruled out last week, relocated. Note the consequence: §2.7.2 judged
 // `#stack_overflow` a duplicate of `#max_depth_exceeded` and kept it out of
 // the registry — that judgement does not survive this arc. They are the

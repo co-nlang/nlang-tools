@@ -100,7 +100,7 @@ fn test_multihop_increments_hop_counter() {
     assert!(ctx.disc_routing_hops >= 1);
 }
 
-// ─── 4. RoutingBudgetExceeded when budget exhausted (ERROR_CODES §2.7.1) ─────
+// ─── 4. RoutingBudgetExceeded when budget exhausted (TAG_REGISTRY §2.7.1) ─────
 // Same §2.7.1 rename as semantic_eclipse_test (handover §7 class): hop budget
 // is not an attack. Expectation only; test retained.
 

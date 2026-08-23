@@ -196,7 +196,7 @@ fn eval_context_reads_config_strategy() {
 }
 
 // ── Phase 15 / O41: genesis timeout is `#_` (unbound) ──
-// Updated under a_limit_you_cannot_choose (ERROR_CODES / SPEC_09 §6 O41):
+// Updated under a_limit_you_cannot_choose (TAG_REGISTRY / SPEC_09 §6 O41):
 // the previous assertion expected a finite 1000 ms default; that default is
 // now the order supremum and arms no deadline.
 

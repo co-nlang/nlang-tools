@@ -6,7 +6,7 @@
 ## 1. 法源(裁定 2026-07-19,A 案,已入法)
 
 - **REAL_04 §1 重寫**:正典核=`%val`(唯一必備、對偶核);診斷欄
-  全部可選、`%`-前綴、依 ERROR_CODES 類別變形(%message/%expected/
+  全部可選、`%`-前綴、依 TAG_REGISTRY 類別變形(%message/%expected/
   %found/%involved/%members);舊表 11 裸名欄(path/line/…)降級
   非規範性附註。
 - **%type 廢止**(法 2):設計考古=舊代節點模型殘欄(型別內容曾

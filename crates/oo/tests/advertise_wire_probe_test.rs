@@ -829,7 +829,7 @@ fn p4_unknown_and_retired_forms() {
 ///     a: ~%Discovery./advertise { pkg: "ladd", version: 1 }   →  #true
 ///     f: ~%Discovery./find      { pkg: "ladd" }               →  _|_ #routing_budget_exceeded
 ///
-/// (ERROR_CODES §2.7.1 / the_name_points_at_the_remedy: was `#semantic_eclipse`.)
+/// (TAG_REGISTRY §2.7.1 / the_name_points_at_the_remedy: was `#semantic_eclipse`.)
 /// That verdict is **not endorsed here**. It is pre-existing (`disc.find` only
 /// resolves via the explicit-`target` direct-lookup path today) and it is on
 /// the ledger. The pin exists so this arc changes it in neither direction — a

@@ -116,7 +116,7 @@
 | **(c)** | 服務端改為交出**未 hydrate 的形**，由持有該標準根的請求方自己接回 | 最有用——**這正是丁-b 的雛形**。但需要新的回應形，射程遠大於本弧 |
 
 〔量〕`#not_implemented` 在**求值層不存在**；`#peer_not_implemented` 為 OODP 專用。
-新 `%reason` 須登記進 `ERROR_CODES`。
+新 `%reason` 須登記進 `TAG_REGISTRY`。
 
 ---
 

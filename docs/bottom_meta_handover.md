@@ -27,11 +27,11 @@
   G6 值語境投影自動完成兩態。
 - **F3 無因開放**(SYNTAX_08 §4 #2):未坍縮節點 `%cause` → `_`。
   combo 缺欄早已回 `_`;只有原子走 catch-all 中毒——與 F4 同一刀。
-- **F4 `#invalid_path` 廢止**(未立法之引擎誤鑄;ERROR_CODES/REAL_04
+- **F4 `#invalid_path` 廢止**(未立法之引擎誤鑄;TAG_REGISTRY/REAL_04
   已加廢止注記):
   - 導航 catch-all(原子/Top)→ **`_`**(原子資料軸可 `&` 混血擴欄
     =開放世界);
-  - `^` 溢出 → **`#out_of_horizon`**(ERROR_CODES §1 正典);
+  - `^` 溢出 → **`#out_of_horizon`**(TAG_REGISTRY §1 正典);
   - 聯集全 ⊥ 存活 → **REAL_04 §4 主因果**(優先級:#divergent >
     #effect_violation > #conflict > 資源邊界 > #not_found);
   - G4 條款修訂:原子支=開放缺欄,**保留**如 Top-miss 支

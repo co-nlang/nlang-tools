@@ -59,7 +59,7 @@ counter in the parser. Deep nesting of any form overflows it:
 | cocoon / combo / scope | ~130 | ~1336 | — |
 
 The symptom is `exit 134`, `thread '…' has overflowed its stack`, no `⊥`, no
-`%cause`, no line number. This is a live violation of **ERROR_CODES §2.7.3**'s
+`%cause`, no line number. This is a live violation of **TAG_REGISTRY §2.7.3**'s
 first MUST — "the implementation MUST have a recursion ceiling of its own,
 strictly below what it can survive" — written last week for the evaluator and
 never applied to the parser.
@@ -593,7 +593,7 @@ parser thread** to `ParserNestingLimitExceeded`, i.e. to `#stack_overflow`. The
 spawn-failure half is what §9.3 asked for. The panic half is new and is a
 mislabel: a genuine stack overflow **aborts** and never reaches `join()`, so a
 failed join means an internal parser bug, and reporting a bug as an incapacity
-is the same class of lie this arc exists to remove (ERROR_CODES §2.7.1/§2.7.3).
+is the same class of lie this arc exists to remove (TAG_REGISTRY §2.7.1/§2.7.3).
 It also makes parser panics silent. Small (propagate the panic instead of
 folding it), out of the accepted scope, and recorded here for the next parser
 arc.
@@ -603,7 +603,7 @@ arc.
 * grouping parses **linearly** — `(…)` x24 went from >120 s to milliseconds,
   and the exponential is gone at the root (left-factored, not capped);
 * the parser has an implementation ceiling that **reports** instead of
-  aborting, satisfying ERROR_CODES §2.7.3's first MUST on the parse path for
+  aborting, satisfying TAG_REGISTRY §2.7.3's first MUST on the parse path for
   the first time;
 * deep ASTs built from flat source no longer kill the walkers;
 * the wire read is bounded and refuses by size;

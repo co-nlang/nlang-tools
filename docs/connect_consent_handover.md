@@ -94,7 +94,7 @@ the local form open.
 
 ### 3.3 The refusal
 
-* `⊥ %cause: #privileged_required` — the code already exists and ERROR_CODES
+* `⊥ %cause: #privileged_required` — the code already exists and TAG_REGISTRY
   already documents it as a horizon capability. **R1.**
 * **It must name the missing capability.** SPEC_08 §6.1.4 separates "this
   operation is not authorised" from "your coverage is insufficient"; this is the

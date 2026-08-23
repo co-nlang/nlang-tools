@@ -303,7 +303,7 @@ fn r6_an_address_literal_prints_back_as_itself() {
 /// decoded`, while `_{addr}.k` says `#missing_key`.
 ///
 /// No new state: `#object_undecodable`, `#caid_mismatch`, `#not_found` and
-/// `#standard_root_unavailable` are all already in ERROR_CODES.
+/// `#standard_root_unavailable` are all already in TAG_REGISTRY.
 ///
 /// Pins the PROPERTY, not the wording: a present-but-corrupt object must not
 /// be reported as missing, and the answer must still name the address.

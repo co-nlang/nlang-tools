@@ -500,7 +500,7 @@ fn r9_a_scan_past_a_refusing_peer_says_missing() {
         cause_of(&out),
         "missing_key",
         "one peer refused and another honestly did not hold it, so nobody has \
-         it — ERROR_CODES says 純粹「無人持有」不適用 #caid_mismatch. observed: {out}"
+         it — TAG_REGISTRY says 純粹「無人持有」不適用 #caid_mismatch. observed: {out}"
     );
     assert!(integrity_lines(&err).is_empty(), "{err}");
 }

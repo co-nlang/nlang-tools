@@ -3,9 +3,9 @@
 **開單**:2026-07-17(驗收方)。**基線**:dev @ 本工單 commit。
 **協議提醒**:完成後**先把交付紀錄寫進本檔 §5 再回報**。
 
-## 1. 裁定(已批 2026-07-17;REAL_04 §2/§4、ERROR_CODES 正典地位)
+## 1. 裁定(已批 2026-07-17;REAL_04 §2/§4、TAG_REGISTRY 正典地位)
 
-法典側(REAL_04 類別法重寫、§4 優先級五階、ERROR_CODES 正典登記簿)由
+法典側(REAL_04 類別法重寫、§4 優先級五階、TAG_REGISTRY 正典登記簿)由
 驗收方完成,**不在本單**。本單=引擎追既有法三件,**零新裁定**:
 
 **T1 — 二源展開 blur 摺疊律**:spread 之 blur 早退臂(blur_spread 弧交付)
@@ -64,7 +64,7 @@ unify 摺疊(⊥ 早退**合法保留**——⊥ 吸收一切含 blur)。單源 
 ## 4. 範圍外(碰到=停,不改)
 
 - 前向引用×spread(凍結)、`<`/`<=`×blur(§4.10)。
-- REAL_04/ERROR_CODES 文本(驗收方已完成)。
+- REAL_04/TAG_REGISTRY 文本(驗收方已完成)。
 - Blur×Blur 二源合併語義(unify 既有臂,未在本單重審)。
 - `%effect` 顯示格式本身(`;; %effect:` 疣另案)。
 
@@ -106,7 +106,7 @@ L2-63/64 翻綠、65 保綠);語料非 pending **78/0** 不退;
   - `BottomCause::InvalidPath` 活鑄點 = **0**(僅 enum 變體 + as_tag/primary_rank/
     display 讀取臂;serde 解碼保留)
 - [x] 申報事項(範圍外接觸、合法改善、歧異記錄):
-  - **未碰**前向引用×spread(凍結)、`<`/`<=`×blur、REAL_04/ERROR_CODES 文本、
+  - **未碰**前向引用×spread(凍結)、`<`/`<=`×blur、REAL_04/TAG_REGISTRY 文本、
     Blur×Blur 二源重審、`%effect` 顯示格式本身。
   - Blur×Blur 多源吸收走既有 unify 臂(本單不重審語義)。
   - 語料目標文案「78/0」與歷次交付路徑 unit+integration **74/0** 同口徑;

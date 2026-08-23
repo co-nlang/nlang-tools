@@ -107,7 +107,7 @@ let hash = match (&req.hash, &req.hash_raw) {
     `for stream in listener.incoming()` 使 handler 跑在 accept 迴圈自己的執行緒上
     ⟹ 任何一個 panic 都是整台節點的死因。**本弧只讓這一個輸入不再抵達。**
 *   **Q-029 的第二、三層**（五個 `| None` 分類點、`not_held`）。
-*   規格條文。〔量〕`ERROR_CODES` 已有 `#malformed`、`unparseable_caid` 已在用
+*   規格條文。〔量〕`TAG_REGISTRY` 已有 `#malformed`、`unparseable_caid` 已在用
     ⟹ **本弧預期零規格變更**。若你認為需要，**回報，不要改**。
 
 ---

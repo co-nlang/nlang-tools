@@ -75,7 +75,7 @@ Bottom::to_nlang  印 `_|_ (%cause: #conflict)  ;; message`,不印 path
 ### 1.4 規格側
 
 **evolve 邊界的回報在規格裡沒有家。** SPEC_10 §4.1.2「回報的內容(MUST)」只治**提交**;
-ERROR_CODES 的 `#conflict` 只給人「檢查兩個值是否互斥」的建議,沒有對引擎的要求。
+TAG_REGISTRY 的 `#conflict` 只給人「檢查兩個值是否互斥」的建議,沒有對引擎的要求。
 
 ⟹ 依 **D39**,本弧要**新增條文**,故是語義變更。條文由**驗收方**在收尾時寫,交付方不動規格。
 

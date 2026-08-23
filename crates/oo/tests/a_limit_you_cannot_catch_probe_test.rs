@@ -24,7 +24,7 @@
 //
 //         `oo fmt` on {{a: … }}   debug: 131 aborts   release: 1336 aborts
 //
-//       No ⊥, no %cause, no line number. This violates ERROR_CODES §2.7.3's
+//       No ⊥, no %cause, no line number. This violates TAG_REGISTRY §2.7.3's
 //       first MUST — "the implementation MUST have a recursion ceiling of its
 //       own, strictly below what it can survive" — which last week we applied
 //       to the EVALUATOR (HARD_RECURSION_LIMIT) and never to the parser. The
