@@ -214,7 +214,7 @@ fn eval_context_genesis_timeout_is_unbound() {
 #[test]
 fn eval_context_new_has_no_timeout() {
     let oo = Ouroboros::new_in_memory();
-    let ctx = EvalContext::new(oo.root_with_system());
+    let ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     assert!(
         ctx.timeout_deadline.is_none(),
         "EvalContext::new() should not set timeout_deadline"

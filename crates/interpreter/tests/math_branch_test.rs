@@ -6,7 +6,7 @@ use nlang_parser::ast::AtomKind;
 #[test]
 fn eml_branch_0_principal() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let builtins = &oo.builtin_registry;
     let eml_fn = builtins.get("math.eml").unwrap();
     let mut fields = IndexMap::new();
@@ -41,7 +41,7 @@ fn eml_branch_0_principal() {
 #[test]
 fn eml_branch_1_shifts_imag() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let builtins = &oo.builtin_registry;
     let eml_fn = builtins.get("math.eml").unwrap();
     let mut fields = IndexMap::new();

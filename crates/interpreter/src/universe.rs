@@ -165,6 +165,8 @@ fn standard_for_root(engine: &Ouroboros, root: &ContentHash) -> Result<ComboVal>
             .ok_or_else(|| anyhow::anyhow!("root names unavailable standard root {digest}")),
         // Formats 1/2 were self-contained; keeping the standard layer empty
         // preserves that shape rather than adding today's library to history.
+        // Dispatch still has a credential: EvalContext::with_standard_root
+        // treats a blank layer as "use the user root's ~% / rules axes".
         None => Ok(ComboVal::default()),
     }
 }

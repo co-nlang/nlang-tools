@@ -86,7 +86,7 @@ fn test_disc_advertise_and_find() {
 
     let oo = Arc::new(Ouroboros::new_in_memory());
     let val = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     // Call disc.advertise
     let builtins = &oo.builtin_registry;

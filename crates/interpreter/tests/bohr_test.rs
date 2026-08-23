@@ -19,7 +19,7 @@ fn dummy_masa_caid() -> ContentHash {
 
 fn setup_bohr() -> (Arc<Ouroboros>, EvalContext) {
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let ctx = EvalContext::new(oo.root_with_system());
+    let ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     (oo, ctx)
 }
 

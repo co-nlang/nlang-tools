@@ -58,7 +58,7 @@ fn blur_val() -> Value {
 #[test]
 fn refl_is_blur_on_blur() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let result = apply_refl("/is_blur", blur_val(), &oo, &mut ctx);
     assert!(
         is_true(&result),
@@ -70,7 +70,7 @@ fn refl_is_blur_on_blur() {
 #[test]
 fn refl_is_blur_on_non_blur() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let result = apply_refl("/is_blur", Value::Top, &oo, &mut ctx);
     assert!(
         is_false(&result),
@@ -82,7 +82,7 @@ fn refl_is_blur_on_non_blur() {
 #[test]
 fn refl_is_bottom_on_bottom() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let bottom: Value = nlang_interpreter::value::BottomCause::Conflict.into();
     let result = apply_refl("/is_bottom", bottom, &oo, &mut ctx);
     assert!(
@@ -95,7 +95,7 @@ fn refl_is_bottom_on_bottom() {
 #[test]
 fn refl_is_some_and_is_none() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     let mut some_fields = IndexMap::new();
     some_fields.insert(
@@ -133,7 +133,7 @@ fn refl_is_some_and_is_none() {
 #[test]
 fn refl_is_ok_and_is_err() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     let mut ok_fields = IndexMap::new();
     ok_fields.insert(
@@ -182,7 +182,7 @@ fn refl_is_ok_and_is_err() {
 #[test]
 fn refl_to_str() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let val = Value::Atom(AtomKind::Int(42.into()), EffectTag::Pure, None);
     let result = apply_refl("/to_str", val, &oo, &mut ctx);
     if let Value::Atom(AtomKind::Str(s), _, _) = result.collapse() {
@@ -195,7 +195,7 @@ fn refl_to_str() {
 #[test]
 fn refl_bottom_cause_on_bottom() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let bottom: Value = nlang_interpreter::value::BottomCause::FuelExhausted.into();
     let result = apply_refl("/bottom_cause", bottom, &oo, &mut ctx);
     if let Value::Atom(AtomKind::Tag(t), _, _) = result.collapse() {
@@ -212,7 +212,7 @@ fn refl_bottom_cause_on_bottom() {
 #[test]
 fn refl_bottom_cause_on_non_bottom() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let result = apply_refl("/bottom_cause", Value::Top, &oo, &mut ctx);
     if let Value::Atom(AtomKind::Tag(t), _, _) = result.collapse() {
         assert_eq!(
@@ -229,7 +229,7 @@ fn refl_bottom_cause_on_non_bottom() {
 #[test]
 fn refl_type_of_blur() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let result = apply_refl("/type_of", blur_val(), &oo, &mut ctx);
     if let Value::Atom(AtomKind::Tag(t), _, _) = result.collapse() {
         assert_eq!(

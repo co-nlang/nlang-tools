@@ -99,6 +99,13 @@ pub struct EvalContext {
     /// Engine-supplied standard table.  It is deliberately a lookup layer,
     /// not fields hydrated into `root`: user coordinates therefore win.
     pub standard_root: Arc<ComboVal>,
+    /// Set only by [`EvalContext::with_standard_root`]. Default `new()` leaves
+    /// this false so "no table installed" is not the same fact as "this table
+    /// does not project that name" (O68 Q3.B / Q-035 S2).
+    pub standard_root_installed: bool,
+    /// `%builtin` names projected by `standard_root`. Cached at install so
+    /// dispatch does not walk the table on every apply.
+    pub projected_builtins: HashSet<String>,
     /// Stage 4: lazily computed CAID of `root`, shared through sub_context
     /// clones. Sound because the engine never mutates root mid-observation
     /// (tests that mutate via Arc::make_mut do so before any force).
@@ -180,6 +187,8 @@ impl EvalContext {
         Self {
             root: Arc::new(root),
             standard_root: Arc::new(ComboVal::default()),
+            standard_root_installed: false,
+            projected_builtins: HashSet::new(),
             root_caid_cache: None,
             scopes: Vec::new(),
             staged: None,
@@ -216,7 +225,18 @@ impl EvalContext {
     }
 
     pub fn with_standard_root(mut self, standard_root: ComboVal) -> Self {
+        // An empty layer is how formats 1/2 are loaded (self-contained:
+        // the library lives on this universe's own `~%` / `rules` axes).
+        // Collecting from that empty combo would project nothing and
+        // refuse the library itself. Do not walk `data` — that is user
+        // fields, not the table (Q-035 repair 1).
+        self.projected_builtins = if standard_root.is_blank() {
+            self.root.collect_projected_builtins_from_library_axes()
+        } else {
+            standard_root.collect_projected_builtins()
+        };
         self.standard_root = Arc::new(standard_root);
+        self.standard_root_installed = true;
         self
     }
     /// Root CAID for memo keys — computed once per root version, then cached
@@ -3063,6 +3083,33 @@ impl Ouroboros {
 
                 if let Some(Value::Atom(AtomKind::Str(builtin_id), _, _)) = c.get_field("%builtin")
                 {
+                    // O68 Q3.B: the credential is this universe's standard
+                    // root, not the string on the value. Consult the table
+                    // before the process registry.
+                    if !ctx.standard_root_installed {
+                        return Value::Bottom(Box::new(crate::value::BottomDetail {
+                            cause: BottomCause::NoStandardRoot,
+                            path: None,
+                            message: Some(format!(
+                                "eval context has no standard root; cannot dispatch {builtin_id}"
+                            )),
+                            expected: None,
+                            found: None,
+                            involved: vec![],
+                            ..Default::default()
+                        }));
+                    }
+                    if !ctx.projected_builtins.contains(builtin_id) {
+                        return Value::Bottom(Box::new(crate::value::BottomDetail {
+                            cause: BottomCause::UnprojectedBuiltin,
+                            path: None,
+                            message: Some(format!("standard root does not project {builtin_id}")),
+                            expected: None,
+                            found: None,
+                            involved: vec![],
+                            ..Default::default()
+                        }));
+                    }
                     if let Some(func) = self.builtin_registry.get(builtin_id) {
                         let res = func(unified_arg.clone(), self, ctx);
                         if let Value::Top = res {
@@ -3103,6 +3150,17 @@ impl Ouroboros {
                         }
                         return res;
                     }
+                    return Value::Bottom(Box::new(crate::value::BottomDetail {
+                        cause: BottomCause::UnprovidedBuiltin,
+                        path: None,
+                        message: Some(format!(
+                            "standard root projects {builtin_id} but this engine cannot provide it"
+                        )),
+                        expected: None,
+                        found: None,
+                        involved: vec![],
+                        ..Default::default()
+                    }));
                 }
 
                 let ks = arg.collapse().to_string_plain();

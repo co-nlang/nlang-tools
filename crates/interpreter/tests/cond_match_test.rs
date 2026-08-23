@@ -68,7 +68,7 @@ fn get_match_morph(oo: &Ouroboros) -> Value {
 #[test]
 fn match_first_pattern_wins() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let value = make_atom_tag("#foo");
     let pat1 = make_atom_tag("#foo");
     let pat2 = make_atom_tag("#bar");
@@ -90,7 +90,7 @@ fn match_first_pattern_wins() {
 #[test]
 fn match_skips_non_matching() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let value = make_atom_tag("#baz");
     let patterns = make_list(vec![
         make_pair(make_atom_tag("#foo"), Value::Top),
@@ -110,7 +110,7 @@ fn match_skips_non_matching() {
 #[test]
 fn match_no_pattern_returns_not_bottom() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let value = make_atom_tag("#qux");
     let patterns = make_list(vec![make_pair(make_atom_tag("#foo"), Value::Top)]);
     let arg = make_match_arg(value, patterns);
@@ -133,7 +133,7 @@ fn match_no_pattern_returns_not_bottom() {
 #[test]
 fn match_top_pattern_catches_all() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let value = make_atom_int(42);
     let patterns = make_list(vec![make_pair(Value::Top, Value::Top)]);
     let arg = make_match_arg(value.clone(), patterns);
