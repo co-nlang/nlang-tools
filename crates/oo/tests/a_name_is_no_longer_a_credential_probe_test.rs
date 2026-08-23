@@ -77,12 +77,19 @@ fn oo_status(dir: &Path, args: &[&str]) -> i32 {
     c.current_dir(dir)
         .env("OO_IDENTITY", dir.join("identity-for-tests"))
         .env("OO_NODE_HOME", dir.join("node-home-for-tests"));
-    c.args(args).output().expect("oo runs").status.code().unwrap_or(-1)
+    c.args(args)
+        .output()
+        .expect("oo runs")
+        .status
+        .code()
+        .unwrap_or(-1)
 }
 
 /// `(<expr>).%cause` as a trimmed string. `_` means "not a bottom".
 fn cause_of(dir: &Path, expr: &str) -> String {
-    oo(dir, &["eval", &format!("({expr}).%cause")]).trim().to_string()
+    oo(dir, &["eval", &format!("({expr}).%cause")])
+        .trim()
+        .to_string()
 }
 
 fn walk(p: &Path) -> Vec<std::path::PathBuf> {
@@ -111,7 +118,13 @@ fn user_root_caid(dir: &Path) -> String {
             continue;
         }
         let file = e.file_name().unwrap().to_string_lossy().to_string();
-        let sub = e.parent().unwrap().file_name().unwrap().to_string_lossy().to_string();
+        let sub = e
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         found = Some(format!("hash:sha256:v1:{sub}{file}"));
     }
     found.expect("a committed user root object exists")
@@ -148,7 +161,10 @@ fn c3_the_forgery_still_exits_and_that_is_the_scope_line() {
     let d = scratch("c3");
     let code = oo_status(
         &d,
-        &["eval", r#"{{ %builtin: "process.exit", %morphism: #true }} 7"#],
+        &[
+            "eval",
+            r#"{{ %builtin: "process.exit", %morphism: #true }} 7"#,
+        ],
     );
     assert_eq!(
         code, 7,
@@ -205,10 +221,12 @@ fn c5_a_universe_holding_a_forgery_stays_readable_and_writable() {
 // ── R1-R4: red at the baseline ───────────────────────────────────────────
 
 #[test]
-#[ignore = "baseline: an invented name and a dead name share `#conflict`"]
 fn r1_an_invented_name_gets_its_own_cause() {
     let d = scratch("r1");
-    let cause = cause_of(&d, r#"{{ %builtin: "nonexistent.thing", %morphism: #true }} (6,3)"#);
+    let cause = cause_of(
+        &d,
+        r#"{{ %builtin: "nonexistent.thing", %morphism: #true }} (6,3)"#,
+    );
     // REACH: it must be a bottom at all. `_` would mean the dispatch site
     // was never entered and the rest of this test would prove nothing.
     assert!(
@@ -222,12 +240,14 @@ fn r1_an_invented_name_gets_its_own_cause() {
 }
 
 #[test]
-#[ignore = "baseline: `math.bitAnd` falls over as `#conflict`, same as an invented name"]
 fn r2_a_dead_name_gets_its_own_cause() {
     // `math.bitAnd` IS projected by the standard root and is NOT in the
     // registry. It passes the gate and then falls over one layer down.
     let d = scratch("r2");
-    let cause = cause_of(&d, r#"{{ %builtin: "math.bitAnd", %morphism: #true }} (6,3)"#);
+    let cause = cause_of(
+        &d,
+        r#"{{ %builtin: "math.bitAnd", %morphism: #true }} (6,3)"#,
+    );
     assert!(
         cause.starts_with('#'),
         "REACH: dispatch must produce a bottom with a cause, got {cause:?}"
@@ -239,13 +259,18 @@ fn r2_a_dead_name_gets_its_own_cause() {
 }
 
 #[test]
-#[ignore = "baseline: both are `#conflict`, so they compare equal"]
 fn r3_the_two_are_told_apart() {
     // The discrimination IS the claim. R1 and R2 can each be satisfied by
     // one new cause used for both; this one cannot.
     let d = scratch("r3");
-    let invented = cause_of(&d, r#"{{ %builtin: "nonexistent.thing", %morphism: #true }} (6,3)"#);
-    let dead = cause_of(&d, r#"{{ %builtin: "math.bitAnd", %morphism: #true }} (6,3)"#);
+    let invented = cause_of(
+        &d,
+        r#"{{ %builtin: "nonexistent.thing", %morphism: #true }} (6,3)"#,
+    );
+    let dead = cause_of(
+        &d,
+        r#"{{ %builtin: "math.bitAnd", %morphism: #true }} (6,3)"#,
+    );
     assert!(
         invented.starts_with('#') && dead.starts_with('#'),
         "REACH: both must be bottoms, got {invented:?} and {dead:?}"
@@ -258,7 +283,6 @@ fn r3_the_two_are_told_apart() {
 }
 
 #[test]
-#[ignore = "baseline: `oo inspect` renders a forged %builtin exactly like a real one"]
 fn r4_a_user_written_builtin_is_distinguishable() {
     // O68 Q4.C's attached duty: leave a QUERYABLE mark. This pins the
     // property, not the spelling -- the delivery picks how to say it and
@@ -273,13 +297,19 @@ fn r4_a_user_written_builtin_is_distinguishable() {
     .unwrap();
     oo(&forged, &["evolve", "a.n"]);
     let c1 = oo(&forged, &["commit", "-m", "forged"]);
-    assert!(c1.contains("hash:"), "REACH: forged universe must commit: {c1:?}");
+    assert!(
+        c1.contains("hash:"),
+        "REACH: forged universe must commit: {c1:?}"
+    );
 
     let clean = scratch("r4b");
     std::fs::write(clean.join("a.n"), "boom: {{ %kind: #x }}\nv: 1\n").unwrap();
     oo(&clean, &["evolve", "a.n"]);
     let c2 = oo(&clean, &["commit", "-m", "clean"]);
-    assert!(c2.contains("hash:"), "REACH: control universe must commit: {c2:?}");
+    assert!(
+        c2.contains("hash:"),
+        "REACH: control universe must commit: {c2:?}"
+    );
 
     // The forged one must be reported as carrying user-authored `%builtin`
     // somewhere the control one is not. Today the two `inspect` outputs

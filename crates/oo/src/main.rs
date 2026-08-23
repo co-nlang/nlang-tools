@@ -65,7 +65,14 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::StackOverflow => "#stack_overflow",
         BottomCause::ObjectUndecodable => "#object_undecodable",
         BottomCause::StandardRootUnavailable => "#standard_root_unavailable",
+        BottomCause::NoStandardRoot => "#no_standard_root",
+        BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
+        BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
     }
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The parser fence is an incapacity boundary, so CLI parse entry points render
@@ -1528,6 +1535,14 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
                 println!("Sketch: {}", sketch_preview);
             }
             println!();
+            // O68 Q4.C: a queryable mark on user objects that carry
+            // meta.builtin. Display only — does not refuse, rewrite, or
+            // move any address. Standard-root objects are engine
+            // projections by definition and are not marked.
+            let digest = hex_digest(&hash.digest);
+            if !engine.standard_roots.contains(&digest) && val.holds_meta_builtin() {
+                println!("note: user-authored %builtin");
+            }
             println!("{}", val.to_nlang(0));
             Ok(())
         }

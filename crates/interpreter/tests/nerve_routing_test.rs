@@ -149,7 +149,7 @@ fn nerve_overlap_same_field_structure() {
     use std::sync::Arc;
 
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     let mut fields1 = IndexMap::new();
     fields1.insert("x".to_string(), Value::Top);
@@ -210,7 +210,7 @@ fn nerve_different_field_structure_different_masa() {
     let cv2 = ComboVal::new(fields2, false, IndexMap::new(), EffectTag::Pure, vec![]);
 
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
     advertise_fn(Value::Combo(cv1), &oo, &mut ctx);
     advertise_fn(Value::Combo(cv2), &oo, &mut ctx);
@@ -237,7 +237,7 @@ fn nerve_non_combo_empty_structure() {
     use std::sync::Arc;
 
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let atom = Value::Atom(AtomKind::Int(99.into()), EffectTag::Pure, None);
     let advertise_fn = oo.builtin_registry.get("disc.advertise").unwrap();
     advertise_fn(atom, &oo, &mut ctx);
@@ -341,7 +341,7 @@ fn test_morphism_node_gets_empty_nerve() {
     use std::sync::Arc;
 
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     let mut fields = IndexMap::new();
     fields.insert(
@@ -374,7 +374,7 @@ fn test_data_node_nerve_excludes_percent_keys() {
     use std::sync::Arc;
 
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     let mut fields = IndexMap::new();
     fields.insert(
@@ -431,7 +431,7 @@ fn test_same_structure_diff_percent_same_masa() {
     use std::sync::Arc;
 
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     let mut f1 = IndexMap::new();
     f1.insert(
@@ -487,7 +487,7 @@ fn test_list_node_nerve_uses_index_keys() {
     use std::sync::Arc;
 
     let oo = Arc::new(Ouroboros::new_in_memory());
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     let mut fields = IndexMap::new();
     fields.insert(

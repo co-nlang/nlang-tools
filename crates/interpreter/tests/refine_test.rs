@@ -325,7 +325,7 @@ fn bootstrap_exempt_when_no_architects() {
         oo.architect_registry.write().unwrap().clear();
     }
 
-    let mut u = Universe::new(None, oo.root_with_system());
+    let mut u = Universe::new_with_standard(None, oo.root_with_system(), oo.root_with_system());
 
     let val_a = Value::Top;
     let val_b = Value::Atom(AtomKind::Int(100.into()), EffectTag::Pure, None);
@@ -383,7 +383,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
         oo.architect_registry.write().unwrap().insert(local_pk);
     }
 
-    let mut u = Universe::new(None, oo.root_with_system());
+    let mut u = Universe::new_with_standard(None, oo.root_with_system(), oo.root_with_system());
 
     let val_a = Value::Top;
     let val_b = Value::Atom(AtomKind::Int(200.into()), EffectTag::Pure, None);
@@ -433,7 +433,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
         oo.architect_registry.write().unwrap().insert(local_pk);
     }
 
-    let mut u = Universe::new(None, oo.root_with_system());
+    let mut u = Universe::new_with_standard(None, oo.root_with_system(), oo.root_with_system());
 
     let val_a = Value::Top;
     let val_b = Value::Atom(AtomKind::Int(300.into()), EffectTag::Pure, None);
@@ -568,7 +568,7 @@ fn shadow_affected_detects_historical_usage() {
 fn shadow_scan_finds_field_in_committed_root() {
     let oo = Arc::new(Ouroboros::new_in_memory());
     let base_dir = nlang_interpreter::ScratchDir::new("shadow-hit");
-    let mut u = Universe::new(None, oo.root_with_system());
+    let mut u = Universe::new_with_standard(None, oo.root_with_system(), oo.root_with_system());
     {
         oo.architect_registry.write().unwrap().clear();
     }
@@ -634,7 +634,7 @@ fn shadow_scan_finds_field_in_committed_root() {
 fn refine_cycle_ab_ba_rejected() {
     let oo = Arc::new(Ouroboros::new_in_memory());
     let base_dir = nlang_interpreter::ScratchDir::new("cycle-ab");
-    let mut u = Universe::new(None, oo.root_with_system());
+    let mut u = Universe::new_with_standard(None, oo.root_with_system(), oo.root_with_system());
     {
         oo.architect_registry.write().unwrap().clear();
     }

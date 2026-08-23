@@ -82,7 +82,7 @@ fn make_map_arg(f: Value, val: Value) -> Value {
 #[test]
 fn option_map_some() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let opt = make_some(make_int(42));
     let morph = get_morph_builtin("option.map");
     let arg = make_map_arg(Value::Top, opt);
@@ -102,7 +102,7 @@ fn option_map_some() {
 #[test]
 fn option_map_none() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let opt = make_none();
     let morph = get_morph_builtin("option.map");
     let arg = make_map_arg(Value::Top, opt);
@@ -122,7 +122,7 @@ fn option_map_none() {
 #[test]
 fn result_map_ok() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let res = make_ok(make_int(99));
     let morph = get_morph_builtin("result.map");
     let arg = make_map_arg(Value::Top, res);
@@ -145,7 +145,7 @@ fn result_map_ok() {
 #[test]
 fn result_map_err_passthrough() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let err_cause = Value::Atom(AtomKind::Tag("oops".to_string()), EffectTag::Pure, None);
     let res = make_err(err_cause);
     let morph = get_morph_builtin("result.map");
@@ -169,7 +169,7 @@ fn result_map_err_passthrough() {
 #[test]
 fn result_map_err_maps_cause() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let err_cause = Value::Atom(AtomKind::Tag("oops".to_string()), EffectTag::Pure, None);
     let res = make_err(err_cause);
     let morph = get_morph_builtin("result.map_err");
@@ -206,7 +206,7 @@ fn option_fmap_accessible_from_type() {
 #[test]
 fn option_and_then_some_chains() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let opt = make_some(make_int(42));
     let morph = get_morph_builtin("option.and_then");
     let arg = make_map_arg(Value::Top, opt);
@@ -226,7 +226,7 @@ fn option_and_then_some_chains() {
 #[test]
 fn option_and_then_none_propagates() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let opt = make_none();
     let morph = get_morph_builtin("option.and_then");
     let arg = make_map_arg(Value::Top, opt);
@@ -246,7 +246,7 @@ fn option_and_then_none_propagates() {
 #[test]
 fn result_and_then_ok_chains() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let res = make_ok(make_int(99));
     let morph = get_morph_builtin("result.and_then");
     let arg = make_map_arg(Value::Top, res);
@@ -266,7 +266,7 @@ fn result_and_then_ok_chains() {
 #[test]
 fn result_and_then_err_propagates() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     let err_cause = Value::Atom(AtomKind::Tag("fail".to_string()), EffectTag::Pure, None);
     let res = make_err(err_cause);
     let morph = get_morph_builtin("result.and_then");

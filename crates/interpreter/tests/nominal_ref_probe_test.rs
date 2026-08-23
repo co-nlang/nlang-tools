@@ -31,7 +31,8 @@ fn tmp_dir() -> nlang_interpreter::ScratchDir {
 fn run_observe(src: &str, path: &str) -> Result<Value, String> {
     let dir = tmp_dir();
     let engine = Ouroboros::init(&dir).unwrap();
-    let mut universe = Universe::new(None, engine.root_with_system());
+    let mut universe =
+        Universe::new_with_standard(None, engine.root_with_system(), engine.root_with_system());
     let program = parse_program(src).unwrap();
     for f in &program.fields {
         universe

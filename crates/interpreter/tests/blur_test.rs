@@ -117,7 +117,7 @@ fn blur_unify_concrete_preserves_snapshot() {
 #[test]
 fn math_ln_zero_returns_blur() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system()).with_strategy(ObservationStrategy::Blur);
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system()).with_strategy(ObservationStrategy::Blur);
     let root = oo.root_with_system();
     let math_combo = root.get_field("~%Math").unwrap().clone();
     let ln_morph = match &math_combo {
@@ -138,7 +138,7 @@ fn math_ln_zero_returns_blur() {
 fn math_ln_zero_strict_returns_blur() {
     let oo = Ouroboros::new_in_memory();
     let mut ctx =
-        EvalContext::new(oo.root_with_system()).with_strategy(ObservationStrategy::Strict);
+        EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system()).with_strategy(ObservationStrategy::Strict);
     let root = oo.root_with_system();
     let math_combo = root.get_field("~%Math").unwrap().clone();
     let ln_morph = match &math_combo {
@@ -154,7 +154,7 @@ fn math_ln_zero_strict_returns_blur() {
 #[test]
 fn handle_resource_exhausted_returns_blur() {
     let oo = Ouroboros::new_in_memory();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
     ctx.fuel = 77;
     ctx.fuel_budget = 10000;
     let result = handle_resource_exhausted(

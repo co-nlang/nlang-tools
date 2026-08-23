@@ -58,7 +58,8 @@ fn run_all_integration_tests() {
         };
 
         let engine = Ouroboros::new_in_memory();
-        let mut universe = Universe::new(None, engine.root_with_system());
+        let mut universe =
+            Universe::new_with_standard(None, engine.root_with_system(), engine.root_with_system());
 
         let mut evolve_failed = false;
         for f in &program.fields {

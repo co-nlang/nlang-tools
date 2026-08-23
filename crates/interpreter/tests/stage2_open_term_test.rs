@@ -19,7 +19,8 @@ fn tmp_dir(tag: &str) -> nlang_interpreter::ScratchDir {
 fn evolve_stores_open_term_as_thunk() {
     let dir = tmp_dir("a");
     let engine = Ouroboros::init(&dir).unwrap();
-    let mut universe = Universe::new(None, engine.root_with_system());
+    let mut universe =
+        Universe::new_with_standard(None, engine.root_with_system(), engine.root_with_system());
 
     // w: { x: $.s } — x is an open term (free $, no enclosing evolution)
     let src = "w: { x: $.s }";
@@ -49,7 +50,8 @@ fn evolve_stores_open_term_as_thunk() {
 fn observe_open_term_collapses_no_context() {
     let dir = tmp_dir("b");
     let engine = Ouroboros::init(&dir).unwrap();
-    let mut universe = Universe::new(None, engine.root_with_system());
+    let mut universe =
+        Universe::new_with_standard(None, engine.root_with_system(), engine.root_with_system());
 
     let src = "w: { x: $.s }";
     let program = parse_program(src).unwrap();
@@ -80,7 +82,8 @@ fn observe_open_term_collapses_no_context() {
 fn commit_reload_preserves_thunk_behavior() {
     let dir = tmp_dir("c");
     let engine = Ouroboros::init(&dir).unwrap();
-    let mut universe = Universe::new(None, engine.root_with_system());
+    let mut universe =
+        Universe::new_with_standard(None, engine.root_with_system(), engine.root_with_system());
 
     // Use an open-term field (w: { x: $.s }) — x is a Thunk (open term).
     // This tests thunk serialization roundtrip, not pipe-result %val collapse.

@@ -44,7 +44,7 @@ fn test_cocoon_isolation_logic() {
 #[test]
 fn test_morphism_tainting() {
     let oo = empty_ouroboros();
-    let mut ctx = EvalContext::new(oo.root_with_system());
+    let mut ctx = EvalContext::new(oo.root_with_system()).with_standard_root(oo.root_with_system());
 
     // 觀測 ~%Time./now (這是 IO 態射)
     let f = oo.root_with_system().get_field("~%Time").unwrap().clone();

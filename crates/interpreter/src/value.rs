@@ -6,6 +6,7 @@ use ring::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Arc, RwLock};
 
@@ -1185,6 +1186,14 @@ impl ComboVal {
         }
     }
 
+    /// Names this combo (and every nested combo) projects via `%builtin`.
+    /// The dispatch gate (O68 Q3.B) consults this set, not the process registry.
+    pub fn collect_projected_builtins(&self) -> HashSet<String> {
+        let mut out = HashSet::new();
+        collect_projected_builtins_in_combo(self, &mut out);
+        out
+    }
+
     pub fn bits(&self) -> u64 {
         let mut b = 64u64;
         for (k, v) in &self.data {
@@ -1331,6 +1340,9 @@ impl BottomDetail {
             BottomCause::StackOverflow => "#stack_overflow",
             BottomCause::ObjectUndecodable => "#object_undecodable",
             BottomCause::StandardRootUnavailable => "#standard_root_unavailable",
+            BottomCause::NoStandardRoot => "#no_standard_root",
+            BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
+            BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1559,6 +1571,18 @@ pub enum BottomCause {
     /// Object is held, but its format-3 standard root is not shipped by
     /// this engine (REAL_03 §6.8). Append-only tail. Distinct from absence.
     StandardRootUnavailable,
+    /// Eval context never installed a standard root (O68 Q3.B / Q-035 S2).
+    /// Distinct from an installed root that does not project the name, and
+    /// from `#standard_root_unavailable` (a held object names a digest this
+    /// engine does not ship). Append-only tail.
+    NoStandardRoot,
+    /// This universe's standard root does not project the `%builtin` name
+    /// (O68 Q3.B / Q-035 S1). Append-only tail.
+    UnprojectedBuiltin,
+    /// The standard root projects the `%builtin` name, but this engine's
+    /// registry cannot provide it (O68 Q3.B / Q-035 S3, the six dead names).
+    /// Append-only tail.
+    UnprovidedBuiltin,
 }
 
 impl BottomCause {
@@ -1593,6 +1617,9 @@ impl BottomCause {
             BottomCause::StackOverflow => "stack_overflow",
             BottomCause::ObjectUndecodable => "object_undecodable",
             BottomCause::StandardRootUnavailable => "standard_root_unavailable",
+            BottomCause::NoStandardRoot => "no_standard_root",
+            BottomCause::UnprojectedBuiltin => "unprojected_builtin",
+            BottomCause::UnprovidedBuiltin => "unprovided_builtin",
         }
     }
 
@@ -1610,7 +1637,10 @@ impl BottomCause {
             | BottomCause::StoreBoundary
             | BottomCause::CaidMismatch
             | BottomCause::ObjectUndecodable
-            | BottomCause::StandardRootUnavailable => 1,
+            | BottomCause::StandardRootUnavailable
+            | BottomCause::NoStandardRoot
+            | BottomCause::UnprojectedBuiltin
+            | BottomCause::UnprovidedBuiltin => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split
@@ -1654,6 +1684,66 @@ impl From<BottomCause> for Value {
 /// a positional pack. Whole-argument builtins (identify, save, advertise, …)
 /// must read slot `0` in that case and the pack itself otherwise — never
 /// unconditional `get_field("0")`, which silently drops tuples and slot-0 combos.
+fn collect_projected_builtins_in_combo(c: &ComboVal, out: &mut HashSet<String>) {
+    if let Some(Value::Atom(AtomKind::Str(id), _, _)) = c.meta.get("builtin") {
+        out.insert(id.clone());
+    }
+    for map in [&c.data, &c.types, &c.rules, &c.meta, &c.system, &c.local] {
+        for v in map.values() {
+            collect_projected_builtins_in_value(v, out);
+        }
+    }
+}
+
+fn collect_projected_builtins_in_value(v: &Value, out: &mut HashSet<String>) {
+    match v {
+        Value::Combo(c) => collect_projected_builtins_in_combo(c, out),
+        Value::Union(vs) => {
+            for x in vs {
+                collect_projected_builtins_in_value(x, out);
+            }
+        }
+        Value::Range { start, end, step } => {
+            collect_projected_builtins_in_value(start, out);
+            collect_projected_builtins_in_value(end, out);
+            if let Some(s) = step {
+                collect_projected_builtins_in_value(s, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+impl Value {
+    /// True if this value, or any nested combo, carries `meta.builtin`.
+    /// Display-time query for O68 Q4.C; does not force thunks and does not
+    /// rewrite the value.
+    pub fn holds_meta_builtin(&self) -> bool {
+        match self {
+            Value::Combo(c) => {
+                c.meta.contains_key("builtin")
+                    || c.data.values().any(Value::holds_meta_builtin)
+                    || c.types.values().any(Value::holds_meta_builtin)
+                    || c.rules.values().any(Value::holds_meta_builtin)
+                    || c.meta.values().any(Value::holds_meta_builtin)
+                    || c.system.values().any(Value::holds_meta_builtin)
+                    || c.local.values().any(Value::holds_meta_builtin)
+            }
+            Value::Union(vs) => vs.iter().any(Value::holds_meta_builtin),
+            Value::Range { start, end, step } => {
+                start.holds_meta_builtin()
+                    || end.holds_meta_builtin()
+                    || step.as_ref().is_some_and(|s| s.holds_meta_builtin())
+            }
+            Value::Blur(b) => b
+                .partial_body
+                .as_ref()
+                .is_some_and(|body| body.holds_meta_builtin()),
+            _ => false,
+        }
+    }
+}
+
 pub fn whole_argument(arg: Value) -> Value {
     match &arg {
         Value::Combo(c) if c.contains_key("%arg") => c.get_field("0").cloned().unwrap_or(arg),
