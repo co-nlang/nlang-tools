@@ -94,7 +94,6 @@ fn ev(tag: &str, expr: &str) -> String {
 ///
 /// Baseline: `["a"]`.
 #[test]
-#[ignore = "red at baseline: `&` drops the right operand when both sides are spread"]
 fn r1_a_meet_of_two_spreads_keeps_both_sides() {
     let got = ev("r1", "~%Reflection./keys ({ ...{ a: 1 } } & { ...{ b: 2 } })");
     assert!(
@@ -113,7 +112,6 @@ fn r1_a_meet_of_two_spreads_keeps_both_sides() {
 ///
 /// Baseline: `["a"]` vs `["b"]`.
 #[test]
-#[ignore = "red at baseline: the two orders answer with different halves"]
 fn r2_a_meet_of_two_spreads_commutes() {
     let ab = ev("r2a", "~%Reflection./keys ({ ...{ a: 1 } } & { ...{ b: 2 } })");
     let ba = ev("r2b", "~%Reflection./keys ({ ...{ b: 2 } } & { ...{ a: 1 } })");
@@ -136,7 +134,6 @@ fn r2_a_meet_of_two_spreads_commutes() {
 ///
 /// Baseline: `#false`.
 #[test]
-#[ignore = "red at baseline: same CAID, two different answers to `&`"]
 fn r3_values_with_one_identity_answer_one_way() {
     let spread = ev(
         "r3a",
@@ -160,7 +157,6 @@ fn r3_values_with_one_identity_answer_one_way() {
 ///
 /// Baseline: 3 (only Cond survives).
 #[test]
-#[ignore = "red at baseline: meeting two modules keeps only one of them"]
 fn r4_meeting_two_modules_keeps_every_name() {
     let got = ev(
         "r4",
@@ -193,7 +189,6 @@ fn r4_meeting_two_modules_keeps_every_name() {
 ///
 /// Baseline: `1`.
 #[test]
-#[ignore = "red at baseline: the dropped operand takes its disagreement with it"]
 fn r5_a_dropped_operand_does_not_swallow_a_conflict() {
     let got = ev("r5", "({ ...{ a: 1 } } & { ...{ a: 2 } }).a");
     assert_ne!(got, "_", "REACH: the field must be reachable; got {got:?}");
