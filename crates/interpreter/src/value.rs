@@ -179,6 +179,8 @@ pub struct Privilege {
     /// Remote `~%Discovery./connect` with `tcp://` (connect_consent).
     /// Local ObjectStore form needs no grant.
     pub connect: bool,
+    /// `oo migrate` — advance container layout declarations (O73 ③).
+    pub migrate: bool,
 }
 
 impl Privilege {
@@ -190,6 +192,7 @@ impl Privilege {
         squash: false,
         gc: false,
         connect: false,
+        migrate: false,
     };
 
     /// Full grant (CLI `--privileged` back-compat). Does **not** set `commit`
@@ -203,6 +206,7 @@ impl Privilege {
             squash: true,
             gc: true,
             connect: true,
+            migrate: true,
         }
     }
 
@@ -221,6 +225,7 @@ impl Privilege {
             squash: self.squash || other.squash,
             gc: self.gc || other.gc,
             connect: self.connect || other.connect,
+            migrate: self.migrate || other.migrate,
         }
     }
 

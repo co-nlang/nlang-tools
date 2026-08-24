@@ -313,8 +313,24 @@ impl ObjectStore {
     /// digest rather than copying its body into every root.
     pub fn put_root(&self, root: &ComboVal, standard: &ComboVal) -> Result<ContentHash> {
         if self.encoding < 4 {
-            // Encoding 3 named roots by their hydrated body.  The container
-            // declaration, not the standard-root table, selects this rule.
+            // O73 ② is about pre-sentinel stores, not "encoding < 4". The
+            // read path already tells them apart with `has_standard`
+            // (`encoding < 4 && has_standard` at get_root). On write the
+            // incoming root does not yet carry the sentinel — that is what
+            // `project_standard_root` adds — so the matching question is
+            // whether the standard table itself is blank.
+            // `standard_for_root` returns `ComboVal::default()` for
+            // formats 1/2; projecting that blank table named `47dc540c…`
+            // and never stored it. Encoding 3 is sentinel form (O63): the
+            // table is there, roots name it by digest, address is the
+            // hydrated body.
+            if standard_table_is_blank(standard) {
+                let value = Value::Combo(root.clone());
+                let durable = value.for_legacy_cas_storage();
+                let hash = durable.content_hash();
+                self.write_object(&hash, encode_readable_cas_json(&durable)?)?;
+                return Ok(hash);
+            }
             let mut logical_root = root.clone();
             hydrate_standard_root(&mut logical_root, standard);
             let value = Value::Combo(logical_root);
@@ -513,7 +529,6 @@ impl ObjectStore {
         if path.exists() {
             return Ok(());
         }
-        self.upgrade_format_for_cas_write()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -521,19 +536,24 @@ impl ObjectStore {
         Ok(())
     }
 
-    /// A write may declare the encoding it is about to install. Legacy stores
-    /// are migrated here, never by a read path.
-    fn upgrade_format_for_cas_write(&self) -> Result<()> {
-        let oo = self
-            .root
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("object store has no .oo parent"))?;
-        Self::ensure_format(oo.parent().ok_or_else(|| anyhow::anyhow!("object store has no base directory"))?)?;
-        let layout = fs::read_to_string(oo.join("format"))?;
-        if layout.trim() != format!("layout={STORE_LAYOUT_VERSION}") {
-            atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;
+    /// Advance the container layout only (O73 ③/④). Does not move HEAD, rewrite
+    /// any object, or name a standard-root digest. The encoding written is the
+    /// one this store already declared — never a guessed current-engine value.
+    pub fn migrate_layout(&self, base_dir: &Path) -> Result<()> {
+        let oo = base_dir.join(".oo");
+        if !oo.exists() {
+            anyhow::bail!("no store at {}", oo.display());
         }
-        atomic_write(&oo.join("objects.format"), format!("encoding={}\n", self.encoding))
+        Self::ensure_format(base_dir)?;
+        atomic_write(
+            &oo.join("format"),
+            format!("layout={STORE_LAYOUT_VERSION}\n"),
+        )?;
+        atomic_write(
+            &oo.join("objects.format"),
+            format!("encoding={}\n", self.encoding),
+        )?;
+        Ok(())
     }
 
     /// Read raw bytes at the digest path. Absence → `NotFound` (not IO prose).
@@ -592,6 +612,17 @@ impl ObjectStore {
 
 fn standard_table_digest(standard: &ComboVal) -> String {
     hex::encode(Value::Combo(standard.clone()).content_hash().digest)
+}
+
+/// Formats 1/2 have no engine-owned table on the write path. Encoding 3
+/// does. Axes, not encoding number: a closed empty Combo is still blank.
+fn standard_table_is_blank(standard: &ComboVal) -> bool {
+    standard.data.is_empty()
+        && standard.types.is_empty()
+        && standard.rules.is_empty()
+        && standard.meta.is_empty()
+        && standard.system.is_empty()
+        && standard.local.is_empty()
 }
 
 const SYSTEM_DIGEST_KEY: &str = "__nlang_system_digest";

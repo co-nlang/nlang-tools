@@ -347,9 +347,20 @@ fn r3_a_bare_number_is_read_as_the_old_conflated_counter() {
         "the legacy write path could not create its fixture: {commit}"
     );
 
-    // The write is allowed to split the declaration into its named axes; it
-    // must retain encoding 3. The following read must then be non-mutating.
-    assert_eq!(read(&encoding_file(&d)).as_deref(), Some("encoding=3"));
+    // O73 (Q-038): `commit` must not rewrite a layout it found. Splitting
+    // the conflated counter into `layout=N` + `objects.format` is `oo migrate`,
+    // never a side effect of writing a root. Encoding 3 is retained as the
+    // bare number the store already declared.
+    assert_eq!(
+        read(&layout_file(&d)).as_deref(),
+        Some("3"),
+        "commit rewrote a pre-split layout declaration"
+    );
+    assert_eq!(
+        read(&encoding_file(&d)).as_deref(),
+        None,
+        "commit added objects.format to a store that did not declare an encoding axis"
+    );
     let declaration_before_read = read(&layout_file(&d));
     let out = oo(&d, &["log"]);
     assert!(

@@ -236,6 +236,14 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Advance the container layout declaration only (O73). Requires
+    /// `--grant migrate`. Does not move HEAD or rewrite any root.
+    Migrate {
+        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        grants: Vec<String>,
+        #[arg(long)]
+        privileged: bool,
+    },
     /// Show the operator public key (64 hex) and the identity file path.
     /// Mints at `OO_IDENTITY` or `~/.oo/identity` on first use.
     Identity,
@@ -407,6 +415,7 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             privileged,
             dry_run,
         } => run_gc(grants, privileged, dry_run),
+        Commands::Migrate { grants, privileged } => run_migrate(grants, privileged),
         Commands::Lint { path, json } => {
             let code = oo::nlint::run_cli(&path, json);
             std::process::exit(code);
@@ -519,7 +528,10 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
     // %source = node id (CAID of the node public key), not the listen port.
     // Two ports on one workspace share one id; two workspaces do not.
     let source_id = engine.node_id()?.to_string();
-    println!("n/ OODP node serving at port {} (node {})", bound_port, source_id);
+    println!(
+        "n/ OODP node serving at port {} (node {})",
+        bound_port, source_id
+    );
     // advert_persistence §3.2 — load report on the serve log (probes parse it).
     if let Some(ref rep) = engine.peers_load_report {
         if let Some(ref line) = rep.log_line {
@@ -830,7 +842,11 @@ fn run_status() -> anyhow::Result<()> {
         match engine.store.root_standard_digest(&commit.root)? {
             Some(digest) => println!(
                 "Standard root dependency: {digest} ({})",
-                if engine.supports_standard_root(&digest) { "available" } else { "unavailable" }
+                if engine.supports_standard_root(&digest) {
+                    "available"
+                } else {
+                    "unavailable"
+                }
             ),
             None => println!("Standard root dependency: self-contained (pre-sentinel)"),
         }
@@ -961,8 +977,8 @@ fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::
             "#privileged_required: rollback requires --grant rollback (privilege.rollback capability)"
         );
     }
-    let target = ContentHash::parse(&caid)
-        .map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", caid, e))?;
+    let target =
+        ContentHash::parse(&caid).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", caid, e))?;
     let mut universe = load_universe(&engine, &cur)?;
     universe.rollback(&engine, &cur, &target)?;
     println!("Rolled back to {}", target);
@@ -1090,16 +1106,12 @@ fn run_refine(
 
     let source_caids: Vec<ContentHash> = sources
         .iter()
-        .map(|s| {
-            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", s, e))
-        })
+        .map(|s| ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", s, e)))
         .collect::<anyhow::Result<_>>()?;
 
     let target_caids: Vec<ContentHash> = targets
         .iter()
-        .map(|s| {
-            ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", s, e))
-        })
+        .map(|s| ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", s, e)))
         .collect::<anyhow::Result<_>>()?;
 
     let authority = if sign {
@@ -1246,6 +1258,10 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             gc: true,
             ..Privilege::NONE
         }),
+        "migrate" => Ok(Privilege {
+            migrate: true,
+            ..Privilege::NONE
+        }),
         "connect" => Ok(Privilege {
             connect: true,
             ..Privilege::NONE
@@ -1280,9 +1296,27 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
             })
         }
         _ => anyhow::bail!(
-            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash, gc, connect)"
+            "unknown grant SPEC `{spec}` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash, gc, migrate, connect)"
         ),
     }
+}
+
+fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
+    let cur = std::env::current_dir()?;
+    let mut engine = Ouroboros::init(&cur)?;
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
+    if !engine.privilege.migrate {
+        anyhow::bail!(
+            "#privileged_required: migrate requires --grant migrate (privilege.migrate capability)"
+        );
+    }
+    engine.store.migrate_layout(&cur)?;
+    println!(
+        "Migrated store layout to layout={}. The creating engine of a pre-sentinel \
+         repo will no longer open this store.",
+        nlang_interpreter::storage::STORE_LAYOUT_VERSION
+    );
+    Ok(())
 }
 
 fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {
