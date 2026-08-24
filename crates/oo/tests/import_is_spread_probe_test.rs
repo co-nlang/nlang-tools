@@ -96,7 +96,6 @@ fn field_line(status: &str, key: &str) -> Option<String> {
 /// landed under a coordinate literally named `"..."` instead of being
 /// flattened into the root.
 #[test]
-#[ignore = "red at baseline: top-level spread does not expand into the root"]
 fn r1_a_top_level_import_makes_its_names_resolve() {
     let (_d, status) = staged_of(
         "r1",
@@ -121,7 +120,6 @@ fn r1_a_top_level_import_makes_its_names_resolve() {
 ///
 /// Baseline: `a: 1..#_["~%Cond"]`.
 #[test]
-#[ignore = "red at baseline: `...` is eaten by `..` when a value precedes it"]
 fn r2_a_spread_does_not_corrupt_the_line_above_it() {
     let (_d, status) = staged_of("r2", "a: 1\n...~%Cond\n");
 
@@ -140,7 +138,6 @@ fn r2_a_spread_does_not_corrupt_the_line_above_it() {
 ///
 /// Baseline: `a: _|_ (%cause: #conflict)`.
 #[test]
-#[ignore = "red at baseline: `1..5` + spread collapses to bottom"]
 fn r3_a_spread_below_a_range_does_not_collapse_it() {
     let (_d, status) = staged_of("r3", "a: 1..5\n...~%Cond\n");
 
@@ -157,7 +154,6 @@ fn r3_a_spread_below_a_range_does_not_collapse_it() {
 /// `...` is an operator, never a name. If a coordinate spelled `"..."`
 /// survives into staged state, the spread was stored rather than performed.
 #[test]
-#[ignore = "red at baseline: the spread is stored under a coordinate named \"...\""]
 fn r4_no_coordinate_is_ever_named_dot_dot_dot() {
     let (_d, status) = staged_of("r4", "...~%Cond\n");
 

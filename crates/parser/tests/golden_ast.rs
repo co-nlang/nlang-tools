@@ -126,6 +126,28 @@ fn golden_range() {
 }
 
 #[test]
+fn golden_top_level_spread_is_not_a_range() {
+    // Q-036 / O72: `...` must not be eaten by `..`. A preceding value used
+    // to turn the next line's spread into a range continuation.
+    let p = parse_program("a: 1\n...xs").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        p.shape(),
+        "Program[PathKey(Bare:a):Atom(Int(1)); Quoted(...):Spread(Path(Bare:xs))]"
+    );
+    let p = parse_program("a: 1..5\n...xs").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        p.shape(),
+        "Program[PathKey(Bare:a):Range(Atom(Int(1)), Atom(Int(5))); Quoted(...):Spread(Path(Bare:xs))]"
+    );
+    // comma already split fields; this is the silent-before case.
+    let p = parse_program("a: 1, ...xs").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        p.shape(),
+        "Program[PathKey(Bare:a):Atom(Int(1)); Quoted(...):Spread(Path(Bare:xs))]"
+    );
+}
+
+#[test]
 fn golden_combo_fields() {
     let p = parse_program("a: 1\nb: 2").unwrap();
     // field_key prefers `path` over `named_key`, so bare idents are PathKey
