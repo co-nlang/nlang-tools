@@ -205,3 +205,62 @@ targets=213  passed=2048  failed=0  ignored=5  err=0
     探針釘的是「無 grant 即拒絕且不改動」這個性質，但子命令名與 grant 名是拼法，
     改了探針就對不上。
 7.  交付前先提交；驗收在提交上做。
+
+---
+
+## 7. 修補回合（驗收方，2026-08-25）——一項，其餘全數通過
+
+**八支探針全綠、全跑全綠、跨版本主張成立**（見 §7.2）。**但驗收另量到一個回歸，
+必須修**：本弧把 `encoding 3` 的倉一起當成 pre-sentinel 了。
+
+### 7.1 要修的那一項
+
+`storage.rs::put_root` 現在對 `self.encoding < 4` **整段**改走「根維持自足」，
+並逐字寫下 `let _ = standard;`——**而 `standard` 正是能分辨這兩種倉的那個值**。
+
+**`encoding = 3` 的倉不是 pre-sentinel。** 它是 sentinel 形式（根以一個 digest
+指名標準根，`REAL_03` §6.8），只是位址規則是舊的（O63：`hash(標準根 ⊕ 使用者內容)`）。
+**O73 ② 治的是 pre-sentinel 倉，不是「encoding 小於 4」。**
+
+〔量，兩個真二進位，同一份 `app: { k1: 1 }`，同一個 `encoding=3` 倉〕
+
+| | 根位址 | `status` |
+| :--- | :--- | :--- |
+| 基線 `oo v0.33.0`（`ae85c8c`） | `c8fca4d9…` | 指名 `7038e250… (available)` |
+| 交付 `0a7b6f0` | **`e1b4d90f…`** | **`self-contained (pre-sentinel)`** |
+
+**更傷的那一格**：一個**第一筆已由基線寫成 sentinel 形式**的 `encoding=3` 倉，
+交付寫第二筆之後 `status` **掉回 `self-contained (pre-sentinel)`**——
+**歷史中途換了位址規則，而沒有任何一端出聲**。
+
+**判準已經在這個倉裡，而且是讀取路徑正在用的那一個**：
+`storage.rs:368` 逐字寫著 `if self.encoding < 4 && has_standard`——那正是
+**O54**「只 hydrate 帶 sentinel 的根；判準是**根自己有沒有那個摘要**」。
+**寫入路徑要用同一個判準，不要用編碼號碼。**〔`standard_for_root` 對 format 1/2
+回傳 `ComboVal::default()`，故「標準表是不是空的」就是那個判準。〕
+
+**紅線不變**：`encoding=4` 的身分不得動（`G3` 仍綠，已驗）；pre-sentinel 的
+自足行為不得回退（`R3` 仍綠，已驗）。**這一項只把 `encoding=3` 那一格還回去。**
+
+### 7.2 已通過、不必再動的部分（供你不必重測）
+
+*   **探針 8/8**（五紅全綠、三綠仍綠），且**只移除了五行 `#[ignore]`**。
+*   **跨版本主張成立**〔量，`oo v0.33.0` ＋ **真的 `oo v0.20.0`**〕：新引擎寫進
+    pre-sentinel 倉 ⟹ 宣告逐字未動（`format=2`、無 `objects.format`）、新引擎讀得回
+    `self-contained (pre-sentinel)`、**造這個倉的 v0.20.0 讀得到新引擎剛寫的提交**。
+*   **`migrate` 照裁定**：無 grant ⟹ `#privileged_required` 且分毫未動；
+    有 grant ⟹ 推進宣告、`HEAD` 不動、歷史照讀，並明說舊引擎此後打不開。
+*   **§2.5 已答**〔量〕：pre-sentinel 倉 commit 之後**用得了內建**——
+    提交後的根裡 `sum: 5`，且舊引擎讀得到該提交。⟹ 「原地不動」不會把使用者
+    困在一個退化的倉裡。
+*   **身分紅線**：根 `932a9f9d…`、標準根 `7038e250…` 逐字元相同。
+*   **O63 的「宣告不動」那半條仍成立**〔量〕：`encoding=3` 的倉 commit 後
+    宣告仍為 `layout=2` ／ `encoding=3`。壞的是**根的形式**，不是宣告。
+
+### 7.3 驗收方已加的圍籬（探針修改權在驗收方）
+
+`G4 g4_an_encoding_3_store_keeps_its_sentinel`——**在工單基線 `ae85c8c` 上綠
+（兩筆提交皆保持 `7038e250… (available)`，已逐項實跑確認）、在 `0a7b6f0` 上紅**。
+**樹裡原本沒有任何測試覆蓋這一格**，這正是整個全跑仍然全綠的原因。
+
+修補後請把 **9 支全綠**一起回報。

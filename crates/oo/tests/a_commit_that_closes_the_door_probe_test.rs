@@ -361,3 +361,63 @@ fn g3_the_identity_of_a_current_repo_does_not_move() {
         "the standard root digest must not move; got {st:?}"
     );
 }
+
+/// ── ADDED BY THE ACCEPTOR, 2026-08-25 (Q-038 repair round) ───────────────
+///
+/// Regression fence. This property was GREEN at the order's baseline
+/// (`dev ae85c8c`) and is RED on delivery `0a7b6f0`; no test in the tree
+/// covered it, which is why the whole suite stayed green.
+///
+/// `encoding=3` is NOT pre-sentinel. Such a store names its standard root by
+/// one digest (`REAL_03` §6.8) and addresses its roots by the hydrated body
+/// (O63). O73 ② is about pre-sentinel stores, and the write path must tell
+/// the two apart by the same predicate the READ path already uses — O54:
+/// "hydrate only roots that carry the sentinel", i.e. whether the standard
+/// table is there, not what number the encoding axis says.
+///
+/// Measured on the two real binaries, same source, same synthetic store:
+///   baseline `oo v0.33.0` → root `c8fca4d9…`, status names `7038e250…`
+///   delivery `0a7b6f0`    → root `e1b4d90f…`, status says self-contained
+/// and, worse, a store whose FIRST commit named the standard root drops to
+/// self-contained when the second commit is written.
+#[test]
+fn g4_an_encoding_3_store_keeps_its_sentinel() {
+    let d = scratch("g4");
+    let oo_dir = d.path().join(".oo");
+    fs::create_dir_all(oo_dir.join("objects")).expect("mkdir");
+    fs::write(oo_dir.join("format"), "layout=2").expect("layout");
+    fs::write(oo_dir.join("objects.format"), "encoding=3").expect("encoding");
+    fs::write(oo_dir.join("objects").join(".legacy-fixture-anchor"), b"").expect("anchor");
+
+    fs::write(d.path().join("main.n"), "app: { k1: 1 }\n").expect("write");
+    oo(d.path(), &["evolve", "main.n"]);
+    let ci = oo(d.path(), &["commit", "-m", "one"]);
+    assert!(
+        ci.contains("Commit successful"),
+        "REACH: the encoding-3 store must accept a commit; got {ci:?}"
+    );
+
+    let st = oo(d.path(), &["status"]);
+    assert!(
+        !st.contains("self-contained"),
+        "an encoding-3 store is not pre-sentinel: its root must name a \
+         standard root. got {st:?}"
+    );
+    assert!(
+        st.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        "the root must name THIS engine's standard root by digest \
+         (REAL_03 §6.8, first two MUSTs). got {st:?}"
+    );
+
+    // The half that bites hardest: a second commit must not change the rule
+    // the store's history is already written under.
+    fs::write(d.path().join("main.n"), "app: { k1: 1, k2: 2 }\n").expect("write");
+    oo(d.path(), &["evolve", "main.n"]);
+    oo(d.path(), &["commit", "-m", "two"]);
+    let st2 = oo(d.path(), &["status"]);
+    assert!(
+        !st2.contains("self-contained"),
+        "a second commit silently dropped the sentinel this store's history \
+         was written under. got {st2:?}"
+    );
+}
