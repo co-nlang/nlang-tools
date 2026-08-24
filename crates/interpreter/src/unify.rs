@@ -16,6 +16,30 @@ use std::cmp::Ordering;
 
 const EPSILON_COHERENT: f64 = 0.1;
 
+/// REAL_03 §6.7 / Q-037: `ComboVal::pending_spreads` is `#[serde(skip)]` and
+/// does not enter the CAID. Two unexpanded spread results (`{ ...{ a: 1 } }`
+/// and `{ ...{ b: 2 } }`) therefore share a digest, and a CAID early-out
+/// would keep one operand and drop the other — including a disagreement
+/// that should have been `⊥ #conflict`.
+///
+/// The field stays out of identity (G4). A digest that cannot see it is
+/// not a license to skip work it would change.
+fn caid_is_incomplete(v: &Value) -> bool {
+    match v {
+        Value::Combo(c) => {
+            !c.pending_spreads.is_empty()
+                || c.data.values().any(caid_is_incomplete)
+                || c.types.values().any(caid_is_incomplete)
+                || c.rules.values().any(caid_is_incomplete)
+                || c.meta.values().any(caid_is_incomplete)
+                || c.system.values().any(caid_is_incomplete)
+                || c.local.values().any(caid_is_incomplete)
+        }
+        Value::Union(xs) => xs.iter().any(caid_is_incomplete),
+        _ => false,
+    }
+}
+
 enum MergeDecision {
     Merge,
     H1Split { theta: f64 },
@@ -142,7 +166,7 @@ impl Ouroboros {
         // preserve thunk, force only when value-judgment needed.
         let id_a = a.content_hash();
         let id_b = b.content_hash();
-        if id_a == id_b {
+        if id_a == id_b && !caid_is_incomplete(&a) && !caid_is_incomplete(&b) {
             // Top and TopCaused share a CAID (lattice identity) — prefer
             // caused provenance so static-cycle fields survive combo merge.
             return Self::prefer_caused_top(a, b);
@@ -205,7 +229,7 @@ impl Ouroboros {
         let b = self.force(b, ctx).collapse().clone();
         let id_a = a.content_hash();
         let id_b = b.content_hash();
-        if id_a == id_b {
+        if id_a == id_b && !caid_is_incomplete(&a) && !caid_is_incomplete(&b) {
             return Self::prefer_caused_top(a, b);
         }
 
@@ -513,10 +537,7 @@ impl Ouroboros {
                     return Err(BottomDetail {
                         cause: BottomCause::MissingKey,
                         path: Some(shown.clone()),
-                        message: Some(format!(
-                            "Key '{}' missing in incoming closed Cocoon",
-                            shown
-                        )),
+                        message: Some(format!("Key '{}' missing in incoming closed Cocoon", shown)),
                         expected: Some(va.clone()),
                         found: None,
                         involved: vec![],
