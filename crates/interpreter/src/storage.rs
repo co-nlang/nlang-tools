@@ -313,15 +313,15 @@ impl ObjectStore {
     /// digest rather than copying its body into every root.
     pub fn put_root(&self, root: &ComboVal, standard: &ComboVal) -> Result<ContentHash> {
         if self.encoding < 4 {
-            // Encoding 3 named roots by their hydrated body.  The container
-            // declaration, not the standard-root table, selects this rule.
-            let mut logical_root = root.clone();
-            hydrate_standard_root(&mut logical_root, standard);
-            let value = Value::Combo(logical_root);
-            let hash = value.content_hash();
-            let mut durable = value.for_legacy_cas_storage();
-            let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
-            project_standard_root(durable_root, standard);
+            // Pre-sentinel stores keep roots self-contained. Projecting a
+            // sentinel here named the empty table's digest (`47dc540c…`) and
+            // never stored the table — a successful commit that no engine
+            // could then open (O73 ②). Hydration stays the READ path for
+            // roots that already carry a sentinel.
+            let _ = standard;
+            let value = Value::Combo(root.clone());
+            let durable = value.for_legacy_cas_storage();
+            let hash = durable.content_hash();
             self.write_object(&hash, encode_readable_cas_json(&durable)?)?;
             return Ok(hash);
         }
@@ -513,7 +513,6 @@ impl ObjectStore {
         if path.exists() {
             return Ok(());
         }
-        self.upgrade_format_for_cas_write()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -521,19 +520,24 @@ impl ObjectStore {
         Ok(())
     }
 
-    /// A write may declare the encoding it is about to install. Legacy stores
-    /// are migrated here, never by a read path.
-    fn upgrade_format_for_cas_write(&self) -> Result<()> {
-        let oo = self
-            .root
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("object store has no .oo parent"))?;
-        Self::ensure_format(oo.parent().ok_or_else(|| anyhow::anyhow!("object store has no base directory"))?)?;
-        let layout = fs::read_to_string(oo.join("format"))?;
-        if layout.trim() != format!("layout={STORE_LAYOUT_VERSION}") {
-            atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;
+    /// Advance the container layout only (O73 ③/④). Does not move HEAD, rewrite
+    /// any object, or name a standard-root digest. The encoding written is the
+    /// one this store already declared — never a guessed current-engine value.
+    pub fn migrate_layout(&self, base_dir: &Path) -> Result<()> {
+        let oo = base_dir.join(".oo");
+        if !oo.exists() {
+            anyhow::bail!("no store at {}", oo.display());
         }
-        atomic_write(&oo.join("objects.format"), format!("encoding={}\n", self.encoding))
+        Self::ensure_format(base_dir)?;
+        atomic_write(
+            &oo.join("format"),
+            format!("layout={STORE_LAYOUT_VERSION}\n"),
+        )?;
+        atomic_write(
+            &oo.join("objects.format"),
+            format!("encoding={}\n", self.encoding),
+        )?;
+        Ok(())
     }
 
     /// Read raw bytes at the digest path. Absence → `NotFound` (not IO prose).

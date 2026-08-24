@@ -125,7 +125,6 @@ fn head(dir: &Path) -> String {
 ///
 /// Baseline: `status` answers `… 47dc540c… (unavailable)` and `log` errors.
 #[test]
-#[ignore = "red at baseline: after the commit, status/log/evolve all refuse the root"]
 fn r1_a_pre_sentinel_repo_stays_openable_after_a_commit() {
     let d = lay_out_legacy("r1");
     let before = oo(d.path(), &["log"]);
@@ -156,7 +155,6 @@ fn r1_a_pre_sentinel_repo_stays_openable_after_a_commit() {
 ///
 /// Baseline: `2` becomes `layout=2` and `objects.format` appears.
 #[test]
-#[ignore = "red at baseline: commit rewrites .oo/format and adds .oo/objects.format"]
 fn r2_a_commit_does_not_rewrite_the_layout_declaration() {
     let d = lay_out_legacy("r2");
     let (before, before_enc) = read_decl(d.path());
@@ -191,7 +189,6 @@ fn r2_a_commit_does_not_rewrite_the_layout_declaration() {
 ///
 /// Baseline: `status` names `47dc540c…`.
 #[test]
-#[ignore = "red at baseline: the new root names a digest of a table never stored"]
 fn r3_a_root_written_into_a_pre_sentinel_repo_stays_self_contained() {
     let d = lay_out_legacy("r3");
     fs::write(d.path().join("main.n"), "app: { k1: 1, k2: 2 }\n").expect("write");
@@ -225,7 +222,6 @@ fn r3_a_root_written_into_a_pre_sentinel_repo_stays_self_contained() {
 ///
 /// Baseline: there is no `migrate` subcommand at all.
 #[test]
-#[ignore = "red at baseline: `oo migrate` is not a subcommand"]
 fn r4_migrating_without_a_grant_refuses_and_changes_nothing() {
     let d = lay_out_legacy("r4");
     let (before, before_enc) = read_decl(d.path());
@@ -250,7 +246,6 @@ fn r4_migrating_without_a_grant_refuses_and_changes_nothing() {
 ///
 /// Baseline: there is no `migrate` subcommand at all.
 #[test]
-#[ignore = "red at baseline: `oo migrate` is not a subcommand"]
 fn r5_a_granted_migrate_moves_the_container_and_not_the_root() {
     let d = lay_out_legacy("r5");
     let head_before = head(d.path());
