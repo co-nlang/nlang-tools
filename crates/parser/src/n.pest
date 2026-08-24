@@ -75,7 +75,10 @@ type_ann_expr = { postfix_expr ~ (!field_start ~ type_ann_op ~ postfix_expr)* }
 type_ann_op = { "@" }
 
 
-field_start = _{ field_key ~ ":" }
+// Spread fields have no colon (`...X`), so a lookahead that only sees
+// `key:` cannot stop juxtaposition / infix from swallowing the next line
+// (Q-036: after range yields, `a: 1` then `...X` became `1 (...X)`).
+field_start = _{ (field_key ~ ":") | "..." }
 
 postfix_expr = { primary ~ postfix_op* }
 postfix_op = { ("." ~ named_key) | ("[" ~ expr ~ "]") }
@@ -97,9 +100,13 @@ primary = {
     | path
 }
 
+// `".." ~ !"."`: a third dot is the spread operator (`...`), not a range.
+// Without this, `a: 1` then `...X` parses as the range `1 .. .X`, and
+// `a: 1..5` then `...X` parses as a three-part range whose step collapses
+// (Q-036 / O72). Comma already broke the field; newline did not.
 range = {
-    (range_start ~ ".." ~ (!field_start ~ range_end)? ~ (".." ~ !field_start ~ range_step)?)
-    | (".." ~ (!field_start ~ range_end)? ~ (".." ~ !field_start ~ range_step)?)
+    (range_start ~ ".." ~ !"." ~ (!field_start ~ range_end)? ~ (".." ~ !"." ~ !field_start ~ range_step)?)
+    | (".." ~ !"." ~ (!field_start ~ range_end)? ~ (".." ~ !"." ~ !field_start ~ range_step)?)
 }
 range_start = { range_bound }
 range_end = { range_bound }

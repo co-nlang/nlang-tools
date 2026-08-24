@@ -8,6 +8,14 @@ use anyhow::Result;
 use indexmap::IndexMap;
 use nlang_parser::ast::{AtomKind, Expr, ExprKind, Field, FieldKey, Path, PathAnchor, Prefix};
 
+/// Top-level `...X` is the same operator Combo construction already knows:
+/// a quoted key `"..."` whose value is the source (usually `ExprKind::Spread`).
+/// `Universe::evolve` must flatten it into staged rather than store a
+/// coordinate literally named `"..."` (Q-036 / O72).
+fn is_spread_field(field: &Field) -> bool {
+    matches!(&field.key, FieldKey::Quoted(name) if name == "...")
+}
+
 /// Coordinate names a field key will occupy in staged (prefixed + bare).
 fn field_coords(key: &FieldKey) -> Vec<String> {
     match key {
@@ -240,7 +248,11 @@ impl Universe {
         Self::new_with_standard(head, root, ComboVal::default())
     }
 
-    pub fn new_with_standard(head: Option<ContentHash>, root: ComboVal, standard_root: ComboVal) -> Self {
+    pub fn new_with_standard(
+        head: Option<ContentHash>,
+        root: ComboVal,
+        standard_root: ComboVal,
+    ) -> Self {
         Self {
             head,
             root,
@@ -307,11 +319,17 @@ impl Universe {
         match head {
             Some(h) => {
                 let commit = engine.store.get_commit(&h)?;
-                let root = engine.store.get_root(&commit.root, &engine.standard_roots)?;
+                let root = engine
+                    .store
+                    .get_root(&commit.root, &engine.standard_roots)?;
                 let standard_root = standard_for_root(engine, &commit.root)?;
                 Ok(Self::new_with_standard(Some(h), root, standard_root))
             }
-            None => Ok(Self::new_with_standard(None, ComboVal::default(), engine.root_with_system())),
+            None => Ok(Self::new_with_standard(
+                None,
+                ComboVal::default(),
+                engine.root_with_system(),
+            )),
         }
     }
 
@@ -332,7 +350,8 @@ impl Universe {
             });
         }
 
-        let mut ctx = EvalContext::new(self.root.clone()).with_standard_root(self.standard_root.clone());
+        let mut ctx =
+            EvalContext::new(self.root.clone()).with_standard_root(self.standard_root.clone());
         ctx.staged = Some(self.staged.clone());
         // O42: no clock salt — blur identity is CHS (budgets + partial).
         // EvalContext keeps a fixed disc tie-break salt from ::new only.
@@ -344,7 +363,8 @@ impl Universe {
         // parameters flow into any resulting blur's CHS just as they do at
         // observe (REAL_01 §9 / meter_reads_two).
         if let Some(Value::Combo(ref staged_cfg)) = self.staged.get_field("~%Config") {
-            if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged)) {
+            if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged))
+            {
                 let apply_timeout = staged_cfg.get_field("timeout").is_some();
                 ctx.apply_horizon_config(&eff, true, apply_timeout);
             }
@@ -355,6 +375,10 @@ impl Universe {
         // phase so expansion re-queues instead of consuming (cocoon face:
         // {{...later, b: 1}} with later defined below).
         ctx.in_evolve = true;
+
+        if is_spread_field(field) {
+            return self.evolve_spread(engine, field, ctx);
+        }
 
         // Coordinate(s) this field will occupy — marked in-flight during eval
         // so self-ref (`a: a + 1`) is ⊥ #divergent, not open-miss Top (L2-17).
@@ -594,6 +618,89 @@ impl Universe {
                 cause: BottomCause::Conflict,
                 ..Default::default()
             }),
+        }
+    }
+
+    /// Flatten a top-level `...X` into staged with the same laws Combo
+    /// construction already applies (intersect on collision, private
+    /// exclusion, Top no-op, ⊥ collapse). Nested spread is untouched.
+    fn evolve_spread(
+        &mut self,
+        engine: &Ouroboros,
+        field: &Field,
+        mut ctx: EvalContext,
+    ) -> std::result::Result<(), crate::value::BottomDetail> {
+        let te = engine.predict_effect(&field.value, &mut ctx);
+        let mut holder = ComboVal::default();
+        holder.pending_spreads.push(Value::Thunk {
+            expr: Box::new(field.value.clone()),
+            closure: ctx.scopes.clone(),
+            context: ctx.context_value.clone().map(Box::new),
+            effect: te,
+        });
+        match engine.expand_combo_pending(holder, &mut ctx) {
+            Value::Combo(incoming) => {
+                let evolved_coords: Vec<String> = incoming.field_keys();
+                if !evolved_coords.is_empty() {
+                    engine.invalidate_coords(&evolved_coords);
+                }
+                let discharged = engine.take_privileged_discharge();
+                if !discharged.is_pure() {
+                    self.effect_pending = Some(
+                        self.effect_pending
+                            .unwrap_or(crate::value::EffectTag::Pure)
+                            .union(discharged),
+                    );
+                }
+                if self.pin_mode && engine.privilege.pin {
+                    self.staged = Self::replace_merge(&self.staged, &incoming);
+                    self.is_dirty = true;
+                    self.pin_pending = true;
+                    for c in &evolved_coords {
+                        self.pin_coords.insert(c.clone());
+                    }
+                    return Ok(());
+                }
+                // Same field lattice as Combo construction / expand_combo_pending:
+                // a colliding key is the meet (⊥ when they disagree). Must not
+                // unify the whole staged combo — that path promotes a field
+                // clash to Evolution Conflict and drops every other member.
+                for (k, v) in incoming.fields() {
+                    if let Some(existing) = self.staged.get_field(&k).cloned() {
+                        let merged = engine.unify_internal(existing, v, &mut ctx);
+                        self.staged.insert_field(&k, merged);
+                    } else {
+                        self.staged.insert_field(&k, v);
+                    }
+                }
+                for (k, v) in incoming.local_fields() {
+                    let bare = k.trim().trim_start_matches('~').to_string();
+                    if let Some(existing) = self.staged.local.get(&bare).cloned() {
+                        let merged = engine.unify_internal(existing, v, &mut ctx);
+                        self.staged.local.insert(bare, merged);
+                    } else {
+                        self.staged.local.insert(bare, v);
+                    }
+                }
+                if !self.staged.closed {
+                    self.staged.effect = self.staged.effect.union(incoming.effect);
+                }
+                self.staged.pending_spreads.extend(incoming.pending_spreads);
+                self.is_dirty = true;
+                Ok(())
+            }
+            Value::Bottom(d) => Err(*d),
+            // Nested blur-spread absorbs the target combo. Staged is a
+            // ComboVal face, not a Blur; absorbing the universe would be a
+            // new lookup/overlay rule. Collision, not overwrite.
+            Value::Blur(_) => Err(crate::value::BottomDetail {
+                cause: BottomCause::Conflict,
+                ..Default::default()
+            }),
+            _ => {
+                self.is_dirty = true;
+                Ok(())
+            }
         }
     }
 
@@ -837,7 +944,9 @@ impl Universe {
         }
         // Target must exist as a commit object (any historical commit).
         let target_commit = engine.store.get_commit(target)?;
-        let new_root = engine.store.get_root(&target_commit.root, &engine.standard_roots)?;
+        let new_root = engine
+            .store
+            .get_root(&target_commit.root, &engine.standard_roots)?;
         let standard_root = standard_for_root(engine, &target_commit.root)?;
         // Record the head we leave behind (if any and different from target).
         if let Some(ref old) = self.head {
@@ -926,7 +1035,9 @@ impl Universe {
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
         // Root value is the same as before; reload for consistency.
-        self.root = engine.store.get_root(&head_commit.root, &engine.standard_roots)?;
+        self.root = engine
+            .store
+            .get_root(&head_commit.root, &engine.standard_roots)?;
         self.standard_root = standard_for_root(engine, &head_commit.root)?;
         self.head = Some(commit_hash.clone());
         self.staged = ComboVal::default();
@@ -945,7 +1056,8 @@ impl Universe {
         let mut root_for_obs = self.root.clone();
         let mut staged_for_obs = self.staged.clone();
         if staged_for_obs.get_field("~%Config").is_some() {
-            if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged)) {
+            if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged))
+            {
                 root_for_obs.insert_field("~%Config", Value::Combo(eff));
             }
             // Strip Config from staged so unify does not re-meet overrides.
@@ -953,7 +1065,8 @@ impl Universe {
         }
         let current = engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
         if let Value::Combo(r) = current {
-            let mut ctx = EvalContext::new(r.clone()).with_standard_root(self.standard_root.clone());
+            let mut ctx =
+                EvalContext::new(r.clone()).with_standard_root(self.standard_root.clone());
             ctx.privilege = engine.privilege;
             // Apply ~%Config horizon params from the observation root
             // (includes staged overrides — SPEC_08 §3.1). Timeout only when
@@ -1036,12 +1149,9 @@ impl Universe {
                             Some(crate::storage::StoreReadError::NotFound { .. }) | None => {
                                 Ok(None)
                             }
-                            Some(crate::storage::StoreReadError::StandardRootUnavailable { .. }) => {
-                                Err(anyhow::anyhow!(
-                                    "refine operand cannot be opened: {}",
-                                    e
-                                ))
-                            }
+                            Some(crate::storage::StoreReadError::StandardRootUnavailable {
+                                ..
+                            }) => Err(anyhow::anyhow!("refine operand cannot be opened: {}", e)),
                             // Present and lying, or present and undecodable:
                             // the check cannot be performed, and pretending it
                             // passed is the fail-open this arc exists to close.
@@ -1114,7 +1224,9 @@ impl Universe {
                     Ok(c) => c,
                     Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
                         Some(crate::storage::StoreReadError::NotFound { .. }) | None => break,
-                        Some(crate::storage::StoreReadError::StandardRootUnavailable { .. }) => {
+                        Some(crate::storage::StoreReadError::StandardRootUnavailable {
+                            ..
+                        }) => {
                             return Err(anyhow::anyhow!(
                                 "refine shadow scan cannot open commit {ch}: {}",
                                 e
@@ -1129,7 +1241,9 @@ impl Universe {
                                     crate::IntegrityKind::Undecodable
                                 }
                                 crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
-                                crate::storage::StoreReadError::StandardRootUnavailable { .. } => {
+                                crate::storage::StoreReadError::StandardRootUnavailable {
+                                    ..
+                                } => {
                                     unreachable!("handled by the abort arm above")
                                 }
                             };
@@ -1145,7 +1259,9 @@ impl Universe {
                             current = commit.parent;
                             continue;
                         }
-                        Some(crate::storage::StoreReadError::StandardRootUnavailable { .. }) => {
+                        Some(crate::storage::StoreReadError::StandardRootUnavailable {
+                            ..
+                        }) => {
                             return Err(anyhow::anyhow!(
                                 "refine shadow scan cannot open root of commit {ch}: {}",
                                 e
@@ -1160,7 +1276,9 @@ impl Universe {
                                     crate::IntegrityKind::Undecodable
                                 }
                                 crate::storage::StoreReadError::NotFound { .. } => unreachable!(),
-                                crate::storage::StoreReadError::StandardRootUnavailable { .. } => {
+                                crate::storage::StoreReadError::StandardRootUnavailable {
+                                    ..
+                                } => {
                                     unreachable!("handled by the abort arm above")
                                 }
                             };
