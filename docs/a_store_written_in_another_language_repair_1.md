@@ -18,6 +18,8 @@
 | 身分紅線 | 根 `932a9f9d…`、標準根 `7038e250…` **逐字元不動** ✅ |
 | 體積 | 根 428 → **133 B**；標準根 136,268 → **21,705 B**；整倉 137,185 → **22,300 B（6.15×）** ✅ |
 | conformance（驗收方獨立跑） | **157/157** ✅ |
+| 全跑 ×5（`--no-fail-fast`，逐 target 聚合，錨 `test result:`） | **`targets=215 passed=2078 failed=0 ignored=0 err=0`、`exit=0`，五輪逐字全同** ✅ |
+| **增量對帳** | v0.35.0 是 `214 / 2064`。**215 ＝ 214 ＋ 1**（本弧探針檔）；**2078 ＝ 2064 ＋ 13 ＋ 1**（本弧探針 13 條全解除 `#[ignore]`，加交付方在 `store_codec.rs:1485` 新增的一條單元測試 `thunk_wrapper_roundtrips_as_thunk`）⟹ **零回歸，逐條對得上** ✅ |
 | 跨版本：舊引擎開新倉 | **響亮拒絕**——`object encoding version 5 is not supported by this engine (understands encoding 1 through 4); refusing to open` ✅ |
 | 跨版本：新引擎開 `encoding=4` fixture | 開得起來、讀得到根、位址不動 ✅ |
 | **跨版本：新引擎寫進 `encoding=4` 倉** | **寫出的仍是 encoding-4 物件，宣告未被改動，而且真 `oo v0.35.0` 讀得到新引擎剛寫的提交** ✅ **O73 的紀律被守住了** |
