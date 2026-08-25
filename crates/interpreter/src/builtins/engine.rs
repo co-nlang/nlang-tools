@@ -206,7 +206,7 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 Ok(h) => h,
                 Err(_) => return BottomCause::Conflict.into(),
             };
-            let target_forced = oo.force(target, ctx);
+            let target_forced = oo.force_recursive(target, ctx);
 
             let mut result_fields = IndexMap::new();
             if let Value::Combo(ref cv) = target_forced {

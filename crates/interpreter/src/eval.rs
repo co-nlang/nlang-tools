@@ -300,7 +300,7 @@ fn atom_spread_shell(atom: Value) -> Value {
 /// lattice unify, which would erase the structural signal before observe.
 /// SPEC_08 §4.3 Model A: true iff combo carries an explicit `%effect: #pure`
 /// meta declaration (SYNTAX_08 writable meta purity assertion).
-fn declared_pure_meta(cv: &ComboVal, oo: &Ouroboros, ctx: &mut EvalContext) -> bool {
+pub(crate) fn declared_pure_meta(cv: &ComboVal, oo: &Ouroboros, ctx: &mut EvalContext) -> bool {
     let Some(raw) = cv.get_field("%effect").cloned() else {
         return false;
     };
@@ -309,6 +309,26 @@ fn declared_pure_meta(cv: &ComboVal, oo: &Ouroboros, ctx: &mut EvalContext) -> b
         Value::Atom(AtomKind::Tag(t), _, _) => t.trim_start_matches('#') == "pure",
         _ => false,
     }
+}
+
+/// TAG_REGISTRY / O74 ②: a declared `#pure` contradicted by a non-zero
+/// obstruction on the value. The criterion is the value's actual effect,
+/// not whether construction could statically see it.
+pub(crate) fn refuse_lying_pure(oo: &Ouroboros, val: Value, ctx: &mut EvalContext) -> Value {
+    if let Value::Combo(ref cv) = val {
+        if declared_pure_meta(cv, oo, ctx) && cv.effect.has_active() {
+            return Value::Bottom(Box::new(BottomDetail {
+                cause: BottomCause::EffectViolation,
+                path: None,
+                message: Some(format!("declared #pure but observes {}", cv.effect)),
+                expected: None,
+                found: None,
+                involved: vec![],
+                ..Default::default()
+            }));
+        }
+    }
+    val
 }
 
 fn mark_structural_view(inner: Value) -> Value {
@@ -1474,23 +1494,12 @@ impl Ouroboros {
                         }
                     }
                 }
-                // SPEC_08 §4.3 (Model A): declared `%effect: #pure` contradicted
-                // by actual active contagion → ⊥ #effect_violation. Cocoon
-                // auto-exempts: closed shield leaves cv.effect pure, so
-                // has_active is false (no special-case).
-                if let Value::Combo(ref cv) = res {
-                    if declared_pure_meta(cv, self, ctx) && cv.effect.has_active() {
-                        return Value::Bottom(Box::new(BottomDetail {
-                            cause: BottomCause::EffectViolation,
-                            path: None,
-                            message: Some(format!("declared #pure but observes {}", cv.effect)),
-                            expected: None,
-                            found: None,
-                            involved: vec![],
-                            ..Default::default()
-                        }));
-                    }
-                }
+                // O74 ②: the gate judges the value's obstruction, which
+                // is only known after solidification. Construction-time
+                // `me` is predict_effect (a morphism's declared tag, not
+                // whether this application observed anything). Cocoons
+                // stay exempt at force_recursive: closed force does not
+                // union interior effects.
                 res
             }
             ExprKind::Path(p) => self.resolve_path(p, ctx),

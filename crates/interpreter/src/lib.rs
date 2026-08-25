@@ -177,6 +177,10 @@ pub struct EvalContext {
     /// this engine cannot read back (`#object_undecodable`). Observation
     /// still dereferences; only the durable projection keeps the Ref.
     pub preserve_refs: bool,
+    /// O74 ①: while a builtin is running, every `apply_morphism` unions the
+    /// application's effect into the current frame — whether or not the
+    /// builtin keeps the returned value. Nested builtins push their own frame.
+    apply_effect_frames: Vec<EffectTag>,
 }
 
 impl EvalContext {
@@ -221,6 +225,7 @@ impl EvalContext {
             disc_routing_hops: 0,
             privilege: crate::value::Privilege::NONE,
             preserve_refs: false,
+            apply_effect_frames: Vec::new(),
         }
     }
 
@@ -2943,6 +2948,25 @@ impl Ouroboros {
     }
 
     pub fn apply_morphism(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
+        // O74 ①: every application unions the obstruction of what it
+        // actually observed into its result, whether or not the returned
+        // value kept that observation (`.r` after reading the clock;
+        // a predicate boolean thrown away by `/filter`). Nested applies
+        // push their own frame; inner observations still join the outer
+        // because the inner result is noted on the parent frame.
+        ctx.apply_effect_frames.push(EffectTag::Pure);
+        let res = self.apply_morphism_dispatch(f, arg, ctx);
+        let observed = ctx
+            .apply_effect_frames
+            .pop()
+            .unwrap_or(EffectTag::Pure);
+        if let Some(acc) = ctx.apply_effect_frames.last_mut() {
+            *acc = acc.union(res.effect()).union(observed);
+        }
+        res.with_effect(observed)
+    }
+
+    fn apply_morphism_dispatch(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
         let f = self.force(f, ctx);
         if let Value::Bottom(_) = f {
             return f;
@@ -3177,6 +3201,34 @@ impl Ouroboros {
         }
     }
 
+    /// O74: an Apply thunk's predicted tag is the callee's declaration, not
+    /// this application's obstruction — do not stamp it. Other thunks still
+    /// carry prediction (a lens tail after observing the clock is #io).
+    fn stamp_thunk_prediction(res: Value, expr: &Expr, effect: EffectTag) -> Value {
+        if matches!(expr.kind, ExprKind::Apply(_, _)) {
+            return res;
+        }
+        match res {
+            Value::Atom(kind, old_e, r) => Value::Atom(kind, old_e.union(effect), r),
+            Value::Combo(mut cv) => {
+                cv.effect = cv.effect.union(effect);
+                Value::Combo(cv)
+            }
+            Value::Bottom(_) | Value::Blur(_) | Value::Top | Value::TopCaused { .. } => res,
+            other if !other.effect().contains_all(effect) => {
+                let e = effect.union(other.effect());
+                Value::Combo(ComboVal::new(
+                    IndexMap::from_iter(vec![("%val".to_string(), other)]),
+                    true,
+                    IndexMap::new(),
+                    e,
+                    vec![],
+                ))
+            }
+            other => other.with_effect(effect),
+        }
+    }
+
     /// Evaluate an expression and force the result recursively — the
     /// **observation** view. This mirrors `universe.observe`'s solidification
     /// of the return value (GUIDE_03 §11.5): eval returns thunks for
@@ -3269,30 +3321,7 @@ impl Ouroboros {
                             c.extend(entry.deps.iter().cloned());
                         }
                         let mut res = entry.value.clone();
-                        res = match res {
-                            Value::Atom(kind, old_e, r) => {
-                                Value::Atom(kind, old_e.union(effect), r)
-                            }
-                            Value::Combo(mut cv) => {
-                                cv.effect = cv.effect.union(effect);
-                                Value::Combo(cv)
-                            }
-                            Value::Bottom(_)
-                            | Value::Blur(_)
-                            | Value::Top
-                            | Value::TopCaused { .. } => res,
-                            other if !other.effect().contains_all(effect) => {
-                                let e = effect.union(other.effect());
-                                Value::Combo(ComboVal::new(
-                                    IndexMap::from_iter(vec![("%val".to_string(), other)]),
-                                    true,
-                                    IndexMap::new(),
-                                    e,
-                                    vec![],
-                                ))
-                            }
-                            other => other.with_effect(effect),
-                        };
+                        res = Self::stamp_thunk_prediction(res, &expr, effect);
                         return res;
                     }
                 }
@@ -3415,28 +3444,12 @@ impl Ouroboros {
                 let inner_deps = call_ctx.dep_collector.take();
                 let mbu_cost = fuel_before.saturating_sub(ctx.fuel);
 
-                // Do NOT wrap Bottom/Blur/Top in a pure-wrapper for effect
-                // escalation — that shell traps `.%cause` navigation (meta
-                // segment treated as on-shell, peel skipped, open miss Top).
-                let res = match res {
-                    Value::Atom(kind, old_e, r) => Value::Atom(kind, old_e.union(effect), r),
-                    Value::Combo(mut cv) => {
-                        cv.effect = cv.effect.union(effect);
-                        Value::Combo(cv)
-                    }
-                    Value::Bottom(_) | Value::Blur(_) | Value::Top | Value::TopCaused { .. } => res,
-                    other if !other.effect().contains_all(effect) => {
-                        let e = effect.union(other.effect());
-                        Value::Combo(ComboVal::new(
-                            IndexMap::from_iter(vec![("%val".to_string(), other)]),
-                            true,
-                            IndexMap::new(),
-                            e,
-                            vec![],
-                        ))
-                    }
-                    other => other.with_effect(effect),
-                };
+                // Apply: the result already carries what this application
+                // observed (O74 ①). Stamping predict_effect would re-apply
+                // the callee's declared tag — the Query./where IO floor.
+                // Other thunks (lens tails, field literals) still take the
+                // predicted tag: `{ t: now, r: 1 }.r` observed the clock.
+                let res = Self::stamp_thunk_prediction(res, &expr, effect);
 
                 let deps = inner_deps.unwrap_or_default();
 
@@ -3630,7 +3643,15 @@ impl Ouroboros {
                         Value::Combo(mut c) => {
                             let mut new_c = ComboVal::default();
                             new_c.closed = c.closed;
-                            new_c.effect = c.effect;
+                            // O74 ②: an open combo's obstruction is the join
+                            // of what its fields actually observed, not the
+                            // construction-time prediction (a callee's
+                            // declared tag). Closed keeps the shield.
+                            new_c.effect = if c.closed {
+                                c.effect
+                            } else {
+                                EffectTag::Pure
+                            };
                             new_c.relations = std::mem::take(&mut c.relations);
                             // forward_spread acceptance repair: re-queued pending
                             // sources (evolve-phase Top) must survive the rebuild.
@@ -3713,7 +3734,10 @@ impl Ouroboros {
             ctx.context_value = old_ctx_val;
         }
         ctx.depth -= 1;
-        res
+        // O74 ②: after solidification, an open combo's effect is the actual
+        // obstruction of its fields — not the construction-time prediction.
+        // Cocoons stay exempt: closed force does not union interior effects.
+        crate::eval::refuse_lying_pure(self, res, ctx)
     }
 
     pub fn resolve_path(&self, path: &Path, ctx: &mut EvalContext) -> Value {
@@ -4353,6 +4377,22 @@ impl Ouroboros {
 
             match current {
                 Value::Combo(c) => {
+                    // O74 ②: a `#pure` declaration is a claim about this
+                    // value. Reading a field (including `.%effect`) must
+                    // still see the obstruction — construction no longer
+                    // judges predict_effect, so solidify here.
+                    let c = if crate::eval::declared_pure_meta(&c, self, ctx) {
+                        match self.force_recursive(Value::Combo(c), ctx) {
+                            Value::Bottom(d) => return Value::Bottom(d),
+                            Value::Combo(c2) => c2,
+                            other => {
+                                val = other;
+                                continue;
+                            }
+                        }
+                    } else {
+                        c
+                    };
                     // SPEC_04 §3.1 #3/#5: dotted descent into a private (`~`)
                     // segment is external locating → ⊥ #private_access_violation.
                     // System axis `~%…` is exempt (not the local axis).
