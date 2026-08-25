@@ -214,7 +214,7 @@ fn refine_signed(dir: &Path, ident: &Path, s: char, t: char, msg: &str) -> (Run,
 fn signer_of(dir: &Path, commit: &str) -> String {
     let p = object_path(dir, commit);
     let j: serde_json::Value =
-        serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+        nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
     let hex = j["refine_info"]["authority"]["signer_pubkey_hex"]
         .as_str()
         .unwrap_or_else(|| panic!("commit {commit} carries no signer_pubkey_hex: {j}"))
@@ -241,7 +241,7 @@ fn head_commit(dir: &Path, ident: &Path) -> String {
 fn root_digest(dir: &Path, ident: &Path) -> String {
     let p = object_path(dir, &head_commit(dir, ident));
     let j: serde_json::Value =
-        serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+        nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
     let dg = &j["root"]["digest"];
     let hex = if let Some(s) = dg.as_str() {
         s.to_string()

@@ -137,7 +137,7 @@ fn object_json(dir: &Path, caid: &str) -> serde_json::Value {
         .join("sha256")
         .join(&d[..2])
         .join(&d[2..]);
-    serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap()
+    nlang_interpreter::store_codec::commit_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap()
 }
 
 /// The universe root's rendering, so a discharge can be shown to have landed

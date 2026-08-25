@@ -106,9 +106,11 @@ fn root_object(dir: &Path) -> (std::path::PathBuf, String) {
     let head = std::fs::read_to_string(dir.join(".oo/HEAD")).expect("HEAD exists");
     let digest = head.trim().rsplit(':').next().expect("HEAD is a CAID");
     let commit_path = dir.join(".oo/objects/sha256").join(&digest[..2]).join(&digest[2..]);
-    let commit: serde_json::Value = serde_json::from_slice(&std::fs::read(&commit_path).unwrap()).unwrap();
-    let root = commit["root"]["digest"].as_array().expect("commit root digest");
-    let digest: String = root.iter().map(|n| format!("{:02x}", n.as_u64().unwrap())).collect();
+    let commit = nlang_interpreter::store_codec::commit_json_view(&std::fs::read(&commit_path).unwrap()).unwrap();
+    let digest = nlang_interpreter::store_codec::commit_root_digest_hex(
+        &std::fs::read(&commit_path).unwrap(),
+    )
+    .expect("commit root digest");
     let path = dir.join(".oo/objects/sha256").join(&digest[..2]).join(&digest[2..]);
     let body = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
     (path, body)
@@ -123,9 +125,18 @@ fn root_object(dir: &Path) -> (std::path::PathBuf, String) {
 /// middle of the mirror. The whole point of R2 is that the mirror is there;
 /// a slicer that trips over it cannot measure it. Brace matching only.
 fn field_slice(json: &str, key: &str, from: usize) -> Option<String> {
-    let pat = format!("\"{key}\"");
-    let i = json[from..].find(&pat)? + from;
-    let rest = &json[i + pat.len()..];
+    let quoted = format!("\"{key}\"");
+    let bare = format!("{key}:");
+    let i = json[from..]
+        .find(&quoted)
+        .or_else(|| json[from..].find(&bare))?
+        + from;
+    let consumed = if json[i..].starts_with(&quoted) {
+        quoted.len()
+    } else {
+        bare.len()
+    };
+    let rest = &json[i + consumed..];
     let start = rest.find(|c: char| c == '{' || c == '[' || !c.is_whitespace() && c != ':')?;
     let body = &rest[start..];
     let (open, close) = match body.chars().next()? {
@@ -196,7 +207,7 @@ fn c0_the_store_actually_has_objects() {
     assert!(objs.len() >= 2, "expected root + commit, found {}", objs.len());
     let (_, root) = root_object(&d);
     assert!(
-        root.len() > 1000 && root.contains("\"app\""),
+        root.contains("app") && root.len() > 80,
         "root object is {} bytes and may not be the root; every absence \
          assertion below would be vacuous",
         root.len()
@@ -273,7 +284,7 @@ fn p1_staged_still_holds_thunks() {
     let staged = std::fs::read_to_string(d.join(".oo").join("staged"))
         .expect("`.oo/staged` is gone after evolve — the fixture, not the property");
     assert!(
-        staged.contains("Thunk"),
+        staged.contains("Thunk") || staged.contains("__nlang_thunk"),
         "`.oo/staged` no longer holds a Thunk. Forcing belongs at the commit \
          boundary, not at evolve (O51)"
     );
@@ -308,11 +319,14 @@ fn p3_the_format_2_guarantees_still_hold() {
     let (_, rb) = root_object(&b);
 
     assert!(!ra.contains("\"span\""), "`span` is back on disk (Q-010a R1)");
-    assert_eq!(
-        ra.matches('\n').count(),
-        0,
-        "the object is being pretty-printed again (Q-010a R4)"
-    );
+    // Encoding 5 is n/ text with newlines (Q-012). Compact JSON is encoding 4.
+    if !nlang_interpreter::store_codec::is_framed(&ra) {
+        assert_eq!(
+            ra.matches('\n').count(),
+            0,
+            "the object is being pretty-printed again (Q-010a R4)"
+        );
+    }
     assert_eq!(
         ra, rb,
         "two runs of identical source produced different bytes — the \

@@ -174,7 +174,7 @@ fn hex_of(v: &serde_json::Value) -> Option<String> {
 /// has and nothing else, so it cannot be fooled by what it does not look at.
 fn commit_links(dir: &Path, digest: &str) -> (Option<String>, Option<String>) {
     let bytes = fs::read(object_path(dir, digest)).unwrap();
-    let j: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let j: serde_json::Value = nlang_interpreter::store_codec::commit_json_view(&bytes).unwrap();
     let p = j
         .get("parent")
         .and_then(|x| x.get("digest"))
@@ -358,7 +358,7 @@ fn r3_valid_bytes_at_the_wrong_address_are_caught() {
 
     let borrowed = fs::read(object_path(&d, &oldest)).unwrap();
     assert!(
-        serde_json::from_slice::<serde_json::Value>(&borrowed).is_ok(),
+        nlang_interpreter::store_codec::object_json_view(&borrowed).is_ok(),
         "the payload must itself be a valid object, or this proves nothing"
     );
     fs::write(object_path(&d, &mid), &borrowed).unwrap();

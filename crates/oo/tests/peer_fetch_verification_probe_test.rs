@@ -318,7 +318,7 @@ fn tamper(path: &Path, from: &str, to: &str) {
         "tamper marker {from:?} must occur exactly once in {path:?}"
     );
     let tampered = text.replace(from, to);
-    serde_json::from_str::<serde_json::Value>(&tampered).expect(
+    nlang_interpreter::store_codec::object_json_view(tampered.as_bytes()).expect(
         "tampered object must remain decodable — otherwise this probe \
                  measures #object_undecodable rather than #caid_mismatch",
     );

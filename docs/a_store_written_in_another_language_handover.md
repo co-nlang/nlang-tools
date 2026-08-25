@@ -167,23 +167,51 @@ standard root 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911
 
 ### 7.1 射程逐項對照
 
-S1 …：
-S2 …：
-S3 …：
-S4 …：
-S5 …：
+S1 補兩個字面：框是檔案開頭的 `#nlang/store`（commit／staged 加第二個詞）。框內 `(c-1)` `~%Name:` 重建到 `ComboVal.system`；框外 eval 仍 ⊥ `#system_reserved`（G3）。`(c-2)` 見 §7.4。
+S2 CAS 物件改 n/ 值形：根與標準根寫成框內 combo；encoding 4 的 `"standard-root:<hex>"` 層在新寫入拿掉。讀路徑按物件自報分流（框 → n/，否則 JSON／舊 hex 包）。
+S3 commit 與 `.oo/staged` 同一編碼形。digest 一律 64 hex 字串（commit 不再 32-int 陣列；`masa_ref`／`lattice_sketch` 改 `masa`／`sketch`，避開探針釘的 serde 標）。
+S4 `OBJECT_ENCODING_VERSION = 5`；新倉宣告 5。encoding=4 fixture 仍開得起來。`oo migrate --grant migrate` 對 encoding ≥ 4 推進宣告到 5，不動 HEAD、不重寫物件。encoding < 4 仍只推進 layout（hydrate 規則綁在編碼號上，不能默默改）。
+S5 GC：encoding 5 物件改語義走訪（解碼後收 64-hex／commit 邊）；JSON 物件仍走舊 `refs_of`。`verify_reachable_object` 對框內物件走 store decoder，避免再把真 Commit 報成 undecodable。
 
 ### 7.2 順手改動（逐項指名）
 
+- `every_byte_or_none` R5、`atomic_write` P2 新倉宣告釘從 `encoding=4` 改為 `encoding=5`（軸被本弧撥動，舊釘會假紅）。
+- 探針只拿掉七行 `#[ignore]`。
+- 舊探針裡「把 CAS 當 serde JSON 讀」的助手改走 `store_codec::{commit,value,object}_json_view`／`named_standard_digest`／`is_cas_value_object`（encoding 5 檔不再以 `{` 開頭）。逐檔：`a_library_you_no_longer_ship`、`a_value_not_a_recipe`、`a_name_is_no_longer_a_credential`、`an_address_you_can_write_down`、`every_byte_or_none`、`held_but_unopenable`、`identity_persistence`、`discover_index`、`discovery_trust`、`kademlia_table`、`local_gc`、`node_identity`、`oodp_packet_format`、`peer_fetch_verification`、`privileged_effect_audit`、`the_half_that_was_never_written`、`universe_determinism`、`verdict_must_gate`。
+- `oodp.rs` 收包時若位元組是框內 n/，走同一套解碼（線上就是 store）。
+- 無 rustfmt 整檔重排（`storage.rs`／`gc.rs` 的整檔 fmt 已還原，只留語意 hunk）。
+
 ### 7.3 工單哪裡是錯的
+
+無。一處實作註記：pest 把 `~%__nlang_thunk` 這類單段鍵收成 `FieldKey::Path` 而非 `Named { prefix: System }`（`field_key` 裡 `path` 排在 `named_key` 前）。解碼必須從 path 段拆前綴，否則系統軸會掉進 data，根 CAID 會動。這不是工單錯，是語法樹的形。
 
 ### 7.4 工單指名要你回答的問題
 
-（本弧指名兩題：**(c-1) 與 (c-2) 各選了什麼拼法，為什麼**；
-以及 **`.oo/staged` 的未強制形怎麼在新編碼裡表達**。）
+**(c-1)** 拼法：既有 `~%Name:` 欄位鍵。理由：印表機已經這樣寫；剖析器本來就收；缺的是框內「重建到 system 軸」而不是 eval。框外行為不變，所以不必再發明一個第二套系統軸字面。
+
+**(c-2)** 拼法分兩層，都不是給值加欄位：
+1. 耐久投影裡已經物質化的 `%effect` meta（O61 `for_cas_storage`）照印 `%effect: #io`——那是**已經在值裡、已經進身分**的欄位，再印一次不移動 CAID。
+2. 尚未物質化的 runtime 槽（atom／thunk／staged combo）用框內系統鍵 `~%__nlang_effect:`，解碼時剝掉寫進 `EffectTag` 槽。它不住在值裡，所以 26 處標準根 CAID 不動。
+
+沒有選 `#!io` 這類新 postfix：那會進主語法，框外表層就變了。
+
+**`.oo/staged` 未強制形：** 同一份 n/ 框，第一行 `#nlang/store staged`。Thunk 寫成
+```
+{ ~%__nlang_thunk: #true, ~%__nlang_expr: <原 AST>, ~%__nlang_closure: [<frame>…], ~%__nlang_context?: …, ~%__nlang_effect?: … }
+```
+`~%__nlang_expr` 的值在解碼時留下 Expr，不求值。encoding < 5 的倉仍寫裸 `ComboVal` JSON。
 
 ### 7.5 探針
 
+本弧探針 13／13，0 ignored。只動了七行 `#[ignore]`。
+
 ### 7.6 數字
 
+- 全閘 `cargo test --workspace --release --no-fail-fast`：`targets=215  passed=2078  failed=0  ignored=0  err=0`（錨 `test result:`）。
+- conformance `python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo`：**157/157**。
+- 本弧探針 13/13，0 ignored。
+- 身分紅線（自驗）：root `932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb`；standard root `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。
+
 ### 7.7 需要改規格之處
+
+本交付未改規格。encoding=5、物件級 `#nlang/store` 框、框內兩個字面，目前只活在實作與本工單。若要寫進 `REAL_03`／changelog，那是規格弧，不是本弧默許的附帶。

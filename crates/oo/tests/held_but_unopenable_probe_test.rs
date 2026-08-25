@@ -165,14 +165,18 @@ fn mixed_history(dir: &Path) -> String {
     let commit_path = objects(dir)
         .into_iter()
         .find(|p| {
-            serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(p).unwrap_or_default())
-                .ok()
-                .and_then(|v| v.get("root").cloned())
-                .is_some()
+            nlang_interpreter::store_codec::object_json_view(
+                &std::fs::read(p).unwrap_or_default(),
+            )
+            .ok()
+            .and_then(|v| v.get("root").cloned())
+            .is_some()
         })
         .expect("harness: the store must have a commit object");
-    let commit: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&commit_path).unwrap()).unwrap();
+    let commit: serde_json::Value = nlang_interpreter::store_codec::object_json_view(
+        &std::fs::read(&commit_path).unwrap(),
+    )
+    .unwrap();
 
     let hash_struct = |addr: &str| {
         let mut h = commit["root"].clone();

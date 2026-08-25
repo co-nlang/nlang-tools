@@ -29,6 +29,7 @@ pub mod peers;
 pub mod routing;
 pub mod scratch;
 pub mod storage;
+pub mod store_codec;
 pub mod type_constraint;
 pub mod unify;
 pub mod value;

@@ -123,7 +123,7 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// The `.oo/` layout and the CAS encoding are independent declarations.
 /// Legacy stores used one bare number for both; new stores name each axis.
 pub const STORE_LAYOUT_VERSION: u32 = 2;
-pub const OBJECT_ENCODING_VERSION: u32 = 4;
+pub const OBJECT_ENCODING_VERSION: u32 = 5;
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 pub struct ObjectStore {
@@ -303,7 +303,7 @@ impl ObjectStore {
             value.for_cas_storage()
         };
         let hash = durable.content_hash();
-        let content = canonical_cas_json(&durable)?;
+        let content = self.encode_cas_value(&durable)?;
         self.write_object(&hash, content)?;
         Ok(hash)
     }
@@ -348,16 +348,20 @@ impl ObjectStore {
         // A table is a real CAS Combo, stored without the root Value envelope.
         // `get_value` accepts this representation under the same CAID.
         let Value::Combo(standard_combo) = &standard else { unreachable!() };
-        let raw_combo = canonical_cas_json(standard_combo)?;
-        let packed = format!("standard-root:{}", hex::encode(raw_combo));
-        self.write_object(&standard_hash, canonical_cas_json(&packed)?)?;
+        if self.encoding >= 5 {
+            self.write_object(&standard_hash, self.encode_cas_value(&standard)?)?;
+        } else {
+            let raw_combo = canonical_cas_json(standard_combo)?;
+            let packed = format!("standard-root:{}", hex::encode(raw_combo));
+            self.write_object(&standard_hash, canonical_cas_json(&packed)?)?;
+        }
 
         let value = Value::Combo(root.clone());
         let mut durable = value.for_cas_storage();
         let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
         project_standard_root(durable_root, match &standard { Value::Combo(root) => root, _ => unreachable!() });
         let hash = durable.content_hash();
-        let content = encode_readable_cas_json(&durable)?;
+        let content = self.encode_readable_cas_value(&durable)?;
         self.write_object(&hash, content)?;
         Ok(hash)
     }
@@ -367,7 +371,7 @@ impl ObjectStore {
     /// not a best-effort substitution with today's builtins.
     pub fn get_root(&self, hash: &ContentHash, standards: &StandardRootSet) -> Result<ComboVal> {
         let content = self.read_object_raw(hash)?;
-        let value: Value = serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+        let value: Value = self.decode_cas_value(&content).map_err(|e| StoreReadError::ObjectUndecodable {
             requested: hash.clone(), detail: e.to_string(),
         })?;
         let has_standard = match &value {
@@ -407,21 +411,12 @@ impl ObjectStore {
 
     pub fn get_value(&self, hash: &ContentHash) -> Result<Value> {
         let content = self.read_object_raw(hash)?;
-        let mut value: Value = match serde_json::from_str(&content) {
-            Ok(value) => value,
-            Err(value_error) => match serde_json::from_str::<String>(&content)
-                .ok()
-                .and_then(|packed| packed.strip_prefix("standard-root:").map(str::to_owned))
-                .and_then(|hex| hex::decode(hex).ok())
-                .and_then(|raw| serde_json::from_slice::<ComboVal>(&raw).ok())
-            {
-                Some(combo) => Value::Combo(combo),
-                None => return Err(StoreReadError::ObjectUndecodable {
-                    requested: hash.clone(),
-                    detail: value_error.to_string(),
-                }.into()),
-            },
-        };
+        let mut value: Value = self.decode_cas_value(&content).map_err(|e| {
+            StoreReadError::ObjectUndecodable {
+                requested: hash.clone(),
+                detail: e.to_string(),
+            }
+        })?;
         if let Value::Combo(root) = &mut value {
             if root.system.contains_key(SYSTEM_DIGEST_KEY) {
                 // All ordinary readers use one decoder. A format-3 root has
@@ -462,7 +457,7 @@ impl ObjectStore {
     /// it. Used by `oo status` so availability is observable before a load.
     pub fn root_standard_digest(&self, hash: &ContentHash) -> Result<Option<String>> {
         let content = self.read_object_raw(hash)?;
-        let value: Value = serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+        let value: Value = self.decode_cas_value(&content).map_err(|e| StoreReadError::ObjectUndecodable {
             requested: hash.clone(), detail: e.to_string(),
         })?;
         let Value::Combo(root) = value else { anyhow::bail!("Invalid root") };
@@ -474,18 +469,28 @@ impl ObjectStore {
 
     pub fn put_commit(&self, commit: &Commit) -> Result<ContentHash> {
         let hash = commit.content_hash();
-        let content = canonical_cas_json(commit)?;
+        let content = if self.encoding >= 5 {
+            crate::store_codec::encode_commit(commit)
+        } else {
+            canonical_cas_json(commit)?
+        };
         self.write_object(&hash, content)?;
         Ok(hash)
     }
 
     pub fn get_commit(&self, hash: &ContentHash) -> Result<Commit> {
         let content = self.read_object_raw(hash)?;
-        let commit: Commit =
+        let commit: Commit = if crate::store_codec::is_framed(&content) {
+            crate::store_codec::decode_commit(&content).map_err(|e| StoreReadError::ObjectUndecodable {
+                requested: hash.clone(),
+                detail: e.to_string(),
+            })?
+        } else {
             serde_json::from_str(&content).map_err(|e| StoreReadError::ObjectUndecodable {
                 requested: hash.clone(),
                 detail: e.to_string(),
-            })?;
+            })?
+        };
         let recomputed = commit.content_hash();
         if !commit_address_matches(hash, &recomputed) {
             return Err(StoreReadError::CaidMismatch {
@@ -549,9 +554,14 @@ impl ObjectStore {
             &oo.join("format"),
             format!("layout={STORE_LAYOUT_VERSION}\n"),
         )?;
+        let encoding = if self.encoding >= 4 {
+            OBJECT_ENCODING_VERSION
+        } else {
+            self.encoding
+        };
         atomic_write(
             &oo.join("objects.format"),
-            format!("encoding={}\n", self.encoding),
+            format!("encoding={encoding}\n"),
         )?;
         Ok(())
     }
@@ -753,4 +763,44 @@ fn encode_readable_cas_json(value: &Value) -> Result<String> {
         anyhow::anyhow!("refusing to store a root this engine cannot read back: {e}")
     })?;
     Ok(content)
+}
+
+impl ObjectStore {
+    fn encode_cas_value(&self, value: &Value) -> Result<String> {
+        if self.encoding >= 5 {
+            Ok(crate::store_codec::encode_value(value))
+        } else {
+            canonical_cas_json(value)
+        }
+    }
+
+    fn encode_readable_cas_value(&self, value: &Value) -> Result<String> {
+        if self.encoding >= 5 {
+            let content = crate::store_codec::encode_value(value);
+            crate::store_codec::decode_value(&content).map_err(|e| {
+                anyhow::anyhow!("refusing to store a root this engine cannot read back: {e}")
+            })?;
+            Ok(content)
+        } else {
+            encode_readable_cas_json(value)
+        }
+    }
+
+    fn decode_cas_value(&self, content: &str) -> Result<Value> {
+        if crate::store_codec::is_framed(content) {
+            return crate::store_codec::decode_value(content);
+        }
+        match serde_json::from_str(content) {
+            Ok(value) => Ok(value),
+            Err(value_error) => match serde_json::from_str::<String>(content)
+                .ok()
+                .and_then(|packed| packed.strip_prefix("standard-root:").map(str::to_owned))
+                .and_then(|hex| hex::decode(hex).ok())
+                .and_then(|raw| serde_json::from_slice::<ComboVal>(&raw).ok())
+            {
+                Some(combo) => Ok(Value::Combo(combo)),
+                None => Err(anyhow::anyhow!("{value_error}")),
+            },
+        }
+    }
 }

@@ -207,7 +207,7 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
         let Ok(bytes) = fs::read(object_path(dir, &d)) else {
             continue;
         };
-        let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        let Ok(json) = nlang_interpreter::store_codec::object_json_view(&bytes) else {
             continue;
         };
         let mut r = Vec::new();
@@ -258,7 +258,7 @@ fn root_digest(dir: &Path) -> String {
     assert!(c.starts_with("hash:sha256:"), "no HEAD commit in {dir:?}");
     let p = object_path(dir, &digest_of_caid(&c));
     let commit: serde_json::Value =
-        serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+        nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
     let dg = &commit["root"]["digest"];
     let hex = if let Some(s) = dg.as_str() {
         s.to_string()

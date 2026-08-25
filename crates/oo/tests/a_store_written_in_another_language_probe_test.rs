@@ -243,7 +243,6 @@ fn longest_hex_run(bytes: &[u8]) -> usize {
 
 /// The headline. The root object on disk is the Rust enum's serde form.
 #[test]
-#[ignore]
 fn r1_the_root_object_is_not_a_rust_enum_dump() {
     let d = fresh_store("r1");
     let bytes = object_bytes(d.path(), ROOT_CAID);
@@ -261,7 +260,6 @@ fn r1_the_root_object_is_not_a_rust_enum_dump() {
 /// carrying 68,126 bytes of content, exactly 2.00x. Half of that file is the
 /// hex, and the hex has nothing to do with which language the store speaks.
 #[test]
-#[ignore]
 fn r2_the_standard_root_is_not_a_hex_blob() {
     let d = fresh_store("r2");
     let bytes = object_bytes(d.path(), STANDARD_ROOT);
@@ -280,7 +278,6 @@ fn r2_the_standard_root_is_not_a_hex_blob() {
 /// root object next to it spells the same kind of thing as 64 hex characters.
 /// O31 ② put it in scope.
 #[test]
-#[ignore]
 fn r3_the_commit_object_speaks_the_same_language_as_the_root() {
     let d = fresh_store("r3");
     let digest = head_digest(d.path());
@@ -300,7 +297,6 @@ fn r3_the_commit_object_speaks_the_same_language_as_the_root() {
 /// O51 keeps the Thunk; O31 ② still puts it in scope, which means the
 /// encoding form has to be able to express an unforced value.
 #[test]
-#[ignore]
 fn r4_staged_is_in_the_same_encoding() {
     let d = scratch("r4");
     fs::write(d.path().join("main.n"), "app: { k1: 1 }\n").expect("write");
@@ -327,7 +323,6 @@ fn r4_staged_is_in_the_same_encoding() {
 /// objects travel alone. The spelling of the token is NOT pinned — only that
 /// an object no longer opens straight into a bare value.
 #[test]
-#[ignore]
 fn r5_every_object_declares_what_it_is() {
     let d = fresh_store("r5");
     let objects = all_objects(d.path());
@@ -355,7 +350,6 @@ fn r5_every_object_declares_what_it_is() {
 /// loud rather than misreading it — `ensure_supported_encoding` already
 /// refuses anything outside the range it understands.
 #[test]
-#[ignore]
 fn r6_a_new_store_declares_the_new_encoding() {
     let d = fresh_store("r6");
     let declared = fs::read_to_string(d.path().join(".oo/objects.format")).expect("format");
@@ -376,7 +370,6 @@ fn r6_a_new_store_declares_the_new_encoding() {
 /// scoped it to. So the two `assert_eq!`s at the end are reached today and
 /// pass today; what is red is only the encoding line.
 #[test]
-#[ignore]
 fn r7_an_encoding_4_store_opens_and_migrates_without_moving_anything() {
     let d = lay_out_encoding4("r7");
     let before_head = head_digest(d.path());

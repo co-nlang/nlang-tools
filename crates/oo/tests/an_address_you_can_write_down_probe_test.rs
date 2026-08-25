@@ -78,10 +78,10 @@ fn universe_with(tag: &str, src: &str) -> (nlang_interpreter::ScratchDir, String
     let mut found = None;
     for e in walk(&d.join(".oo").join("objects")) {
         let body = std::fs::read_to_string(&e).unwrap_or_default();
-        if body.starts_with('"') && body.contains("standard-root:") {
+        if body.contains("standard-root:") || body.contains("~%Bytes:") {
             continue;
         }
-        if body.contains("\"parent\"") {
+        if body.contains("\"parent\"") || body.contains("#nlang/store commit") {
             continue;
         }
         let file = e.file_name().unwrap().to_string_lossy().to_string();
@@ -327,7 +327,11 @@ fn r7_a_corrupt_object_is_not_reported_as_absent() {
     // `k: 7` is stored as `{"Int":[1,[7]]}`. Change the magnitude only: the
     // JSON stays well-formed and decodable, so the store must catch this by
     // RECOMPUTING the address (REAL_03 6.6), not by failing to parse.
-    let corrupt = body.replacen("[1,[7]]", "[1,[9]]", 1);
+    let corrupt = if body.contains("[1,[7]]") {
+        body.replacen("[1,[7]]", "[1,[9]]", 1)
+    } else {
+        body.replacen("k: 7", "k: 9", 1)
+    };
     assert_ne!(corrupt, body, "the corruption must actually change the bytes");
     std::fs::write(&obj, corrupt).unwrap();
 

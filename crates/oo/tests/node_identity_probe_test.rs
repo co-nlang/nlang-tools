@@ -670,7 +670,7 @@ fn pin_root_caid_stays_deterministic() {
                 .join("sha256")
                 .join(&h[..2])
                 .join(&h[2..]);
-            let j: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+            let j: serde_json::Value = nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap()).unwrap();
             let dg = &j["root"]["digest"];
             if let Some(s) = dg.as_str() {
                 s.to_string()
