@@ -162,7 +162,10 @@ pub fn register_query_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     kept.push(item);
                 }
             }
-            build_list(kept, max_effect.union(EffectTag::IO))
+            // O74 ④: no unconditional IO floor. An honest pure predicate
+            // must be writable; an impure one is carried by S1 (the
+            // applications are unioned into the builtin result).
+            build_list(kept, max_effect)
         }) as Arc<BuiltinFn>,
     );
 

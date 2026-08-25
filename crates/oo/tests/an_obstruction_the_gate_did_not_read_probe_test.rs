@@ -129,7 +129,6 @@ fn declared_pure(v: &str) -> String {
 ///
 /// Baseline: accepted.
 #[test]
-#[ignore = "red at baseline: one morphism application launders the declaration"]
 fn r1_one_layer_of_application_does_not_launder_a_declaration() {
     let got = observe("r1", &declared_pure(&format!("(({IMPURE}) 1)")));
     assert!(
@@ -150,7 +149,6 @@ fn r1_one_layer_of_application_does_not_launder_a_declaration() {
 ///
 /// Baseline: accepted.
 #[test]
-#[ignore = "red at baseline: the value prints #io and the gate accepts it"]
 fn r2_the_gate_reads_the_value_it_was_handed() {
     let inner = format!("~%List./map ([1,2,3], {IMPURE_ONE})");
     let effect = observe("r2-eff", &format!("({inner}).%effect"));
@@ -175,7 +173,6 @@ fn r2_the_gate_reads_the_value_it_was_handed() {
 ///
 /// Baseline: `#pure`.
 #[test]
-#[ignore = "red at baseline: a predicate's effect is discarded with its boolean"]
 fn r3_a_discarded_return_value_does_not_discard_the_obstruction() {
     let got = observe(
         "r3",
@@ -194,7 +191,6 @@ fn r3_a_discarded_return_value_does_not_discard_the_obstruction() {
 ///
 /// Baseline: `#pure`.
 #[test]
-#[ignore = "red at baseline: same laundering in take_while"]
 fn r4_the_rule_holds_for_every_callback_not_just_one() {
     let got = observe(
         "r4",
@@ -218,7 +214,6 @@ fn r4_the_rule_holds_for_every_callback_not_just_one() {
 ///
 /// Baseline: `_|_ #effect_violation`.
 #[test]
-#[ignore = "red at baseline: /where's IO floor refuses even a pure predicate"]
 fn r5_an_honest_pure_predicate_is_writable() {
     let got = observe(
         "r5",

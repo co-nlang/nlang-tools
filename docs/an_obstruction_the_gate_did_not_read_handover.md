@@ -199,27 +199,59 @@ targets=214  passed=2059  failed=0  ignored=5  err=0
 
 ### 7.1 射程逐項對照
 
-S1 …
-S2 …
-S3 …
+S1 類別，不是逐個 builtin。`apply_morphism` 對每一次施用推一層 frame：該次施用裡
+實際發生的觀測（含內層 builtin、含回傳值被丟掉的謂詞）都 union 進結果。
+`/filter` 與 `/take_while` 因而同一條律；沒有改那些給錯答案的 List callback
+的回傳值。
+
+S2 守衛改讀值的實際障礙。構造期 `predict_effect`（被呼叫者的宣告標籤）不再是
+判準。`force_recursive` 對開 combo 以欄位實際效果重算 `effect`；宣告 `#pure`
+的 combo 在固化／導航時走 `refuse_lying_pure`。繭仍不把內部效果 join 出去。
+
+S3 `query.where` 不再無條件 `union(IO)`。誠實純謂詞寫得出來（R5）；不純謂詞
+由 S1 帶上障礙，再由 S2 擋住。標準根上 `/where` 仍標 `#io`（身分紅線，未改）。
 
 ### 7.2 順手改動（逐項指名）
 
+*   `engine.project_down` 對 target 改 `force_recursive`：結果成為 solid combo，
+    才不會在觀察時被開 combo 重算洗掉 builtin 已寫的 `#state`（L2-104 的尾巴）。
+    這是 S2 重算的後果，不是 project_down 行為改寫。
+*   無 `cargo fmt` 整檔重排。
+
 ### 7.3 工單哪裡是錯的
+
+無。補充一項工單已寫、實作必須守的：`~%Query./where` 在標準根上的宣告標籤
+仍是 `#io`（`as_shipped` 進 digest）。S3 拆的是把那張標籤蓋到結果上的底線，
+不是改庫裡的字。
 
 ### 7.4 工單指名要你回答的問題
 
-§6.6（`~%Cond./match` 之後是否誠實）：
+§6.6（`~%Cond./match` 之後是否誠實）：**是。** 不純分支
+`(x -> { t: ~%Time.now _, r: 1 }.r)` 的 `.%effect` 為 `#io`；包在
+`{ %effect: #pure, v: … }` 下為 ⊥ `#effect_violation`。誠實純分支仍成立。
 
 ### 7.5 探針
 
-拿掉的 `#[ignore]`：
-除此之外動了什麼（應為「無」）：
+拿掉的 `#[ignore]`：R1、R2、R3、R4、R5 各一行。
+除此之外動了什麼（應為「無」）：無。
 
 ### 7.6 數字
 
 全跑（`--no-fail-fast`、逐 target 聚合、exit code）：
-conformance：
-身分紅線實測：
+
+```
+targets=214  passed=2064  failed=0  ignored=0  err=0   exit=0
+```
+
+conformance：153/153
+
+身分紅線實測：根物件 CAID
+`932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb`，
+標準根 digest
+`7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。
+G4 仍為 `a04c6b85…`。
 
 ### 7.7 你認為需要改規格之處
+
+無。規格收尾由驗收方做。`SPEC_08` §4.3 靜態守護降為實作註記已由 O74 ② 裁定。
+
