@@ -1703,10 +1703,23 @@ pub fn remote_fetch_oodp(
         return Err(BottomCause::CaidMismatch);
     }
 
-    let val: Value = serde_json::from_value(result_j.clone()).map_err(|_| {
-        oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
-        BottomCause::CaidMismatch
-    })?;
+    let val: Value = if let Some(s) = result_j.as_str() {
+        match crate::store_codec::decode_value(s) {
+            Ok(v) => v,
+            Err(_) => {
+                oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
+                return Err(BottomCause::CaidMismatch);
+            }
+        }
+    } else {
+        match serde_json::from_value(result_j.clone()) {
+            Ok(v) => v,
+            Err(_) => {
+                oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
+                return Err(BottomCause::CaidMismatch);
+            }
+        }
+    };
 
     let recomputed = val.content_hash();
     if !value_address_matches(hash, &recomputed) {
@@ -1723,11 +1736,31 @@ fn legacy_or_fail(
     source: &str,
 ) -> Result<Value, BottomCause> {
     // Old protocol: bare JSON value. Still verify address — never trust the peer.
-    let val: Value = match serde_json::from_slice(buffer) {
-        Ok(v) => v,
-        Err(_) => {
-            oo.record_integrity(hash, source, IntegrityKind::Undecodable);
-            return Err(BottomCause::CaidMismatch);
+    let val: Value = if let Ok(s) = std::str::from_utf8(buffer) {
+        if crate::store_codec::is_framed(s) {
+            match crate::store_codec::decode_value(s) {
+                Ok(v) => v,
+                Err(_) => {
+                    oo.record_integrity(hash, source, IntegrityKind::Undecodable);
+                    return Err(BottomCause::CaidMismatch);
+                }
+            }
+        } else {
+            match serde_json::from_slice(buffer) {
+                Ok(v) => v,
+                Err(_) => {
+                    oo.record_integrity(hash, source, IntegrityKind::Undecodable);
+                    return Err(BottomCause::CaidMismatch);
+                }
+            }
+        }
+    } else {
+        match serde_json::from_slice(buffer) {
+            Ok(v) => v,
+            Err(_) => {
+                oo.record_integrity(hash, source, IntegrityKind::Undecodable);
+                return Err(BottomCause::CaidMismatch);
+            }
         }
     };
     let recomputed = val.content_hash();

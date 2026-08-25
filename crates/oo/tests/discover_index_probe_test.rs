@@ -201,7 +201,7 @@ fn object_path(dir: &Path, caid: &str) -> PathBuf {
 fn root_digest(dir: &Path) -> String {
     let p = object_path(dir, &head_commit(dir));
     let commit: serde_json::Value =
-        serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+        nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
     let dg = commit["root"]["digest"].clone();
     let hex = if let Some(s) = dg.as_str() {
         s.to_string()

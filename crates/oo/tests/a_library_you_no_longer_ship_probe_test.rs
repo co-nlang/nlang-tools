@@ -103,15 +103,7 @@ const SENTINEL: &str = "__nlang_system_digest";
 fn digest_in_store(dir: &Path) -> Option<String> {
     for p in cas_objects(dir) {
         let Ok(s) = std::fs::read_to_string(&p) else { continue };
-        let Some(i) = s.find(SENTINEL) else { continue };
-        // …"__nlang_system_digest":{"Atom":[{"Str":"<64 hex>"}…
-        let tail = &s[i..];
-        let Some(j) = tail.find("\"Str\":\"") else { continue };
-        let hex: String = tail[j + 7..]
-            .chars()
-            .take_while(|c| c.is_ascii_hexdigit())
-            .collect();
-        if hex.len() == 64 {
+        if let Some(hex) = nlang_interpreter::store_codec::named_standard_digest(&s) {
             return Some(hex);
         }
     }

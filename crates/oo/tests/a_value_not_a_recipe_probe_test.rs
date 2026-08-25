@@ -105,11 +105,21 @@ fn objects(dir: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 fn root_object(dir: &Path) -> (std::path::PathBuf, String) {
     let head = std::fs::read_to_string(dir.join(".oo/HEAD")).expect("HEAD exists");
     let digest = head.trim().rsplit(':').next().expect("HEAD is a CAID");
-    let commit_path = dir.join(".oo/objects/sha256").join(&digest[..2]).join(&digest[2..]);
-    let commit: serde_json::Value = serde_json::from_slice(&std::fs::read(&commit_path).unwrap()).unwrap();
-    let root = commit["root"]["digest"].as_array().expect("commit root digest");
-    let digest: String = root.iter().map(|n| format!("{:02x}", n.as_u64().unwrap())).collect();
-    let path = dir.join(".oo/objects/sha256").join(&digest[..2]).join(&digest[2..]);
+    let commit_path = dir
+        .join(".oo/objects/sha256")
+        .join(&digest[..2])
+        .join(&digest[2..]);
+    let commit =
+        nlang_interpreter::store_codec::commit_json_view(&std::fs::read(&commit_path).unwrap())
+            .unwrap();
+    let digest = nlang_interpreter::store_codec::commit_root_digest_hex(
+        &std::fs::read(&commit_path).unwrap(),
+    )
+    .expect("commit root digest");
+    let path = dir
+        .join(".oo/objects/sha256")
+        .join(&digest[..2])
+        .join(&digest[2..]);
     let body = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
     (path, body)
 }
@@ -123,9 +133,18 @@ fn root_object(dir: &Path) -> (std::path::PathBuf, String) {
 /// middle of the mirror. The whole point of R2 is that the mirror is there;
 /// a slicer that trips over it cannot measure it. Brace matching only.
 fn field_slice(json: &str, key: &str, from: usize) -> Option<String> {
-    let pat = format!("\"{key}\"");
-    let i = json[from..].find(&pat)? + from;
-    let rest = &json[i + pat.len()..];
+    let quoted = format!("\"{key}\"");
+    let bare = format!("{key}:");
+    let i = json[from..]
+        .find(&quoted)
+        .or_else(|| json[from..].find(&bare))?
+        + from;
+    let consumed = if json[i..].starts_with(&quoted) {
+        quoted.len()
+    } else {
+        bare.len()
+    };
+    let rest = &json[i + consumed..];
     let start = rest.find(|c: char| c == '{' || c == '[' || !c.is_whitespace() && c != ':')?;
     let body = &rest[start..];
     let (open, close) = match body.chars().next()? {
@@ -193,10 +212,14 @@ const SPREAD: &str = "app: { k1: 1 + 2, f: x -> x + v1, v1: 10, v2: 20, v3: 30 }
 fn c0_the_store_actually_has_objects() {
     let d = committed("c0", SPREAD);
     let objs = objects(&d);
-    assert!(objs.len() >= 2, "expected root + commit, found {}", objs.len());
+    assert!(
+        objs.len() >= 2,
+        "expected root + commit, found {}",
+        objs.len()
+    );
     let (_, root) = root_object(&d);
     assert!(
-        root.len() > 1000 && root.contains("\"app\""),
+        root.contains("app") && root.len() > 80,
         "root object is {} bytes and may not be the root; every absence \
          assertion below would be vacuous",
         root.len()
@@ -210,7 +233,13 @@ fn c1_the_committed_values_still_read_back() {
     let (path, _) = root_object(&d);
     let caid = {
         let file = path.file_name().unwrap().to_string_lossy().to_string();
-        let dir = path.parent().unwrap().file_name().unwrap().to_string_lossy().to_string();
+        let dir = path
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         format!("hash:sha256:v1:{dir}{file}")
     };
     let out = oo(&d, &["inspect", &caid]);
@@ -237,7 +266,10 @@ fn c2_a_recursive_morphism_still_computes() {
     let d = fresh("c2");
     let out = oo(
         &d,
-        &["eval", "{ fact: n -> (n <= 1) ? 1 : n * (fact (n - 1)) }.fact 5"],
+        &[
+            "eval",
+            "{ fact: n -> (n <= 1) ? 1 : n * (fact (n - 1)) }.fact 5",
+        ],
     );
     assert!(
         out.contains("120"),
@@ -273,7 +305,7 @@ fn p1_staged_still_holds_thunks() {
     let staged = std::fs::read_to_string(d.join(".oo").join("staged"))
         .expect("`.oo/staged` is gone after evolve — the fixture, not the property");
     assert!(
-        staged.contains("Thunk"),
+        staged.contains("Thunk") || staged.contains("__nlang_thunk"),
         "`.oo/staged` no longer holds a Thunk. Forcing belongs at the commit \
          boundary, not at evolve (O51)"
     );
@@ -307,12 +339,31 @@ fn p3_the_format_2_guarantees_still_hold() {
     let (_, ra) = root_object(&a);
     let (_, rb) = root_object(&b);
 
-    assert!(!ra.contains("\"span\""), "`span` is back on disk (Q-010a R1)");
-    assert_eq!(
-        ra.matches('\n').count(),
-        0,
-        "the object is being pretty-printed again (Q-010a R4)"
-    );
+    // ACCEPTOR-EDITED (Q-012 closure, 2026-08-26). This assertion looked for
+    // the JSON spelling only. Under encoding 5 the object is n/ text, where a
+    // span would be spelled `~%__nlang_span:` or `span:` — so the pin went
+    // vacuously true the moment the encoding moved, rather than going red.
+    // The property still holds (measured: `span` appears 0 times in a new
+    // store, and store_codec has no span constant); what was missing was the
+    // second spelling. See REAL_03 §6.7 判例四.
+    // A bare `span:` is deliberately NOT in the list: a user field may legally
+    // be named `span` — that is what every_byte_or_none::r6 exists to protect.
+    // The durable form spells engine-only slots `~%__nlang_*`, which a user
+    // cannot write (L2-60/61, and L2-119 pins those very keys).
+    for spelling in ["\"span\"", "~%__nlang_span"] {
+        assert!(
+            !ra.contains(spelling),
+            "`span` is back on disk as {spelling} (Q-010a R1)"
+        );
+    }
+    // Encoding 5 is n/ text with newlines (Q-012). Compact JSON is encoding 4.
+    if !nlang_interpreter::store_codec::is_framed(&ra) {
+        assert_eq!(
+            ra.matches('\n').count(),
+            0,
+            "the object is being pretty-printed again (Q-010a R4)"
+        );
+    }
     assert_eq!(
         ra, rb,
         "two runs of identical source produced different bytes — the \

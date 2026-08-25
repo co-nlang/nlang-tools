@@ -105,21 +105,57 @@ fn is_hex64(s: &str) -> bool {
 
 /// Result of verifying one on-disk object at a requested digest.
 enum VerifiedObject {
-    /// Address recomputed and matches; JSON available for ref walking.
-    Ok(JsonValue),
+    /// Address recomputed and matches; refs ready for the walk.
+    Ok(Vec<String>),
     /// Bytes present but do not hash/decode to the requested address.
     CaidMismatch,
     /// Present but neither a Value nor a Commit (or unreadable).
     Undecodable,
 }
 
+fn json_refs(json: &JsonValue, follow_abandoned: bool) -> Vec<String> {
+    let mut refs = Vec::new();
+    refs_of(json, follow_abandoned, &mut refs);
+    refs
+}
+
 /// Read + recompute (REAL_03 §6.6). Try Value then Commit so a genuine
 /// engine Commit is not mis-reported as undecodable (v0.2.52 trap).
-fn verify_reachable_object(store: &ObjectStore, digest_hex: &str) -> VerifiedObject {
+fn verify_reachable_object(
+    store: &ObjectStore,
+    digest_hex: &str,
+    follow_abandoned: bool,
+) -> VerifiedObject {
     let Ok(bytes) = store.read_raw_digest(digest_hex) else {
         return VerifiedObject::Undecodable;
     };
     let want = digest_hex.to_lowercase();
+    let text = String::from_utf8_lossy(&bytes);
+
+    if crate::store_codec::is_framed(&text) {
+        let refs = crate::store_codec::refs_of_document_ex(&text, follow_abandoned);
+        let Ok(bytes_digest) = hex::decode(digest_hex) else {
+            return VerifiedObject::Undecodable;
+        };
+        let h = ContentHash::v1(bytes_digest);
+        let is_mismatch = |e: &anyhow::Error| {
+            matches!(
+                e.downcast_ref::<crate::storage::StoreReadError>(),
+                Some(crate::storage::StoreReadError::CaidMismatch { .. })
+            )
+        };
+        match store.get_value(&h) {
+            Ok(_) => return VerifiedObject::Ok(refs),
+            Err(e) if is_mismatch(&e) => return VerifiedObject::CaidMismatch,
+            Err(_) => {}
+        }
+        match store.get_commit(&h) {
+            Ok(_) => return VerifiedObject::Ok(refs),
+            Err(e) if is_mismatch(&e) => return VerifiedObject::CaidMismatch,
+            Err(_) => {}
+        }
+        return VerifiedObject::Undecodable;
+    }
 
     // Format-3 roots are decoded through the store's single value decoder;
     // raw serde alone sees their compact dependency marker, not the logical
@@ -127,7 +163,7 @@ fn verify_reachable_object(store: &ObjectStore, digest_hex: &str) -> VerifiedObj
     if let Ok(bytes_digest) = hex::decode(digest_hex) {
         if store.get_value(&ContentHash::v1(bytes_digest)).is_ok() {
             if let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) {
-                return VerifiedObject::Ok(json);
+                return VerifiedObject::Ok(json_refs(&json, follow_abandoned));
             }
         }
     }
@@ -135,9 +171,8 @@ fn verify_reachable_object(store: &ObjectStore, digest_hex: &str) -> VerifiedObj
     if let Ok(val) = serde_json::from_slice::<Value>(&bytes) {
         let recomputed = val.content_hash();
         if hex::encode(&recomputed.digest) == want {
-            // Prefer walking the same JSON the store holds (pretty-printed).
             if let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) {
-                return VerifiedObject::Ok(json);
+                return VerifiedObject::Ok(json_refs(&json, follow_abandoned));
             }
         } else {
             return VerifiedObject::CaidMismatch;
@@ -148,7 +183,7 @@ fn verify_reachable_object(store: &ObjectStore, digest_hex: &str) -> VerifiedObj
         let recomputed = commit.content_hash();
         if hex::encode(&recomputed.digest) == want {
             if let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) {
-                return VerifiedObject::Ok(json);
+                return VerifiedObject::Ok(json_refs(&json, follow_abandoned));
             }
         } else {
             return VerifiedObject::CaidMismatch;
@@ -183,10 +218,8 @@ pub fn mark(
             continue;
         }
         seen.insert(d.clone());
-        match verify_reachable_object(store, &d) {
-            VerifiedObject::Ok(json) => {
-                let mut refs = Vec::new();
-                refs_of(&json, follow_abandoned, &mut refs);
+        match verify_reachable_object(store, &d, follow_abandoned) {
+            VerifiedObject::Ok(refs) => {
                 for r in refs {
                     if !seen.contains(&r) {
                         stack.push_back(r);

@@ -145,7 +145,13 @@ fn objects(dir: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 fn root_object(dir: &Path) -> (std::path::PathBuf, Vec<u8>) {
     let roots: Vec<_> = objects(dir)
         .into_iter()
-        .filter(|(_, b)| b.starts_with(br#"{"Combo":"#))
+        .filter(|(_, b)| {
+            nlang_interpreter::store_codec::is_cas_value_object(b)
+                && !b.windows(b"~%Bytes:".len()).any(|w| w == b"~%Bytes:")
+                && !std::str::from_utf8(b)
+                    .map(|s| s.contains("standard-root:"))
+                    .unwrap_or(false)
+        })
         .collect();
     assert_eq!(
         roots.len(),
@@ -215,7 +221,7 @@ fn c0_the_store_actually_has_objects() {
     // fixture's own coordinate, so R1/R4's absence assertions are not vacuous.
     let (_, root) = root_object(&d);
     let text = String::from_utf8_lossy(&root);
-    for want in ["\"app\"", "\"k1\""] {
+    for want in ["app", "k1"] {
         assert!(
             text.contains(want),
             "the root object does not contain {want} — it is not this \
@@ -256,6 +262,7 @@ fn tamper_int_one_to_two(s: &str) -> String {
     for pat in [
         "\"Int\": [\n          1,\n          [\n            1\n          ]",
         "\"Int\":[1,[1]]",
+        "k1: 1",
     ] {
         if let Some(i) = s.find(pat) {
             let mut out = s.to_string();
@@ -265,7 +272,10 @@ fn tamper_int_one_to_two(s: &str) -> String {
         }
     }
     // Fall back: last `1` inside the first Int block.
-    let i = s.find("\"Int\"").expect("no Int in the object — fixture drifted");
+    let i = s
+        .find("\"Int\"")
+        .or_else(|| s.find("k1:"))
+        .expect("no Int in the object — fixture drifted");
     let j = s[i..].find(']').unwrap() + i;
     let k = s[i..j].rfind('1').expect("no digit to flip") + i;
     let mut out = s.to_string();
@@ -328,11 +338,12 @@ fn p2_staged_still_keeps_its_thunks() {
     std::fs::write(d.join("u.n"), PROGRAM).unwrap();
     oo(&d, &["evolve", "u.n"]);
 
-    let staged = std::fs::read_to_string(d.join(".oo").join("staged"))
-        .expect("`.oo/staged` does not exist after evolve — the fixture for \
-                 this pin is gone, not the property");
+    let staged = std::fs::read_to_string(d.join(".oo").join("staged")).expect(
+        "`.oo/staged` does not exist after evolve — the fixture for \
+                 this pin is gone, not the property",
+    );
     assert!(
-        staged.contains("Thunk"),
+        staged.contains("Thunk") || staged.contains("__nlang_thunk"),
         "`.oo/staged` no longer holds a Thunk. O51 rules that the working set \
          stays lazy and that forcing happens at commit; O48 governs CAS \
          objects and `.oo/staged` is not one (it has no address). Content: {}",
@@ -378,7 +389,9 @@ fn p3_nothing_writes_the_skipped_fields() {
         if f.file_name() == Some(me) {
             continue; // a scan that reports itself reports its own prose
         }
-        let Ok(src) = std::fs::read_to_string(f) else { continue };
+        let Ok(src) = std::fs::read_to_string(f) else {
+            continue;
+        };
         scanned += 1;
         for (n, line) in src.lines().enumerate() {
             for field in ["legacy_fields", "legacy_local"] {
@@ -387,8 +400,8 @@ fn p3_nothing_writes_the_skipped_fields() {
                 }
                 read_sites += 1;
                 let after = line.split(field).nth(1).unwrap_or("");
-                let assigns = after.trim_start().starts_with('=')
-                    && !after.trim_start().starts_with("==");
+                let assigns =
+                    after.trim_start().starts_with('=') && !after.trim_start().starts_with("==");
                 if assigns {
                     write_sites.push(format!("{}:{}: {}", f.display(), n + 1, line.trim()));
                 }
@@ -396,7 +409,10 @@ fn p3_nothing_writes_the_skipped_fields() {
         }
     }
 
-    assert!(scanned > 50, "only {scanned} .rs files scanned — walker failed");
+    assert!(
+        scanned > 50,
+        "only {scanned} .rs files scanned — walker failed"
+    );
     assert!(
         read_sites > 0,
         "no mention of `legacy_fields`/`legacy_local` anywhere in {scanned} \
@@ -461,10 +477,12 @@ fn r1_no_span_survives_into_a_cas_object() {
     let mut code_seen = false;
     for (p, b) in objects(&m) {
         let s = String::from_utf8_lossy(&b);
-        if s.contains("\"Code\"") {
+        if s.contains("\"Code\"") || s.contains("__nlang_code") || s.contains("->") {
             code_seen = true;
         }
-        if s.contains("\"span\"") {
+        // ACCEPTOR-EDITED (Q-012 closure, 2026-08-26): the JSON spelling
+        // alone goes vacuously true under encoding 5. See REAL_03 §6.7 判例四.
+        if s.contains("\"span\"") || s.contains("~%__nlang_span") {
             with_span.push(p.display().to_string());
         }
     }
@@ -558,7 +576,11 @@ fn r4_no_unhashed_formatting_on_disk() {
     for (p, b) in &objs {
         let newlines = b.iter().filter(|&&c| c == b'\n').count();
         if newlines > 1 {
-            offenders.push(format!("{}: {newlines} newlines, {} bytes", p.display(), b.len()));
+            offenders.push(format!(
+                "{}: {newlines} newlines, {} bytes",
+                p.display(),
+                b.len()
+            ));
         }
     }
     assert!(
@@ -622,7 +644,7 @@ fn r6_a_user_field_named_span_survives() {
 
         let mut missing: Vec<&str> = want
             .iter()
-            .filter(|k| !text.contains(&format!("\"{k}\"")))
+            .filter(|k| !text.contains(&format!("\"{k}\"")) && !text.contains(&format!("{k}:")))
             .copied()
             .collect();
         missing.sort();
@@ -635,7 +657,10 @@ fn r6_a_user_field_named_span_survives() {
         // a field no longer hashes to its own address.
         let out = oo(&d, &["inspect", &caid_of(&path)]);
         if out.contains("caid_mismatch") || out.contains("undecodable") {
-            lost.push(format!("{tag}: stored but unreadable — {}", &out[..out.len().min(120)]));
+            lost.push(format!(
+                "{tag}: stored but unreadable — {}",
+                &out[..out.len().min(120)]
+            ));
         }
     }
 
@@ -692,7 +717,7 @@ fn r5_the_store_format_says_it_changed() {
         .expect("`.oo/objects.format` is missing — the encoding has no declaration");
     assert_eq!(
         encoding.trim(),
-        "encoding=4",
+        "encoding=5",
         "the object encoding declaration reads `{}`. New objects have no \
          `span`, and an engine that opens this store without being told the \
          encoding moved will fail on a missing field instead of saying which \

@@ -79,7 +79,10 @@ fn root_addr(dir: &Path) -> String {
     let mut found = None;
     for a in std::fs::read_dir(dir.join(".oo/objects/sha256")).unwrap().flatten() {
         for b in std::fs::read_dir(a.path()).unwrap().flatten() {
-            if std::fs::read_to_string(b.path()).unwrap_or_default().contains("\"Combo\"") {
+            let bytes = std::fs::read(b.path()).unwrap_or_default();
+            if nlang_interpreter::store_codec::is_cas_value_object(&bytes)
+                && !bytes.windows(b"~%Bytes:".len()).any(|w| w == b"~%Bytes:")
+            {
                 assert!(found.is_none(), "harness: more than one root object");
                 found = Some(format!(
                     "{}{}",

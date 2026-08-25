@@ -535,7 +535,7 @@ fn pin_root_caid_stays_deterministic() {
                 .find_map(|l| l.strip_prefix("commit ").map(|s| s.trim().to_string()))
                 .unwrap();
             let j: serde_json::Value =
-                serde_json::from_slice(&fs::read(object_path(&d, &commit)).unwrap()).unwrap();
+                nlang_interpreter::store_codec::object_json_view(&fs::read(object_path(&d, &commit)).unwrap()).unwrap();
             let dg = &j["root"]["digest"];
             if let Some(s) = dg.as_str() {
                 s.to_string()

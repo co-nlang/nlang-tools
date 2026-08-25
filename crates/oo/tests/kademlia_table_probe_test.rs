@@ -1236,7 +1236,7 @@ fn p3_the_table_never_reaches_the_root() {
             .join(&d[..2])
             .join(&d[2..]);
         let commit: serde_json::Value =
-            serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+            nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
         let dg = commit["root"]["digest"].clone();
         let hex = if let Some(s) = dg.as_str() {
             s.to_string()

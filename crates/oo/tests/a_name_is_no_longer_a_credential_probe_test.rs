@@ -114,7 +114,12 @@ fn user_root_caid(dir: &Path) -> String {
     let mut found = None;
     for e in walk(&dir.join(".oo").join("objects")) {
         let body = std::fs::read_to_string(&e).unwrap_or_default();
-        if body.starts_with('"') || body.contains("\"parent\"") {
+        if body.starts_with('"')
+            || body.contains("\"parent\"")
+            || body.contains("#nlang/store commit")
+            || body.contains("~%Bytes:")
+            || body.contains("standard-root:")
+        {
             continue;
         }
         let file = e.file_name().unwrap().to_string_lossy().to_string();

@@ -154,7 +154,7 @@ fn object_path(dir: &Path, caid: &str) -> PathBuf {
 
 fn commit_json(dir: &Path) -> serde_json::Value {
     let p = object_path(dir, &head_commit(dir));
-    serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap()
+    nlang_interpreter::store_codec::commit_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap()
 }
 
 /// Hex digest of the universe root this repository's HEAD points at.
@@ -216,7 +216,7 @@ fn leaves(v: &serde_json::Value, path: &str, out: &mut BTreeMap<String, String>)
 fn root_leaves(dir: &Path) -> BTreeMap<String, String> {
     let p = object_path(dir, &root_caid(dir));
     let v: serde_json::Value =
-        serde_json::from_slice(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+        nlang_interpreter::store_codec::value_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
     let mut out = BTreeMap::new();
     leaves(&v, "", &mut out);
     // ACCEPTOR (Q-010b, 2026-08-14). Was `out.len() > 1000`, which held only

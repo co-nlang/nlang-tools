@@ -714,8 +714,12 @@ impl Universe {
         if !staged_path.parent().unwrap().exists() {
             std::fs::create_dir_all(staged_path.parent().unwrap())?;
         }
-        let json = serde_json::to_string(&self.staged)?;
-        crate::storage::atomic_write(&staged_path, json)?;
+        let body = if engine.store.encoding_version() >= 5 {
+            crate::store_codec::encode_staged(&self.staged)
+        } else {
+            serde_json::to_string(&self.staged)?
+        };
+        crate::storage::atomic_write(&staged_path, body)?;
         // Pin audit intent lives beside staged, never inside values (CAID).
         // ACCEPTANCE REPAIR: the file now carries the pinned COORDINATES, not
         // a bare flag — the commit must know which coordinates the privilege
@@ -747,7 +751,11 @@ impl Universe {
             let json = std::fs::read_to_string(staged_path)?;
             // O42 repair: blur carries partial as CAID only — staged stays
             // shallow; default serde recursion limit is correct again.
-            self.staged = serde_json::from_str(&json)?;
+            self.staged = if crate::store_codec::is_framed(&json) {
+                crate::store_codec::decode_staged(&json)?
+            } else {
+                serde_json::from_str(&json)?
+            };
             self.is_dirty = true;
         }
         let pin_path = base_dir.join(".oo").join("pin_pending");
