@@ -261,7 +261,7 @@ fn write_value(v: &Value, indent: usize) -> String {
                 format!("({})", parts.join(" | "))
             }
         }
-        Value::Code(expr) => write_wrapper(CODE, &[(EXPR, expr.to_nlang(indent))], indent),
+        Value::Code(expr) => write_wrapper(CODE, &[(EXPR, expr.to_nlang(0))], indent),
         Value::Thunk {
             expr,
             closure,
@@ -350,13 +350,11 @@ fn atom_lit(kind: &AtomKind) -> String {
 }
 
 fn write_combo(c: &ComboVal, indent: usize) -> String {
-    let pad = "  ".repeat(indent);
-    let inner = "  ".repeat(indent + 1);
     let open = if c.closed { "{{" } else { "{" };
     let close = if c.closed { "}}" } else { "}" };
     let mut rows: Vec<(String, String)> = Vec::new();
     let push = |rows: &mut Vec<(String, String)>, prefix: &str, k: &str, v: &Value| {
-        rows.push((quote_key(prefix, k), write_value(v, indent + 1)));
+        rows.push((quote_key(prefix, k), write_value(v, indent)));
     };
     for (k, v) in &c.data {
         push(&mut rows, "", k, v);
@@ -391,15 +389,12 @@ fn write_combo(c: &ComboVal, indent: usize) -> String {
         };
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut s = String::new();
-    s.push_str(open);
-    s.push('\n');
-    for (k, v) in rows {
-        s.push_str(&format!("{inner}{k}: {v}\n"));
-    }
-    s.push_str(&pad);
-    s.push_str(close);
-    s
+    let inner = rows
+        .into_iter()
+        .map(|(k, v)| format!("{k}: {v}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{open} {inner} {close}")
 }
 
 fn write_thunk(
@@ -409,14 +404,14 @@ fn write_thunk(
     effect: EffectTag,
     indent: usize,
 ) -> String {
-    let frames: Vec<String> = closure.iter().map(|f| write_combo(f, indent + 1)).collect();
+    let frames: Vec<String> = closure.iter().map(|f| write_combo(f, 0)).collect();
     let mut fields = vec![
         (THUNK, "#true".into()),
-        (EXPR, expr.to_nlang(indent + 1)),
+        (EXPR, expr.to_nlang(0)),
         (CLOSURE, format!("[{}]", frames.join(", "))),
     ];
     if let Some(ctx) = context {
-        fields.push((CONTEXT, write_value(ctx, indent + 1)));
+        fields.push((CONTEXT, write_value(ctx, 0)));
     }
     if !effect.is_pure() {
         fields.push((EFFECT, write_effect(effect)));
@@ -467,65 +462,65 @@ fn write_blur(bd: &BlurDetail, indent: usize) -> String {
 
 fn write_commit(c: &Commit) -> String {
     let mut rows = vec![
-        format!("  kind: {}", write_tag(commit_kind_name(c.kind))),
-        format!("  root: {}", write_hash(&c.root)),
-        format!("  meta: {}", write_commit_meta(&c.meta)),
+        format!("kind: {}", write_tag(commit_kind_name(c.kind))),
+        format!("root: {}", write_hash(&c.root)),
+        format!("meta: {}", write_commit_meta(&c.meta)),
     ];
     if let Some(p) = &c.parent {
-        rows.push(format!("  parent: {}", write_hash(p)));
+        rows.push(format!("parent: {}", write_hash(p)));
     } else {
-        rows.push("  parent: _".into());
+        rows.push("parent: _".into());
     }
     if let Some(ri) = &c.refine_info {
-        rows.push(format!("  refine: {}", write_refine(ri)));
+        rows.push(format!("refine: {}", write_refine(ri)));
     }
-    format!("{{\n{}\n}}", rows.join("\n"))
+    format!("{{ {} }}", rows.join(" "))
 }
 
 fn write_commit_meta(m: &CommitMeta) -> String {
     let mut rows = Vec::new();
     if let Some(a) = &m.author {
-        rows.push(format!("    author: {}", quote_string(a)));
+        rows.push(format!("author: {}", quote_string(a)));
     }
-    rows.push(format!("    timestamp: {}", m.timestamp));
+    rows.push(format!("timestamp: {}", m.timestamp));
     if let Some(msg) = &m.message {
-        rows.push(format!("    message: {}", quote_string(msg)));
+        rows.push(format!("message: {}", quote_string(msg)));
     }
     if let Some(ab) = &m.abandoned {
         let items: Vec<String> = ab.iter().map(|s| quote_string(s)).collect();
-        rows.push(format!("    abandoned: [{}]", items.join(", ")));
+        rows.push(format!("abandoned: [{}]", items.join(", ")));
     }
     if let Some(p) = m.privileged_effect {
         rows.push(format!(
-            "    privileged_effect: {}",
+            "privileged_effect: {}",
             if p { "#true" } else { "#false" }
         ));
     }
-    format!("{{\n{}\n  }}", rows.join("\n"))
+    format!("{{ {} }}", rows.join(" "))
 }
 
 fn write_refine(ri: &RefineInfo) -> String {
     let src: Vec<String> = ri.source_caids.iter().map(write_hash).collect();
     let tgt: Vec<String> = ri.target_caids.iter().map(write_hash).collect();
     let mut rows = vec![
-        format!("    source: [{}]", src.join(", ")),
-        format!("    target: [{}]", tgt.join(", ")),
+        format!("source: [{}]", src.join(", ")),
+        format!("target: [{}]", tgt.join(", ")),
     ];
     if !ri.shadow_affected.is_empty() {
         let sh: Vec<String> = ri.shadow_affected.iter().map(write_hash).collect();
-        rows.push(format!("    shadow: [{}]", sh.join(", ")));
+        rows.push(format!("shadow: [{}]", sh.join(", ")));
     }
     if let Some(st) = &ri.authority_status {
-        rows.push(format!("    authority_status: {}", quote_string(st)));
+        rows.push(format!("authority_status: {}", quote_string(st)));
     }
     if let Some(a) = &ri.authority {
         rows.push(format!(
-            "    authority: {{\n      signer_pubkey_hex: {}\n      signature_hex: {}\n    }}",
+            "authority: {{ signer_pubkey_hex: {} signature_hex: {} }}",
             quote_string(&a.signer_pubkey_hex),
             quote_string(&a.signature_hex),
         ));
     }
-    format!("{{\n{}\n  }}", rows.join("\n"))
+    format!("{{ {} }}", rows.join(" "))
 }
 
 fn write_hash(h: &ContentHash) -> String {
@@ -558,24 +553,20 @@ fn write_wrapper(kind: &str, fields: &[(&str, String)], indent: usize) -> String
     write_wrapper_fields(&all, indent)
 }
 
-fn write_wrapper_fields(fields: &[(&str, String)], indent: usize) -> String {
-    let pad = "  ".repeat(indent);
-    let inner = "  ".repeat(indent + 1);
-    let mut s = "{\n".to_string();
-    for (k, v) in fields {
-        let key = if *k == EXPR {
-            // Keep the raw expr; prefix as system so reconstruction sees it.
-            format!("~%{k}")
-        } else if k.starts_with("__nlang_") {
-            format!("~%{k}")
-        } else {
-            (*k).to_string()
-        };
-        s.push_str(&format!("{inner}{key}: {v}\n"));
-    }
-    s.push_str(&pad);
-    s.push('}');
-    s
+fn write_wrapper_fields(fields: &[(&str, String)], _indent: usize) -> String {
+    let inner = fields
+        .iter()
+        .map(|(k, v)| {
+            let key = if *k == EXPR || k.starts_with("__nlang_") {
+                format!("~%{k}")
+            } else {
+                (*k).to_string()
+            };
+            format!("{key}: {v}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{{ {inner} }}")
 }
 
 fn write_effect(e: EffectTag) -> String {
@@ -923,16 +914,14 @@ fn decode_bottom(sys: &IndexMap<String, (Expr, Option<Value>)>, combo: &ComboVal
         Some((e, _)) => cause_from_value(&expr_to_value(e)?)?,
         None => BottomCause::Conflict,
     };
-    let message = combo
-        .data
-        .get("message")
-        .and_then(string_of)
-        .or_else(|| sys.get("message").and_then(|(e, _)| string_of(&expr_to_value(e).ok()?)));
-    let path = combo
-        .data
-        .get("path")
-        .and_then(string_of)
-        .or_else(|| sys.get("path").and_then(|(e, _)| string_of(&expr_to_value(e).ok()?)));
+    let message = combo.data.get("message").and_then(string_of).or_else(|| {
+        sys.get("message")
+            .and_then(|(e, _)| string_of(&expr_to_value(e).ok()?))
+    });
+    let path = combo.data.get("path").and_then(string_of).or_else(|| {
+        sys.get("path")
+            .and_then(|(e, _)| string_of(&expr_to_value(e).ok()?))
+    });
     Ok(Value::Bottom(Box::new(BottomDetail {
         cause,
         path,

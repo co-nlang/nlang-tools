@@ -215,3 +215,19 @@ S5 GC：encoding 5 物件改語義走訪（解碼後收 64-hex／commit 邊）�
 ### 7.7 需要改規格之處
 
 本交付未改規格。encoding=5、物件級 `#nlang/store` 框、框內兩個字面，目前只活在實作與本工單。若要寫進 `REAL_03`／changelog，那是規格弧，不是本弧默許的附帶。
+
+## 8. 代修回合 1 回報
+
+耐久形改成緊湊 n/：框後面只留一個換行，欄位以空白分隔。`every_byte_or_none` R4 的三行 `if is_framed_bytes { continue }` 已刪；R4 判準未改。§2 兩處空洞斷言未動。規格未動。身分未動。
+
+緊湊化後（`app: { k1: 1 }` 一筆提交）：
+
+| | 位元組 | 換行 |
+| :--- | ---: | ---: |
+| 根 | 123 | 1 |
+| 標準根 | 16,029 | 1 |
+| CAS 整倉（三個物件） | 16,483 | 各 1 |
+
+紅線：root `932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb`；standard root `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。
+
+全閘：`targets=215  passed=2078  failed=0  ignored=0  err=0`。conformance **157/157**。未推。

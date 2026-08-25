@@ -566,9 +566,6 @@ fn r4_no_unhashed_formatting_on_disk() {
 
     let mut offenders = Vec::new();
     for (p, b) in &objs {
-        if nlang_interpreter::store_codec::is_framed_bytes(b) {
-            continue;
-        }
         let newlines = b.iter().filter(|&&c| c == b'\n').count();
         if newlines > 1 {
             offenders.push(format!("{}: {newlines} newlines, {} bytes", p.display(), b.len()));
