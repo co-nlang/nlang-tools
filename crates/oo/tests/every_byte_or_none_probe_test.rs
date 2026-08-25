@@ -338,9 +338,10 @@ fn p2_staged_still_keeps_its_thunks() {
     std::fs::write(d.join("u.n"), PROGRAM).unwrap();
     oo(&d, &["evolve", "u.n"]);
 
-    let staged = std::fs::read_to_string(d.join(".oo").join("staged"))
-        .expect("`.oo/staged` does not exist after evolve — the fixture for \
-                 this pin is gone, not the property");
+    let staged = std::fs::read_to_string(d.join(".oo").join("staged")).expect(
+        "`.oo/staged` does not exist after evolve — the fixture for \
+                 this pin is gone, not the property",
+    );
     assert!(
         staged.contains("Thunk") || staged.contains("__nlang_thunk"),
         "`.oo/staged` no longer holds a Thunk. O51 rules that the working set \
@@ -388,7 +389,9 @@ fn p3_nothing_writes_the_skipped_fields() {
         if f.file_name() == Some(me) {
             continue; // a scan that reports itself reports its own prose
         }
-        let Ok(src) = std::fs::read_to_string(f) else { continue };
+        let Ok(src) = std::fs::read_to_string(f) else {
+            continue;
+        };
         scanned += 1;
         for (n, line) in src.lines().enumerate() {
             for field in ["legacy_fields", "legacy_local"] {
@@ -397,8 +400,8 @@ fn p3_nothing_writes_the_skipped_fields() {
                 }
                 read_sites += 1;
                 let after = line.split(field).nth(1).unwrap_or("");
-                let assigns = after.trim_start().starts_with('=')
-                    && !after.trim_start().starts_with("==");
+                let assigns =
+                    after.trim_start().starts_with('=') && !after.trim_start().starts_with("==");
                 if assigns {
                     write_sites.push(format!("{}:{}: {}", f.display(), n + 1, line.trim()));
                 }
@@ -406,7 +409,10 @@ fn p3_nothing_writes_the_skipped_fields() {
         }
     }
 
-    assert!(scanned > 50, "only {scanned} .rs files scanned — walker failed");
+    assert!(
+        scanned > 50,
+        "only {scanned} .rs files scanned — walker failed"
+    );
     assert!(
         read_sites > 0,
         "no mention of `legacy_fields`/`legacy_local` anywhere in {scanned} \
@@ -474,7 +480,9 @@ fn r1_no_span_survives_into_a_cas_object() {
         if s.contains("\"Code\"") || s.contains("__nlang_code") || s.contains("->") {
             code_seen = true;
         }
-        if s.contains("\"span\"") {
+        // ACCEPTOR-EDITED (Q-012 closure, 2026-08-26): the JSON spelling
+        // alone goes vacuously true under encoding 5. See REAL_03 §6.7 判例四.
+        if s.contains("\"span\"") || s.contains("~%__nlang_span") {
             with_span.push(p.display().to_string());
         }
     }
@@ -568,7 +576,11 @@ fn r4_no_unhashed_formatting_on_disk() {
     for (p, b) in &objs {
         let newlines = b.iter().filter(|&&c| c == b'\n').count();
         if newlines > 1 {
-            offenders.push(format!("{}: {newlines} newlines, {} bytes", p.display(), b.len()));
+            offenders.push(format!(
+                "{}: {newlines} newlines, {} bytes",
+                p.display(),
+                b.len()
+            ));
         }
     }
     assert!(
@@ -645,7 +657,10 @@ fn r6_a_user_field_named_span_survives() {
         // a field no longer hashes to its own address.
         let out = oo(&d, &["inspect", &caid_of(&path)]);
         if out.contains("caid_mismatch") || out.contains("undecodable") {
-            lost.push(format!("{tag}: stored but unreadable — {}", &out[..out.len().min(120)]));
+            lost.push(format!(
+                "{tag}: stored but unreadable — {}",
+                &out[..out.len().min(120)]
+            ));
         }
     }
 
