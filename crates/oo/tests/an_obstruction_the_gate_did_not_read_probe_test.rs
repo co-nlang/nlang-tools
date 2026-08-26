@@ -150,7 +150,7 @@ fn r1_one_layer_of_application_does_not_launder_a_declaration() {
 /// Baseline: accepted.
 #[test]
 fn r2_the_gate_reads_the_value_it_was_handed() {
-    let inner = format!("~%List./map ([1,2,3], {IMPURE_ONE})");
+    let inner = format!("~%List./map ({IMPURE_ONE}, [1,2,3])");
     let effect = observe("r2-eff", &format!("({inner}).%effect"));
     assert_eq!(
         effect, "#io",
@@ -176,7 +176,7 @@ fn r2_the_gate_reads_the_value_it_was_handed() {
 fn r3_a_discarded_return_value_does_not_discard_the_obstruction() {
     let got = observe(
         "r3",
-        &format!("(~%List./filter ([1,2,3], {IMPURE_PRED})).%effect"),
+        &format!("(~%List./filter ({IMPURE_PRED}, [1,2,3])).%effect"),
     );
     assert_eq!(
         got, "#io",
@@ -194,7 +194,7 @@ fn r3_a_discarded_return_value_does_not_discard_the_obstruction() {
 fn r4_the_rule_holds_for_every_callback_not_just_one() {
     let got = observe(
         "r4",
-        &format!("(~%List./take_while ([1,2,3], {IMPURE_PRED})).%effect"),
+        &format!("(~%List./take_while ({IMPURE_PRED}, [1,2,3])).%effect"),
     );
     assert_eq!(
         got, "#io",
@@ -217,7 +217,7 @@ fn r4_the_rule_holds_for_every_callback_not_just_one() {
 fn r5_an_honest_pure_predicate_is_writable() {
     let got = observe(
         "r5",
-        &declared_pure("~%Query./where ([{ a: 1 }], (r -> #true))"),
+        &declared_pure("~%Query./where ((r -> #true), [{ a: 1 }])"),
     );
     assert!(
         !is_effect_violation(&got),
@@ -268,7 +268,7 @@ fn g2_the_cocoon_still_discharges() {
 /// path this arc did not take.
 #[test]
 fn g3_an_honest_pure_declaration_still_stands() {
-    let got = observe("g3", &declared_pure("~%List./map ([1,2,3], (x -> x))"));
+    let got = observe("g3", &declared_pure("~%List./map ((x -> x), [1,2,3])"));
     assert!(
         !is_effect_violation(&got),
         "`(x -> x)` observes nothing; got {got:?}"
@@ -285,11 +285,11 @@ fn g3_an_honest_pure_declaration_still_stands() {
 fn g4_an_effect_does_not_move_an_address() {
     let pure = observe(
         "g4-pure",
-        "~%Discovery./identify (~%List./map ([1,2,3], (x -> 1)))",
+        "~%Discovery./identify (~%List./map ((x -> 1), [1,2,3]))",
     );
     let impure = observe(
         "g4-impure",
-        &format!("~%Discovery./identify (~%List./map ([1,2,3], {IMPURE_ONE}))"),
+        &format!("~%Discovery./identify (~%List./map ({IMPURE_ONE}, [1,2,3]))"),
     );
     assert!(
         pure.contains("a04c6b853f9d16a0b4c5b35f6e25aa73fc983bdaa5b05514cbe52ffc77c42e28"),

@@ -149,7 +149,7 @@ fn test_list_scan_add() {
         &oo,
         &mut ctx,
         "list.scan",
-        combo3(list(vec![int(1), int(2), int(3)]), add_morph(), int(0)),
+        combo3(add_morph(), int(0), list(vec![int(1), int(2), int(3)])),
     );
     assert_eq!(list_len(&r), 3);
     assert_eq!(as_int(list_at(&r, 0)), 1);
@@ -202,7 +202,7 @@ fn test_list_take_while_and_drop_while() {
         &oo,
         &mut ctx,
         "list.take_while",
-        combo2(list(vec![int(2), int(3), int(4), int(5)]), is_prime_morph()),
+        combo2(is_prime_morph(), list(vec![int(2), int(3), int(4), int(5)])),
     );
     assert_eq!(list_len(&r), 2);
     assert_eq!(as_int(list_at(&r, 0)), 2);
@@ -211,7 +211,7 @@ fn test_list_take_while_and_drop_while() {
         &oo,
         &mut ctx,
         "list.drop_while",
-        combo2(list(vec![int(2), int(3), int(4), int(5)]), is_prime_morph()),
+        combo2(is_prime_morph(), list(vec![int(2), int(3), int(4), int(5)])),
     );
     assert_eq!(list_len(&r), 2);
     assert_eq!(as_int(list_at(&r, 0)), 4);

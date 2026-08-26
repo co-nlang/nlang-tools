@@ -3136,7 +3136,17 @@ impl Ouroboros {
                         }));
                     }
                     if let Some(func) = self.builtin_registry.get(builtin_id) {
-                        let res = func(unified_arg.clone(), self, ctx);
+                        // O76 / O78 ②: declared keys live in the registry.
+                        // Missing required keys reuse the existing Top → cocoon
+                        // path; the builtin is not invoked on an undeclared shape.
+                        let keys_ready = crate::builtins::contract_for(builtin_id)
+                            .map(|c| c.satisfied(&unified_arg))
+                            .unwrap_or(true);
+                        let res = if keys_ready {
+                            func(unified_arg.clone(), self, ctx)
+                        } else {
+                            Value::Top
+                        };
                         if let Value::Top = res {
                             let mut partial_fields = c.fields().clone();
                             if let Value::Combo(ref ac) = unified_arg {
