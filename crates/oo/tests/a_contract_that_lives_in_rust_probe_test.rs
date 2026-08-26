@@ -99,7 +99,6 @@ const CANON_PRED_FIRST: &str = "~%List./count ((x -> #true), [1,2,3])";
 /// exists to be piped into. Baseline: `_|_ #conflict`, because `where` is
 /// list-first and the pipe fills the LAST slot.
 #[test]
-#[ignore]
 fn r1_where_composes_with_the_pipe() {
     let got = flat(&obs("r1", "[{a:1}] |> ~%Query./where (r -> #true)"));
     assert!(
@@ -117,7 +116,6 @@ fn r1_where_composes_with_the_pipe() {
 /// Same rule, the silent half. Baseline `[]`: the pipe put the list where
 /// the predicate was expected, and nothing said so.
 #[test]
-#[ignore]
 fn r2_take_while_composes_with_the_pipe() {
     let got = flat(&obs("r2", "[1,2,3] |> ~%List./take_while (x -> #true)"));
     assert_eq!(
@@ -130,7 +128,6 @@ fn r2_take_while_composes_with_the_pipe() {
 /// drop nothing under `drop_while`. Baseline is `[]` for BOTH predicates,
 /// which is exactly the indistinguishability this arc is about.
 #[test]
-#[ignore]
 fn r3_drop_while_composes_with_the_pipe() {
     let got = flat(&obs("r3", "[1,2,3] |> ~%List./drop_while (x -> #false)"));
     assert_eq!(
@@ -144,7 +141,6 @@ fn r3_drop_while_composes_with_the_pipe() {
 /// (partial cocoon, `_|_`, anything), it must not be an answer that a
 /// reader would accept as the count of a 3-element list.
 #[test]
-#[ignore]
 fn r4_a_swapped_call_does_not_silently_answer() {
     let canon = flat(&obs("r4a", CANON_PRED_FIRST));
     assert_eq!(
@@ -165,7 +161,6 @@ fn r4_a_swapped_call_does_not_silently_answer() {
 /// O77. A predicate that COLLAPSED and a predicate that said NO must not be
 /// the same cell. Baseline: both `0`.
 #[test]
-#[ignore]
 fn r5_a_collapsed_predicate_is_not_a_false_one() {
     let bottom = flat(&obs("r5a", "~%List./count ((x -> (1 2)), [1,2,3])"));
     let no = flat(&obs("r5b", "~%List./count ((x -> #false), [1,2,3])"));
@@ -184,7 +179,6 @@ fn r5_a_collapsed_predicate_is_not_a_false_one() {
 /// O77's other half, same line of Rust: truth is decided by printed form,
 /// so the STRING "true" is counted as the atom `#true`. Baseline: 3.
 #[test]
-#[ignore]
 fn r6_a_string_is_not_the_atom_true() {
     let got = flat(&obs("r6", r#"~%List./count ((x -> "true"), [1,2,3])"#));
     assert_ne!(
@@ -197,7 +191,6 @@ fn r6_a_string_is_not_the_atom_true() {
 /// O78 ①. Sniffing is the third convention and it has to go: a morphism
 /// that accepts both orders has not declared anything.
 #[test]
-#[ignore]
 fn r7_filter_does_not_accept_both_orders() {
     let a = flat(&obs("r7a", "~%List./filter ((x -> #true), [1,2,3])"));
     let b = flat(&obs("r7b", "~%List./filter ([1,2,3], (x -> #true))"));
@@ -212,7 +205,6 @@ fn r7_filter_does_not_accept_both_orders() {
 /// Same for `/map` -- measured 2026-08-26, it sniffs too. The Inbox row
 /// named `/filter` only; this is the second one.
 #[test]
-#[ignore]
 fn r8_map_does_not_accept_both_orders() {
     let a = flat(&obs("r8a", "~%List./map ((x -> 9), [1,2,3])"));
     let b = flat(&obs("r8b", "~%List./map ([1,2,3], (x -> 9))"));

@@ -26,4 +26,4 @@ subset: 3 <= 5                ;; → #true
 ;; 6. 態射與管道（|> ＝ Kleisli bind）
 /double: x -> x * 2
 piped: 21 |> /double          ;; → 42
-mapped: ~%List./map ([1, 2, 3], (x -> x + 1))   ;; → [2, 3, 4]
+mapped: ~%List./map ((x -> x + 1), [1, 2, 3])   ;; → [2, 3, 4]

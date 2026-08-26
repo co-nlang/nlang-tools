@@ -1,5 +1,6 @@
 mod bytes;
 mod cond;
+pub mod contract;
 mod csv;
 mod diff;
 mod disc;
@@ -23,9 +24,24 @@ mod time;
 mod toml;
 mod url;
 
+use crate::value::Value;
 use crate::BuiltinFn;
+use nlang_parser::ast::AtomKind;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+pub use contract::{contract_for, contract_ids, BuiltinContract};
+
+/// O77: only the atom `#true` is true. A collapsed predicate is
+/// distinguishable — the `Err` arm carries the `_|_`. The STRING `"true"`
+/// is not the atom (same line of code that used to print-then-compare).
+pub fn pred_is_true(v: &Value) -> Result<bool, Value> {
+    match v.collapse() {
+        Value::Bottom(_) => Err(v.clone()),
+        Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "true" => Ok(true),
+        _ => Ok(false),
+    }
+}
 
 pub fn create_default_builtins() -> HashMap<String, Arc<BuiltinFn>> {
     let mut m = HashMap::new();

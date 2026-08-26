@@ -3,4 +3,4 @@
 ;; 測試 list.fold 累加器 - 最終相容順序版
 ~l: [10, 20, 30]
 ~f: acc -> (x -> acc + x)
-res: ~%List./fold ~l { %val: 0, %f: ~f }
+res: ~%List./fold ({ %val: 0, %f: ~f }, ~l)

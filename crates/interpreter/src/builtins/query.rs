@@ -84,14 +84,6 @@ fn build_list(items: Vec<Value>, effect: EffectTag) -> Value {
     Value::Combo(ComboVal::new(m, false, IndexMap::new(), effect, vec![]))
 }
 
-fn is_truthy(val: &Value) -> bool {
-    match val {
-        Value::Bottom(_) => false,
-        Value::Atom(AtomKind::Tag(t), _, _) => t != "false",
-        _ => true,
-    }
-}
-
 pub fn deep_merge_values(a: Value, b: Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Value {
     match (&a, &b) {
         (Value::Combo(ca), Value::Combo(cb)) => {
@@ -136,30 +128,35 @@ pub fn register_query_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }) as Arc<BuiltinFn>,
     );
 
-    // query.where: {0: list, 1: pred} → filtered @list
+    // query.where: {0: pred, 1: list} → filtered @list  (data last, O78 ③)
     m.insert(
         "query.where".to_string(),
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
             let c = match arg {
                 Value::Combo(ref c) => c.clone(),
-                _ => return BottomCause::Conflict.into(),
+                _ => return Value::Top,
             };
-            let list_val = match c.get_field("0") {
-                Some(v) => oo.force(v.clone(), ctx),
-                None => return BottomCause::Conflict.into(),
-            };
-            let pred = match c.get_field("1") {
+            let pred = match c.get_field("0") {
                 Some(v) => v.clone(),
-                None => return BottomCause::Conflict.into(),
+                None => return Value::Top,
             };
+            let list_val = match c.get_field("1") {
+                Some(v) => oo.force(v.clone(), ctx),
+                None => return Value::Top,
+            };
+            if !oo.is_list(&list_val, ctx) {
+                return Value::Top;
+            }
             let items = extract_list_items(&list_val, oo, ctx);
             let mut kept = Vec::new();
             let mut max_effect = EffectTag::Pure;
             for item in items {
                 let result = oo.apply_morphism(pred.clone(), item.clone(), ctx);
                 max_effect = max_effect.union(result.effect());
-                if is_truthy(&result) {
-                    kept.push(item);
+                match super::pred_is_true(&result) {
+                    Err(bottom) => return bottom,
+                    Ok(true) => kept.push(item),
+                    Ok(false) => {}
                 }
             }
             // O74 ④: no unconditional IO floor. An honest pure predicate

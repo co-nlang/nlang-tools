@@ -152,24 +152,78 @@
 
 ### 7.1 射程逐項對照
 
-S1 …
-S2 …
-S3 …（含 40 個 `~%List` 註冊點的現行形對照表，與 L2-117 的處理）
-S4 …
-S5 …
+S1 — 241 個內建在登記表宣告鍵集（`builtins/contract.rs` + `contract_for`）。宣告不進值。問「這個內建收哪些鍵」不必執行它。應用側在 `lib.rs` 呼叫 `func` 之前比對；缺必填鍵 → 既有 `Value::Top` → 部分施用的繭。
+
+S2 — 未宣告的形不再被靜默施用。位置式缺槽 → 繭（管道可補上最後一格）。callback 的資料槽不是清單 → 同樣回 Top。探針 r4：對調的 `/count` 不再答 `0`／`3`。
+
+S3 — callback 統一為資料在最後。`~%Query./where` 改為 `0`＝謂詞、`1`＝清單，故 `data |> /where pred` 成立（r1）。**L2-117** 與 `where` 同批改寫為 `((r -> #true), [{ a: 1 }])`，期望仍是 `1`——若只改實作不改向量，它會從 `1` 變成 `0` 而仍然綠。L2-116 改寫為資料在最後（主題與引數序無關）。
+
+40 個 `~%List` 註冊點（鍵＝交付後的宣告；「原」＝本弧前）：
+
+| 內建 | 原 | 今 | 動作 |
+| :--- | :--- | :--- | :--- |
+| `len` `reverse` `sort` `head` `tail` `flatten` `sum` `unique` `enumerate` `dedup` `product` `transpose` | unary `0`＝清單 | 同 | 不動（已是資料） |
+| `at` `take` `drop` `chunk` `window` `intersperse` | `0`＝索引／n／分隔，`1`＝清單 | 同 | 不動（已是資料在最後） |
+| `slice` | `0`＝start `1`＝end `2`＝清單 | 同 | 不動 |
+| `concat` `zip` | `0`／`1`＝兩份清單 | 同 | 不動（見 7.4③） |
+| `range` | `0`＝start `1`＝end | 同 | 不動（產出清單，不是 callback） |
+| `flat_map` `any` `all` `find` `count` `partition` `group_by` `sort_by` `max_by` `min_by` `reduce` `zip_with` | 已是 callback／f 在前、資料在後 | 同 | 宣告；資料槽不是清單 → Top |
+| `map` `filter` | **嗅探兩種順序** | `0`＝callback `1`＝清單 | **拿掉嗅探** |
+| `take_while` `drop_while` | list-first | `0`＝謂詞 `1`＝清單 | 翻成資料在最後 |
+| `scan` | `{0: list, 1: f, 2: init}` | `0`＝f `1`＝init `2`＝清單 | 翻成資料在最後 |
+| `fold` | 兩鍵、嗅探哪個是清單，另一個必須是 `{ %val, %f }` | `0`＝`{ %val, %f }` `1`＝清單 | 拿掉嗅探；資料在最後（見 7.4①） |
+
+S4 — `list.rs` 六行印出形判真改為 `pred_is_true`：只有原子 `#true` 為真；`_|_` 沿呼叫回傳，不再折成假。同函式覆寫了 `query.where` 的 `is_truthy`（它也把 ⊥ 當假；該函式本弧必須改引數序）。
+
+S5 — 同一條 `pred_is_true`：字串 `"true"` 不是 `#true`（r6）。
 
 ### 7.2 順手改動（逐項指名）
 
+- Q-034 探針 `an_obstruction_the_gate_did_not_read_probe_test.rs`：把 `/map`／`/filter`／`/take_while`／`/where` 的呼叫改成資料在最後（否則那些綠探針會因本弧的統一而紅）。未動其斷言。
+- `tests/unit/test_list_fold.n`：`fold ~l { %val, %f }` → `fold ({ %val, %f }, ~l)`。
+- `examples/test.n`：`/map` 改為 morphism 在前。
+- `list_p45_test.rs`：`scan`／`take_while`／`drop_while` 的直接 registry 呼叫改鍵序。
+- `query_p43_test.rs`：`where` 空清單測改為謂詞在前。
+- `disc.fetch` 的宣告從誤推的必填 `0`＋`1` 收成只必填 `0`（一元 CAID 形是合法的；`1` 是可選的 peer 名）。否則 `~%Discovery./fetch s` 變成繭，`effect_cached` 探針會紅。這是宣告表的校正，不是 fetch 語義改動。
+- `cond.cond` 的宣告從誤推的 `0`＋`1` 收成只必填 `0`（`1` 是分支表裡那對的欄，不是態射的鍵）。否則 g6 會紅。
+- `math.gt`／`gte`／`lt`／`lte` 由 macro 註冊，補進宣告表。
+- 新增 `builtin_contract_test.rs`（登記表與宣告表雙射）。
+- **未**對整檔 `cargo fmt`（會重排未動的 `disc.rs` 等）。只 rustfmt 了 `contract.rs`／`mod.rs`／`builtin_contract_test.rs`。
+- **未**動那 11 處先 `match AtomKind::Tag` 再 `trim_start_matches('#')` 的安全臂。
+
 ### 7.3 工單哪裡是錯的
+
+無方向性錯誤。兩處偵察的「具名七個」裡，`diff.patch` 的 `path`／`to` 是 diff **條目**上的欄，不是態射綁定的鍵（態射綁 `0`＝值、`1`＝diff 清單）。`disc.find` 的 `target` 是可選的。工單要我們宣告它們，不是改成位置式——有宣告；必填鍵按實際。
 
 ### 7.4 工單指名要你回答的問題
 
 1. `list.fold`：
-2. 34 個無 `get_field` 的宣告：
-3. 「必須」而非「習慣」者：
+   - **現行（本弧前）**：兩鍵，嗅探哪個是清單；另一個必須是 `{ %val: 初值, %f: 態射 }`。`f` 以柯里化施用：`apply(apply(f, acc), item)`。三引數 `fold(f, init, list)` 到不了。`~%List./fold ~l { %val: 0, %f: ~f }` 與 `xs |> /fold { %val, %f }` 靠嗅探都能跑。
+   - **選的協定**：仍是兩鍵，**不再嗅探**。`0`＝`{ %val, %f }`，`1`＝清單。資料在最後，故 `xs |> /fold { %val, %f }` 仍對；list-first 的 `fold ~l rec` 改為繭。
+   - **可跑的呼叫**：`~%List./fold ({ %val: 0, %f: (acc -> (x -> acc + x)) }, [10, 20, 30])` → `60`。管道：`[10, 20, 30] |> ~%List./fold { %val: 0, %f: (acc -> (x -> acc + x)) }`。
+
+2. 34 個無 `get_field` 的宣告：掛在**登記表的註冊點**（每個 id 一列），不是掛在 helper 的型別上。`get_two_args` 的 8 個宣告為必填 `0`、`1`；`extract_str_arg` 的宣告為必填 `0`。`math.random`（以及 `time.now`、`env.args` 等不讀引數／`|_arg|`）宣告**空必填鍵**——施用即開火，多出來的鍵（慣用 `_`）不擋。
+
+3. 「必須」而非「習慣」者（未改）：
+   - `concat`／`zip`：兩個運算元都是資料，順序就是結果的順序；翻轉會讓 `a |> /concat b` 變成 `b ++ a`。
+   - `range`：兩個整數產出清單，沒有 callback。
+   - 一元清單態射：唯一的資料槽已經是那一個。
+   - `query.select`：`0`＝值，`path`／`1`＝路徑（七個具名裡的 `path`）。這是導航不是 callback；把資料翻到最後會讓具名 `{ path: … }` 與 L2-104 那一族的「具名＝所綁的鍵」不一致。`query.pluck`／`deep_merge` 同型，維持。
+   - `~%Cond./cond`／`./match`：工單要它宣告、不要改分支表。已宣告；g6 綠。
 
 ### 7.5 探針
 
+`git diff` 對探針檔**只有**八行 `#[ignore]` 移除。15／15，0 ignored。
+
 ### 7.6 數字
 
+- 全跑 `cargo test --workspace --release --no-fail-fast`（`--test-threads=1`）×5，逐字相同：`targets=217 passed=2097 failed=0 ignored=0 err=0`。
+- 對工單基線 `1e3c752`（`targets=215 passed=2078 ignored=0`）：增量 **+2 targets、+19 passed**。拆開＝工單提交帶上的探針 7 綠＋本弧解除的 8 紅＋新增 `builtin_contract_test` 4 支。差 0。
+- conformance **161/161**（基線 158；+L2-120／121／122）。動了 L2-116（資料在最後）、L2-117（與 `where` 同批改謂詞在前）。**L2-104 一字未改。**
+- 身分（真二進位 `target/release/oo`，`app: { k1: 1 }` 提交後讀 commit 物件）：根 **`932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb`**；標準根 **`7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`**。
+
 ### 7.7 你認為需要改規格之處
+
+本弧已寫進規格的：SYNTAX_09 §2 #1 拿掉未兌現段落（宣告住 registry 已兌現）；SPEC_09 §5.1.1 新設 List callback 形；SPEC_08 §4.3 O77 由引擎兌現；REAL_05 索引 119→122。CHANGELOG Unreleased 有條。
+
+其餘：`query.select` 若也要 `data |> /select "path"`，那是另一次家規，本弧不裁。`list.fold` 沒有改成三引數 `fold(f, init, list)`——現況能跑的就是記錄形，三引數仍然是繭。

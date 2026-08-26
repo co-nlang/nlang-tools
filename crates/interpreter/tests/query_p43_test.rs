@@ -169,7 +169,7 @@ fn test_where_empty_list_returns_empty() {
     let oo = oo();
     let mut ctx = oo.eval_context();
     let empty_list = list_of(&[]);
-    let result = call(&oo, &mut ctx, "query.where", args2(empty_list, Value::Top));
+    let result = call(&oo, &mut ctx, "query.where", args2(Value::Top, empty_list));
     if let Value::Combo(ref cv) = result {
         assert!(
             cv.get_field("0").is_none(),

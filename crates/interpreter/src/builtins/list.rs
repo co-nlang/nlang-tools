@@ -249,15 +249,12 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
             if let Value::Combo(ref c) = arg {
                 if let (Some(v0), Some(v1)) = (c.get_field("0"), c.get_field("1")) {
-                    let f0 = oo.force(v0.clone(), ctx);
-                    let f1 = oo.force(v1.clone(), ctx);
-                    let (lv, fv) = if oo.is_list(&f0, ctx) {
-                        (f0.clone(), f1.clone())
-                    } else if oo.is_list(&f1, ctx) {
-                        (f1.clone(), f0.clone())
-                    } else {
+                    // Declared: 0 = morphism, 1 = list. No sniffing (O78).
+                    let fv = oo.force(v0.clone(), ctx);
+                    let lv = oo.force(v1.clone(), ctx);
+                    if !oo.is_list(&lv, ctx) {
                         return Value::Top;
-                    };
+                    }
 
                     if let (Value::Combo(lc), f) = (lv.collapse().clone(), fv) {
                         let mut res = IndexMap::new();
@@ -294,18 +291,16 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
             if let Value::Combo(ref c) = arg {
                 if let (Some(v0), Some(v1)) = (c.get_field("0"), c.get_field("1")) {
-                    let f0 = oo.force(v0.clone(), ctx);
-                    let f1 = oo.force(v1.clone(), ctx);
-                    let (lv, fv) = if oo.is_list(&f0, ctx) {
-                        (f0.clone(), f1.clone())
-                    } else if oo.is_list(&f1, ctx) {
-                        (f1.clone(), f0.clone())
-                    } else {
-                        (f0.clone(), f1.clone())
-                    };
+                    // Declared: 0 = { %val: seed, %f: morphism }, 1 = list.
+                    // Data last so `xs |> /fold { %val, %f }` fills slot 1.
+                    let rec = oo.force(v0.clone(), ctx);
+                    let lv = oo.force(v1.clone(), ctx);
+                    if !oo.is_list(&lv, ctx) {
+                        return Value::Top;
+                    }
 
                     if let (Value::Combo(lc), Value::Combo(fc)) =
-                        (lv.collapse().clone(), fv.clone())
+                        (lv.collapse().clone(), rec.clone())
                     {
                         let mut acc = fc.get_field("%val").cloned().unwrap_or(Value::Top);
                         acc = oo.force(acc, ctx);
@@ -334,23 +329,28 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
             if let Value::Combo(ref c) = arg {
                 if let (Some(v0), Some(v1)) = (c.get_field("0"), c.get_field("1")) {
-                    let f0 = oo.force(v0.clone(), ctx);
-                    let f1 = oo.force(v1.clone(), ctx);
-                    let (lv, fv) = if oo.is_list(&f0, ctx) {
-                        (f0.clone(), f1.clone())
-                    } else {
-                        (f1.clone(), f0.clone())
-                    };
+                    // Declared: 0 = predicate, 1 = list. No sniffing (O78).
+                    let fv = oo.force(v0.clone(), ctx);
+                    let lv = oo.force(v1.clone(), ctx);
+                    if !oo.is_list(&lv, ctx) {
+                        return Value::Top;
+                    }
                     if let (Value::Combo(lc), f) = (lv.collapse().clone(), fv) {
                         let mut res = IndexMap::new();
                         let mut count = 0;
+                        let mut max_e = lc.effect.union(f.effect());
                         for (k, v) in &lc.fields() {
                             if k.parse::<usize>().is_ok() {
                                 let item = oo.force(v.clone(), ctx);
                                 let pred = oo.apply_morphism(f.clone(), item.clone(), ctx);
-                                if pred.to_string_plain().trim_start_matches('#') == "true" {
-                                    res.insert(count.to_string(), item);
-                                    count += 1;
+                                max_e = max_e.union(pred.effect());
+                                match super::pred_is_true(&pred) {
+                                    Err(bottom) => return bottom,
+                                    Ok(true) => {
+                                        res.insert(count.to_string(), item);
+                                        count += 1;
+                                    }
+                                    Ok(false) => {}
                                 }
                             }
                         }
@@ -362,7 +362,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             res,
                             false,
                             IndexMap::new(),
-                            lc.effect.union(f.effect()),
+                            max_e,
                             vec![],
                         ));
                     }
@@ -428,6 +428,9 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let f = f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut result: Vec<Value> = Vec::new();
                     for item in items {
@@ -452,15 +455,22 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let pred_f = pred_f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item, ctx);
-                        if result.to_string_plain().trim_start_matches('#') == "true" {
-                            return Value::Atom(
-                                AtomKind::Tag("true".to_string()),
-                                EffectTag::Pure,
-                                None,
-                            );
+                        match super::pred_is_true(&result) {
+                            Err(bottom) => return bottom,
+                            Ok(true) => {
+                                return Value::Atom(
+                                    AtomKind::Tag("true".to_string()),
+                                    EffectTag::Pure,
+                                    None,
+                                );
+                            }
+                            Ok(false) => {}
                         }
                     }
                     return Value::Atom(AtomKind::Tag("false".to_string()), EffectTag::Pure, None);
@@ -479,15 +489,22 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let pred_f = pred_f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item, ctx);
-                        if result.to_string_plain().trim_start_matches('#') != "true" {
-                            return Value::Atom(
-                                AtomKind::Tag("false".to_string()),
-                                EffectTag::Pure,
-                                None,
-                            );
+                        match super::pred_is_true(&result) {
+                            Err(bottom) => return bottom,
+                            Ok(true) => {}
+                            Ok(false) => {
+                                return Value::Atom(
+                                    AtomKind::Tag("false".to_string()),
+                                    EffectTag::Pure,
+                                    None,
+                                );
+                            }
                         }
                     }
                     return Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None);
@@ -507,19 +524,26 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let pred_f = pred_f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item.clone(), ctx);
-                        if result.to_string_plain().trim_start_matches('#') == "true" {
-                            let mut fields = IndexMap::new();
-                            fields.insert("%val".to_string(), item);
-                            return Value::Combo(ComboVal::new(
-                                fields,
-                                false,
-                                IndexMap::new(),
-                                EffectTag::Pure,
-                                vec![],
-                            ));
+                        match super::pred_is_true(&result) {
+                            Err(bottom) => return bottom,
+                            Ok(true) => {
+                                let mut fields = IndexMap::new();
+                                fields.insert("%val".to_string(), item);
+                                return Value::Combo(ComboVal::new(
+                                    fields,
+                                    false,
+                                    IndexMap::new(),
+                                    EffectTag::Pure,
+                                    vec![],
+                                ));
+                            }
+                            Ok(false) => {}
                         }
                     }
                     return none_val;
@@ -646,12 +670,17 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let pred_f = pred_f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut count: usize = 0;
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item, ctx);
-                        if result.to_string_plain().trim_start_matches('#') == "true" {
-                            count += 1;
+                        match super::pred_is_true(&result) {
+                            Err(bottom) => return bottom,
+                            Ok(true) => count += 1,
+                            Ok(false) => {}
                         }
                     }
                     return Value::Atom(AtomKind::Int(BigInt::from(count)), EffectTag::Pure, None);
@@ -707,15 +736,18 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(pred_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let pred_f = pred_f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut yes_items: Vec<Value> = Vec::new();
                     let mut no_items: Vec<Value> = Vec::new();
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item.clone(), ctx);
-                        if result.to_string_plain().trim_start_matches('#') == "true" {
-                            yes_items.push(item);
-                        } else {
-                            no_items.push(item);
+                        match super::pred_is_true(&result) {
+                            Err(bottom) => return bottom,
+                            Ok(true) => yes_items.push(item),
+                            Ok(false) => no_items.push(item),
                         }
                     }
                     let mut out = ComboVal::default();
@@ -817,6 +849,9 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(key_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let key_f = key_f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut best_elem: Option<Value> = None;
                     let mut best_key: f64 = f64::INFINITY;
@@ -848,6 +883,9 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(key_f), Some(list_v)) = (c.get_field("0"), c.get_field("1")) {
                     let key_f = key_f.clone();
                     let list = oo.force(list_v.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut best_elem: Option<Value> = None;
                     let mut best_key: f64 = f64::NEG_INFINITY;
@@ -944,6 +982,9 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(vf), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
                     let func = vf.clone();
                     let list = oo.force(vl.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     if items.is_empty() {
                         return Value::Top;
@@ -978,6 +1019,9 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(vf), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
                     let key_fn = vf.clone();
                     let list = oo.force(vl.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut groups: IndexMap<String, Vec<Value>> = IndexMap::new();
                     for item in items {
@@ -1096,6 +1140,9 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if let (Some(vf), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
                     let cmp_fn = vf.clone();
                     let list = oo.force(vl.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let mut items = extract_list_items(&list);
                     items.sort_by(|a, b| {
                         let mut pair = IndexMap::new();
@@ -1179,25 +1226,20 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
 
     // ── Phase 45: List extras 2 ────────────────────────────────────
 
-    fn is_truthy_pred(v: &Value) -> bool {
-        match v {
-            Value::Bottom(_) => false,
-            Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "false" => false,
-            _ => true,
-        }
-    }
-
-    // list.scan: {0: list, 1: f, 2: init} → @list
+    // list.scan: {0: f, 1: init, 2: list} → @list  (data last, O78 ③)
     m.insert(
         "list.scan".to_string(),
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
             if let Value::Combo(ref c) = arg {
-                if let (Some(vl), Some(vf), Some(vi)) =
+                if let (Some(vf), Some(vi), Some(vl)) =
                     (c.get_field("0"), c.get_field("1"), c.get_field("2"))
                 {
-                    let list = oo.force(vl.clone(), ctx);
                     let morph = vf.clone();
                     let mut acc = oo.force(vi.clone(), ctx);
+                    let list = oo.force(vl.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut result: Vec<Value> = Vec::new();
                     for item in items {
@@ -1213,22 +1255,26 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }) as Arc<BuiltinFn>,
     );
 
-    // list.take_while: {0: list, 1: pred} → @list
+    // list.take_while: {0: pred, 1: list} → @list  (data last, O78 ③)
     m.insert(
         "list.take_while".to_string(),
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
             if let Value::Combo(ref c) = arg {
-                if let (Some(vl), Some(vp)) = (c.get_field("0"), c.get_field("1")) {
-                    let list = oo.force(vl.clone(), ctx);
+                if let (Some(vp), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
                     let pred = vp.clone();
+                    let list = oo.force(vl.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut result: Vec<Value> = Vec::new();
                     for item in items {
                         let p = oo.apply_morphism(pred.clone(), item.clone(), ctx);
-                        if !is_truthy_pred(&p) {
-                            break;
+                        match super::pred_is_true(&p) {
+                            Err(bottom) => return bottom,
+                            Ok(true) => result.push(item),
+                            Ok(false) => break,
                         }
-                        result.push(item);
                     }
                     return build_list_value(result);
                 }
@@ -1237,24 +1283,28 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         }) as Arc<BuiltinFn>,
     );
 
-    // list.drop_while: {0: list, 1: pred} → @list
+    // list.drop_while: {0: pred, 1: list} → @list  (data last, O78 ③)
     m.insert(
         "list.drop_while".to_string(),
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
             if let Value::Combo(ref c) = arg {
-                if let (Some(vl), Some(vp)) = (c.get_field("0"), c.get_field("1")) {
-                    let list = oo.force(vl.clone(), ctx);
+                if let (Some(vp), Some(vl)) = (c.get_field("0"), c.get_field("1")) {
                     let pred = vp.clone();
+                    let list = oo.force(vl.clone(), ctx);
+                    if !oo.is_list(&list, ctx) {
+                        return Value::Top;
+                    }
                     let items = extract_list_items(&list);
                     let mut dropping = true;
                     let mut result: Vec<Value> = Vec::new();
                     for item in items {
                         if dropping {
                             let p = oo.apply_morphism(pred.clone(), item.clone(), ctx);
-                            if is_truthy_pred(&p) {
-                                continue;
+                            match super::pred_is_true(&p) {
+                                Err(bottom) => return bottom,
+                                Ok(true) => continue,
+                                Ok(false) => dropping = false,
                             }
-                            dropping = false;
                         }
                         result.push(item);
                     }
