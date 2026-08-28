@@ -160,6 +160,12 @@ pub fn encode_staged(combo: &ComboVal) -> String {
     format!("{FRAME} staged\n{}", write_combo(combo, 0))
 }
 
+/// Same combo body as staged; the kind marks a local savepoint (○), whose
+/// identity is the filename, not a CAID.
+pub fn encode_savepoint(combo: &ComboVal) -> String {
+    format!("{FRAME} savepoint\n{}", write_combo(combo, 0))
+}
+
 pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
     let rest = bytes.trim_start();
     if !rest.starts_with(FRAME) {
@@ -170,7 +176,10 @@ pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
         Some(rest) => ("commit", rest),
         None => match after.strip_prefix(" staged") {
             Some(rest) => ("staged", rest),
-            None => ("value", after),
+            None => match after.strip_prefix(" savepoint") {
+                Some(rest) => ("staged", rest),
+                None => ("value", after),
+            },
         },
     };
     let body = body.trim_start_matches(['\r', '\n', ' ', '\t']);

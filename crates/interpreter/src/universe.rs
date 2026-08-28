@@ -200,6 +200,102 @@ fn is_system_axis_lhs_forbidden(key: &FieldKey) -> bool {
     }
 }
 
+/// After evolve-time eval, a `#pure` derived answer is not what injection
+/// stores (D46 (i) / S3). Eval still runs so evolve-boundary reports stay
+/// loud (Config types, `#divergent`, resource horizons). The recipe is
+/// what goes into staged; the answer is discarded.
+fn recipe_instead_of_pure_answer(
+    engine: &Ouroboros,
+    expr: &Expr,
+    val: Value,
+    ctx: &crate::EvalContext,
+) -> Value {
+    // S3 as measured: `top: 1 + 2` must not land as `3`. Arithmetic is the
+    // evolve-time solidification. Other expr kinds keep their eval result
+    // (live Refs, `%effect` reads, applications that already ran).
+    if !matches!(
+        expr.kind,
+        ExprKind::Add(_, _)
+            | ExprKind::Sub(_, _)
+            | ExprKind::Mul(_, _)
+            | ExprKind::Div(_, _)
+            | ExprKind::Rem(_, _)
+            | ExprKind::Eq(_, _)
+            | ExprKind::Ne(_, _)
+            | ExprKind::Lt(_, _)
+            | ExprKind::Gt(_, _)
+            | ExprKind::Lte(_, _)
+            | ExprKind::Gte(_, _)
+    ) {
+        return val;
+    }
+    match &val {
+        Value::Bottom(_) | Value::Blur(_) | Value::Thunk { .. } => val,
+        Value::Top | Value::TopCaused { .. } | Value::Ref(_) => val,
+        _ if val.effect().is_pure() => Value::Thunk {
+            expr: Box::new(expr.clone()),
+            closure: ctx.scopes.clone(),
+            context: ctx.context_value.clone().map(Box::new),
+            effect: engine.predict_effect(expr, ctx),
+        },
+        _ => val,
+    }
+}
+
+fn refresh_combo_thunks(engine: &Ouroboros, ctx: &crate::EvalContext, c: &mut ComboVal) {
+    for v in c
+        .data
+        .values_mut()
+        .chain(c.types.values_mut())
+        .chain(c.rules.values_mut())
+        .chain(c.meta.values_mut())
+        .chain(c.system.values_mut())
+        .chain(c.local.values_mut())
+    {
+        refresh_thunk_effects(engine, ctx, v);
+    }
+    for v in &mut c.pending_spreads {
+        refresh_thunk_effects(engine, ctx, v);
+    }
+}
+
+fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut Value) {
+    match val {
+        Value::Thunk { expr, effect, .. } => {
+            *effect = engine.predict_effect(expr, ctx);
+        }
+        Value::Combo(c) => {
+            for v in c
+                .data
+                .values_mut()
+                .chain(c.types.values_mut())
+                .chain(c.rules.values_mut())
+                .chain(c.meta.values_mut())
+                .chain(c.system.values_mut())
+                .chain(c.local.values_mut())
+            {
+                refresh_thunk_effects(engine, ctx, v);
+            }
+            for v in &mut c.pending_spreads {
+                refresh_thunk_effects(engine, ctx, v);
+            }
+        }
+        Value::Union(branches) => {
+            for b in branches {
+                refresh_thunk_effects(engine, ctx, b);
+            }
+        }
+        Value::Range { start, end, step } => {
+            refresh_thunk_effects(engine, ctx, start);
+            refresh_thunk_effects(engine, ctx, end);
+            if let Some(s) = step {
+                refresh_thunk_effects(engine, ctx, s);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// True only for the literal open-world hole `_` (not e.g. `a + 1` → Top).
 fn is_literal_top(expr: &Expr) -> bool {
     match &expr.kind {
@@ -410,8 +506,10 @@ impl Universe {
                 expr: Box::new(field.value.clone()),
                 closure: ctx.scopes.clone(),
                 context: ctx.context_value.clone().map(Box::new),
-                effect: EffectTag::Pure,
+                effect: engine.predict_effect(&field.value, &ctx),
             };
+        } else if !is_root_config_field_write(&field.key) {
+            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx);
         }
         let val_effect = val.effect();
 
@@ -496,6 +594,7 @@ impl Universe {
                     Value::Combo(m) => {
                         self.staged = m;
                         self.is_dirty = true;
+                        self.restamp_thunk_effects(engine);
                         Ok(())
                     }
                     Value::Bottom(d) => Err(*d),
@@ -604,6 +703,7 @@ impl Universe {
             for c in &evolved_coords {
                 self.pin_coords.insert(c.clone());
             }
+            self.restamp_thunk_effects(engine);
             return Ok(());
         }
         let res = engine.unify(Value::Combo(self.staged.clone()), Value::Combo(incoming));
@@ -611,6 +711,7 @@ impl Universe {
             Value::Combo(m) => {
                 self.staged = m;
                 self.is_dirty = true;
+                self.restamp_thunk_effects(engine);
                 Ok(())
             }
             Value::Bottom(d) => Err(*d),
@@ -659,6 +760,7 @@ impl Universe {
                     for c in &evolved_coords {
                         self.pin_coords.insert(c.clone());
                     }
+                    self.restamp_thunk_effects(engine);
                     return Ok(());
                 }
                 // Same field lattice as Combo construction / expand_combo_pending:
@@ -687,6 +789,7 @@ impl Universe {
                 }
                 self.staged.pending_spreads.extend(incoming.pending_spreads);
                 self.is_dirty = true;
+                self.restamp_thunk_effects(engine);
                 Ok(())
             }
             Value::Bottom(d) => Err(*d),
@@ -702,6 +805,13 @@ impl Universe {
                 Ok(())
             }
         }
+    }
+
+    fn restamp_thunk_effects(&mut self, engine: &Ouroboros) {
+        let mut ctx = crate::EvalContext::new(self.root.clone())
+            .with_standard_root(self.standard_root.clone());
+        ctx.staged = Some(self.staged.clone());
+        refresh_combo_thunks(engine, &ctx, &mut self.staged);
     }
 
     pub fn save_staged(&self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
@@ -720,6 +830,10 @@ impl Universe {
             serde_json::to_string(&self.staged)?
         };
         crate::storage::atomic_write(&staged_path, body)?;
+        // ○ lives beside staged, not in CAS. Local sequential id; survives
+        // the commit that deletes `staged` (D43 / D46 depth has to go
+        // somewhere). Identical bodies do not mint a new ○ (D47).
+        crate::savepoint::record(base_dir, &self.staged)?;
         // Pin audit intent lives beside staged, never inside values (CAID).
         // ACCEPTANCE REPAIR: the file now carries the pinned COORDINATES, not
         // a bare flag — the commit must know which coordinates the privilege
@@ -825,7 +939,12 @@ impl Universe {
             .with_standard_root(self.standard_root.clone());
         commit_ctx.memo_enabled = false;
         commit_ctx.preserve_refs = true;
-        let new_root = match engine.force_recursive(Value::Combo(new_root), &mut commit_ctx) {
+        let parent_root = Value::Combo(self.root.clone());
+        let new_root = match engine.project_for_commit(
+            Value::Combo(new_root),
+            Some(&parent_root),
+            &mut commit_ctx,
+        ) {
             Value::Combo(root) => root,
             _ => return Err(anyhow::anyhow!("Commit observation did not produce a root")),
         };

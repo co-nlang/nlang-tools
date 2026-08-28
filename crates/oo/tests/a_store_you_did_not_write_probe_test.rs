@@ -116,6 +116,12 @@ fn oo_files(dir: &Path) -> Vec<String> {
     let re_collapse = |s: &String| -> String {
         if s.starts_with(".oo/objects/sha256/") {
             ".oo/objects/sha256/<CAS>".to_string()
+        } else if s.starts_with(".oo/savepoints/") && !s.ends_with("/LOG") {
+            // Q-013 / D43. A savepoint's name is a locally minted counter, so
+            // collapse it the way CAS is collapsed: this pin states the
+            // LAYOUT, not how many savepoints this particular run happened to
+            // mint.
+            ".oo/savepoints/<local-id>".to_string()
         } else {
             s.clone()
         }
@@ -201,6 +207,11 @@ fn p1_the_layout_is_a_short_and_known_list() {
         ".oo/HEAD".to_string(),
         ".oo/format".to_string(),          // layout axis
         ".oo/objects.format".to_string(),  // object-encoding axis (O23)
+        // Q-013 / D43: savepoints are durable by ruling -- every circle is
+        // already persistent -- so they survive commit and live outside CAS.
+        // Declared here by the acceptor; the work order omitted the file.
+        ".oo/savepoints/LOG".to_string(),
+        ".oo/savepoints/<local-id>".to_string(),
         ".oo/objects/sha256/<CAS>".to_string(),
     ];
     let extra: Vec<&String> = files.iter().filter(|f| !expected.contains(f)).collect();

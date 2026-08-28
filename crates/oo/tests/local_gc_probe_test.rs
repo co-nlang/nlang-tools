@@ -849,6 +849,8 @@ fn p4_no_undeclared_durable_state() {
         "abandoned",
         "format", // declared by local_gc; carries the LAYOUT axis since Q-011
         "objects.format", // declared by Q-011 (O23): the object-encoding axis
+        "savepoints", // declared by Q-013 (D43): a savepoint is durable, so it
+        // outlives commit and is NOT content-addressed (a local id, not a CAID)
         "peers",  // declared by advert_persistence (scheduled pin update)
     ];
     let mut unexpected = Vec::new();
