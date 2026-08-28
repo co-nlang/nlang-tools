@@ -142,6 +142,25 @@ L2 語料可能表達不出來（與 Q-038 同形）。**若確實沒有，逐�
 
 ---
 
+## 7. 基線數字（驗收方於開單時實測，2026-08-28）
+
+交付時逐項比對，差異在 §N.6 說明。
+
+| | 值 |
+| :-- | :-- |
+| **全跑**（`--no-fail-fast`，逐 target 聚合，錨 `test result:`） | `targets=218 passed=2102 failed=0 ignored=4`，exit 0 |
+| **其中 ignored=4** | 本工單四支紅探針。**綠的部分＝ 2097（v0.37.0 標籤）＋ 5（本工單新綠）** |
+| **conformance** | `python3 nlang-spec/scripts/run-conformance.py --engine <你的 oo>` → **162 vectors, 162 pass, 0 fail** |
+| **標準根 digest** | `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911` |
+| **`x: 0` 單欄宇宙的根 CAID** | `…:31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`（**全固化，本弧不得改變它**——G5 的機器版） |
+| **該宇宙 `.oo/objects` 物件數** | 3 |
+
+〔量測方式〕conformance 腳本住 **`nlang-spec/scripts/`**，不在 `nlang-tools`。
+二進位為 `/home/gali/nlang-baselines/v0.37.0-verify-target/release/oo`，
+`--version` 印 `oo v0.37.0`，known-answer `~%Math./add (1,2)` → `3` 已過。
+
+---
+
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照
