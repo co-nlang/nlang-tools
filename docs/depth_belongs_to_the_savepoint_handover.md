@@ -278,3 +278,11 @@ conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/rel
 ### N.7 你認為需要改規格之處
 
 無條文草案。S1 落地後，Q-011／local_gc 那兩支「`.oo/` 名單」應把 `savepoints` 列入——那是驗收方改探針，不是規格 MUST。D46 ① 進 `SPEC_10` 由驗收方收弧。
+
+---
+
+## N-R1. Repair 1 交付回報（交付方填）
+
+從 `project_for_commit` 純 thunk 臂拿掉 `_ if matches!(parent, Some(Value::Thunk { .. })) => forced`。判準只剩 `%effect`：非純強制；純的算出 ⊥ 才寫入，其餘留配方。探針未動。新 r2 對。
+
+全跑：`targets=218 passed=2106 failed=0 ignored=0`，exit 0。conformance **162/162**。known-answer（標籤 `oo v0.37.0` 與本弧二進位）`add (1,2)` → `3`。標準根 `7038e250…`。`x: 0` 根 `31745ef0…`，物件數 3。一次／兩次 commit 同一最終內容現在同根 `24c1c904…`，皆 `c: a + b`（不再是 `067627389c…` / `c: 3`）。

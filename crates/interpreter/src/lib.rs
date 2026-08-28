@@ -3753,11 +3753,9 @@ impl Ouroboros {
     }
 
     /// D46 (i) projection for a commit. `#pure` thunks stay thunks (the
-    /// derived value is not new information). Exceptions: ⊥ is kept
-    /// (D33/D44 — a divergent definition must still say why) and a thunk
-    /// that already lived in the parent root and now evaluates is
-    /// satisfied (otherwise a definition committed before its inputs
-    /// existed can never complete).
+    /// derived value is not new information). The criterion is `%effect`,
+    /// not what a parent commit happened to hold. Exception: ⊥ is kept
+    /// (D33/D44 — a divergent definition must still say why).
     pub fn project_for_commit(
         &self,
         val: Value,
@@ -3781,8 +3779,6 @@ impl Ouroboros {
                 let forced = self.force_recursive(val, ctx);
                 match &forced {
                     Value::Bottom(_) => forced,
-                    Value::Top | Value::TopCaused { .. } | Value::Blur(_) => orig,
-                    _ if matches!(parent, Some(Value::Thunk { .. })) => forced,
                     _ => orig,
                 }
             }
