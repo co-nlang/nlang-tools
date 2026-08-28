@@ -165,12 +165,25 @@ fn r2_an_unevaluable_definition_is_not_destroyed_by_commit() {
         second.contains("a: 1") && second.contains("b: 2"),
         "REACH: the second commit must have taken the new inputs. got {second:?}"
     );
+    // ACCEPTOR REPAIR 1 (2026-08-28). This assertion first read
+    // `contains("c: 3")`, which asked for the ANSWER to be stored and so
+    // contradicted the very ruling it was written to enforce. The delivery
+    // satisfied it with a branch keyed on what the PARENT commit held, and
+    // that made a root a function of commit granularity again -- the disease
+    // D46 exists to cure. Measured: the same program committed once gives
+    // 24c1c904... with `c: a + b`, committed twice gives 067627389c... with
+    // `c: 3`, which is the pre-arc CAID. The probe was wrong, not the ruling.
     assert!(
-        second.contains("c: 3"),
-        "A definition committed before its inputs existed must still be there \
-         to be satisfied later. Baseline forces it to `_` at commit, and `_` \
-         is the lattice identity, so the field vanishes on the next meet -- \
-         silent data loss, not a wrong answer. got {second:?}"
+        second.contains("c: a + b"),
+        "A definition committed before its inputs existed must survive, and it \
+         must survive AS THE DEFINITION -- a `#pure` cell keeps its recipe \
+         whatever the parent commit happened to hold, or the root is a \
+         function of how often you committed. got {second:?}"
+    );
+    assert!(
+        !second.contains("c: 3"),
+        "storing the answer here is storing depth, which is what D46 (i) \
+         forbids for a `#pure` cell. got {second:?}"
     );
 }
 
