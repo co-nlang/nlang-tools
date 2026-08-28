@@ -27,6 +27,7 @@ pub mod oml;
 pub mod oodp;
 pub mod peers;
 pub mod routing;
+pub mod savepoint;
 pub mod scratch;
 pub mod storage;
 pub mod store_codec;
@@ -3751,6 +3752,125 @@ impl Ouroboros {
         crate::eval::refuse_lying_pure(self, res, ctx)
     }
 
+    /// D46 (i) projection for a commit. `#pure` thunks stay thunks (the
+    /// derived value is not new information). Exceptions: ⊥ is kept
+    /// (D33/D44 — a divergent definition must still say why) and a thunk
+    /// that already lived in the parent root and now evaluates is
+    /// satisfied (otherwise a definition committed before its inputs
+    /// existed can never complete).
+    pub fn project_for_commit(
+        &self,
+        val: Value,
+        parent: Option<&Value>,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        match val {
+            Value::Thunk { ref expr, effect, .. }
+                if !effect.is_pure()
+                    || matches!(
+                        expr.kind,
+                        ExprKind::Morphism { .. } | ExprKind::Atom(_)
+                    ) =>
+            {
+                // Non-pure: D46 (ii). Morphisms and atoms are values, not
+                // derived observations — forcing them is construction.
+                self.force_recursive(val, ctx)
+            }
+            Value::Thunk { .. } => {
+                let orig = val.clone();
+                let forced = self.force_recursive(val, ctx);
+                match &forced {
+                    Value::Bottom(_) => forced,
+                    Value::Top | Value::TopCaused { .. } | Value::Blur(_) => orig,
+                    _ if matches!(parent, Some(Value::Thunk { .. })) => forced,
+                    _ => orig,
+                }
+            }
+            Value::Combo(c) => {
+                if solid_combo_expansion_cost(&c).is_some() {
+                    return Value::Combo(c);
+                }
+                match self.expand_combo_pending(c, ctx) {
+                    Value::Combo(mut c) => {
+                        let parent_c = match parent {
+                            Some(Value::Combo(p)) => Some(p),
+                            _ => None,
+                        };
+                        let mut new_c = ComboVal::default();
+                        new_c.closed = c.closed;
+                        new_c.effect = if c.closed { c.effect } else { EffectTag::Pure };
+                        new_c.relations = std::mem::take(&mut c.relations);
+                        new_c.pending_spreads = std::mem::take(&mut c.pending_spreads);
+                        let closed = c.closed;
+                        for (k, v) in std::mem::take(&mut c.data) {
+                            let p = parent_c.and_then(|pc| pc.data.get(&k));
+                            let projected = self.project_for_commit(v, p, ctx);
+                            if !closed {
+                                new_c.effect = new_c.effect.union(projected.effect());
+                            }
+                            new_c.data.insert(k, projected);
+                        }
+                        for (k, v) in std::mem::take(&mut c.types) {
+                            let p = parent_c.and_then(|pc| pc.types.get(&k));
+                            let projected = self.project_for_commit(v, p, ctx);
+                            if !closed {
+                                new_c.effect = new_c.effect.union(projected.effect());
+                            }
+                            new_c.types.insert(k, projected);
+                        }
+                        for (k, v) in std::mem::take(&mut c.rules) {
+                            let p = parent_c.and_then(|pc| pc.rules.get(&k));
+                            let projected = self.project_for_commit(v, p, ctx);
+                            if !closed {
+                                new_c.effect = new_c.effect.union(projected.effect());
+                            }
+                            new_c.rules.insert(k, projected);
+                        }
+                        for (k, v) in std::mem::take(&mut c.meta) {
+                            let p = parent_c.and_then(|pc| pc.meta.get(&k));
+                            let projected = self.project_for_commit(v, p, ctx);
+                            if !closed {
+                                new_c.effect = new_c.effect.union(projected.effect());
+                            }
+                            new_c.meta.insert(k, projected);
+                        }
+                        for (k, v) in std::mem::take(&mut c.system) {
+                            let p = parent_c.and_then(|pc| pc.system.get(&k));
+                            let projected = self.project_for_commit(v, p, ctx);
+                            if !closed {
+                                new_c.effect = new_c.effect.union(projected.effect());
+                            }
+                            new_c.system.insert(k, projected);
+                        }
+                        for (k, v) in std::mem::take(&mut c.local) {
+                            let p = parent_c.and_then(|pc| pc.local.get(&k));
+                            let projected = self.project_for_commit(v, p, ctx);
+                            if !closed {
+                                new_c.effect = new_c.effect.union(projected.effect());
+                            }
+                            new_c.local.insert(k, projected);
+                        }
+                        Value::Combo(new_c)
+                    }
+                    other => other,
+                }
+            }
+            Value::Union(branches) => {
+                let mut out = Vec::with_capacity(branches.len());
+                for b in branches {
+                    out.push(self.project_for_commit(b, None, ctx));
+                }
+                Value::Union(out)
+            }
+            Value::Range { start, end, step } => Value::Range {
+                start: Box::new(self.project_for_commit(*start, None, ctx)),
+                end: Box::new(self.project_for_commit(*end, None, ctx)),
+                step: step.map(|s| Box::new(self.project_for_commit(*s, None, ctx))),
+            },
+            other => other,
+        }
+    }
+
     pub fn resolve_path(&self, path: &Path, ctx: &mut EvalContext) -> Value {
         let name_raw = if !path.segments.is_empty() {
             &path.segments[0]
@@ -3840,8 +3960,7 @@ impl Ouroboros {
                     &ctx.root,
                     &ctx.standard_root,
                     ctx.staged.as_ref(),
-                )
-                {
+                ) {
                     self.record_dep(ctx, "~%Config");
                     return Value::Combo(eff);
                 }
@@ -3978,13 +4097,11 @@ impl Ouroboros {
                 // SPEC_09 §6: never bind staged Config fragment as ~%Config;
                 // multi-segment reads (~%Config.timeout) need genesis ∧ override.
                 if found.is_none() && name == "~%Config" {
-                    if let Some(eff) =
-                        crate::universe::effective_config(
-                            &ctx.root,
-                            &ctx.standard_root,
-                            ctx.staged.as_ref(),
-                        )
-                    {
+                    if let Some(eff) = crate::universe::effective_config(
+                        &ctx.root,
+                        &ctx.standard_root,
+                        ctx.staged.as_ref(),
+                    ) {
                         found = Some(Value::Combo(eff));
                         self.record_dep(ctx, "~%Config");
                     }

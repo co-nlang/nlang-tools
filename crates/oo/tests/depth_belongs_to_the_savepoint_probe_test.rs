@@ -126,7 +126,6 @@ const STD_ROOT: &str = "7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58
 /// commit begins. Baseline: staged holds `c: a + b`, the root holds `c: 3`.
 /// A pure cell's answer carries nothing its definition did not.
 #[test]
-#[ignore]
 fn r1_a_pure_thunk_survives_the_commit() {
     let d = universe("r1", &["c: a + b\n", "a: 1\nb: 2\n"]);
     let staged = oo(&d, &["status"]);
@@ -152,7 +151,6 @@ fn r1_a_pure_thunk_survives_the_commit() {
 /// and because top is the lattice identity the field is simply gone from
 /// the second root. The definition is unrecoverable.
 #[test]
-#[ignore]
 fn r2_an_unevaluable_definition_is_not_destroyed_by_commit() {
     let d = universe("r2", &["c: a + b\n"]);
     let first = flat(&commit_and_read_root(&d, "r2-one"));
@@ -181,7 +179,6 @@ fn r2_an_unevaluable_definition_is_not_destroyed_by_commit() {
 /// solid before commit ever runs. Fixing only the commit force
 /// (universe.rs:828) leaves this cell solidified into the commit anyway.
 #[test]
-#[ignore]
 fn r3_top_level_pure_computation_is_not_solidified_either() {
     let d = universe("r3", &["top: 1 + 2\n"]);
     let root = flat(&commit_and_read_root(&d, "r3"));
@@ -205,7 +202,6 @@ fn r3_top_level_pure_computation_is_not_solidified_either() {
 /// nothing -- so under D46 the engine would keep `r` lazy, and `r` is
 /// exactly the irreproducible class that must be captured.
 #[test]
-#[ignore]
 fn r4_a_forward_miss_thunk_reports_its_real_effect() {
     let d = universe("r4", &["r: src\n", "src: ~%Time./now #trigger\n"]);
     let staged = flat(&oo(&d, &["status"]));

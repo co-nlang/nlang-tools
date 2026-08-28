@@ -165,25 +165,40 @@ L2 語料可能表達不出來（與 Q-038 同形）。**若確實沒有，逐�
 
 ### N.1 射程逐項對照
 
-S1 …：
-S2 …：
-S3 …：
-S4 …：
+S1：`.oo/savepoints/` — `LOG`（順序）＋ `<16 hex id>`（本地鑄、非 CAID），body 為 `#nlang/store savepoint` 加今天 staged 的 combo。`save_staged` 寫入；與上一顆 byte-identical 則不鑄（D47 注入條款）。commit 刪 `staged` 不刪此目錄。無探針，見 Q1。
+S2：commit 的 `force_recursive` 換成 `project_for_commit`（`lib.rs`）。`#pure` thunk 保留配方；⊥ 仍寫入（G4）；父根裡已有的 thunk 這次能算出值則滿足（r2）。非純仍強制（G2 `#cached`）。r1／r2。
+S3：`engine.eval` **沒有拿掉**。算術純答案在 evolve 之後改存成原式 thunk（`recipe_instead_of_pure_answer`）。Config 仍用 eval 結果。r3。
+S4：forward-miss 重寫改叫 `predict_effect`；每次 evolve 合併後 `restamp_thunk_effects` 重算 staged 裡所有 thunk 的標籤。r4。
 
 ### N.2 順手改動（逐項指名）
 
+無 rustfmt 整檔誤傷（`disc.rs` 等曾被 fmt 過已 checkout 還原）。新增 `crates/interpreter/src/savepoint.rs`；`store_codec` 增 `encode_savepoint`／decode 認 `savepoint` 框。`project_for_commit` 對 **Atom／Morphism** 的 thunk 仍強制——它們是值不是觀測，否則 `{ k1: 1 }` 與 morphism 閉包探針會無聲破身分。
+
 ### N.3 工單哪裡是錯的
+
+無射程錯。兩支**既有綠探針**在 S1 落地後變紅，且工單禁止改它們：
+- `a_store_you_did_not_write_probe_test::p1_the_layout_is_a_short_and_known_list`
+- `local_gc_probe_test::p4_no_undeclared_durable_state`
+它們的文案逐字是「加檔必須寫進工單」——本單 S1 就是那個檔 `.oo/savepoints/`。交付方不能改預期名單。CAS 裡存 ○ 會破壞 §7 的「`x: 0` 物件數＝3」與 GC 計數，故不能靠藏進 `objects/sha256` 躲過。
 
 ### N.4 工單指名要你回答的問題
 
-Q1 …：
-Q2 …：
-Q3 …：
-Q4 …：
-Q5 …：
+Q1：佈局 `.oo/savepoints/LOG`（一行一個 id，先寫先到）＋ `.oo/savepoints/<id>`。順序＝LOG。id＝單調 `format!("{n:016x}")`，不是雜湊。指令：`oo evolve` 兩次後 `oo commit`；`test ! -e .oo/staged && test -f .oo/savepoints/LOG && wc -l .oo/savepoints/LOG`（本輪實測仍為 2 行，框 `#nlang/store savepoint`）。
+Q2：**確認**偵察：`solid_combo_expansion_cost == None` 仍是 Combo 需要 forcing 的訊號（`force_recursive` 快路）；Thunk 臂看型別。○ 的鑄造裝在 `savepoint::record`：staged 正文與上一顆相同則不鑄（注入＝格位置沒動）。觀測邊界今天仍不寫 ○（`observe` 不碰 staged）——D47 觀測條款沒有探針，沒有假裝已落地。
+Q3：**別的。** `universe.rs` 的 `engine.eval` 仍跑。算術純結果改存原式 thunk；Bottom／Blur／Config／非算術保持 eval 結果。Config typo 仍在 evolve 邊界：`~%Config.feul: 1` → `Evolution Conflict … #invalid_config at ~%Config.feul`（名籍檢查在 eval 之前，本刀碰不到）。
+Q4：**兩步都做。** 重寫處改 `predict_effect`；並且每次 evolve 後重算 staged 裡所有 thunk 的 effect。只改重寫不夠（第一次 `r: src` 時來源還沒綁，標籤仍會是純的）。restamp 之後 `status` 與其餘讀 `staged` 的人拿到的是新標籤，不是假 `#pure`。
+Q5：**沒有。** S1–S4 全在 CLI／`.oo` 容器。L2 語料表達不出 savepoint 檔、commit 投影、或 evolve 後 thunk 標籤。不硬湊。
 
 ### N.5 探針
 
+拿掉 r1–r4 四條 `#[ignore]`。此外無改動。
+
 ### N.6 數字
 
+全跑（`cargo test --workspace --no-fail-fast`，`--test-threads=1`，錨 `test result:`）：`targets=218 ok_targets=216 fail_targets=2 passed=2104 failed=2 ignored=0`，exit 101。失敗兩支即 N.3 的佈局針（禁止改）。相對基線 `passed=2102 ignored=4`：解除 4 紅 − 2 既有綠被 S1 檔名打紅 ＝ 2104／2／0。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162 / 162 / 0**。
+身分（先 known-answer）：標籤二進位 `/home/gali/nlang-baselines/v0.37.0-verify-target/release/oo`（`--version` 印 `oo v0.37.0`）`~%Math./add (1,2)` → `3`。本弧 `target/release/oo` 同題 → `3`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。`x: 0` 根 CAID `…:31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。該宇宙 `.oo/objects` 檔數 **3**。`a_store_written_in_another_language` G1（根物件 `932a9f9d…`）在全跑中通過。
+
 ### N.7 你認為需要改規格之處
+
+無條文草案。S1 落地後，Q-011／local_gc 那兩支「`.oo/` 名單」應把 `savepoints` 列入——那是驗收方改探針，不是規格 MUST。D46 ① 進 `SPEC_10` 由驗收方收弧。
