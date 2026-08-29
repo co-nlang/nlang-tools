@@ -105,21 +105,21 @@ fn oo(dir: &Path, args: &[&str]) -> String {
     )
 }
 
-/// Evolve one fresh field. Each call rewrites `.oo/staged`.
+/// Evolve one fresh field. Each call mints one immutable injection.
 fn evolve_field(dir: &Path, n: usize) -> String {
     let f = format!("w{n}.n");
     fs::write(dir.join(&f), format!("k{n}: {n}\n")).unwrap();
     oo(dir, &["evolve", &f])
 }
 
+fn injection_files(dir: &Path) -> Vec<PathBuf> {
+    nlang_interpreter::injections::paths(dir).unwrap_or_default()
+}
+
 fn ino(p: &Path) -> u64 {
     fs::metadata(p)
         .unwrap_or_else(|e| panic!("stat {}: {e}", p.display()))
         .ino()
-}
-
-fn staged(dir: &Path) -> PathBuf {
-    dir.join(".oo").join("staged")
 }
 
 /// Collect every regular file under `.oo/`, relative to the workspace.
@@ -146,65 +146,69 @@ fn walk_oo(dir: &Path) -> Vec<String> {
     out
 }
 
-/// A workspace with `.oo/staged` already on disk, so the first measured write
-/// is a rewrite rather than a create. (A create legitimately mints a new
-/// inode; measuring one would let R1 pass for the wrong reason.)
+/// A workspace with at least one injection on disk, so later evolves are
+/// adding members to a set rather than creating the directory.
 fn workspace(tag: &str) -> nlang_interpreter::ScratchDir {
     let d = fresh_dir(tag);
     evolve_field(d.path(), 0);
     assert!(
-        staged(d.path()).exists(),
-        "fixture did not create .oo/staged"
+        !injection_files(d.path()).is_empty(),
+        "fixture did not mint an injection"
     );
     d
 }
 
 // ── controls ────────────────────────────────────────────────────────────
 
-/// C1 — the fixture really rewrites `staged`: the walker finds the file, and
-/// its **content** changes between two evolves. Without this, a fixture that
-/// silently stopped writing would leave every red red for the wrong reason
-/// (and, after the change, would leave them red forever).
+/// C1 — the fixture really mints injections: the walker finds the files, and
+/// a second evolve adds a member. Without this, a fixture that silently
+/// stopped writing would leave every red red for the wrong reason.
 #[test]
 fn c1_the_fixture_rewrites_staged_and_content_moves() {
     let d = workspace("c1");
-    let p = staged(d.path());
-
-    let before = fs::read(&p).unwrap();
+    let before = injection_files(d.path());
     evolve_field(d.path(), 1);
-    let after = fs::read(&p).unwrap();
+    let after = injection_files(d.path());
 
-    assert_ne!(
-        before, after,
-        "evolve did not change .oo/staged — the fixture is not exercising the write path"
+    assert!(
+        after.len() > before.len(),
+        "evolve did not mint an injection — the fixture is not exercising the write path"
     );
 
     let files = walk_oo(d.path());
     assert!(
-        files.iter().any(|f| f == ".oo/staged"),
-        "walker did not see .oo/staged; saw {files:?}"
+        files.iter().any(|f| f.starts_with(".oo/injections/")),
+        "walker did not see .oo/injections/; saw {files:?}"
     );
 }
 
 // ── reds ────────────────────────────────────────────────────────────────
 
-/// R1 — `.oo/staged` must get a new inode on every write.
+/// R1 — an injection is immutable: later evolves do not rewrite earlier files.
+/// Each new member is installed by `atomic_write` (temp + fsync + rename).
 #[test]
 fn r1_staged_is_replaced_not_rewritten_in_place() {
     let d = workspace("r1");
-    let p = staged(d.path());
+    let first = injection_files(d.path());
+    assert_eq!(first.len(), 1, "fixture should have minted one injection");
+    let p = first[0].clone();
+    let bytes0 = fs::read(&p).unwrap();
+    let ino0 = ino(&p);
 
-    let mut seen = vec![ino(&p)];
     for n in 1..=5 {
         evolve_field(d.path(), n);
-        seen.push(ino(&p));
     }
 
-    let stuck: Vec<_> = seen.windows(2).filter(|w| w[0] == w[1]).collect();
-    assert!(
-        stuck.is_empty(),
-        ".oo/staged kept its inode across writes — in-place truncate+write, \
-         so a concurrent reader can see a half file. inodes: {seen:?}"
+    assert_eq!(
+        fs::read(&p).unwrap(),
+        bytes0,
+        "an earlier injection was rewritten — the working set is no longer a set of immutable files"
+    );
+    assert_eq!(ino(&p), ino0, "an earlier injection changed inode");
+    assert_eq!(
+        injection_files(d.path()).len(),
+        6,
+        "five further evolves must mint five further injections"
     );
 }
 

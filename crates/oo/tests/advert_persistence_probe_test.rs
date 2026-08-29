@@ -292,7 +292,11 @@ impl Node {
 
 fn serve(dir: &Path) -> Node {
     let served = common::serve(oo_cmd(dir), dir.join("serve.log"));
-    Node { child: served.child, port: served.port, log: served.log }
+    Node {
+        child: served.child,
+        port: served.port,
+        log: served.log,
+    }
 }
 
 fn ask_raw(port: u16, payload: &str) -> String {
@@ -683,6 +687,9 @@ fn r2_the_file_appears_where_declared_and_nowhere_else() {
         // Q-013 (D43). This scenario never evolves, so it mints no savepoint
         // today; declared anyway so the pin states the layout, not this run.
         "savepoints",
+        // Q-014 / D48. This scenario never evolves, so it mints no injection
+        // today; declared anyway so the pin states the layout, not this run.
+        "injections",
         PEERS_DIR,
     ];
     let mut unexpected = Vec::new();

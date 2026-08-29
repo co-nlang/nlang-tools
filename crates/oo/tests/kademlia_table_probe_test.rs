@@ -298,7 +298,11 @@ impl Node {
 
 fn serve(dir: &Path) -> Node {
     let served = common::serve(oo_cmd(dir), dir.join("serve.log"));
-    Node { child: served.child, port: served.port, log: served.log }
+    Node {
+        child: served.child,
+        port: served.port,
+        log: served.log,
+    }
 }
 
 fn ask_raw(port: u16, payload: &str) -> String {
@@ -1235,8 +1239,10 @@ fn p3_the_table_never_reaches_the_root() {
             .join("sha256")
             .join(&d[..2])
             .join(&d[2..]);
-        let commit: serde_json::Value =
-            nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+        let commit: serde_json::Value = nlang_interpreter::store_codec::object_json_view(
+            &fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}")),
+        )
+        .unwrap();
         let dg = commit["root"]["digest"].clone();
         let hex = if let Some(s) = dg.as_str() {
             s.to_string()
@@ -1314,7 +1320,16 @@ fn p4_nothing_persisted() {
     // SCHEDULED CHANGE (advert_persistence §6.1): allow-list, not absolute.
     // `peers/` is the durable peer directory; undeclared paths still fail.
     // Q-011 (O23): `objects.format` declares the object-encoding axis.
-    let allowed = ["objects", "format", "objects.format", "peers"];
+    let allowed = [
+        "objects",
+        "format",
+        "objects.format",
+        "peers",
+        // Q-014 / D48. This scenario never evolves, so it mints no injection;
+        // declared so an accidental evolve cannot land an unaudited directory
+        // (the latent pin recon Q6 named for `savepoints`).
+        "injections",
+    ];
     let mut unexpected: Vec<String> = Vec::new();
     for e in fs::read_dir(dir.join(".oo")).unwrap().flatten() {
         let name = e.file_name().to_string_lossy().to_string();

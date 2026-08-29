@@ -302,11 +302,17 @@ fn p1_staged_still_holds_thunks() {
     let d = fresh("p1");
     std::fs::write(d.join("u.n"), SPREAD).unwrap();
     oo(&d, &["evolve", "u.n"]);
-    let staged = std::fs::read_to_string(d.join(".oo").join("staged"))
-        .expect("`.oo/staged` is gone after evolve — the fixture, not the property");
+    let staged = {
+        let ps = nlang_interpreter::injections::paths(&d).expect("list injections");
+        std::fs::read_to_string(
+            ps.first()
+                .expect("`.oo/injections` is empty after evolve — the fixture, not the property"),
+        )
+        .expect("read injection")
+    };
     assert!(
         staged.contains("Thunk") || staged.contains("__nlang_thunk"),
-        "`.oo/staged` no longer holds a Thunk. Forcing belongs at the commit \
+        "the working set no longer holds a Thunk. Forcing belongs at the commit \
          boundary, not at evolve (O51)"
     );
 }

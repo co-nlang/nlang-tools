@@ -144,7 +144,6 @@ const X0_ROOT: &str = "31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8d
 //
 // The assertion is the equality, not the number forty. See the header.
 #[test]
-#[ignore = "RED at baseline: 40 processes claim success, 3-6 injections survive"]
 fn r1_every_success_leaves_a_trace() {
     let d = scratch("r1");
     let mut files = Vec::new();
@@ -187,7 +186,6 @@ fn r1_every_success_leaves_a_trace() {
 // reflected == 1), or both kept and the coordinate is bottom (claimed == 2,
 // reflected == 2). What must not survive is 2 and 1.
 #[test]
-#[ignore = "RED at baseline: both processes claim success, one injection vanishes"]
 fn r2_a_conflicting_pair_does_not_vanish_silently() {
     let d = scratch("r2");
     std::fs::write(d.join("p.n"), "a: 1\n").unwrap();
@@ -321,7 +319,10 @@ fn g4_identity_is_a_red_line() {
 
     let objects = d.join(".oo").join("objects");
     let count = walkdir_count(&objects);
-    assert_eq!(count, 3, "`x: 0` must hold exactly 3 CAS objects, found {count}");
+    assert_eq!(
+        count, 3,
+        "`x: 0` must hold exactly 3 CAS objects, found {count}"
+    );
 
     let meta = oo(&d, &["inspect", &commit]);
     assert!(

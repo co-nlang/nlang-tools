@@ -150,24 +150,59 @@ fold、清除工作集注入、**`~%Config` 的 session 壽命必須存活**。
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照
-S1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+S1：`evolve` 不再重寫 `.oo/staged`。每次成功 evolve 以 `atomic_write` 鑄 `.oo/injections/<32-hex>`（框 `#nlang/store injection`）。id＝`ring::SystemRandom` 16 位元組，**不讀目錄計數**。探針 r1；Q1。
+S2：工作集＝`injections::fold`（`crates/interpreter/src/injections.rs:69`–`:87`）對 `engine.unify` 的迴圈，不是 n/ `&` 鏈。
+S3：鑄檔前 `fold ⊓ incoming`；⊥ 不鑄、離開碼非零、回報葉座標（`#conflict at a`）。探針 g1。
+S4：兩筆各自過 S3、合起來為 ⊥：兩檔都留；`oo status` 印 `Conflict`／`#conflict at a` 且 exit≠0；`oo commit` 同樣拒。探針 r2。
+S5：commit fold、清注入目錄、有 `~%Config` 則寫回一筆 Config-only 注入（O37）。探針 g3。
+S6：`injections` 寫進 `a_store_you_did_not_write` p1、`local_gc` p4、`advert_persistence` r2；`kademlia_table` p4 一併宣告（該情境仍不 evolve）。探針 g2：未動 `.oo/savepoints/`。
 
 ### N.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+* 既有探針改讀工作集路徑（性質不變）：`every_byte_or_none` p2、`a_value_not_a_recipe` p1、`a_store_written_in_another_language` r4、`local_gc` p6、`where_the_conflict_is` p2（加「拒寫後注入目錄為空」）。
+* `atomic_write` C1／R1：可變 `.oo/staged` 的 inode 命題改成「既有注入檔位元組與 inode 不變、每次 evolve 多一檔」（丙沒有被改寫的格子）。R3 `pin_pending` 仍釘 rename。
+* 載入後 `restamp_thunk_effects`（否則 `status` 看不到巢狀 spread／forward-miss 的 `%effect`，那是把快照寫成注入時必須補的一步，不是射程外行為）。
+* `pin_pending` 存在時 fold 走 `replace_merge` 而非 unify（pin 是覆蓋；Q-016 仍擁有並行 pin 的序）。
+* 本弧編過的檔有跑 `rustfmt`（未對 `lib.rs` 整模組 fmt，避免 `disc.rs` 等被重排）。
 
 ### N.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。
 
 ### N.4 工單指名要你回答的問題
-Q1–Q7 逐題作答，**答案不利也照寫**。
+**Q1** — `.oo/injections/<32 lowercase hex>`，框 `#nlang/store injection`，body 是這一筆的 combo（delta，不是整份 fold）。可重跑：
+
+```
+printf 'a: 1\n' > a.n && oo evolve a.n
+xxd .oo/injections/$(ls .oo/injections)
+```
+
+實測位元組（31 B，無尾隨換行）：
+
+```
+23 6e 6c 61 6e 67 2f 73 74 6f 72 65 20 69 6e 6a
+65 63 74 69 6f 6e 0a 7b 20 61 3a 20 31 20 7d
+```
+
+即 `#nlang/store injection\n{ a: 1 }`。id：`injections.rs:24`–`:30` `SystemRandom` 填 16 位元組再 `hex::encode`。函式不讀目錄、不用 `ids.len()+1`。40 並行檔名皆 32 hex，且不是 `000…1` 計數形。
+
+**Q2** — 兩筆衝突各一檔，目錄裡都在。fold 在第一次 `unify` 得 `Value::Bottom` 時停下，葉座標是 `BottomDetail.path`（`a: 1` ⊓ `a: "x"` → `path = "a"`）。`Universe.workset_bottom` 記住它；`status`／`commit`／下一次 evolve 都報 `#conflict at a`。
+
+**Q3** — 沒有按座標分組。一筆注入＝一次 evolve 的 incoming combo（可含多欄）。找出 ⊥ 葉＝最多 N 次 `unify`（N＝未提交檔數）；第一次撞 ⊥ 就停。
+
+**Q4** — 偵察 Q18 第三個：commit 清空目錄後寫回一筆 Config-only 注入。不留 `.oo/staged`（那是甲的格子），也不給 Config 另做格運算。同一檔裡 Config 與普通欄一起到：注入裡兩欄，commit 剝 Config 再只把 Config 寫回。
+
+**Q5** — `crates/interpreter/src/injections.rs:69`–`:87`（`engine.unify` 迴圈）。呼叫點 `universe.rs:951`。不是 `&` 鏈。
+
+**Q6** — 無。未改 `savepoint.rs`、未改 LOG 形。evolve 仍呼叫既有 `savepoint::record`（Q-014b 的格子，本弧不當它是工作集）。
+
+**Q7** — 40 並行 `oo evolve`、相異欄位 `f{i}: {i}`：注入檔 **40**、`oo status` 欄位 **40**（標籤基線 3–6／40）。零錯誤。
 
 ### N.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+拿掉 `r1_every_success_leaves_a_trace`、`r2_a_conflicting_pair_does_not_vanish_silently` 的 `#[ignore]`。本檔其餘一字未動。
 
 ### N.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+* `cargo test --workspace --no-fail-fast -- --test-threads=1`：**exit 0**。錨 `test result:`：**219** target 全 ok；**2112** passed／**0** failed／**0** ignored。`^error` 列 **0**。
+* conformance：`python3 nlang-spec/scripts/run-conformance.py --engine …/target/release/oo` → **162** vectors, **162** pass, **0** fail。
+* 身分：`x: 0` 根 **`31745ef0e8bfde3d…`**、`.oo/objects` **3** 個物件；標準根 **`7038e2504b8ef4d4…`**。known-answer `~%Math./add (1,2)` → `3`。
 
 ### N.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+工單 §7 已點名：D49（兩筆都留、fold 報 ⊥）違反 `SPEC_10` §2.2.1「meet 為 ⊥ 時演化不得發生」的**字面**，但滿足該節實際規範（循序 S3 仍拒；並行沒有序可拒較晚者）。規格收尾是驗收方的事，未改規格。

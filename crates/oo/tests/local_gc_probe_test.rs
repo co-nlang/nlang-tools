@@ -84,6 +84,17 @@ fn write(dir: &Path, name: &str, src: &str) {
     fs::write(dir.join(name), src).unwrap();
 }
 
+fn workset_snapshot(dir: &Path) -> Vec<u8> {
+    let mut ps = nlang_interpreter::injections::paths(dir).unwrap();
+    ps.sort();
+    let mut out = Vec::new();
+    for p in ps {
+        out.extend(fs::read(&p).unwrap());
+        out.push(0);
+    }
+    out
+}
+
 fn objects_dir(dir: &Path) -> PathBuf {
     dir.join(".oo").join("objects").join("sha256")
 }
@@ -174,8 +185,7 @@ fn refs_of_standard_digest(v: &serde_json::Value, out: &mut Vec<String>) {
     match v {
         serde_json::Value::String(s)
             if s.len() == 64
-                && s
-                    .bytes()
+                && s.bytes()
                     .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) =>
         {
             out.push(s.to_lowercase())
@@ -257,8 +267,10 @@ fn root_digest(dir: &Path) -> String {
     let c = head_commit_caid(dir);
     assert!(c.starts_with("hash:sha256:"), "no HEAD commit in {dir:?}");
     let p = object_path(dir, &digest_of_caid(&c));
-    let commit: serde_json::Value =
-        nlang_interpreter::store_codec::object_json_view(&fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"))).unwrap();
+    let commit: serde_json::Value = nlang_interpreter::store_codec::object_json_view(
+        &fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}")),
+    )
+    .unwrap();
     let dg = &commit["root"]["digest"];
     let hex = if let Some(s) = dg.as_str() {
         s.to_string()
@@ -474,12 +486,16 @@ fn p6_staged_work_survives_collection() {
 
     write(&d, "u.n", "pending: { n: 42 }\n");
     oo(&d, &["evolve", "u.n"]);
-    let staged_before = fs::read(d.join(".oo").join("staged")).expect("nothing staged");
+    let staged_before = workset_snapshot(&d);
+    assert!(
+        !staged_before.is_empty(),
+        "nothing in the working set after evolve"
+    );
 
     oo(&d, &["gc", "--grant", "gc"]);
 
-    let staged_after = fs::read(d.join(".oo").join("staged")).expect("GC deleted `staged`");
-    assert_eq!(staged_before, staged_after, "GC modified `staged`");
+    let staged_after = workset_snapshot(&d);
+    assert_eq!(staged_before, staged_after, "GC modified the working set");
     let out = oo(&d, &["commit", "-m", "staged survived"]);
     assert!(
         out.contains("hash:"),
@@ -847,11 +863,13 @@ fn p4_no_undeclared_durable_state() {
         "pin_pending",
         "effect_pending",
         "abandoned",
-        "format", // declared by local_gc; carries the LAYOUT axis since Q-011
+        "format",         // declared by local_gc; carries the LAYOUT axis since Q-011
         "objects.format", // declared by Q-011 (O23): the object-encoding axis
-        "savepoints", // declared by Q-013 (D43): a savepoint is durable, so it
+        "savepoints",     // declared by Q-013 (D43): a savepoint is durable, so it
         // outlives commit and is NOT content-addressed (a local id, not a CAID)
-        "peers",  // declared by advert_persistence (scheduled pin update)
+        "injections", // declared by Q-014 (D48): the working set is a set of
+        // immutable injection files, not a rewritten `.oo/staged`
+        "peers", // declared by advert_persistence (scheduled pin update)
     ];
     let mut unexpected = Vec::new();
     for e in fs::read_dir(d.join(".oo")).unwrap().flatten() {

@@ -20,6 +20,7 @@ pub mod dispatch;
 pub mod eval;
 pub mod gc;
 pub mod genesis;
+pub mod injections;
 pub mod ladd;
 pub mod lattice_sketch;
 pub mod observation;
