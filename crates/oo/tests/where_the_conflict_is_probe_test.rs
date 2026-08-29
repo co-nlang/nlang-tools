@@ -310,6 +310,11 @@ fn p2_a_conflicting_evolve_stages_nothing() {
         !d.join(".oo").join("staged").exists(),
         "a refused evolve left a staged file behind"
     );
+    let leftover = nlang_interpreter::injections::paths(&d).unwrap_or_default();
+    assert!(
+        leftover.is_empty(),
+        "a refused evolve left an injection behind: {leftover:?}"
+    );
     let (out, ok) = oo_raw(&d, &["commit", "-m", "should not exist"]);
     assert!(
         !ok,

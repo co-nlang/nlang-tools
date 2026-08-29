@@ -84,6 +84,12 @@ fn fresh(tag: &str) -> nlang_interpreter::ScratchDir {
     d
 }
 
+fn injection_text(dir: &Path) -> Option<String> {
+    let ps = nlang_interpreter::injections::paths(dir).ok()?;
+    let p = ps.first()?;
+    std::fs::read_to_string(p).ok()
+}
+
 fn oo(dir: &Path, args: &[&str]) -> String {
     let o = Command::new(env!("CARGO_BIN_EXE_oo"))
         .args(args)
@@ -338,15 +344,15 @@ fn p2_staged_still_keeps_its_thunks() {
     std::fs::write(d.join("u.n"), PROGRAM).unwrap();
     oo(&d, &["evolve", "u.n"]);
 
-    let staged = std::fs::read_to_string(d.join(".oo").join("staged")).expect(
-        "`.oo/staged` does not exist after evolve — the fixture for \
+    let staged = injection_text(&d).expect(
+        "no working-set injection after evolve — the fixture for \
                  this pin is gone, not the property",
     );
     assert!(
         staged.contains("Thunk") || staged.contains("__nlang_thunk"),
-        "`.oo/staged` no longer holds a Thunk. O51 rules that the working set \
+        "the working set no longer holds a Thunk. O51 rules that the working set \
          stays lazy and that forcing happens at commit; O48 governs CAS \
-         objects and `.oo/staged` is not one (it has no address). Content: {}",
+         objects and an injection is not one (it has no address). Content: {}",
         &staged[..staged.len().min(400)]
     );
 }

@@ -338,6 +338,13 @@ pub struct Universe {
     /// ACCEPTOR REPAIR: was a `bool`, which cannot express what the commit
     /// gate has to check.
     pub effect_pending: Option<crate::value::EffectTag>,
+    /// Incoming combo(s) of this CLI process, not the fold. Written as one
+    /// immutable injection at `save_staged`. Empty unless an evolve succeeded.
+    session_delta: ComboVal,
+    session_has_delta: bool,
+    /// D49: the on-disk injection set jointly meets to ⊥. The files stay;
+    /// this is the leaf the fold reported. Not a ComboVal — ⊥ is not a combo.
+    pub workset_bottom: Option<crate::value::BottomDetail>,
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
@@ -359,6 +366,9 @@ impl Universe {
             pin_pending: false,
             pin_coords: std::collections::BTreeSet::new(),
             effect_pending: None,
+            session_delta: ComboVal::default(),
+            session_has_delta: false,
+            workset_bottom: None,
         }
     }
 
@@ -429,11 +439,32 @@ impl Universe {
         }
     }
 
+    fn note_session_incoming(&mut self, engine: &Ouroboros, incoming: &ComboVal) {
+        if !self.session_has_delta {
+            self.session_delta = incoming.clone();
+            self.session_has_delta = true;
+            return;
+        }
+        if self.pin_mode && engine.privilege.pin {
+            self.session_delta = Self::replace_merge(&self.session_delta, incoming);
+            return;
+        }
+        if let Value::Combo(m) = engine.unify(
+            Value::Combo(self.session_delta.clone()),
+            Value::Combo(incoming.clone()),
+        ) {
+            self.session_delta = m;
+        }
+    }
+
     pub fn evolve(
         &mut self,
         engine: &Ouroboros,
         field: &Field,
     ) -> std::result::Result<(), crate::value::BottomDetail> {
+        if let Some(d) = &self.workset_bottom {
+            return Err(d.clone());
+        }
         // SPEC_09 ownership: user LHS on `~%` is illegal (except root
         // ~%Config.<bare> horizon family). Loud at evolve boundary — same
         // family as G2-S Evolution Conflict (CLI exit 1).
@@ -584,14 +615,18 @@ impl Universe {
                 partial.closed = false;
                 partial.insert_field(&bare, val);
                 rf.insert("~%Config".to_string(), Value::Combo(partial));
-                let incoming = Value::Combo(ComboVal::new(rf, false, rl, val_effect, vec![]));
+                let incoming_combo = ComboVal::new(rf, false, rl, val_effect, vec![]);
                 if !evolved_coords.is_empty() {
                     engine.invalidate_coords(&evolved_coords);
                 }
                 // Merge open partials only (no root Config in the meet).
-                let res = engine.unify(Value::Combo(self.staged.clone()), incoming);
+                let res = engine.unify(
+                    Value::Combo(self.staged.clone()),
+                    Value::Combo(incoming_combo.clone()),
+                );
                 return match res {
                     Value::Combo(m) => {
+                        self.note_session_incoming(engine, &incoming_combo);
                         self.staged = m;
                         self.is_dirty = true;
                         self.restamp_thunk_effects(engine);
@@ -694,6 +729,7 @@ impl Universe {
             );
         }
         if self.pin_mode && engine.privilege.pin {
+            self.note_session_incoming(engine, &incoming);
             self.staged = Self::replace_merge(&self.staged, &incoming);
             self.is_dirty = true;
             self.pin_pending = true;
@@ -706,9 +742,13 @@ impl Universe {
             self.restamp_thunk_effects(engine);
             return Ok(());
         }
-        let res = engine.unify(Value::Combo(self.staged.clone()), Value::Combo(incoming));
+        let res = engine.unify(
+            Value::Combo(self.staged.clone()),
+            Value::Combo(incoming.clone()),
+        );
         match res {
             Value::Combo(m) => {
+                self.note_session_incoming(engine, &incoming);
                 self.staged = m;
                 self.is_dirty = true;
                 self.restamp_thunk_effects(engine);
@@ -754,6 +794,7 @@ impl Universe {
                     );
                 }
                 if self.pin_mode && engine.privilege.pin {
+                    self.note_session_incoming(engine, &incoming);
                     self.staged = Self::replace_merge(&self.staged, &incoming);
                     self.is_dirty = true;
                     self.pin_pending = true;
@@ -767,6 +808,7 @@ impl Universe {
                 // a colliding key is the meet (⊥ when they disagree). Must not
                 // unify the whole staged combo — that path promotes a field
                 // clash to Evolution Conflict and drops every other member.
+                self.note_session_incoming(engine, &incoming);
                 for (k, v) in incoming.fields() {
                     if let Some(existing) = self.staged.get_field(&k).cloned() {
                         let merged = engine.unify_internal(existing, v, &mut ctx);
@@ -812,27 +854,43 @@ impl Universe {
             .with_standard_root(self.standard_root.clone());
         ctx.staged = Some(self.staged.clone());
         refresh_combo_thunks(engine, &ctx, &mut self.staged);
+        if self.session_has_delta {
+            let mut next = ComboVal::default();
+            next.effect = self.session_delta.effect;
+            for (k, _) in self.session_delta.all_fields_iter() {
+                if let Some(v) = self.staged.get_field(&k).cloned() {
+                    next.insert_field(&k, v);
+                } else if let Some(v) = self.staged.get_local_field(&k).cloned() {
+                    next.local.insert(k, v);
+                }
+            }
+            self.session_delta = next;
+        }
     }
 
-    pub fn save_staged(&self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
-        // O42 11.6.1 (i): write blur partial bodies into CAS before staged
-        // JSON drops them (partial is CAID-only on disk). Uncommitted bodies
-        // are unreachable after the next commit of a different root and are
-        // local-GC fodder — same class as auto-cleared adverts (v0.2.54).
-        Value::Combo(self.staged.clone()).persist_blur_partials(&engine.store)?;
+    fn unlink_legacy_staged(base_dir: &std::path::Path) {
         let staged_path = base_dir.join(".oo").join("staged");
-        if !staged_path.parent().unwrap().exists() {
-            std::fs::create_dir_all(staged_path.parent().unwrap())?;
+        if staged_path.exists() {
+            let _ = std::fs::remove_file(staged_path);
         }
-        let body = if engine.store.encoding_version() >= 5 {
-            crate::store_codec::encode_staged(&self.staged)
-        } else {
-            serde_json::to_string(&self.staged)?
-        };
-        crate::storage::atomic_write(&staged_path, body)?;
-        // ○ lives beside staged, not in CAS. Local sequential id; survives
-        // the commit that deletes `staged` (D43 / D46 depth has to go
-        // somewhere). Identical bodies do not mint a new ○ (D47).
+    }
+
+    pub fn save_staged(&mut self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+        // O42 11.6.1 (i): write blur partial bodies into CAS before the
+        // injection drops them (partial is CAID-only on disk). Uncommitted
+        // bodies are unreachable after the next commit of a different root
+        // and are local-GC fodder — same class as auto-cleared adverts.
+        Value::Combo(self.staged.clone()).persist_blur_partials(&engine.store)?;
+        if self.session_has_delta {
+            Value::Combo(self.session_delta.clone()).persist_blur_partials(&engine.store)?;
+            crate::injections::write(base_dir, &self.session_delta)?;
+            self.session_delta = ComboVal::default();
+            self.session_has_delta = false;
+        }
+        Self::unlink_legacy_staged(base_dir);
+        // ○ lives beside the working set, not in CAS. Unchanged this arc
+        // (D48 split: Q-014b owns identity and order). Identical bodies do
+        // not mint a new ○ (D47).
         crate::savepoint::record(base_dir, &self.staged)?;
         // Pin audit intent lives beside staged, never inside values (CAID).
         // ACCEPTANCE REPAIR: the file now carries the pinned COORDINATES, not
@@ -859,19 +917,10 @@ impl Universe {
         Ok(())
     }
 
-    pub fn load_staged(&mut self, base_dir: &std::path::Path) -> Result<()> {
-        let staged_path = base_dir.join(".oo").join("staged");
-        if staged_path.exists() {
-            let json = std::fs::read_to_string(staged_path)?;
-            // O42 repair: blur carries partial as CAID only — staged stays
-            // shallow; default serde recursion limit is correct again.
-            self.staged = if crate::store_codec::is_framed(&json) {
-                crate::store_codec::decode_staged(&json)?
-            } else {
-                serde_json::from_str(&json)?
-            };
-            self.is_dirty = true;
-        }
+    pub fn load_staged(&mut self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+        self.workset_bottom = None;
+        self.session_delta = ComboVal::default();
+        self.session_has_delta = false;
         let pin_path = base_dir.join(".oo").join("pin_pending");
         self.pin_pending = pin_path.exists();
         if self.pin_pending {
@@ -884,6 +933,48 @@ impl Universe {
                 .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
                 .map(|v| v.into_iter().collect())
                 .unwrap_or_default();
+        }
+        let injections = crate::injections::load_all(base_dir)?;
+        if !injections.is_empty() {
+            if self.pin_pending {
+                // Pin is replace, not meet (SPEC_08 §6.2). Q-016 owns the
+                // order of concurrent pins; sequential pins of one coordinate
+                // must still land, or the pin sidecar itself is never rewritten.
+                let mut acc = ComboVal::default();
+                for c in injections {
+                    acc = Self::replace_merge(&acc, &c);
+                }
+                self.staged = acc;
+                self.restamp_thunk_effects(engine);
+                self.is_dirty = true;
+            } else {
+                match crate::injections::fold(engine, injections) {
+                    Ok(combo) => {
+                        self.staged = combo;
+                        self.restamp_thunk_effects(engine);
+                        self.is_dirty = staged_has_committable_content(&self.staged)
+                            || self.staged.get_field("~%Config").is_some();
+                    }
+                    Err(d) => {
+                        self.workset_bottom = Some(d);
+                        self.staged = ComboVal::default();
+                        self.is_dirty = true;
+                    }
+                }
+            }
+        } else {
+            let staged_path = base_dir.join(".oo").join("staged");
+            if staged_path.exists() {
+                let json = std::fs::read_to_string(staged_path)?;
+                // O42 repair: blur carries partial as CAID only — staged stays
+                // shallow; default serde recursion limit is correct again.
+                self.staged = if crate::store_codec::is_framed(&json) {
+                    crate::store_codec::decode_staged(&json)?
+                } else {
+                    serde_json::from_str(&json)?
+                };
+                self.is_dirty = true;
+            }
         }
         self.effect_pending = std::fs::read_to_string(base_dir.join(".oo").join("effect_pending"))
             .ok()
@@ -903,6 +994,21 @@ impl Universe {
         meta: crate::value::CommitMeta,
     ) -> Result<(ContentHash, bool)> {
         engine.clear_force_memo();
+        if let Some(d) = &self.workset_bottom {
+            let coord = d.path.as_deref().filter(|s| !s.is_empty()).unwrap_or("");
+            return Err(anyhow::anyhow!(
+                "Evolution Conflict: {}{}",
+                match d.cause {
+                    BottomCause::Conflict => "#conflict",
+                    _ => "bottom",
+                },
+                if coord.is_empty() {
+                    String::new()
+                } else {
+                    format!(" at {coord}")
+                }
+            ));
+        }
         // O37: horizon parameters do not enter history. Strip `~%Config` from
         // the commit meet so ordinary writes beside a knob still land; keep
         // the override in staging as session state after the commit.
@@ -978,20 +1084,24 @@ impl Universe {
         engine.store.set_head(base_dir, &commit_hash)?;
         self.root = new_root;
         self.standard_root = standard;
-        // Retain ~%Config as session state; everything else left history.
+        // Workset injections are consumed. Config is session-scoped (O37):
+        // write one Config-only injection back so a "clear the directory"
+        // cannot drop the horizon (recon Q18, candidate 3).
+        crate::injections::clear(base_dir)?;
+        Self::unlink_legacy_staged(base_dir);
+        self.session_delta = ComboVal::default();
+        self.session_has_delta = false;
         if let Some(cfg) = retained_config {
             let mut restaged = ComboVal::default();
             restaged.insert_field("~%Config", cfg);
-            self.staged = restaged;
+            self.staged = restaged.clone();
             self.is_dirty = true;
+            self.session_delta = restaged;
+            self.session_has_delta = true;
             self.save_staged(engine, base_dir)?;
         } else {
             self.staged = ComboVal::default();
             self.is_dirty = false;
-            let staged_path = base_dir.join(".oo").join("staged");
-            if staged_path.exists() {
-                let _ = std::fs::remove_file(staged_path);
-            }
         }
         let config_not_committed = self.staged.get_field("~%Config").is_some();
         self.head = Some(commit_hash.clone());

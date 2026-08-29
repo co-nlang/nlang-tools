@@ -166,6 +166,12 @@ pub fn encode_savepoint(combo: &ComboVal) -> String {
     format!("{FRAME} savepoint\n{}", write_combo(combo, 0))
 }
 
+/// One immutable working-set member (D48). Same combo body as staged; the
+/// kind marks a delta, not a snapshot. Identity is the filename, not a CAID.
+pub fn encode_injection(combo: &ComboVal) -> String {
+    format!("{FRAME} injection\n{}", write_combo(combo, 0))
+}
+
 pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
     let rest = bytes.trim_start();
     if !rest.starts_with(FRAME) {
@@ -178,7 +184,10 @@ pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
             Some(rest) => ("staged", rest),
             None => match after.strip_prefix(" savepoint") {
                 Some(rest) => ("staged", rest),
-                None => ("value", after),
+                None => match after.strip_prefix(" injection") {
+                    Some(rest) => ("staged", rest),
+                    None => ("value", after),
+                },
             },
         },
     };

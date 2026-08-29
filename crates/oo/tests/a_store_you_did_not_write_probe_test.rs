@@ -94,7 +94,9 @@ fn encoding_file(d: &Path) -> std::path::PathBuf {
     d.join(".oo").join("objects.format")
 }
 fn read(p: &std::path::PathBuf) -> Option<String> {
-    std::fs::read_to_string(p).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(p)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Every file under `.oo/`, relative, with CAS object paths collapsed.
@@ -122,6 +124,11 @@ fn oo_files(dir: &Path) -> Vec<String> {
             // LAYOUT, not how many savepoints this particular run happened to
             // mint.
             ".oo/savepoints/<local-id>".to_string()
+        } else if s.starts_with(".oo/injections/") {
+            // Q-014 / D48. An injection's name is a random local id, never a
+            // CAID. Committed stores have none (the workset is emptied);
+            // declared so a leftover is layout, not surprise.
+            ".oo/injections/<local-id>".to_string()
         } else {
             s.clone()
         }
@@ -205,13 +212,17 @@ fn p1_the_layout_is_a_short_and_known_list() {
     // a scheduled change and belongs in the work order.
     let expected = vec![
         ".oo/HEAD".to_string(),
-        ".oo/format".to_string(),          // layout axis
-        ".oo/objects.format".to_string(),  // object-encoding axis (O23)
+        ".oo/format".to_string(),         // layout axis
+        ".oo/objects.format".to_string(), // object-encoding axis (O23)
         // Q-013 / D43: savepoints are durable by ruling -- every circle is
         // already persistent -- so they survive commit and live outside CAS.
         // Declared here by the acceptor; the work order omitted the file.
         ".oo/savepoints/LOG".to_string(),
         ".oo/savepoints/<local-id>".to_string(),
+        // Q-014 / D48: working-set injections live outside CAS. A committed
+        // store without leftover `~%Config` has none; the name is still
+        // layout.
+        ".oo/injections/<local-id>".to_string(),
         ".oo/objects/sha256/<CAS>".to_string(),
     ];
     let extra: Vec<&String> = files.iter().filter(|f| !expected.contains(f)).collect();
@@ -244,9 +255,8 @@ fn p2_the_address_is_not_the_hash_of_the_file() {
             for b in std::fs::read_dir(a.path()).unwrap().flatten() {
                 let addr = format!("{pre}{}", b.file_name().to_string_lossy());
                 let bytes = std::fs::read(b.path()).unwrap();
-                let file_hash = hex::encode(
-                    ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref(),
-                );
+                let file_hash =
+                    hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref());
                 assert_ne!(
                     addr, file_hash,
                     "the address IS the hash of the file. Encoding would then \
@@ -348,8 +358,11 @@ fn r3_a_bare_number_is_read_as_the_old_conflated_counter() {
     std::fs::create_dir_all(d.join(".oo").join("objects")).unwrap();
     std::fs::write(layout_file(&d), "3\n").unwrap();
     let _ = std::fs::remove_file(encoding_file(&d));
-    std::fs::write(d.join(".oo").join("objects").join(".legacy-fixture-anchor"), b"")
-        .unwrap();
+    std::fs::write(
+        d.join(".oo").join("objects").join(".legacy-fixture-anchor"),
+        b"",
+    )
+    .unwrap();
     std::fs::write(d.join("u.n"), SRC).unwrap();
     oo(&d, &["evolve", "u.n"]);
     let commit = oo(&d, &["commit", "-m", "legacy probe"]);

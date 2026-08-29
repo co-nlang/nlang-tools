@@ -301,16 +301,17 @@ fn r4_staged_is_in_the_same_encoding() {
     let d = scratch("r4");
     fs::write(d.path().join("main.n"), "app: { k1: 1 }\n").expect("write");
     let out = oo(d.path(), &["evolve", "main.n"]);
-    let staged = d.path().join(".oo/staged");
+    let ps = nlang_interpreter::injections::paths(d.path()).expect("list injections");
+    let staged = ps.first().cloned();
     assert!(
-        staged.is_file(),
-        "REACH: evolve without commit must leave `.oo/staged`; got {out:?}"
+        staged.as_ref().is_some_and(|p| p.is_file()),
+        "REACH: evolve without commit must leave an injection; got {out:?}"
     );
-    let bytes = fs::read(&staged).expect("read staged");
+    let bytes = fs::read(staged.as_ref().unwrap()).expect("read injection");
     let found = serde_tags_in(&bytes);
     assert!(
         found.is_empty(),
-        "`.oo/staged` still carries {found:?}. It keeps its Thunk by O51 — \
+        "the working-set injection still carries {found:?}. It keeps its Thunk by O51 — \
          that is not what this pins. What this pins is that the unforced form \
          is written in the same language as everything else. First 200 bytes: {:?}",
         String::from_utf8_lossy(&bytes[..bytes.len().min(200)])

@@ -860,6 +860,13 @@ fn run_status() -> anyhow::Result<()> {
             return Ok(());
         }
     };
+    if let Some(d) = &universe.workset_bottom {
+        // D49 / D33: both injections stay; the fold reports ⊥ at the
+        // coordinate and the process must not exit 0.
+        println!("Conflict");
+        println!("{}", format_conflict_where(d, None));
+        anyhow::bail!("{}", format_conflict_where(d, None))
+    }
     if universe.is_dirty {
         println!("Staged changes:");
         println!("{}", Value::Combo(universe.staged.clone()).to_nlang(0));
@@ -1027,6 +1034,9 @@ fn run_commit(
     let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     let mut universe = load_universe(&engine, &std::env::current_dir()?)?;
+    if let Some(d) = &universe.workset_bottom {
+        anyhow::bail!("Evolution Conflict: {}", format_conflict_where(d, None));
+    }
     // W4‴ (a): "dirty" for commit means content beyond `~%Config`. A stage
     // holding only horizon knobs is session state (O37) — reuse the existing
     // `Nothing to commit` path; knobs stay staged.
@@ -1602,7 +1612,7 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
 
 fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {
     let mut u = Universe::load(engine, path)?;
-    let _ = u.load_staged(path);
+    let _ = u.load_staged(engine, path);
     Ok(u)
 }
 
