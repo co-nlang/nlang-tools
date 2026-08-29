@@ -10,6 +10,7 @@
 > **未重量**驗收方 2026-08-29 已量的 (a)–(e)（brief §1）。
 > **未裁的岔路不選邊**（brief §3）：兩邊只報價。
 > **附錄（2026-08-29）**：Q10–Q14 身分三候選報價；撤回 Q9 的甲-1／甲-2／甲-3 框架。不選 A／B／C。
+> **附錄二（2026-08-29）**：Q15–Q20 候選丙（存注入不存狀態）。不選甲／乙／丙。
 >
 > **身分**：本輪零改動。〔量，標籤二進位〕`~%Math./add (1,2)` → `3`
 > （呼叫發生了：答案不是 `_`、不是原文）。`x: 0` 根
@@ -415,7 +416,7 @@ kademlia `p4` 的允許名單**沒有** `savepoints`（Q6）：不是 3c 的「�
 
 ## 明確不做（複述，以免被讀成工單）
 
-compare-and-swap 與重試（Q-016）。staged 並發語義。觀測邊界寫 ○。CLI savepoint 動詞。動身分。選甲或乙。選 A／B／C。
+compare-and-swap 與重試（Q-016）。staged 並發語義。觀測邊界寫 ○。CLI savepoint 動詞。動身分。選甲或乙。選 A／B／C。選丙。
 
 ---
 
@@ -604,3 +605,204 @@ PORT=$(grep -oP 'serving at port \K[0-9]+' serve.log)
 ⟹ 把 ○ 鏈改成 append-only log，等於採用**產品路徑上靠單執行緒才看起來沒事、斷電語義比 `atomic_write` 弱**的那個面。孤兒類別（懸空指標）可能換成「state 與 log 過時」，不是消失。
 
 Inbox 一列開在 `nlang-spec` `local`（本弧不修程式）。
+
+---
+
+# 附錄二 — 候選丙：不存狀態，存注入（2026-08-29）
+
+> brief 附錄二。**不是新弧，不選邊。** 甲／乙／丙／A／B／C 都仍等用戶。
+>
+> **身分**：本附錄零改動。known-answer 再過：`~%Math./add (1,2)` → `3`。
+> 未重量 brief §8.2 那兩格（`@int` 然後 `3` ／ 冪等）；下方 Q19 是**擴大**，不是重跑那兩格。
+
+## 8.0 六題各一句
+
+| | 答案 |
+| :-- | :-- |
+| **Q15** | 丙核心約 **280–400** 行 ＋ **12–18** 支探針。與甲＋A（260–370 ＋ 10–15）同量級；成本從「五檔編碼」跑到「fold ＋ pin 定序 ＋ Config 壽命」。 |
+| **Q16** | 寫一筆注入是亞毫秒；讀 N 個檔 N＝1000 約 20 ms。fold **不能**寫成 n/ 的 `&` 鏈（N＝100 已 `#fuel_exhausted`，N＝1000 `#max_depth_exceeded`）。衍生快照（§1.8 可重算）能把 evolve 壓回 O(1)，代價是甲的那個狀態檔又回來。 |
+| **Q17** | 五支釘的是工作集性質（可改路徑）。兩支釘「一個名叫 `staged`／`pin_pending` 的檔」（不能原樣留）。衝突那支在寫入式丙之下**會變語義**。 |
+| **Q18** | `~%Config.fuel: 0` 當一筆注入，與 `x: 1` **meet 可交換**（根仍 `ca0986d5…`）。但 Config 的壽命是 session，commit 清空注入目錄會違反 O37。丙必須把 Config 注入留過 commit。 |
+| **Q19** | 目錄插入原子 **≠** 目錄是序列。`readdir` 不保證插入序。meet 子集不需要序；**pin 需要，而目錄給不出來。** 另：衝突在今天是「第二筆被拒、第一筆留下」；丙 fold 兩筆會得到 ⊥——不只是報得晚。 |
+| **Q20** | 40 個不同欄位並行 evolve → 40 個檔、fold 出 40 欄。今天 4–6。探針：工作集欄位數 ＝ 並行成功寫入數。今天紅、丙綠。 |
+
+---
+
+## Q15 — 報價（對甲＋A）
+
+甲＋A（附錄一 Q9＋Q10）：state 合成 200–280 ＋ 隨機 id／前驅 60–90 ＝ **260–370** 行，探針 **10–15** 支。
+
+丙把 `save_staged` 的讀-改-寫換成「鑄一個不可變檔」。目錄取代 LOG。沒有單一 `.oo/state`。
+
+| 檔 | 做什麼 | 約略行數 |
+| :-- | :-- | --: |
+| `savepoint.rs` | 重寫成注入：隨機檔名、`atomic_write`、無 LOG、無 `mint_id` 計數 | 83 重寫 → ~80–120 |
+| `universe.rs` `save_staged` | 不再寫五檔；把本次 incoming combo（＋ pin／effect 欄位）寫成一筆注入 | 43 → ~30 |
+| `universe.rs` 載入 | `load_staged` 改成 readdir ＋ decode ＋ **unify 迴圈** fold；pin 子集另定序 | 32 → ~80–150 |
+| `universe.rs` `commit` | fold，剝 Config，清注入目錄，Config 注入**留下** | 28 → ~50–80 |
+| `store_codec.rs` | 注入框（可沿用 `savepoint`）＋ pin／effect 欄位在 combo 外 | +20–40 |
+| 可選衍生快照 | 把 fold 結果 `atomic_write` 成 `.oo/staged`；丟了依 §1.8 可重算 | +30–50 |
+
+生產碼 **約 280–400**（含快照取上沿；不含 Q-016 的 pin 序列化協定）。不碰 `put_root` 的 combo 形、不動身分。
+
+探針見 Q17：約 **12–18** 支要改路徑或宣告（三支版圖 ＋ 七支 staged／pin ＋ kademlia 潛伏 ＋ 衝突／inode）。比甲＋A 略多，因為「一個檔」這個形本身被拆掉。
+
+**成本跑到哪裡**：磁碟寫入變便宜（Q8 的 3 次 `atomic_write` → 1 次）；每次要看工作集就 fold；pin 仍要一個序（Q19）；Config 要第二種壽命。與「git 的 index 換成格上的 log」這句話一致——index 的工作被 meet 吃掉，**序與 session 沒被吃掉**。
+
+**§8 開弧 4**：不適用。
+
+---
+
+## Q16 — fold 的實測成本
+
+方法：標籤二進位。N 個相異欄位 `f{i}: {i}`。機器本機、單次，不是平均。
+
+**今天（對照）**
+
+| N | 一次 evolve 寫入 N 欄（一個 incoming） | 隨後 commit | 已提交後再 evolve 1 欄 | N 次「每次一欄」evolve（含 每次行程開銷） |
+| --: | --: | --: | --: | --: |
+| 1 | 0.017 s | 0.022 s | 0.017 s | 0.018 s |
+| 10 | 0.034 s | 0.024 s | 0.018 s | 0.188 s |
+| 100 | 0.241 s | 0.025 s | 0.019 s | 2.03 s |
+| 1000 | 6.29 s | 0.046 s | 0.033 s | 26.64 s |
+
+**丙的磁碟（模擬：寫 N 個 `#nlang/store savepoint` 小檔，再全部讀回）**
+
+| N | 寫 N 個檔 | 再寫 1 個 | 讀 N＋1 個 | 位元組 |
+| --: | --: | --: | --: | --: |
+| 1 | 0.1 ms | 0.07 ms | 0.1 ms | 65 |
+| 10 | 0.7 ms | 0.08 ms | 0.5 ms | 362 |
+| 100 | 5.1 ms | 0.06 ms | 2.1 ms | 3 512 |
+| 1000 | 49 ms | 0.06 ms | 20 ms | 36 812 |
+
+定義上的 evolve（只鑄檔）≈ 「再寫 1 個」。CLI 行程稅今天約 16 ms，會蓋過這段。
+
+**fold 不能做成 n/ 表達式。** 〔量〕`oo eval '{ f0: 0 } & { f1: 1 } & …'`：
+
+| N | 耗時 | 結果 |
+| --: | --: | :-- |
+| 1 | 0.019 s | `{ f0: 0 }`（呼叫發生了） |
+| 10 | 0.020 s | 十欄 combo |
+| 100 | 0.045 s | **`#blur %cause: #fuel_exhausted`** |
+| 1000 | 0.488 s | **`#blur %cause: #max_depth_exceeded`** |
+
+⟹ 丙的 fold 必須是引擎裡對 `unify` 的迴圈（今日 `evolve` 已走這條），**不能**把注入 fold 寫成一條 `&` 鏈再 `eval`。N＝100 已不是答案。
+
+N 次 unify 的**上限**是「N 次 CLI evolve」（上表右欄，含 1000 次行程啟動）。in-process 的下限沒有單獨儀器；最接近的 in-process 代理是「一次 evolve 一個 N 欄 incoming」（上表左欄）——那是**一次**胖 unify，不是 N 次瘦 unify。兩者不要混著引用。
+
+**衍生快照**（`commit.md` §1.8「可重算：丟了無損」）：每寫一筆注入，把 fold 結果 `atomic_write` 成 `.oo/staged`（或等價）。evolve 變 O(1) meet（新注入 ∧ 快照）＋兩次寫入；commit 用快照，不必當場 fold。代價：
+
+* 那個快照**就是甲的狀態檔**又回來了，只是可以丟。
+* 崩潰後 O(N) 重建。Q8 省下的寫入有一半吐回去。
+* 快照與注入目錄可以再不一致——甲要解的窗，用「可丟的 staged」再買一次。
+
+沒有快照：`status`／下一次要報衝突的 evolve／commit 都是 O(N) 讀＋unify。
+
+**§8 開弧 4**：`&` 鏈的 eval 有回傳值；N＝1／10 得到 combo（呼叫發生），N＝100／1000 得到具名 `#blur`（也發生了，只是撞視界）。不適用其他內建。
+
+---
+
+## Q17 — 七支讀 `.oo/staged` 的探針
+
+原文 Q6 列的是這組。逐支分「形」還是「性質」。
+
+| 探針 | 今天釘什麼 | 形還是性質 | 丙 |
+| :-- | :-- | :-- | :-- |
+| `atomic_write` **R1** | `.oo/staged` **每次 evolve 換 inode** | **形**（「工作集是一個被改寫的檔」） | **不能原樣留。** 丙每次鑄新檔，inode 命題對單一 `staged` 無意義。原子性改由每筆注入的 `atomic_write` 承擔。R3（`pin_pending` inode）同。 |
+| `atomic_write` **C1** | walker 看得到 `.oo/staged` 且內容會變 | 形（檔名） | 改 walker 目標，或刪。 |
+| `local_gc` **p6** | GC 之後 staged **位元組不變**，仍可 commit | **性質**（未提交的工作集不是 CAS，GC 不收） | **可改路徑。** 注入目錄同樣不在 `objects/`；GC 今天也不走 savepoints。宣告目錄即可。 |
+| `every_byte_or_none` **p2** | staged 裡還有 Thunk／`__nlang_thunk` | **性質**（O51：工作集惰性） | 改讀注入檔或 fold 結果。 |
+| `a_value_not_a_recipe` **p1** | 同上 | **性質** | 同上。 |
+| `a_store_written…` **r4** | staged 是 encoding-5 框，不是 serde 標籤 | **性質**（工作集與 CAS 同一種語言） | 改讀注入檔；框可沿用 `savepoint`。 |
+| `where_the_conflict_is` **p2** | 衝突的 evolve **不留下** `.oo/staged`，接著 `Nothing to commit` | 看起來像性質，**其實綁了今天的失敗形** | 見 Q19：今天第二筆根本不進工作集。丙若寫入式，衝突注入**在目錄裡**，fold 才是 ⊥。這支**不能原樣留**，除非丙在 evolve 當場 fold 且拒絕時不鑄檔——那就不是 brief 寫的「不讀-改-寫」。 |
+| `pin_probe` 種 `.oo/pin_pending`；`store_boundary` 禁寫該路徑 | 一個**名叫 pin_pending 的檔**＋語言層寫不進 `.oo/` | 檔名是形；禁寫是性質 | 檔名測試不能留。store boundary **可改**成禁寫注入目錄。 |
+
+**能改（性質，換路徑）**：p6、thunk 兩支、encoding r4、store boundary。
+
+**不能原樣留（形，或失敗形會變）**：atomic R1／R3／C1、衝突 p2、pin_pending 存在測試、p1 的 `savepoints/LOG`。
+
+**§8 開弧 4**：不適用。
+
+---
+
+## Q18 — 視界參數當注入
+
+〔量〕`~%Config.fuel: 0` 然後 `x: 1`，與反序：staged 位元組相同（含 `~%Config: { fuel: 0 }`），commit 後根 digest 皆 `ca0986d5…`（Config 未進歷史，與 Q5 的 `x: 1` 同一顆根）。`is_root_config_field_write`（`universe.rs:58`）這條豁免在 evolve 當時就生效；注入的是**已經過豁免枝的 combo**，不是原始鍵路徑。
+
+**當一筆注入，meet 行得通。** 丙不必為 Config 另做格運算。
+
+**壽命不行。** commit（`:906`–`:984`）把 `~%Config` 從提交 meet 剝掉，再 restage 成 session。丙若「fold 完清空目錄」，Config 注入一起沒了，下一次觀測回到創世 fuel（O37 反面）。
+
+丙要留的：
+
+* 注入帶 `session`／「過 commit 仍在」標記，commit 只刪工作集注入；或
+* Config 仍走今天的 `.oo/staged` 殘留（目錄就不再是「全部未提交注入」）；或
+* commit 寫回一筆 Config-only 注入。
+
+三種都是「第二種壽命」。brief 的清空目錄不是免費的。同一份 evolve 檔裡 Config 與 `x: 1` 同到——今天是一筆 staged combo 裡兩欄；丙一筆注入裡兩欄，commit 時要拆。
+
+**§8 開弧 4**：不適用（Config 是路徑形寫入，不是內建呼叫）。
+
+---
+
+## Q19 — 丙在哪裡會壞（對抗）
+
+brief 點名的幾處，先交卷：
+
+| 查 | 結果 |
+| :-- | :-- |
+| 衝突回報時機 | **會變**，而且不只是晚報。今天第二筆 evolve 拒、rc＝1、staged 留**第一筆**（〔量〕`a: 1` 然後 `a: "x"` 留下 `{ a: 1 }`；反序留下 `{ a: "x" }`）。丙 fold 兩筆 → 格上 ⊥。答案從「先到者」變成 ⊥。落 Q-017 的是時機；**答案本身也搬了。** |
+| GC 走訪 | **查了，沒事**（結構上）。注入與今日 ○ 一樣不在 `objects/`；`mark` 只從 HEAD 走。blur partial 仍要在鑄注入前 `persist_blur_partials`，與現 `save_staged` 第 0 步相同。 |
+| `.oo/abandoned`／rollback | **查了，沒事**（結構上）。dirty ＝ 還有工作集注入；rollback 已拒 dirty。abandoned 仍只在 rollback／下一次 commit meta。 |
+| `effect_pending` 閘 | **查了，沒事**（若 fold 會收集）。意圖變成注入欄位之後，commit 閘讀 fold 的 tag 聯集，比全域檔更不容易 leftover。 |
+| meet 是否「所有」值形可交換 | 在 **evolve 成功**的格子裡，擴大後仍交換。見下表。**失敗的格子今天不可交換**——因為失敗根本不 meet。 |
+
+〔量，未重量 §8.2 那兩格；下列是擴大〕成功的 evolve，staged sha256 與（若 commit）根 digest 兩序相同：
+
+| 形 | 兩序 staged | 兩序根 |
+| :-- | :-- | :-- |
+| thunk `c: a + b` 與 `a: 1` `b: 2` | 同 | 同 `24c1c904…` |
+| union `1\|2` 與 `2\|3` → `2` | 同 | 同 `bd603319…` |
+| 巢狀 `{ k: 1 }` 與 `{ m: 2 }` | 同 | 同 `fcb36c67…` |
+| range `1..5` 與 `3..8` → `3..5` | 同 | 同 `886e9020…` |
+| Config.fuel 與 `x: 1` | 同 | 同 `ca0986d5…` |
+| 兩欄 `p,q` 與 `r` | 同 | 同 `2fdaac37…` |
+| `a: 1` 與 `a: "x"`（衝突，第二筆 rc＝1） | **不同**（各留第一筆） | 無第二顆根 |
+
+**驗收方沒寫、且會讓「目錄就是 log」這句話垮掉的洞：**
+
+POSIX 建檔原子，**`readdir` 不給插入序**。meet 子集無序，所以「所有未提交注入的 meet」不靠目錄序。**pin 子集有序**（brief 8.3；〔量〕`--pin x: @int` 再 `x: 1` 的根 `a9c88ed9…`，反序 `--pin x: @int` 的根 `89977051…`，staged 一個是 `1` 一個是 `@int`）。
+
+丙把序從 LOG 拿掉之後，pin 要問「B 插在 A 與 C 哪裡」。目錄回答不了。mtime 不是原子單位、跨行程不可靠；隨機檔名沒有序；要序就得把 A／B／C 之一請回來（前驅、發放計數、或 compare-and-swap）。**這不是丙的小例外，是 8.3 那題在儲存層的答案：目錄當 log 只對無序的 meet 成立。**
+
+其餘兩個連帶：
+
+1. **fold 的實作形**：Q16，`&` 鏈在 N＝100 已不是 combo。
+2. **寫入式 evolve 的離開碼**：brief 定義 evolve 不讀。衝突的第二筆也 rc＝0，⊥ 遲到 `status`／`commit`。今天 rc＝1。這是 Q-017 加上「成功的謊」。
+
+**§8 開弧 4**：thunk 那格用了 `a + b`（加法在 thunk 裡，commit 後根 `24c1c904…` 與先前 D46 同一顆，證明不是空白宇宙）。其餘格子是格運算不是內建。
+
+---
+
+## Q20 — 40 並行：預測與探針
+
+§1(a) 是 40 個**不同欄位**。丙：每筆隨機檔名、互不覆寫，目錄應有 40 個注入，fold 出 40 欄。今天 4–6 欄／4–6 個 ○。
+
+**探針（附錄一 Q11 更正過的方向，不是 brief 正文那兩句）：**
+
+並行 40 次 `evolve`，各加一個從未出現的欄位之後：
+
+* 注入目錄裡的檔數 ＝ 40（D47 若「同 body 不鑄」在相異欄位下不觸發）；
+* fold（或今日等價：`oo status` 印出的工作集）的使用者欄位數 ＝ 40。
+
+不斷言 LOG、不斷言「≦」。今天這支**紅**（4–6）。丙之後**綠**——這正是目錄插入原子、meet 可交換要買的那一格。
+
+⚠ 同一座標寫 40 個不同值：丙 fold → ⊥；今天最後寫入者贏。不要用那組當這支探針的輸入。§1(a) 的輸入形（相異欄位）才對。
+
+**§8 開弧 4**：不適用。
+
+---
+
+## 明確不做（附錄二複述）
+
+compare-and-swap 與重試（Q-016）。觀測邊界寫 ○。CLI savepoint 動詞。動身分。選甲、乙或丙。
