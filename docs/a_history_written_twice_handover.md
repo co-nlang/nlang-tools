@@ -378,3 +378,46 @@ N.3 第 1 點成立且重要。`gc::mark` 從 HEAD 沿**物件裡的** CAS 邊�
 
 **A.1 之外，N.3 第 3 點（混鏈 squash）不在本回合**——它是本弧沒宣稱要修的一格，
 **但它要進 Inbox**，由驗收方開列。
+
+---
+
+## R. 交付回報（驗收回合 1 的修補；交付方填。本行以上一字不得動）
+
+### R.1 改了什麼
+
+普通 commit 與 refine 的提交 ○ **改掛在它所提交的 tip**（`record_commit(..., None)` → 目錄裡唯一／最小 tip），不再掛「先前 HEAD 的提交 ○」。Squash 仍掛 base 的提交 ○（壓縮歷史不是 A.1 那條線性 evolve+commit）。
+
+五次提交後的鑄造圖變成交替鏈：
+
+```
+工作 ○ 1  parents=[]
+提交 ○ 1  parents=[工作 ○ 1]  commit:…
+工作 ○ 2  parents=[提交 ○ 1]
+提交 ○ 2  parents=[工作 ○ 2]  commit:…
+```
+
+每一顆提交 ○ 恰一個父，且那個父就是剛鑄的工作 ○。下一次 evolve 只有一個 tip，**不再合流**。G5 對 N ∈ {1,2,3,5,10} 綠。G3 仍綠（一次 commit 前後 $H_1$ 本來就不動；G5 才釘整段 session）。
+
+走訪本來就是「沿 `parents:` BFS 找下一顆 `commit:`」——S2 形狀下是兩跳，不需要提交 ○ 之間的捷徑。
+
+### R.2 A.1 之外動到的（為讓 R-b 在新接線下仍成立）
+
+S2 接好之後，rollback 再 evolve 的工作 ○ 會掛在被放棄的那顆提交 ○ 上（它當時是唯一 tip）。雙讀若照單全收，`oo log` 會把放棄的 tip **印成鏈上的上一顆**——history_ops `red_rollback_is_recorded_in_the_next_commit` 的前置條件。
+
+`previous_commit` 因此跳過**本顆 commit 的 `meta.abandoned`** 列出的 digest（仍繼續走它的 `parents:`，所以更早的祖先還在）。線性 session 沒有 `abandoned`，G5 不受影響。這是 R-b「放棄的是紀錄不是鏈成員」在覆蓋走訪上的同一條規則，不是新產品面。
+
+`local_gc` 探針的獨立 walker 同樣跳過：不跳的話 r3 的 `follow_abandoned` 對照組與實驗組都經覆蓋走到放棄的 tip，harness 會說「ruling has no consequence」。
+
+**未**編輯 Q-015 探針（G5 屬驗收方）。**未** rustfmt 該檔。**未**動混鏈 squash。
+
+### R.3 探針
+
+Q-015 **7／7**（含 G5）。history_ops 15／15。local_gc 17／17。
+
+### R.4 數字
+
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：221 target 皆 ok；**2125 passed／0 failed／0 ignored**（比交付回合 1 多 1，就是 G5）。
+`^error`：**0**。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
+身分：G2 綠（`x: 0` 三物件、標準根 `7038e250…`）。Q-015 探針一字未動。

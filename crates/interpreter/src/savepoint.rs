@@ -208,6 +208,12 @@ pub fn circle_id_for_commit(base: &Path, digest: &str) -> Result<Option<String>>
 /// Previous commit along D52's edge, or `Commit.parent` when still set.
 /// Cycle-safe: visited set on circle ids. Returns `None` when this commit
 /// has no predecessor (first commit, or HEAD with no commit circle).
+///
+/// A digest listed in this commit's `abandoned` meta is a record, not a
+/// chain member (history_ops R1 / R-b). Linear sessions have no such list,
+/// so G5 is unaffected; after a rollback resume the covering may still
+/// pass through the abandoned tip, and skipping it is what keeps the
+/// record from re-entering `oo log`.
 pub fn previous_commit(
     base: &Path,
     commit: &crate::value::Commit,
@@ -216,6 +222,16 @@ pub fn previous_commit(
     if let Some(p) = &commit.parent {
         return Ok(Some(p.clone()));
     }
+    let abandoned: HashSet<String> = commit
+        .meta
+        .abandoned
+        .iter()
+        .flatten()
+        .filter_map(|s| {
+            let hex = s.rsplit(':').next()?;
+            (hex.len() == 64).then(|| hex.to_lowercase())
+        })
+        .collect();
     let nodes = load_circles(base)?;
     let Some(start) = nodes
         .iter()
@@ -238,7 +254,7 @@ pub fn previous_commit(
             continue;
         };
         if let Some(d) = &n.commit_digest {
-            if d != digest {
+            if d != digest && !abandoned.contains(d) {
                 if let Ok(bytes) = hex::decode(d) {
                     if bytes.len() == 32 {
                         return Ok(Some(ContentHash::v1(bytes)));

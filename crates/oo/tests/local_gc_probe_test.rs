@@ -225,7 +225,27 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
         // D52: new commits store `parent: None`. The predecessor lives on
         // the commit circle (`commit:` + `parents:`). Dual-walk: JSON
         // `parent` when present (already in `r`), else the circle covering.
-        if let Some(p) = commit_pred_from_circles(dir, &d) {
+        // R-b: a digest in this commit's `abandoned` is a record, not a
+        // covering predecessor — skip it unless we are measuring the
+        // abandoned-as-root counterfactual.
+        let mut skip = BTreeSet::new();
+        if !follow_abandoned {
+            if let Some(arr) = json
+                .pointer("/meta/abandoned")
+                .or_else(|| json.get("abandoned"))
+                .and_then(|v| v.as_array())
+            {
+                for x in arr {
+                    if let Some(s) = x.as_str() {
+                        let hex = s.rsplit(':').next().unwrap_or(s);
+                        if hex.len() == 64 {
+                            skip.insert(hex.to_lowercase());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(p) = commit_pred_from_circles(dir, &d, &skip) {
             r.push(p);
         }
         stack.extend(r);
@@ -236,7 +256,7 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
 /// Independent of the engine walk: directory is truth. Finds the first
 /// other `commit:` digest reachable along `parents:` from the circle that
 /// names `digest`.
-fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
+fn commit_pred_from_circles(dir: &Path, digest: &str, skip: &BTreeSet<String>) -> Option<String> {
     let sp = dir.join(".oo").join("savepoints");
     let rd = fs::read_dir(&sp).ok()?;
     let mut nodes: BTreeMap<String, (Vec<String>, Option<String>)> = BTreeMap::new();
@@ -271,7 +291,7 @@ fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
             continue;
         };
         if let Some(d) = commit {
-            if d != digest {
+            if d != digest && !skip.contains(d) {
                 return Some(d.clone());
             }
         }
