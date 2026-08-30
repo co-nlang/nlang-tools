@@ -440,3 +440,61 @@ fn g4_squash_still_reaches_its_base() {
         "squash must still find its base on the graph; it said:\n{out}"
     );
 }
+
+// ---------------------------------------------------------------- G5 ----
+//
+// ADDED BY THE ACCEPTOR IN ACCEPTANCE ROUND 1 (2026-08-31). RED on the
+// first delivery. Test-modification rights on this function stay with the
+// acceptor; the delivery may not edit or ignore it.
+//
+// G3 was too narrow and I wrote it. It measures H1 immediately before and
+// immediately after ONE commit, starting from a linear state, and a
+// commit circle with one parent leaves H1 alone at that instant. The hole
+// does not open at the commit. It opens on the NEXT evolve, which sees
+// two tips -- the work circle and the commit circle -- and merges them.
+// So G3 is STABLY green on the defect, which is the exact failure this
+// protocol exists to catch, and it is mine.
+//
+// Measured on delivery 1: a session with no concurrent writers at all,
+// N evolves each followed by a commit, gives
+//
+//     N =  1  2  3  5  10
+//    H1 =  0  0  1  3   8
+//
+// Ten commits in a perfectly linear session assert EIGHT merges that
+// never happened. Under D53 a hole means "a fork that was reconciled",
+// so the record makes eight false statements about what the operator did.
+// The order's own words: an extra hole is a merge invented from nothing.
+//
+// Cause, and it is a deviation from S2 rather than a subtlety: S2 says the
+// commit circle's single parent is THE TIP IT COMMITTED. Delivery 1 made
+// it the PREVIOUS COMMIT CIRCLE (disclosed in N.1, so this is a disclosed
+// deviation, not a hidden one). That runs the commit circles as a second
+// chain beside the work chain: every commit forks, every following evolve
+// merges, one diamond per commit.
+//
+// With S2 as written the two chains are one alternating chain and H1 is
+// zero. This probe pins the invariant rather than the wiring, so any
+// shape that keeps a linear session linear will pass.
+
+#[test]
+fn g5_a_linear_session_has_no_holes() {
+    for n in [1usize, 2, 3, 5, 10] {
+        let s = scratch(&format!("g5-{n}"));
+        let d = s.path();
+        for i in 1..=n {
+            write(d, "e.n", &format!("f{i}: {i}\n"));
+            assert!(oo_ok(d, &["evolve", "e.n"]), "REACH: evolve {i} failed");
+            assert!(oo_ok(d, &["commit", "-m", "c"]), "REACH: commit {i} failed");
+        }
+        assert_eq!(
+            h1(d),
+            0,
+            "a session with no concurrent writers must leave no holes, but \
+             {n} evolve+commit pairs left H1 = {} over {} circles. A hole \
+             means a fork that was reconciled; nothing forked here.",
+            h1(d),
+            circles(d).len()
+        );
+    }
+}
