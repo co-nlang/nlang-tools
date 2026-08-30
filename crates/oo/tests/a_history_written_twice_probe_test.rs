@@ -498,3 +498,78 @@ fn g5_a_linear_session_has_no_holes() {
         );
     }
 }
+
+// ---------------------------------------------------------------- G6 ----
+//
+// ADDED BY THE ACCEPTOR IN ACCEPTANCE ROUND 2 (2026-08-31). RED on
+// delivery 2. Test-modification rights stay with the acceptor.
+//
+// This one is the ORDER's fault, not the delivery's. S2 asked for the
+// commit circle to have ONE parent and did not say which relation that
+// parent stands for. There are two, and no single edge is both:
+//
+//   * the TIME covering -- what was minted before what. Rollback leaves
+//     no mark on it, and correctly so: gen2..gen5 really did happen.
+//   * ANCESTRY -- what the current HEAD descends from. Rollback is a jump
+//     in this relation and in no other.
+//
+// Delivery 1 parented at the previous HEAD's commit circle: ancestry
+// right, topology wrong (G5). Delivery 2 parents at the committed tip:
+// topology right (H1 = 0 to twenty commits), ancestry wrong -- this. Both
+// did exactly what was asked. What was asked was under-specified.
+//
+// Measured on delivery 2, five commits, rollback to gen1, one more:
+//
+//   v0.40.0 baseline   `final gen1`                    (2 entries)
+//   delivery 2         `final gen4 gen3 gen2 gen1`     (5 entries)
+//
+// `CommitMeta.abandoned` names only the former HEAD (history_ops R1), so
+// filtering by it removes gen5 and the rest of the segment walks back in.
+// SPEC_08 6.2 R1 says the abandoned segment LEAVES history; here most of
+// it returns.
+//
+// And it is not a display problem. `oo squash` proves ancestry with the
+// same walk, so a rolled-past commit is accepted as a squash base --
+// measured: squashing onto the reappeared gen3 succeeded and produced a
+// squash commit. A privileged history rewrite acting on a chain the
+// operator explicitly rolled past.
+//
+// This probe pins the property, not the fix. Any shape that keeps the
+// abandoned segment out of HEAD's ancestry will pass.
+
+#[test]
+fn g6_a_rolled_back_segment_stays_out_of_the_log() {
+    let s = scratch("g6");
+    let d = s.path();
+    for i in 1..=5u32 {
+        write(d, "e.n", &format!("f{i}: {i}\n"));
+        assert!(oo_ok(d, &["evolve", "e.n"]), "REACH: evolve {i}");
+        assert!(oo_ok(d, &["commit", "-m", &format!("gen{i}")]), "REACH: commit {i}");
+    }
+    let log = oo(d, &["log"]);
+    let first = log
+        .lines()
+        .filter(|l| l.starts_with("commit "))
+        .last()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .expect("REACH: five commits in the log")
+        .to_string();
+
+    assert!(
+        oo_ok(d, &["rollback", &first, "--grant", "rollback"]),
+        "REACH: rollback to the first commit failed"
+    );
+    write(d, "z.n", "z: 9\n");
+    assert!(oo_ok(d, &["evolve", "z.n"]), "REACH: evolve after rollback");
+    assert!(oo_ok(d, &["commit", "-m", "final"]), "REACH: commit after rollback");
+
+    let after = oo(d, &["log"]);
+    for gone in ["gen2", "gen3", "gen4", "gen5"] {
+        assert!(
+            !after.contains(gone),
+            "SPEC_08 6.2 R1: the abandoned segment leaves history. After a \
+             rollback to the first commit, {gone} must not be on HEAD's \
+             chain, but the log reads:\n{after}"
+        );
+    }
+}
