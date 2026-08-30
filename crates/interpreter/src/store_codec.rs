@@ -160,10 +160,75 @@ pub fn encode_staged(combo: &ComboVal) -> String {
     format!("{FRAME} staged\n{}", write_combo(combo, 0))
 }
 
+/// Covering predecessors (D50). Empty set is the line `parents:` with no
+/// ids — never omitted, never `parent: _` (that spelling is Commit's).
+/// Ids are sorted lexicographically before write (Q15: the field is a set).
+pub fn encode_savepoint_parents_line(parents: &[String]) -> String {
+    let mut ids = parents.to_vec();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        "parents:".to_string()
+    } else {
+        format!("parents: {}", ids.join(" "))
+    }
+}
+
 /// Same combo body as staged; the kind marks a local savepoint (○), whose
-/// identity is the filename, not a CAID.
-pub fn encode_savepoint(combo: &ComboVal) -> String {
-    format!("{FRAME} savepoint\n{}", write_combo(combo, 0))
+/// identity is the filename, not a CAID. `parents` is a frame line, not a
+/// ComboVal field.
+pub fn encode_savepoint(combo: &ComboVal, parents: &[String]) -> String {
+    format!(
+        "{FRAME} savepoint\n{}\n{}",
+        encode_savepoint_parents_line(parents),
+        write_combo(combo, 0)
+    )
+}
+
+/// Ids listed on the savepoint frame's `parents:` line. `None` if the line
+/// is absent (v0.38/v0.39 files). Unsorted input is accepted and re-sorted
+/// — `parents` is a set; refusing would make a readable file unloadable.
+pub fn parse_savepoint_parents(bytes: &str) -> Option<Vec<String>> {
+    let rest = bytes.trim_start();
+    let after = rest
+        .strip_prefix(FRAME)
+        .and_then(|s| s.strip_prefix(" savepoint"))
+        .unwrap_or(rest);
+    for line in after.lines() {
+        let l = line.trim_start();
+        if l.starts_with('{') {
+            return None;
+        }
+        if let Some(ids) = l.strip_prefix("parents:") {
+            let mut v: Vec<String> = ids.split_whitespace().map(|s| s.to_string()).collect();
+            v.sort();
+            v.dedup();
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Combo text of a savepoint (after the frame and optional `parents:`).
+pub fn savepoint_combo_text(bytes: &str) -> &str {
+    let rest = bytes.trim_start();
+    let after = rest
+        .strip_prefix(FRAME)
+        .and_then(|s| s.strip_prefix(" savepoint"))
+        .unwrap_or(rest);
+    skip_savepoint_parents_line(after)
+}
+
+fn skip_savepoint_parents_line(body: &str) -> &str {
+    let body = body.trim_start_matches(['\r', '\n', ' ', '\t']);
+    if let Some(after) = body.strip_prefix("parents:") {
+        match after.find('\n') {
+            Some(i) => after[i + 1..].trim_start_matches(['\r', '\n', ' ', '\t']),
+            None => "",
+        }
+    } else {
+        body
+    }
 }
 
 /// One immutable working-set member (D48). Same combo body as staged; the
@@ -183,7 +248,7 @@ pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
         None => match after.strip_prefix(" staged") {
             Some(rest) => ("staged", rest),
             None => match after.strip_prefix(" savepoint") {
-                Some(rest) => ("staged", rest),
+                Some(rest) => ("savepoint", rest),
                 None => match after.strip_prefix(" injection") {
                     Some(rest) => ("staged", rest),
                     None => ("value", after),
@@ -191,10 +256,14 @@ pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
             },
         },
     };
-    let body = body.trim_start_matches(['\r', '\n', ' ', '\t']);
+    let body = if kind == "savepoint" {
+        skip_savepoint_parents_line(body)
+    } else {
+        body.trim_start_matches(['\r', '\n', ' ', '\t'])
+    };
     match kind {
         "commit" => Ok(StoreDocument::Commit(decode_commit_body(body)?)),
-        "staged" => match expr_to_value(&parse_body(body)?)? {
+        "staged" | "savepoint" => match expr_to_value(&parse_body(body)?)? {
             Value::Combo(c) => Ok(StoreDocument::Staged(c)),
             other => anyhow::bail!("staged document is not a combo: {other:?}"),
         },

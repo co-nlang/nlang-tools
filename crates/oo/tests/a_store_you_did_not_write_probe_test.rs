@@ -216,8 +216,9 @@ fn p1_the_layout_is_a_short_and_known_list() {
         ".oo/objects.format".to_string(), // object-encoding axis (O23)
         // Q-013 / D43: savepoints are durable by ruling -- every circle is
         // already persistent -- so they survive commit and live outside CAS.
-        // Declared here by the acceptor; the work order omitted the file.
-        ".oo/savepoints/LOG".to_string(),
+        // Q-014b / D50: LOG is gone (a second truth and a crash window).
+        // Order lives in the `parents:` frame line; identity is a random
+        // local id, not a counter.
         ".oo/savepoints/<local-id>".to_string(),
         // Q-014 / D48: working-set injections live outside CAS. A committed
         // store without leftover `~%Config` has none; the name is still
