@@ -191,8 +191,6 @@ const X0_ROOT: &str = "31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8d
 // wrong for reasons outside this arc (a process failing to start). A
 // lattice move that left no trace in the circle layer cannot.
 #[test]
-#[ignore = "RED at baseline: 120 successful lattice moves mint 96-115 circles \
-            (counter-derived ids collide and overwrite). Remove when D50/D51 land."]
 fn r1_every_lattice_move_leaves_a_circle() {
     const N: usize = 120;
     let d = scratch("r1");
@@ -246,8 +244,6 @@ fn r1_every_lattice_move_leaves_a_circle() {
 // correct. With a genesis present, `ids != {} and tips == {}` is a
 // corruption signal and exactly one root is the invariant.
 #[test]
-#[ignore = "RED at baseline: the savepoint frame has no `parents:` line. \
-            Remove when D50 lands."]
 fn r2_a_circle_declares_its_parents() {
     let d = scratch("r2");
     std::fs::write(d.join("g.n"), "g: 0\n").unwrap();

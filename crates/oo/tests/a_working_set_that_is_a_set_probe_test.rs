@@ -256,21 +256,54 @@ fn g2_the_circle_layer_is_left_alone() {
     let d = scratch("g2");
     std::fs::write(d.join("s.n"), "k: 7\n").unwrap();
     assert!(evolve_claims_success(&d, "s.n"), "REACH: evolve failed");
-    let log = d.join(".oo").join("savepoints").join("LOG");
+    // Q-014b removed `.oo/savepoints/LOG` (second truth / crash window).
+    // The property this pin always meant is D43: circles survive commit
+    // and this arc (Q-014) does not rewrite them. Read the directory.
+    let dir = d.join(".oo").join("savepoints");
+    let mut before: Vec<(String, Vec<u8>)> = std::fs::read_dir(&dir)
+        .expect("savepoints")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let n = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            n != "LOG" && !n.starts_with('.')
+        })
+        .map(|p| {
+            (
+                p.file_name().unwrap().to_string_lossy().to_string(),
+                std::fs::read(&p).unwrap(),
+            )
+        })
+        .collect();
+    before.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(
-        log.exists(),
-        "the savepoint LOG is gone. Q-014b owns that file, not this arc."
+        !before.is_empty(),
+        "the savepoint directory is empty. Q-014b owns identity and order, \
+         not this arc; an evolve must still mint a circle (D47)."
     );
-    let before = std::fs::read_to_string(&log).unwrap();
     oo(&d, &["commit", "-m", "s"]);
-    assert!(
-        log.exists(),
-        "SPEC_10 3.1: a savepoint MUST survive commit (D43). It did not."
-    );
+    let mut after: Vec<(String, Vec<u8>)> = std::fs::read_dir(&dir)
+        .expect("savepoints after commit")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let n = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            n != "LOG" && !n.starts_with('.')
+        })
+        .map(|p| {
+            (
+                p.file_name().unwrap().to_string_lossy().to_string(),
+                std::fs::read(&p).unwrap(),
+            )
+        })
+        .collect();
+    after.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
-        before,
-        std::fs::read_to_string(&log).unwrap(),
-        "commit rewrote the savepoint LOG. This arc must not touch it."
+        before, after,
+        "commit rewrote or dropped circles. SPEC_10 3.1: a savepoint MUST \
+         survive commit (D43). Q-014 must not touch the circle layer."
     );
 }
 

@@ -184,24 +184,83 @@ D51 的匯流情形在 CLI 層**沒有釘**——兩個並行注入同一個檔�
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照
-S1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+S1：`savepoint::record` 用 `injections::mint_id`（`SystemRandom` 16 位元組 → 32 hex），不再讀 `ids.len()+1`。探針 r1：120 並行相異欄位，宣稱成功＝○ 數。
+S2：框上永遠有 `parents:` 一行，在 combo 之外。空集合寫 `parents:`（無 id），不得省略、不得 `parent: _`。多元素寫出前按 id 字典序排序。decode **接受未排序並重排**（`parents` 是集合；拒絕會讓一份仍可讀的檔變得不能 `load`）。r2：每顆都有這一行，恰好一個根。
+S3：tip ＝ 目錄裡沒有被任何 `parents` 提到的檔名。跳過 `LOG` 與 `.` 開頭。沒有 `tips` 檔，寫者不以快取為輸入。
+S4：去重當且僅當 `parents` 恰為單一 tip T 且候選 combo 與 T 的 combo 相同。g1 仍綠（循序 no-op 不鑄）。匯流（`parents` ≥ 2）即使 combo 相同也鑄——Q3 有可重跑示範。
+S5：`ids ≠ ∅ ∧ tips = ∅` 時 `record` 回 `savepoint cycle: ids nonempty and tips empty`，evolve rc＝1。不鑄第二顆創世。
+S6：不再寫 `LOG`；寫入成功後若有殘留則刪。`p1` 從預期名單拿掉 `.oo/savepoints/LOG`。Q-014 的 `g2` 改讀目錄裡的 ○ 檔位元組（commit 前後相等），不再釘 LOG 這個檔。
+S7：未做。每次 `record` 走 S3。N＝100 全檔掃描 1.65 ms，不必快取。
 
 ### N.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+無 rustfmt 整倉誤傷（`cargo fmt` 曾掃到別檔，已 checkout 還原；只 `rustfmt` 了 `savepoint.rs` 與 `store_codec.rs`）。
+`p1`／Q-014 `g2` 的改動是 S6 指名的版圖，不是順手。
+寫入時刪殘留 `LOG`：讓舊倉打開後不再留第二份真相。
 
 ### N.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。r1 寬度 120 未改。
 
 ### N.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+
+**Q1 — D51 成長。** N＝100 相異欄位並行（標籤二進位 vs 本弧 debug `oo`）：
+
+| | 宣稱成功 | ○ 檔數 | `savepoints/` 檔位元組 | LOG |
+| :-- | --: | --: | --: | :-- |
+| 前（v0.39.0） | 100 | **90** | 18 884 | 有 |
+| 後 | 100 | **100** | 16 400 | 無 |
+
+並行相異欄位補齊的是**檔數**（遺漏 → 一筆一檔），不是偵察 Q7 那條循序 O(N²) 曲線。循序仍是每一筆存當下整個工作集；D51 額外成長出現在「同 combo、不同 `parents`」的匯流（Q3），不是這 100 筆相異欄位。沒有刪 ○ 的路徑，曲線仍只上不下。
+
+**Q2 — 既有倉。** 三條路都報價，引擎走了第一條：
+
+1. **缺 `parents:` 視為按 16-hex 檔名排序的鏈**（舊 `mint_id` 就是這個序）。第一顆空父，其後各指前一顆。第一顆新 ○ 的 `parents` 是舊鏈的 tip，不是 N 路假匯流。約 20 行，已做。舊引擎讀新檔：`load` 本就是死碼；若它解 combo，新的 `parents:` 行會讓舊 `decode` 在跳過框之後撞上 `parents:` 而不是 `{`——**舊引擎讀 ○ 會壞**，但產品路徑不讀。
+2. **一次性遷移**：打開倉時重寫每一顆舊 ○、補上推導的 `parents:`。約 +40–60 行 ＋ 遷移探針。把「讀舊檔」變成「寫舊檔」，失敗窗更大。
+3. **不相容、升 `layout=`**：舊引擎拒新倉，新引擎拒無 `parents:` 的 ○。探針／哨兵／遷移說明一起動。最貴、最清楚。
+
+沒有選「最省事」當唯一答案；1 是相容讀法，2／3 留給要對舊倉做手術的時候。
+
+**Q3 — D51 匯流示範。** CLI 並行同一檔會被排程器決定鑄一顆還是兩顆，不能當針。示範改為：**種一個分叉，再循序 no-op**——不受排程影響。
+
+```bash
+OO=target/debug/oo
+W=$(mktemp -d); export OO_IDENTITY="$W/id" OO_NODE_HOME="$W/nh"; cd "$W"
+printf 'g: 0\n' > g.n
+$OO evolve g.n
+G=$(ls .oo/savepoints | grep -v '^\.')
+combo=$(python3 -c "import pathlib; t=pathlib.Path('.oo/savepoints/$G').read_text(); print(t[t.index('{'):], end='')")
+printf '#nlang/store savepoint\nparents: %s\n%s' "$G" "$combo" > .oo/savepoints/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+printf '#nlang/store savepoint\nparents: %s\n%s' "$G" "$combo" > .oo/savepoints/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+$OO evolve g.n
+# 第四顆 ○ 的框是：
+# parents: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+# { g: 0 }
+# combo 與兩個 tip 相同，parents 有兩個 ⟹ 鑄。循序，可重跑。
+```
+
+**Q4 — `oo log --graph`。** 畫得出來。節點＝目錄裡的 ○ 檔名，邊＝`parents:`。兩個孩子同一組父＝分叉；一個孩子兩個父＝匯流（Q3 第四顆）。未實作該動詞。
+
+**Q5 — `layout=`。** 讀法：**本弧不升。** 今天仍是 `layout=2`。理由：Q-013 加整個目錄時就沒升；○ 層產品路徑仍唯寫，哨兵擋的是舊引擎打開新倉，而舊引擎本來就不讀 ○；升版的代價是舊 `oo` 拒新倉（advert／affiliation 的 `p7` 還釘「本情境不升版」——那是別支針，但說明升版不是默認）。框變了、LOG 沒了，**這是磁碟形改變**，該不該進哨兵由驗收方補規格宣告時裁。代價：不升＝靠探針名單（`p1` 已改）＋新引擎容忍舊鏈（Q2.1）；升＝舊倉要遷移或雙讀。
+
+**Q6 — 對抗題。**
+* 懸空前驅：查了。純導出不把幽靈當 tip；已存在的邊若指向缺檔，圖上是缺角，新 `record` 不修復。不再有 LOG 那兩個崩潰窗（單次 `atomic_write`）。
+* `rollback`／`squash`：查了，沒事（○ 仍不動）。
+* `oo migrate`：查了，只重寫 `format`／`objects.format`，不碰 ○。
+* `oo gc`：查了，仍不走訪 `savepoints/`。
+* commit 的 `~%Config` 再暫存：**查了，仍會鑄一顆更小的 ○**（combo 變成只有 Config，與唯一 tip 的工作集快照不同，S4 鑄）。不是新洞，是第一輪 Q4 還在。g1 不管這條路徑。
+* 多行程共用 `.oo/`：查了。隨機 id 不再互覆寫；同一組 tip 上並行鑄＝分叉（D50 資料）。
+* `readdir` 半截檔：查了。跳過 `.partial-*`；`atomic_write` 是 fsync 後才 rename，看見檔名則內容完整。
+* **驗收方沒寫到的：** `ids ≠ ∅ ∧ tips = ∅` 已拒絕（S5）。**缺 `parents:` 且檔名不是 16-hex 計數**的檔被當成空父——那會變成額外的根。本引擎不鑄這種檔；手種或外語寫入才會碰到。
 
 ### N.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+拿掉 r1、r2 的 `#[ignore]`。除此之外本檔一字未動（無 rustfmt）。
+未改 N＝120。
 
 ### N.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：220 target 皆 ok；**2118 passed／0 failed／0 ignored**。
+`^error`：**0**。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
+身分：`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`，物件 **3**，標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（g4）。known-answer：debug 與標籤二進位皆 `3`。
 
 ### N.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無條文草案。D50／D51 已裁。Q5 的 `layout=` 與 Q2 舊倉要不要從「讀時推導」改成遷移，留給驗收方。判準 (b) 與 ⊥ 款本弧不兌現，Inbox 那列不結。
