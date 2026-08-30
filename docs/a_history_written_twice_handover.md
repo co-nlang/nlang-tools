@@ -164,14 +164,111 @@ D50 之後 ○ 是 **DAG**：「base 是 HEAD 的祖先」＝ **圖上可達**�
 
 ### N.1 射程逐項對照
 
+**S1.** 框上加 `commit: <64-hex>`（小寫，無 `hash:sha256:` 前綴）。無此項的舊 ○（含 v0.38／v0.39 連 `parents:` 都沒有的）仍走 `load_circles` 的既有回退。combo 本文由 `skip_savepoint_frame_lines` 跳過 `parents:`／`commit:` 才開始，encode→decode→encode 的 combo 位元組路徑未改。身分仍是檔名，不進 `objects/`。
+
+**S2.** 順序是 `put_commit(C)` → `set_head` → `record_commit`。提交 ○ 恰一個父：先前 HEAD 的提交 ○（若有），否則字典序最小 tip。永遠鑄。G3 綠。
+
+**S3.** 普通／squash／refine 三處 `Commit::new`／結構字面都傳 `parent: None`。欄位仍在。R2 綠：第二顆 commit 物件位元組不含第一顆 digest。
+
+**S4.** `circle_id_for_commit`：每次從目錄建（commit digest → 本地 id）。不是耐久快取。
+
+**S5.** 雙讀在 `previous_commit`：有 `parent` 走 `parent`，沒有就沿提交 ○ 的 `parents:` BFS 找另一顆 `commit:`。入口永遠 HEAD。五個讀者：`Ouroboros::log`、`commits_after`、squash 祖先、refine 影子掃描（深度 16 不變）。`oo inspect` 的 `parent:` **沒改**（仍印欄位，新 commit 是 `(none)`）。
+
+**S6.** `commit_is_ancestor`：DAG 可達，visited 集合切環（commit digest）。G4 綠。
+
+**S7.** 見 N.4 Q1 旁的混鏈紀錄：v0.40.0 三顆舊倉，新引擎 `oo log` **三列都在**（舊物件仍設 `parent`）。在上面再 commit 一顆之後，走訪只印新的那一顆；舊三顆物件仍在，`oo inspect` 仍可。
+
+另：`gc::mark` 是第六個讀者，工單沒列。已雙讀，否則歷史 commit 會被當成垃圾。見 N.3。
+
 ### N.2 順手改動（逐項指名）
+
+*   **Q-014 `g2_the_circle_layer_is_left_alone`、Q-014b `g2_circles_outlive_the_commit`：** 從「commit 前後 ○ **檔數相等**」改成「commit 前的檔位元組仍在，允許變多」。本弧 S2 必鑄一顆提交 ○，檔數相等會為對的理由紅。
+*   **`local_gc_probe_test.rs` 的獨立 walker：** 同樣雙讀 `commit:`／`parents:`。不改的話 r9 會在乾淨倉上報「already has garbage」（walker 只看 JSON `parent`，只走到 HEAD+root+標準根）。
+*   **`verdict_must_gate_probe_test.rs` 的 `chain()`：** 同樣雙讀。它原本只讀物件上的 `parent`，三顆 commit 只看到 HEAD，C2／R1／P1 等全部越界。
+*   **`record_commit` 在沒有 tip 時鑄空父根 ○**（不報錯）。單元測試的 `refine`／`commit` 不經 `save_staged`，目錄裡沒有工作集 ○；工單 S2 的「恰一個父」是 CLI 有 tip 的情況。零個父不是兩個父，G3 不管這一格。
+*   rustfmt 只跑了本弧動過的檔（`savepoint.rs`／`store_codec.rs`／`universe.rs`／`gc.rs`／`main.rs`／上述探針）。`lib.rs` 整檔 fmt 會重排 `apply_morphism`／`force_memo`，已還原後只補 `log()`。**未** rustfmt Q-015 探針。
 
 ### N.3 工單哪裡是錯的
 
+1.  **S5 漏了 GC。** `gc::mark` 從 HEAD 沿物件裡的 CAS 邊走。`parent: None` 之後歷史 commit 從物件圖消失，只剩 HEAD+root+標準根（實測 3／9）。不改 `mark`，`oo gc` 會把「`oo log` 還走得到的歷史」收掉。S7 那句「不要讓人以為歷史被 gc 掉了」在 sweep 之後會變成真的。本弧把它納進雙讀。
+2.  **S7 的「看不見」對純舊倉不成立。** 雙讀「有 `parent` 就走 `parent`」，v0.40.0 三顆全部可見。走訪停在**新引擎在舊倉上又 commit 一顆之後**（新物件 `parent: None`，提交 ○ 的父是工作集 tip，上面沒有舊 commit 的 `commit:`）。
+3.  **混鏈 squash：** 舊 base 沒有提交 ○ 時，`record_commit` 會退到最小 tip，squash 那顆 ○ 不一定掛在 base 的歷史上。本弧沒修（S7 只要求 log）。G4 只覆蓋新引擎自己鑄的鏈。
+
 ### N.4 工單指名要你回答的問題
+
+**Q1.** 採工單寫的那一個：`put_commit` → `set_head` → 鑄提交 ○。
+
+中間態：
+
+| 步 | 磁碟 | `oo log` |
+| :-- | :-- | :-- |
+| 只有 `put_commit` | 物件在，HEAD 仍指舊的 | 印舊 HEAD |
+| `set_head` 已寫、提交 ○ 未鑄 | HEAD 指 C，C 的物件在，沒有 `commit:` 框 | **印 C，然後停** |
+| 三步完成 | 提交 ○ 在 | 印 C，再沿 ○（或舊 `parent`）下走 |
+
+用 `cp`／`rm` 重建第二格（兩顆 commit 之後刪掉第二顆的提交 ○，不假裝崩機）：
+
+```
+commit hash:sha256:v1:d1f948c7ae82c08fe9309b7e086c7ec3a6e7c450ede28a4fb909d6218f2204a4
+    message: second
+    Date: 2026-08-30T18:43:20.396Z
+```
+
+只這一列。第一顆的物件與提交 ○ 都還在，走訪從 HEAD 找不到下一個 `commit:` 就停。`oo inspect` 那顆 HEAD 仍是 `parent: (none)`。
+
+**S7 逐字。** 標籤二進位 `oo v0.40.0`（known-answer `3`）造三顆；新引擎 `oo v0.40.0-730-g2fc10ad+`（known-answer `3`）讀。
+
+舊倉、新 `oo log`（三列，與標籤二進位相同）：
+
+```
+commit hash:sha256:v1:1f624b5e8a12a6855f1f4ea3373af2e3b7b523f750897f6d1371facc3b81d3c1
+    message: gen3
+    Date: 2026-08-30T18:42:54.663Z
+
+commit hash:sha256:v1:8f192743a6d5d9b6e2bfc6b74ddc537253f3b818386abc3903fc581954db2113
+    message: gen2
+    Date: 2026-08-30T18:42:54.611Z
+
+commit hash:sha256:v1:c448679ed00a772dccb34c86ab0f5a41a2b7976202b52252ab4daf8682f331e3
+    message: gen1
+    Date: 2026-08-30T18:42:54.554Z
+```
+
+在同一倉上用新引擎再 `commit -m gen4` 之後，新 `oo log` **只剩一列**：
+
+```
+commit hash:sha256:v1:875e23d67917a825f2dc537c3bef516a694894e20c33b9179002422167bc9c31
+    message: gen4
+    Date: 2026-08-30T18:42:55.069Z
+```
+
+gen1–gen3 **不是被 gc 掉**：`oo inspect hash:sha256:v1:1f624b5e8a12a6855f1f4ea3373af2e3b7b523f750897f6d1371facc3b81d3c1` 仍印 `kind: commit` 與它的舊 `parent:`。走訪停是因為 gen4 的 `parent` 是 `None`，它的提交 ○ 父是一顆工作集 ○（`parents: 16e3c191…`），上面沒有舊三顆的 `commit:`。標籤二進位再讀這個倉也只印 gen4（它只走 `Commit.parent`）。
+
+**Q2.** visited 集合，鍵是 **commit digest**，沒有深度上限。`tips_of` 的自指檢查只擋「目錄非空而沒有 tip」；可達性走訪自己仍可能在 DAG 裡繞。上限會讓夠深的合法祖先變成 `not an ancestor`（G4 那種）。visited 讓環終止成「不是祖先」，與 `log`／`commits_after` 同一套。
+
+**Q3.** **目錄是真相。** 適用上一弧同一條規則。`circle_id_for_commit`／`previous_commit` 每次 `load_circles`，沒有 `tips` 檔、沒有旁路索引。它是一次呼叫內的查找，不是快取。核對以 `savepoints/` 為準。
+
+**Q4.** **沒改。** 新 commit 印 `parent: (none)`。沒有改成印來源 ○（那是零命中的 CLI 面）。● 的血緣在提交 ○ 的 `parents:` 與 `oo log` 的雙讀；`oo inspect` 看一顆舊物件時仍印欄位裡的 `parent:`（混鏈 S7 的 gen3 即是）。
+
+**Q5.** **空 combo**（`{}`）。工作集快照在它所提交的那個 tip 上；提交 ○ 只註記「我變成了 C」。空 combo 不會等於工作集快照，所以 D51 不會把後來的 evolve 當成與這顆 tip 相同而跳過，也不會把循序 no-op 誤判成「跟提交事件一樣」。G1 仍綠。
+
+**Q6.** 報價：共用索引 40–70、squash 祖先 25–40、五讀者合計 110–200。實作：`circle_id_for_commit` 7 行（每次掃目錄，沒做耐久索引，低於 40–70）；`commit_is_ancestor` 26 行（落在 25–40）；五讀者共享 `previous_commit`（42 行）＋ `log`／`commits_after`／refine 的呼叫點，inspect 0 行，合計低於 110–200——因為索引沒做成旁路檔、inspect 維持印欄位。**工單沒報價的 GC 雙讀 +32 行**（含探針 walker）。`savepoint.rs` 本檔 +166／−35。
 
 ### N.5 探針
 
+拿掉 r1、r2 的 `#[ignore]`。除此之外本檔一字未動（無 rustfmt）。6／6 綠。
+
+D53「呈現圖 $E-V+C$＝鑄造圖」本弧無探針（無呈現圖）；G3 只釘鑄造圖那一半。混鏈由 S7 手跑，不在 `cargo test` 裡。
+
 ### N.6 數字
 
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：221 target 皆 ok；**2124 passed／0 failed／0 ignored**。
+`^error`：**0**。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
+身分：`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`，物件 **3**，標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（g2）。known-answer：標籤 `oo v0.40.0` 與本弧 `oo v0.40.0-730-g2fc10ad+` 皆 `3`。
+
 ### N.7 你認為需要改規格之處
+
+無條文草案。D52／D53／D54 已裁。建議驗收方在下一份清單把 **GC 標成歷史走訪的讀者**（與 log／squash 同級），否則 `parent: None` 會讓「走訪看得到、sweep 收得到」變成同一條邊的兩種讀法。混鏈上再 commit 之後 log 停住——這是雙讀加「新 ○ 不認識舊 `parent`」的後果，不是 GC；不要把它寫成「歷史被收集了」。判準 (b) 與 ⊥ 款、Q-016、Q-018、`--graph` 本弧不兌現。
+

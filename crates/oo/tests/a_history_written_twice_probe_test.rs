@@ -242,7 +242,6 @@ fn object_text(d: &Path, digest: &str) -> String {
 // it is green before the work starts, the premise is wrong.
 
 #[test]
-#[ignore]
 fn r1_a_commit_leaves_a_circle_that_names_it() {
     let s = scratch("r1");
     let d = s.path();
@@ -275,7 +274,6 @@ fn r1_a_commit_leaves_a_circle_that_names_it() {
 // instead -- pinning the CLI would go red for the wrong reason.
 
 #[test]
-#[ignore]
 fn r2_a_new_commit_does_not_name_its_predecessor() {
     let s = scratch("r2");
     let d = s.path();

@@ -1,6 +1,7 @@
 //! Local store garbage collection (local_gc arc).
 //!
-//! Roots: HEAD → commit chain (`parent`) + each commit's `root` tree, then
+//! Roots: HEAD → commit predecessors (dual-walk: `Commit.parent` if set,
+//! else the commit circle's covering, D52) + each commit's `root` tree, then
 //! every digest referenced by those value objects. **`CommitMeta.abandoned`
 //! is not a root** (R-b). Forgetting never runs automatically (R-c).
 //!
@@ -225,6 +226,10 @@ pub fn mark(
                         stack.push_back(r);
                     }
                 }
+                // D52: `parent: None` contributes zero bytes, so JSON refs
+                // no longer name the predecessor. Dual-walk the commit
+                // circle; `previous_commit` still prefers a set `parent`.
+                push_commit_predecessor(store, base_dir, &d, &seen, &mut stack);
             }
             VerifiedObject::CaidMismatch => {
                 integrity.push(format!(
@@ -240,6 +245,31 @@ pub fn mark(
         }
     }
     (seen, integrity)
+}
+
+fn push_commit_predecessor(
+    store: &ObjectStore,
+    base_dir: &Path,
+    digest: &str,
+    seen: &BTreeSet<String>,
+    stack: &mut VecDeque<String>,
+) {
+    let Ok(raw) = hex::decode(digest) else {
+        return;
+    };
+    if raw.len() != 32 {
+        return;
+    }
+    let Ok(commit) = store.get_commit(&ContentHash::v1(raw)) else {
+        return;
+    };
+    let Ok(Some(p)) = crate::savepoint::previous_commit(base_dir, &commit, digest) else {
+        return;
+    };
+    let pd = hex::encode(&p.digest);
+    if !seen.contains(&pd) {
+        stack.push_back(pd);
+    }
 }
 
 /// Plan a collection without deleting.

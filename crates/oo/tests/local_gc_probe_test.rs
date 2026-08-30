@@ -44,7 +44,7 @@
 // it behind the same capability gate as `#squash`, because deleting bytes is
 // at least as consequential as making them unreachable.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -222,9 +222,62 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
         };
         let mut r = Vec::new();
         refs_of(&json, follow_abandoned, &mut r);
+        // D52: new commits store `parent: None`. The predecessor lives on
+        // the commit circle (`commit:` + `parents:`). Dual-walk: JSON
+        // `parent` when present (already in `r`), else the circle covering.
+        if let Some(p) = commit_pred_from_circles(dir, &d) {
+            r.push(p);
+        }
         stack.extend(r);
     }
     seen
+}
+
+/// Independent of the engine walk: directory is truth. Finds the first
+/// other `commit:` digest reachable along `parents:` from the circle that
+/// names `digest`.
+fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
+    let sp = dir.join(".oo").join("savepoints");
+    let rd = fs::read_dir(&sp).ok()?;
+    let mut nodes: BTreeMap<String, (Vec<String>, Option<String>)> = BTreeMap::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = p.file_name()?.to_str()?.to_string();
+        if name == "LOG" || name.starts_with('.') {
+            continue;
+        }
+        let text = fs::read_to_string(&p).ok()?;
+        let parents =
+            nlang_interpreter::store_codec::parse_savepoint_parents(&text).unwrap_or_default();
+        let commit = nlang_interpreter::store_codec::parse_savepoint_commit(&text);
+        nodes.insert(name, (parents, commit));
+    }
+    let start = nodes
+        .iter()
+        .find(|(_, (_, c))| c.as_deref() == Some(digest))?
+        .0
+        .clone();
+    let mut seen = BTreeSet::new();
+    seen.insert(start.clone());
+    let mut q: VecDeque<String> = nodes.get(&start)?.0.clone().into();
+    while let Some(pid) = q.pop_front() {
+        if !seen.insert(pid.clone()) {
+            continue;
+        }
+        let Some((parents, commit)) = nodes.get(&pid) else {
+            continue;
+        };
+        if let Some(d) = commit {
+            if d != digest {
+                return Some(d.clone());
+            }
+        }
+        q.extend(parents.iter().cloned());
+    }
+    None
 }
 
 fn bytes_of(dir: &Path, set: &BTreeSet<String>) -> u64 {
