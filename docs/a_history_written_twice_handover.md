@@ -548,3 +548,28 @@ D54 已裁：鑄造圖節點＝○、邊＝`parents:`。**祖先邊與 `commit:`
 
 全跑 ×3 `--no-fail-fast`／conformance／身分紅線／**跨版本混鏈（v0.40.0 造倉、新引擎讀）**／
 **rollback 與 squash 的基線對照**（本回合抓到的那兩組，逐字並排）。
+
+---
+
+## R2. 交付回報（修補回合 2；交付方填。本行以上一字不得動）
+
+### R2.1 射程
+
+**R2-1.** 框上加 `ancestor: <本地 id>`（與 `parents:` 同一名字空間，與 64-hex 的 `commit:` 可分辨）。第一顆 commit 缺席這一項，不是空字串。`skip_savepoint_frame_lines` 連 `parents:`／`commit:`／`ancestor:` 一併跳過，combo encode↔decode 路徑未改。祖先邊**不是** `parents:`，`h1()` 不計（G5 綠）。
+
+**R2-2.** `record_commit` 兩條邊分開鑄：`parents:` ＝所提交的 tip（交付 2，未改）；`ancestor:` ＝鑄造當下 `self.head` 的提交 ○（交付 1 的規則）。squash 的 covering 改為唯一 tip，祖先掛 base 的提交 ○（否則 covering 掛 base 會讓 HEAD 的提交 ○ 仍是 tip，下一次 evolve 再開洞）。六個讀者走祖先：`previous_commit` 有 `Commit.parent` 走 parent，否則讀 `ancestor:` 那顆 ○ 的 `commit:`。入口仍是 HEAD。`oo inspect` 的 `parent:` 沒改。
+
+**R2-3.** 量完：**不再需要 `abandoned` 過濾。** 祖先邊指向回溯後的 HEAD 提交 ○，被放棄區段不在鏈上。已從 `previous_commit` 與 `local_gc` walker 拿掉；不是死碼。history_ops 那支「abandoned 離開 parent chain」與 G6 皆綠。
+
+### R2.2 探針
+
+未編輯 Q-015 探針（G5／G6 屬驗收方）。未 rustfmt。**8／8**（含 G6）。
+
+### R2.3 數字
+
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：221 target 皆 ok；**2126 passed／0 failed／0 ignored**（比修補 1 多 1，就是 G6）。
+`^error`：**0**。
+（第一次全跑 `identity_persistence::pin_concurrent_first_mint_yields_one_key` 因並行 mint 撞到半截 PKCS#8 紅了一次；重跑該檔 16／16，第二次全跑 exit 0。與本弧無關。）
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
+身分：G2 綠。Q-015 探針一字未動。

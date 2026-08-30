@@ -44,7 +44,7 @@
 // it behind the same capability gate as `#squash`, because deleting bytes is
 // at least as consequential as making them unreachable.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -222,30 +222,9 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
         };
         let mut r = Vec::new();
         refs_of(&json, follow_abandoned, &mut r);
-        // D52: new commits store `parent: None`. The predecessor lives on
-        // the commit circle (`commit:` + `parents:`). Dual-walk: JSON
-        // `parent` when present (already in `r`), else the circle covering.
-        // R-b: a digest in this commit's `abandoned` is a record, not a
-        // covering predecessor — skip it unless we are measuring the
-        // abandoned-as-root counterfactual.
-        let mut skip = BTreeSet::new();
-        if !follow_abandoned {
-            if let Some(arr) = json
-                .pointer("/meta/abandoned")
-                .or_else(|| json.get("abandoned"))
-                .and_then(|v| v.as_array())
-            {
-                for x in arr {
-                    if let Some(s) = x.as_str() {
-                        let hex = s.rsplit(':').next().unwrap_or(s);
-                        if hex.len() == 64 {
-                            skip.insert(hex.to_lowercase());
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(p) = commit_pred_from_circles(dir, &d, &skip) {
+        // D55: JSON `parent` when present (already in `r`), else the
+        // ancestor annotation. Covering (`parents:`) is not ancestry.
+        if let Some(p) = commit_pred_from_circles(dir, &d) {
             r.push(p);
         }
         stack.extend(r);
@@ -253,13 +232,13 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
     seen
 }
 
-/// Independent of the engine walk: directory is truth. Finds the first
-/// other `commit:` digest reachable along `parents:` from the circle that
-/// names `digest`.
-fn commit_pred_from_circles(dir: &Path, digest: &str, skip: &BTreeSet<String>) -> Option<String> {
+/// Independent of the engine walk: directory is truth. Follows the
+/// `ancestor:` annotation on the circle that names `digest`.
+fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
     let sp = dir.join(".oo").join("savepoints");
     let rd = fs::read_dir(&sp).ok()?;
-    let mut nodes: BTreeMap<String, (Vec<String>, Option<String>)> = BTreeMap::new();
+    let mut commit_of: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut ancestor_of: BTreeMap<String, Option<String>> = BTreeMap::new();
     for e in rd.flatten() {
         let p = e.path();
         if !p.is_file() {
@@ -270,34 +249,26 @@ fn commit_pred_from_circles(dir: &Path, digest: &str, skip: &BTreeSet<String>) -
             continue;
         }
         let text = fs::read_to_string(&p).ok()?;
-        let parents =
-            nlang_interpreter::store_codec::parse_savepoint_parents(&text).unwrap_or_default();
-        let commit = nlang_interpreter::store_codec::parse_savepoint_commit(&text);
-        nodes.insert(name, (parents, commit));
+        commit_of.insert(
+            name.clone(),
+            nlang_interpreter::store_codec::parse_savepoint_commit(&text),
+        );
+        ancestor_of.insert(
+            name,
+            nlang_interpreter::store_codec::parse_savepoint_ancestor(&text),
+        );
     }
-    let start = nodes
+    let start = commit_of
         .iter()
-        .find(|(_, (_, c))| c.as_deref() == Some(digest))?
+        .find(|(_, c)| c.as_deref() == Some(digest))?
         .0
         .clone();
-    let mut seen = BTreeSet::new();
-    seen.insert(start.clone());
-    let mut q: VecDeque<String> = nodes.get(&start)?.0.clone().into();
-    while let Some(pid) = q.pop_front() {
-        if !seen.insert(pid.clone()) {
-            continue;
-        }
-        let Some((parents, commit)) = nodes.get(&pid) else {
-            continue;
-        };
-        if let Some(d) = commit {
-            if d != digest && !skip.contains(d) {
-                return Some(d.clone());
-            }
-        }
-        q.extend(parents.iter().cloned());
+    let aid = ancestor_of.get(&start)?.as_ref()?;
+    let d = commit_of.get(aid)?.as_ref()?;
+    if d == digest {
+        return None;
     }
-    None
+    Some(d.clone())
 }
 
 fn bytes_of(dir: &Path, set: &BTreeSet<String>) -> u64 {

@@ -1082,14 +1082,16 @@ impl Universe {
         commit.kind = kind;
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
-        // D52: the commit is an event, so it earns its own circle. Order is
-        // put_commit → set_head → mint (Q15). Log's entry is HEAD, so a
-        // crash here still shows C. Parent is the tip this commit submitted
-        // (S2): unique / min tip, usually the workset circle just evolved.
-        // Parenting at the previous HEAD's commit-circle instead left that
-        // workset circle as a second tip; the next evolve merged them and
-        // opened a hole in a linear session (acceptance A.1 / G5).
-        crate::savepoint::record_commit(base_dir, &commit_hash, None)?;
+        // D52/D55: put_commit → set_head → mint. Covering parent is the
+        // workset tip just submitted (S2 / G5). Ancestor is HEAD's
+        // commit-circle at mint time (`self.head` is still the previous
+        // HEAD) — log/squash/gc walk that annotation, not `parents:`.
+        let ancestor = self.head.as_ref().and_then(|h| {
+            crate::savepoint::circle_id_for_commit(base_dir, &hex::encode(&h.digest))
+                .ok()
+                .flatten()
+        });
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
         self.root = new_root;
         self.standard_root = standard;
         // Workset injections are consumed. Config is session-scoped (O37):
@@ -1278,9 +1280,11 @@ impl Universe {
         commit.kind = CommitKind::Squash;
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
-        let parent_circle =
+        // Covering: unique tip (HEAD's commit-circle). Ancestor: the base,
+        // so log/squash skip the compressed range without opening a hole.
+        let ancestor =
             crate::savepoint::circle_id_for_commit(base_dir, &hex::encode(&base.digest))?;
-        crate::savepoint::record_commit(base_dir, &commit_hash, parent_circle.as_deref())?;
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
         // Root value is the same as before; reload for consistency.
         self.root = engine
             .store
@@ -1608,11 +1612,12 @@ impl Universe {
         };
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
-        // Same as ordinary commit (S2): parent the unique tip. After a
-        // linear session that tip is the previous commit-circle; passing
-        // HEAD's circle explicitly would re-open A.1 whenever a workset
-        // circle is still a tip.
-        crate::savepoint::record_commit(base_dir, &commit_hash, None)?;
+        let ancestor = self.head.as_ref().and_then(|h| {
+            crate::savepoint::circle_id_for_commit(base_dir, &hex::encode(&h.digest))
+                .ok()
+                .flatten()
+        });
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
         self.head = Some(commit_hash.clone());
 
         // Step 3: update RefineMap

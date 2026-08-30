@@ -177,13 +177,26 @@ pub fn encode_savepoint_parents_line(parents: &[String]) -> String {
 /// Same combo body as staged; the kind marks a local savepoint (○), whose
 /// identity is the filename, not a CAID. `parents` is a frame line, not a
 /// ComboVal field. `commit` is the 64-hex digest of the commit this circle
-/// became (D52); omitted when the circle is not a commit event.
-pub fn encode_savepoint(combo: &ComboVal, parents: &[String], commit: Option<&str>) -> String {
+/// became (D52); omitted when the circle is not a commit event. `ancestor`
+/// is the local id of HEAD's commit-circle at mint time (D55); omitted
+/// on the first commit and on every evolve circle. It is an annotation,
+/// not a covering edge — `h1()` must not count it.
+pub fn encode_savepoint(
+    combo: &ComboVal,
+    parents: &[String],
+    commit: Option<&str>,
+    ancestor: Option<&str>,
+) -> String {
     let mut frame = encode_savepoint_parents_line(parents);
     if let Some(d) = commit {
         frame.push('\n');
         frame.push_str("commit: ");
         frame.push_str(d);
+    }
+    if let Some(id) = ancestor {
+        frame.push('\n');
+        frame.push_str("ancestor: ");
+        frame.push_str(id);
     }
     format!("{FRAME} savepoint\n{frame}\n{}", write_combo(combo, 0))
 }
@@ -237,7 +250,28 @@ pub fn parse_savepoint_commit(bytes: &str) -> Option<String> {
     None
 }
 
-/// Combo text of a savepoint (after the frame, `parents:`, and optional `commit:`).
+/// Local id on the `ancestor:` frame line. `None` if absent (evolve
+/// circles, the first commit, and every ○ from before D55).
+pub fn parse_savepoint_ancestor(bytes: &str) -> Option<String> {
+    let rest = bytes.trim_start();
+    let after = rest
+        .strip_prefix(FRAME)
+        .and_then(|s| s.strip_prefix(" savepoint"))
+        .unwrap_or(rest);
+    for line in after.lines() {
+        let l = line.trim_start();
+        if l.starts_with('{') {
+            return None;
+        }
+        if let Some(rest) = l.strip_prefix("ancestor:") {
+            return rest.split_whitespace().next().map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// Combo text of a savepoint (after the frame, `parents:`, optional
+/// `commit:`, and optional `ancestor:`).
 pub fn savepoint_combo_text(bytes: &str) -> &str {
     let rest = bytes.trim_start();
     let after = rest
@@ -257,7 +291,10 @@ fn skip_savepoint_frame_lines(body: &str) -> &str {
             return body;
         };
         let line = body[..nl].trim_start();
-        if line.starts_with("parents:") || line.starts_with("commit:") {
+        if line.starts_with("parents:")
+            || line.starts_with("commit:")
+            || line.starts_with("ancestor:")
+        {
             body = body[nl + 1..].trim_start_matches(['\r', '\n', ' ', '\t']);
             continue;
         }

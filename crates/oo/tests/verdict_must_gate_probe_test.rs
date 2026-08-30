@@ -75,7 +75,7 @@
 // one of them renames the interleaving into place. R5/R6 squat that name
 // with a directory, which turns a race into an assertion.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -184,11 +184,13 @@ fn commit_links(dir: &Path, digest: &str) -> (Option<String>, Option<String>) {
     (p, r)
 }
 
-/// Independent of the engine walk: directory is truth.
+/// Independent of the engine walk: directory is truth. D55 ancestor
+/// annotation, not the covering `parents:`.
 fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
     let sp = dir.join(".oo").join("savepoints");
     let rd = fs::read_dir(&sp).ok()?;
-    let mut nodes: BTreeMap<String, (Vec<String>, Option<String>)> = BTreeMap::new();
+    let mut commit_of: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut ancestor_of: BTreeMap<String, Option<String>> = BTreeMap::new();
     for e in rd.flatten() {
         let p = e.path();
         if !p.is_file() {
@@ -199,38 +201,30 @@ fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
             continue;
         }
         let text = fs::read_to_string(&p).ok()?;
-        let parents =
-            nlang_interpreter::store_codec::parse_savepoint_parents(&text).unwrap_or_default();
-        let commit = nlang_interpreter::store_codec::parse_savepoint_commit(&text);
-        nodes.insert(name, (parents, commit));
+        commit_of.insert(
+            name.clone(),
+            nlang_interpreter::store_codec::parse_savepoint_commit(&text),
+        );
+        ancestor_of.insert(
+            name,
+            nlang_interpreter::store_codec::parse_savepoint_ancestor(&text),
+        );
     }
-    let start = nodes
+    let start = commit_of
         .iter()
-        .find(|(_, (_, c))| c.as_deref() == Some(digest))?
+        .find(|(_, c)| c.as_deref() == Some(digest))?
         .0
         .clone();
-    let mut seen = BTreeSet::new();
-    seen.insert(start.clone());
-    let mut q: VecDeque<String> = nodes.get(&start)?.0.clone().into();
-    while let Some(pid) = q.pop_front() {
-        if !seen.insert(pid.clone()) {
-            continue;
-        }
-        let Some((parents, commit)) = nodes.get(&pid) else {
-            continue;
-        };
-        if let Some(d) = commit {
-            if d != digest {
-                return Some(d.clone());
-            }
-        }
-        q.extend(parents.iter().cloned());
+    let aid = ancestor_of.get(&start)?.as_ref()?;
+    let d = commit_of.get(aid)?.as_ref()?;
+    if d == digest {
+        return None;
     }
-    None
+    Some(d.clone())
 }
 
 /// The commit chain, newest first, with each commit's root.
-/// Dual-walk: JSON `parent` when set, else the commit circle (D52).
+/// Dual-walk: JSON `parent` when set, else the D55 ancestor annotation.
 fn chain(dir: &Path) -> Vec<(String, Option<String>)> {
     let mut out = Vec::new();
     let mut cur = Some(head_digest(dir));

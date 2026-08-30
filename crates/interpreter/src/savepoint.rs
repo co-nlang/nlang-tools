@@ -10,12 +10,12 @@
 //! These files survive commit: D43 requires every ○ to already be durable.
 
 use crate::store_codec::{
-    decode_staged, encode_savepoint, parse_savepoint_commit, parse_savepoint_parents,
-    savepoint_combo_text,
+    decode_staged, encode_savepoint, parse_savepoint_ancestor, parse_savepoint_commit,
+    parse_savepoint_parents, savepoint_combo_text,
 };
 use crate::value::{ComboVal, ContentHash};
 use anyhow::Result;
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -51,6 +51,9 @@ pub struct Circle {
     pub combo: String,
     /// 64-hex digest of the commit this circle became, if any (D52).
     pub commit_digest: Option<String>,
+    /// Local id of HEAD's commit-circle at mint time (D55). Annotation,
+    /// not a covering edge.
+    pub ancestor: Option<String>,
 }
 
 fn is_legacy_counter_id(id: &str) -> bool {
@@ -62,8 +65,10 @@ fn is_legacy_counter_id(id: &str) -> bool {
 /// the first new ○ does not claim an N-way merge that never happened.
 pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
     let files = paths(base)?;
-    let mut parsed: BTreeMap<String, (Option<Vec<String>>, String, Option<String>)> =
-        BTreeMap::new();
+    let mut parsed: BTreeMap<
+        String,
+        (Option<Vec<String>>, String, Option<String>, Option<String>),
+    > = BTreeMap::new();
     for p in &files {
         let id = p
             .file_name()
@@ -74,17 +79,18 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
         let parents = parse_savepoint_parents(&text);
         let combo = savepoint_combo_text(&text).to_string();
         let commit = parse_savepoint_commit(&text);
-        parsed.insert(id, (parents, combo, commit));
+        let ancestor = parse_savepoint_ancestor(&text);
+        parsed.insert(id, (parents, combo, commit, ancestor));
     }
 
     let legacy: Vec<String> = parsed
         .iter()
-        .filter(|(id, (p, _, _))| p.is_none() && is_legacy_counter_id(id))
+        .filter(|(id, (p, _, _, _))| p.is_none() && is_legacy_counter_id(id))
         .map(|(id, _)| id.clone())
         .collect();
 
     let mut nodes = BTreeMap::new();
-    for (id, (parents, combo, commit_digest)) in parsed {
+    for (id, (parents, combo, commit_digest, ancestor)) in parsed {
         let parents = match parents {
             Some(p) => p,
             None if is_legacy_counter_id(&id) => {
@@ -103,6 +109,7 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
                 parents,
                 combo,
                 commit_digest,
+                ancestor,
             },
         );
     }
@@ -150,7 +157,7 @@ pub fn record(base: &Path, combo: &ComboVal) -> Result<Option<String>> {
         anyhow::bail!("savepoint cycle: ids nonempty and tips empty");
     }
     tips.sort();
-    let candidate_combo = encode_savepoint(combo, &[] as &[String], None);
+    let candidate_combo = encode_savepoint(combo, &[] as &[String], None, None);
     let candidate_combo = savepoint_combo_text(&candidate_combo).to_string();
     if tips.len() == 1 {
         if let Some(t) = nodes.get(&tips[0]) {
@@ -159,29 +166,33 @@ pub fn record(base: &Path, combo: &ComboVal) -> Result<Option<String>> {
             }
         }
     }
-    let body = encode_savepoint(combo, &tips, None);
+    let body = encode_savepoint(combo, &tips, None, None);
     Ok(Some(write_circle(base, &body)?))
 }
 
-/// Mint the commit event's own circle (D51/D52). Always mints. Combo is
-/// empty — the working set already lives on the parent; an empty combo
-/// cannot equal a workset snapshot, so D51 will not skip a later evolve.
+/// Mint the commit event's own circle (D51/D52/D55). Always mints. Combo
+/// is empty — the working set already lives on the covering parent; an
+/// empty combo cannot equal a workset snapshot, so D51 will not skip a
+/// later evolve.
 ///
-/// Parent: `parent` if given; otherwise the unique (or lexicographically
-/// first) tip. No tip means this is the first history event on an empty
-/// directory (unit-test refine / first commit without a disk evolve) —
-/// mint a root circle with empty `parents:`. G3 forbids *two* parents,
-/// not zero.
+/// Covering (`parents:`): `covering` if given; otherwise the unique (or
+/// lexicographically first) tip. No tip means a root circle with empty
+/// `parents:` (unit-test refine / first commit without a disk evolve).
+/// G3 forbids *two* covering parents, not zero.
+///
+/// Ancestor (annotation, not an H1 edge): the commit-circle of HEAD at
+/// mint time. Omitted on the first commit.
 pub fn record_commit(
     base: &Path,
     commit: &ContentHash,
-    parent: Option<&str>,
+    covering: Option<&str>,
+    ancestor: Option<&str>,
 ) -> Result<Option<String>> {
     let nodes = load_circles(base)?;
     if !nodes.is_empty() && tips_of(&nodes).is_empty() {
         anyhow::bail!("savepoint cycle: ids nonempty and tips empty");
     }
-    let parents: Vec<String> = if let Some(p) = parent {
+    let parents: Vec<String> = if let Some(p) = covering {
         vec![p.to_string()]
     } else {
         let mut tips = tips_of(&nodes);
@@ -192,7 +203,7 @@ pub fn record_commit(
         }
     };
     let digest = hex::encode(&commit.digest);
-    let body = encode_savepoint(&ComboVal::default(), &parents, Some(&digest));
+    let body = encode_savepoint(&ComboVal::default(), &parents, Some(&digest), ancestor);
     Ok(Some(write_circle(base, &body)?))
 }
 
@@ -205,15 +216,9 @@ pub fn circle_id_for_commit(base: &Path, digest: &str) -> Result<Option<String>>
         .map(|(id, _)| id))
 }
 
-/// Previous commit along D52's edge, or `Commit.parent` when still set.
-/// Cycle-safe: visited set on circle ids. Returns `None` when this commit
-/// has no predecessor (first commit, or HEAD with no commit circle).
-///
-/// A digest listed in this commit's `abandoned` meta is a record, not a
-/// chain member (history_ops R1 / R-b). Linear sessions have no such list,
-/// so G5 is unaffected; after a rollback resume the covering may still
-/// pass through the abandoned tip, and skipping it is what keeps the
-/// record from re-entering `oo log`.
+/// Previous commit: `Commit.parent` if still set, else the D55 ancestor
+/// annotation on this commit's circle. Does not walk `parents:` — that is
+/// the time covering, and rollback does not leave a mark on it.
 pub fn previous_commit(
     base: &Path,
     commit: &crate::value::Commit,
@@ -222,16 +227,6 @@ pub fn previous_commit(
     if let Some(p) = &commit.parent {
         return Ok(Some(p.clone()));
     }
-    let abandoned: HashSet<String> = commit
-        .meta
-        .abandoned
-        .iter()
-        .flatten()
-        .filter_map(|s| {
-            let hex = s.rsplit(':').next()?;
-            (hex.len() == 64).then(|| hex.to_lowercase())
-        })
-        .collect();
     let nodes = load_circles(base)?;
     let Some(start) = nodes
         .iter()
@@ -240,35 +235,26 @@ pub fn previous_commit(
     else {
         return Ok(None);
     };
-    let mut seen: HashSet<String> = HashSet::new();
-    seen.insert(start.clone());
-    let mut q: VecDeque<String> = nodes
-        .get(&start)
-        .map(|n| n.parents.clone().into())
-        .unwrap_or_default();
-    while let Some(pid) = q.pop_front() {
-        if !seen.insert(pid.clone()) {
-            continue;
-        }
-        let Some(n) = nodes.get(&pid) else {
-            continue;
-        };
-        if let Some(d) = &n.commit_digest {
-            if d != digest && !abandoned.contains(d) {
-                if let Ok(bytes) = hex::decode(d) {
-                    if bytes.len() == 32 {
-                        return Ok(Some(ContentHash::v1(bytes)));
-                    }
-                }
-            }
-        }
-        q.extend(n.parents.iter().cloned());
+    let Some(aid) = nodes.get(&start).and_then(|n| n.ancestor.clone()) else {
+        return Ok(None);
+    };
+    let Some(d) = nodes.get(&aid).and_then(|n| n.commit_digest.clone()) else {
+        return Ok(None);
+    };
+    if d == digest {
+        return Ok(None);
     }
-    Ok(None)
+    let Ok(bytes) = hex::decode(&d) else {
+        return Ok(None);
+    };
+    if bytes.len() != 32 {
+        return Ok(None);
+    }
+    Ok(Some(ContentHash::v1(bytes)))
 }
 
-/// Whether `base` is reachable from `head` as a commit ancestor (D50 DAG).
-/// Dual walk: `parent` if set, else the commit circle's covering predecessors.
+/// Whether `base` is reachable from `head` as a commit ancestor (D55).
+/// Dual walk: `parent` if set, else the ancestor annotation.
 /// Cycles are cut by a visited set on commit digests.
 pub fn commit_is_ancestor(
     base_dir: &Path,
