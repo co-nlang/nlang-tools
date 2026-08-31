@@ -576,83 +576,69 @@ fn g6_a_rolled_back_segment_stays_out_of_the_log() {
 
 // ---------------------------------------------------------------- G7 ----
 //
-// ADDED BY THE ACCEPTOR IN ACCEPTANCE ROUND 3 (2026-08-31). RED on
-// repair 2. Test-modification rights stay with the acceptor.
+// REPLACED BY THE ACCEPTOR IN ACCEPTANCE ROUND 4 (2026-08-31). The first
+// G7 was wrong and it is worth saying how, because it cost a repair.
 //
-// The ancestry edge names a CIRCLE, and commits written before this arc
-// have no circle. So on any repository that already exists, one commit
-// with the new engine severs the chain -- and because `gc::mark` walks
-// that same edge, `oo gc` then DELETES the history for good.
+// It built commits with THIS engine and then stripped the arc's
+// annotations off the frames, which leaves a commit with no `parent`
+// (D52), no `ancestor:`, and no circle naming it. **That state cannot
+// arise.** A commit written by this engine always gets a circle carrying
+// an ancestor; a commit written before this arc always carries `parent`.
+// The probe modelled nothing, and the delivery -- reasonably -- added a
+// fallback that guesses the predecessor from wall-clock timestamps to
+// satisfy it. Ancestry derived from arrival order is the one thing this
+// whole arc is about not doing (1.7.1: the local graph is DECLARED), so
+// the probe had to go, not the design.
 //
-// Measured: a repo with three commits from the v0.40.0 tag build, one
-// `oo commit` with this build, then `oo gc --grant gc`:
+// Worse, the order already said this. Its NOT PROBED note reads: mixed
+// chains "cannot be armed inside `cargo test`, because the binary under
+// test is the new one and cannot produce old-shaped commits", and are
+// measured at acceptance with the real tag binary. I wrote that, then
+// wrote a probe that tried anyway.
 //
-//   objects        7 -> 3          ("removed 6 objects, freed 1614 bytes")
-//   oo log         3 entries -> 1
-//   inspect old1   CAID not found in local store
-//   inspect old2   CAID not found in local store
+// What replaces it is the property that makes the fallback unnecessary:
+// traversal and collection must agree. `gc::mark` walks the same edge
+// `oo log` does, so if a commit is reachable by one it must survive the
+// other. That is armable with this engine alone, it is green, and it is
+// the guard that would have caught round 3's data loss on any repo this
+// engine wrote itself.
 //
-// The v0.40.0 binary cannot see them either. This is not a traversal
-// stopping early, which the order accepted and section 1.7.7 predicted.
-// It is silent, permanent loss of a history the operator still had five
-// seconds earlier, reached by the ordinary sequence commit-then-gc.
-//
-// Partly the order's wording again: A2.6 said the ancestry edge points at
-// "the commit circle that was HEAD when this was minted", and for a
-// pre-arc commit there is no such circle. The edge should name the
-// predecessor COMMIT, which works the same for both engines: reach old3
-// by its digest, and old3 still carries `Commit.parent` for the rest.
-//
-// This probe pins survival, not the spelling. Anything that keeps the
-// old commits reachable will pass.
-//
-// It cannot use the tag binary (not available to `cargo test`), so it
-// builds the old shape the same way the engine's own legacy path is
-// exercised: commits carrying `parent`, and circles with no `commit:`.
-// The acceptance measurement above used the real v0.40.0 binary.
+// The CROSS-VERSION half stays a hand measurement, as originally stated.
+// Round 4, real v0.40.0 tag binary building the repo: log reads
+// `new4 old3 old2 old1`, `oo gc --grant gc` removes 0 objects, and the
+// oldest commit still inspects.
 
 #[test]
-fn g7_committing_on_an_older_repo_does_not_let_gc_eat_it() {
+fn g7_gc_keeps_every_commit_reachable() {
     let s = scratch("g7");
     let d = s.path();
-    for i in 1..=3u32 {
+    let mut made = Vec::new();
+    for i in 1..=6u32 {
         write(d, "e.n", &format!("g{i}: {i}\n"));
         assert!(oo_ok(d, &["evolve", "e.n"]), "REACH: evolve {i}");
-        assert!(oo_ok(d, &["commit", "-m", &format!("old{i}")]), "REACH: commit {i}");
-    }
-    let log = oo(d, &["log"]);
-    let oldest = log
-        .lines()
-        .filter(|l| l.starts_with("commit "))
-        .last()
-        .and_then(|l| l.split_whitespace().nth(1))
-        .expect("REACH: three commits")
-        .to_string();
-
-    // Strip this arc's annotations so the store looks like one written
-    // before it: circles keep their covering, commits keep `parent`.
-    for p in circles(d) {
-        let text = std::fs::read_to_string(&p).unwrap();
-        let stripped: String = text
-            .lines()
-            .filter(|l| {
-                let t = l.trim_start();
-                !t.starts_with("commit:") && !t.starts_with("ancestor:")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&p, format!("{stripped}\n")).unwrap();
+        assert!(oo_ok(d, &["commit", "-m", &format!("c{i}")]), "REACH: commit {i}");
+        made.push(head_digest(d));
     }
 
-    write(d, "n.n", "g4: 4\n");
-    assert!(oo_ok(d, &["evolve", "n.n"]), "REACH: evolve on the older repo");
-    assert!(oo_ok(d, &["commit", "-m", "new4"]), "REACH: commit on the older repo");
+    let before = oo(d, &["log"]);
+    let n_before = before.lines().filter(|l| l.starts_with("commit ")).count();
+    assert_eq!(n_before, 6, "REACH: six commits should be in the log:\n{before}");
+
     assert!(oo_ok(d, &["gc", "--grant", "gc"]), "REACH: gc failed to run");
 
-    let out = oo(d, &["inspect", &oldest]);
-    assert!(
-        !out.contains("not found"),
-        "committing on a repo written before this arc, then running gc, \
-         destroyed its history. `oo inspect {oldest}` said:\n{out}"
+    for h in &made {
+        let out = oo(d, &["inspect", &format!("hash:sha256:v1:{h}")]);
+        assert!(
+            !out.contains("not found"),
+            "gc collected commit {h}, which the log still reaches. Traversal \
+             and collection must walk the same edge, or `oo gc` deletes \
+             history that `oo log` still shows.\n{out}"
+        );
+    }
+    let after = oo(d, &["log"]);
+    assert_eq!(
+        after.lines().filter(|l| l.starts_with("commit ")).count(),
+        6,
+        "the log lost entries across gc:\n{after}"
     );
 }
