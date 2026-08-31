@@ -657,6 +657,13 @@ fn write_commit_meta(m: &CommitMeta) -> String {
             if p { "#true" } else { "#false" }
         ));
     }
+    if let Some(reported) = &m.reported_bottoms {
+        let items: Vec<String> = reported
+            .iter()
+            .map(|(coord, cause)| quote_string(&format!("{coord} {cause}")))
+            .collect();
+        rows.push(format!("reported_bottoms: [{}]", items.join(", ")));
+    }
     format!("{{ {} }}", rows.join(" "))
 }
 
@@ -1340,12 +1347,42 @@ fn decode_commit_meta(m: &ComboVal) -> CommitMeta {
         Some(Value::Atom(AtomKind::Tag(t), _, _)) => Some(t == "true"),
         _ => None,
     };
+    let reported_bottoms = match m.data.get("reported_bottoms") {
+        Some(Value::Combo(list)) => {
+            let mut v = Vec::new();
+            let mut i = 0;
+            while let Some(item) = list.data.get(&i.to_string()) {
+                if let Some(s) = string_of(item) {
+                    if let Some((coord, cause)) = s.rsplit_once(' ') {
+                        if cause.starts_with('#') {
+                            v.push((coord.to_string(), cause.to_string()));
+                        }
+                    }
+                }
+                i += 1;
+            }
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
+        }
+        Some(Value::Atom(AtomKind::Str(s), _, _)) => {
+            s.rsplit_once(' ').and_then(|(coord, cause)| {
+                cause
+                    .starts_with('#')
+                    .then(|| vec![(coord.to_string(), cause.to_string())])
+            })
+        }
+        _ => None,
+    };
     CommitMeta {
         author,
         timestamp,
         message,
         abandoned,
         privileged_effect,
+        reported_bottoms,
     }
 }
 

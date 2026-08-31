@@ -129,14 +129,78 @@
 
 ### N.1 射程逐項對照
 
+**S1.** `Value::bottom_leaves` 走完投影後的根（六個軸），收集 `(葉座標, #cause)`。不讀 `message`。巢狀是 `a.b`／`a.c`，不是頂層 `a`。排序後去重。
+
+**S2.** `oo commit` 先印每一葉（`#divergent at c`，與 `format_conflict_where` 同形），再印 `Commit successful`。rc=0，HEAD 寫入。G2 綠。不拒絕。
+
+**S3.** `CommitMeta.reported_bottoms: Option<Vec<(String, String)>>`。`None` 不進手寫 Debug、不進 serde、不進 encode。G1 綠：`x: 0` 根仍 `31745ef0…`、3 物件。`pin_commit_meta_debug_omits_absent_fields` 仍是三個普通欄位。
+
+**S4.** 標記只在 `reported` 非空時為 `Some`，內容就是剛剛要印的那份清單。斷言見 Q1。
+
+**S5.** 無 grant、無旗標。B 路徑未動（G3 綠）。
+
 ### N.2 順手改動（逐項指名）
+
+*   `Universe::commit` 回傳值多了第三元（報告清單）。呼叫點：`main.rs` `run_commit`、`stage2_open_term_test.rs`。
+*   既有 `CommitMeta { … }` 字面補 `reported_bottoms: None`：`refine_test.rs`、`authority_test.rs`、`universe_determinism_probe_test.rs`、`main.rs` squash／refine。否則編不過。Debug 釘 `pin_commit_meta_debug_omits_absent_fields` **沒有**改斷言（None 仍不出現）。
+*   rustfmt 只跑本弧動過的檔。探針只拿掉兩行 `#[ignore]`，未 rustfmt。
 
 ### N.3 工單哪裡是錯的
 
+沒有射程寫錯。Q4 量出來的跨版本行為見 N.4——工單要我們量，沒有預言「舊引擎會丟掉欄位繼續走」。帶標記的 commit **進入 Debug 故進入 digest**，v0.41.0 在那顆物件上報 `#caid_mismatch`。乾淨 commit 舊引擎照常讀。這是 D57「記在 ● 上且進 digest」的直接後果，不是實作選錯。
+
 ### N.4 工單指名要你回答的問題
+
+**Q1.** 標記逐字斷言：**「下列座標上的 ⊥ 已向操作者印出，且這次提交繼續進行。」**
+它不多說，因為一次性 CLI 問不到同意（工單 §5 沒探針的那一件／§6.2）。清單就是印出去的那一份，不是「操作者同意把矛盾寫進歷史」。
+
+**Q2.** **全部葉。** §4.1.2「哪些座標」、§2.2.1 到葉。〔量〕`x: 1 & 2` 與 `y: 3 & 4` 同一次會印兩行。不是第一個。
+
+**Q3.** **`project_for_commit` 之後、`put_commit` 之前。** `c: c + 1` 的 ⊥ 在投影時才出現；收集完寫進 `meta.reported_bottoms`，然後 `put_commit` 用含該欄的 Debug 算 digest。若放在 `put_commit` 之後，digest 已定，標記進不去。CLI 的印出在 `commit()` 回傳之後（磁碟已落地），同一條指令、rc=0。
+
+可重跑：
+
+```
+c: c + 1
+oo evolve
+oo commit -m x
+# 第一行是 `#divergent at c`，然後 `Commit successful`
+# 物件 meta 含 `reported_bottoms: ["c #divergent"]`
+```
+
+**Q4.** 〔量，v0.41.0 標籤二進位讀本弧引擎寫的倉〕
+
+帶 ⊥ 的 commit（物件含 `reported_bottoms:`）：
+
+```
+oo log     RC=1
+Error: #caid_mismatch: object at digest path is corrupt (integrity failure);
+requested hash:sha256:v1:c8d95968…, recomputed hash:sha256:v1:6ec2dd11…
+oo status  RC=1  （同一則 #caid_mismatch）
+oo inspect <HEAD>  RC=1
+Error: #object_undecodable: … store document is a commit, not a value
+```
+
+**不是丟掉欄位繼續走，也不是拒絕開倉（format 仍認）。** 舊引擎的 `content_hash` 不算新欄位，路徑上的 digest 對不上。
+
+本弧引擎寫的**乾淨** commit，同一支 v0.41.0：`log`／`inspect`／`status` 皆 rc=0，訊息與根都在。
+
+**Q5.** 偵察 Q7 甲報價走訪 40–60 ＋ CLI 15–30 ⟹ ~50–90。產品路徑（`value.rs` 收集＋`CommitMeta`／Debug、`store_codec` 編解碼、`universe.rs`、`main.rs` 印出）大約 **+140／−10** 量級，比報價多出 S3 的框與編解碼（報價沒單獨列）。測試字面補 `None` 另計，不是產品行為。
 
 ### N.5 探針
 
+只拿掉 R1／R2 的 `#[ignore]`。未 rustfmt。**5／5**。
+
 ### N.6 數字
 
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：222 target 皆 ok；**2132 passed／0 failed／0 ignored**。
+失敗測試名：**無**。
+`^error`：**0**。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
+身分：G1 綠（`x: 0` 根 `31745ef0…`、3 物件）。known-answer `3`，對照 `_|_`。
+探針只動 `#[ignore]`。
+
 ### N.7 你認為需要改規格之處
+
+沒有本弧必須改的條文。跨版本：帶標記的 ● 對 v0.41.0 是 `#caid_mismatch`，這是「審計欄進入 digest」的後果；若規格要舊引擎仍能核對那顆物件，就得把標記移出 `content_hash`——那會讓 D57 要分辨的兩種紀錄又變成同一個 CAID。不在這裡請裁。

@@ -992,7 +992,7 @@ impl Universe {
         engine: &Ouroboros,
         base_dir: &std::path::Path,
         meta: crate::value::CommitMeta,
-    ) -> Result<(ContentHash, bool)> {
+    ) -> Result<(ContentHash, bool, Vec<(String, String)>)> {
         engine.clear_force_memo();
         if let Some(d) = &self.workset_bottom {
             let coord = d.path.as_deref().filter(|s| !s.is_empty()).unwrap_or("");
@@ -1054,6 +1054,12 @@ impl Universe {
             Value::Combo(root) => root,
             _ => return Err(anyhow::anyhow!("Commit observation did not produce a root")),
         };
+        // S1 / D56: bottoms of `c: c + 1` exist only after this projection.
+        // Collect here, before put_commit, so the audit field can enter the
+        // digest. Never read `message`.
+        let mut reported = Value::Combo(new_root.clone()).bottom_leaves();
+        reported.sort();
+        reported.dedup();
         // O63: the container encoding selects the root-address rule.  An
         // encoding-3 store keeps the standard table it already names; a new
         // encoding-4 store begins with this engine's current table.
@@ -1077,6 +1083,11 @@ impl Universe {
         // was staged (effect_pending), never merely because a grant was present.
         if self.effect_pending.is_some() {
             meta.privileged_effect = Some(true);
+        }
+        // S3 / S4: mark only when we actually reported a leaf. None stays
+        // out of Debug, so clean commit CAIDs do not move (G1).
+        if !reported.is_empty() {
+            meta.reported_bottoms = Some(reported.clone());
         }
         let mut commit = crate::value::Commit::new(None, root_hash, meta);
         commit.kind = kind;
@@ -1123,7 +1134,7 @@ impl Universe {
             let _ = std::fs::remove_file(effect_path);
         }
         Self::clear_abandoned_file(base_dir);
-        Ok((commit_hash, config_not_committed))
+        Ok((commit_hash, config_not_committed, reported))
     }
 
     fn abandoned_path(base_dir: &std::path::Path) -> std::path::PathBuf {

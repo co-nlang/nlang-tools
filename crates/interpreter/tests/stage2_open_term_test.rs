@@ -98,8 +98,9 @@ fn commit_reload_preserves_thunk_behavior() {
         author: Some("test".to_string()),
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
-    let (_hash, _) = universe.commit(&engine, &dir, meta).unwrap();
+    let (_hash, _, _) = universe.commit(&engine, &dir, meta).unwrap();
 
     // reload
     let engine2 = Ouroboros::init(&dir).unwrap();

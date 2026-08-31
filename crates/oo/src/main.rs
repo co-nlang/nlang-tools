@@ -1020,6 +1020,7 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
         author: Some("oo-cli".to_string()),
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let hash = universe.squash(&engine, &cur, &base, meta)?;
     println!("Squash commit: {}", hash);
@@ -1092,8 +1093,19 @@ fn run_commit(
         author: Some("oo-cli".to_string()),
         abandoned: None,
         privileged_effect: None, // set by Universe::commit from effect_pending
+        reported_bottoms: None,  // set by Universe::commit from the projected root
     };
-    let (hash, config_not_committed) = universe.commit(&engine, &std::env::current_dir()?, meta)?;
+    let (hash, config_not_committed, reported) =
+        universe.commit(&engine, &std::env::current_dir()?, meta)?;
+    // S2: name every leaf, then the success line. rc stays 0 (G2).
+    // Same shape as format_conflict_where; never print `message`.
+    for (coord, cause) in &reported {
+        if coord.is_empty() {
+            println!("{cause}");
+        } else {
+            println!("{cause} at {coord}");
+        }
+    }
     println!("Commit successful: {}", hash);
     // O37: horizon knobs are session state — never silent when dropped from history.
     if config_not_committed {
@@ -1146,6 +1158,7 @@ fn run_refine(
         author: Some("oo-cli".to_string()),
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
 
     let hash = universe.refine(&engine, &cur, source_caids, target_caids, authority, meta)?;

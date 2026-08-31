@@ -41,6 +41,7 @@ fn refine_simple_source_to_target() {
         message: Some("refine test".into()),
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let result = u.refine(
         &oo,
@@ -85,6 +86,7 @@ fn refine_fails_monotonicity() {
         message: Some("should fail".into()),
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let result = u.refine(&oo, &base_dir, vec![caid_a], vec![caid_b], None, meta);
     assert!(result.is_err(), "refine should fail when new & old ≠ new");
@@ -113,6 +115,7 @@ fn refine_cycle_detection() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     u.refine(
         &oo,
@@ -206,6 +209,7 @@ fn refine_no_redirect_in_history_commits() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     u.refine(
         &oo,
@@ -247,6 +251,7 @@ fn refine_info_stored_in_commit() {
         message: Some("test refine".into()),
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let ch = u
         .refine(
@@ -297,6 +302,7 @@ fn get_live_value_follows_refine() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     u.refine(
         &oo,
@@ -339,6 +345,7 @@ fn bootstrap_exempt_when_no_architects() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     u.refine(
         &oo,
@@ -362,6 +369,7 @@ fn bootstrap_exempt_when_no_architects() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     // Top & 99 = 99 → monotonicity holds
     let result = u.refine(&oo, &base_dir, vec![ca2_hash], vec![cb2], None, meta2);
@@ -397,6 +405,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1)
         .unwrap();
@@ -414,6 +423,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2);
     assert!(
@@ -447,6 +457,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1)
         .unwrap();
@@ -468,6 +479,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], Some(auth), meta2);
     assert!(
@@ -496,6 +508,7 @@ fn shadow_affected_empty_on_fresh_universe() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let ch = u
         .refine(&oo, &base_dir, vec![ca], vec![cb], None, meta)
@@ -530,6 +543,7 @@ fn shadow_affected_detects_historical_usage() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     u.refine(
         &oo,
@@ -551,6 +565,7 @@ fn shadow_affected_detects_historical_usage() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let ch2 = u
         .refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2)
@@ -590,6 +605,7 @@ fn shadow_scan_finds_field_in_committed_root() {
             message: None,
             abandoned: None,
             privileged_effect: None,
+            reported_bottoms: None,
         },
         kind: CommitKind::Refine,
         refine_info: None,
@@ -607,6 +623,7 @@ fn shadow_scan_finds_field_in_committed_root() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let ch_refine = u
         .refine(
@@ -657,6 +674,7 @@ fn refine_cycle_ab_ba_rejected() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
     let result = u.refine(
         &oo,

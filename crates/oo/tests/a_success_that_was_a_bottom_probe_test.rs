@@ -139,7 +139,6 @@ fn evolve_and_commit(d: &Path, src: &str) -> (String, i32) {
 // coordinates the bottom landed on, and not merely report success.
 
 #[test]
-#[ignore]
 fn r1_a_commit_that_writes_a_bottom_says_where_it_landed() {
     let s = scratch("r1");
     let d = s.path();
@@ -174,7 +173,6 @@ fn r1_a_commit_that_writes_a_bottom_says_where_it_landed() {
 // field's name or spelling.
 
 #[test]
-#[ignore]
 fn r2_the_commit_records_that_it_was_reported() {
     let s = scratch("r2");
     let d = s.path();
