@@ -573,3 +573,66 @@ D54 已裁：鑄造圖節點＝○、邊＝`parents:`。**祖先邊與 `commit:`
 （第一次全跑 `identity_persistence::pin_concurrent_first_mint_yields_one_key` 因並行 mint 撞到半截 PKCS#8 紅了一次；重跑該檔 16／16，第二次全跑 exit 0。與本弧無關。）
 conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
 身分：G2 綠。Q-015 探針一字未動。
+
+---
+
+## A3. 驗收回合 3（驗收方填，2026-08-31）
+
+**R2-1／R2-2／R2-3 三項都做對了。但混鏈那一格，量出來是資料遺失。**
+
+### A3.1 通過的（逐項複驗）
+
+*   **探針 8／8**（含 G5、G6），**探針檔自 G6 進檔後零改動**、未 rustfmt。
+*   **$H_1$**：N ＝ 3／10／20 皆 **0**（$V=2N$、$E=2N-1$、$C=1$）。祖先邊確實**沒有**進邊集。
+*   **rollback 與基線逐字相同**〔量，五顆＋回溯到第一顆＋再一顆〕：
+    基線 `final gen1`、交付 `final gen1`，**兩邊都恰好一行 `abandoned`**。**A2.2 已關。**
+*   **squash 對被放棄的 commit 現在拒絕**〔量〕：`Error: squash base is not an ancestor of HEAD`，
+    **rc=1**，log 不變。**回合 2 那個「特權改寫作用在回溯掉的鏈上」已關。**
+*   **R2-3 答得對且做得對**：`abandoned` 過濾量完確認多餘、已移除，**沒有留成死碼**。
+*   行為版本確認：○ 帶 `ancestor:`。known-answer `3`，對照 `add (1,"x")` → `_|_`。
+
+### A3.2 要修的：在既有的倉上提交一次，然後 `gc` 會把歷史刪掉
+
+〔量，**真二進位**：`oo v0.40.0` 標籤建置造倉（known-answer `3`），本弧建置讀〕
+
+三顆 commit 的舊倉 → **本弧引擎 `oo commit` 一次** → `oo gc --grant gc`：
+
+| | |
+| :-- | :-- |
+| 物件數 | **7 → 3**（`removed 6 objects, freed 1614 bytes`） |
+| `oo log` | 3 列 → **1 列** |
+| `oo inspect <old1>` | **`Error: CAID not found in local store`** |
+| `oo inspect <old2>` | **`Error: CAID not found in local store`** |
+| v0.40.0 二進位再讀 | 也只看得到 `new4` |
+
+**⟹ 五秒前還在的那段歷史，永久不見了。** 觸發路徑是**最普通的兩步：commit，然後 gc。**
+
+**這不是「走訪提早停下」**——那個 §1.7.7 預言過、工單也接受。
+**這是無聲的、不可回復的資料遺失。**
+而工單 S7 逐字寫著「**不要讓人以為歷史被 gc 掉了**」；**現在它真的被 gc 掉了。**
+
+**成因**：`ancestor:` 記的是**一顆 ○ 的本地 id**，而**本弧之前寫下的 commit 沒有 ○**。
+於是 `new4` 的祖先邊落空 ⟹ 走訪在 `new4` 就停 ⟹ `gc::mark` 走同一條邊
+⟹ old1–old3 判為不可達 ⟹ **sweep 掉**。
+
+### A3.3 這一格也有驗收方的份
+
+A2.6 的表逐字寫「祖先邊 → **鑄造當下 HEAD 的那顆提交 ○**」。
+**對一顆本弧之前的 commit，那顆 ○ 不存在**，而工單沒有說那時候該怎麼辦。
+
+**建議的方向（一句話，仍請你自己量）**：**祖先邊改記「前一顆 commit 的 digest」**，
+不是 ○ 的本地 id。兩種引擎寫的 commit 就統一了——
+以 digest 直接搆到 `old3`，而 `old3` 自己還帶著 `Commit.parent`，雙讀接得下去。
+
+### A3.4 已補 G7
+
+`g7_committing_on_an_older_repo_does_not_let_gc_eat_it`：造三顆、**把本弧的註記從框上剝掉**
+（做出本弧之前的形狀：commit 帶 `parent`、○ 沒有 `commit:`）、再 commit 一次、`gc`，
+斷言最舊那顆仍 `inspect` 得到。**在修補 2 上紅。**
+**釘存活不釘拼法。** 它用剝註記的方式在 `cargo test` 裡重現，
+**上面 A3.2 的數字則是用真的 v0.40.0 二進位量的**。
+**測試修改權屬驗收方。**
+
+### A3.5 本回合只做這一件
+
+**只修 A3.2。** 不擴射程。修好之後驗收方跑完整流程並收弧。
