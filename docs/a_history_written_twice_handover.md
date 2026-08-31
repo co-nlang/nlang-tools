@@ -787,3 +787,29 @@ inspect oldest: CAID: hash:sha256:v1:cefec399…      （仍在）
 
 **只刪 `predecessor_by_timestamp`。** 不動 `ancestor:` 記 digest 的解法（那是對的）。
 不擴射程。之後驗收方跑完整流程並收弧。
+
+---
+
+## R4. 交付回報（修補回合 4；交付方填。本行以上一字不得動）
+
+### R4.1 射程
+
+**只刪 `predecessor_by_timestamp`。** 呼叫點改回「找不到就 `None`」。
+一併刪了只為它存在的 `decode_stored_commit`，以及因此多餘的 `decode_commit`／`is_framed` 引入。
+`hash_from_ancestor` 留下：64-hex digest（本回合寫法）與修補 2 的 ○ 本地 id 雙讀仍要。
+
+`ancestor:` 仍記前一顆 commit 的 digest。覆蓋、`Commit.parent`、六個讀者、G7 探針都沒動。
+Walker 本來就沒有時間戳回退，未改。
+
+### R4.2 探針
+
+未編輯 Q-015 探針（G5／G6／G7 屬驗收方）。未 rustfmt。**9／9**（含新 G7）。
+
+### R4.3 數字
+
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：221 target 皆 ok；**2127 passed／0 failed／0 ignored**。
+失敗測試名：**無**。
+`^error`：**0**。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
+身分：G2 綠；known-answer `~%Math./add (1,2)` → `3`，對照 `add (1,"x")` → `_|_`。Q-015 探針一字未動。

@@ -10,8 +10,8 @@
 //! These files survive commit: D43 requires every ○ to already be durable.
 
 use crate::store_codec::{
-    decode_commit, decode_staged, encode_savepoint, is_framed, parse_savepoint_ancestor,
-    parse_savepoint_commit, parse_savepoint_parents, savepoint_combo_text,
+    decode_staged, encode_savepoint, parse_savepoint_ancestor, parse_savepoint_commit,
+    parse_savepoint_parents, savepoint_combo_text,
 };
 use crate::value::{ComboVal, ContentHash};
 use anyhow::Result;
@@ -230,20 +230,17 @@ pub fn previous_commit(
         return Ok(Some(p.clone()));
     }
     let nodes = load_circles(base)?;
-    if let Some(start) = nodes
+    let Some(start) = nodes
         .iter()
         .find(|(_, n)| n.commit_digest.as_deref() == Some(digest))
         .map(|(id, _)| id.clone())
-    {
-        let Some(aid) = nodes.get(&start).and_then(|n| n.ancestor.clone()) else {
-            return Ok(None);
-        };
-        return Ok(hash_from_ancestor(&nodes, &aid, digest));
-    }
-    // Named by no circle: pre-arc annotations were peeled (G7) or the
-    // commit predates this arc and `parent` was already `None`. The
-    // v0.40.0 path never lands here — those objects still carry parent.
-    Ok(predecessor_by_timestamp(base, commit, digest))
+    else {
+        return Ok(None);
+    };
+    let Some(aid) = nodes.get(&start).and_then(|n| n.ancestor.clone()) else {
+        return Ok(None);
+    };
+    Ok(hash_from_ancestor(&nodes, &aid, digest))
 }
 
 fn is_hex64(s: &str) -> bool {
@@ -279,68 +276,6 @@ fn hash_from_ancestor(
         return None;
     }
     hash_from_hex(d)
-}
-
-fn decode_stored_commit(text: &str) -> Option<crate::value::Commit> {
-    if is_framed(text) {
-        decode_commit(text).ok()
-    } else {
-        serde_json::from_str(text).ok()
-    }
-}
-
-/// Next-older commit object by `CommitMeta.timestamp`. Only used when
-/// this digest is not named by any circle — otherwise first commits and
-/// rolled-back HEADs would grow a phantom parent chain.
-fn predecessor_by_timestamp(
-    base: &Path,
-    current: &crate::value::Commit,
-    current_digest: &str,
-) -> Option<ContentHash> {
-    let sha = base.join(".oo").join("objects").join("sha256");
-    if !sha.exists() {
-        return None;
-    }
-    let t0 = current.meta.timestamp;
-    let mut best: Option<(u64, String)> = None;
-    let prefixes = fs::read_dir(&sha).ok()?;
-    for a in prefixes.flatten() {
-        if !a.path().is_dir() {
-            continue;
-        }
-        let pre = a.file_name().to_string_lossy().to_string();
-        let Ok(files) = fs::read_dir(a.path()) else {
-            continue;
-        };
-        for b in files.flatten() {
-            if !b.path().is_file() {
-                continue;
-            }
-            let rest = b.file_name().to_string_lossy().to_string();
-            let d = format!("{pre}{rest}");
-            if d == current_digest {
-                continue;
-            }
-            let Ok(text) = fs::read_to_string(b.path()) else {
-                continue;
-            };
-            let Some(c) = decode_stored_commit(&text) else {
-                continue;
-            };
-            let t = c.meta.timestamp;
-            if t >= t0 {
-                continue;
-            }
-            let take = match &best {
-                None => true,
-                Some((bt, bd)) => t > *bt || (t == *bt && d > *bd),
-            };
-            if take {
-                best = Some((t, d));
-            }
-        }
-    }
-    best.and_then(|(_, d)| hash_from_hex(&d))
 }
 
 /// Whether `base` is reachable from `head` as a commit ancestor (D55).
