@@ -284,6 +284,36 @@ Error: store layout declaration "layout=3" is not supported; refusing to open
 〔附帶〕Inbox 早有一列記著「`.oo/format` 仍是 `layout=2`，**Q-013 新增目錄時沒有升版**」
 ⟹ **這個版號欠帳不是本弧造的，但本弧是第一次讓它產生可見後果的地方。**
 
+### A.3a 全跑 ×3：兩次全綠，第三次紅在**另一支探針自己的 REACH 守衛**上
+
+〔量，release，`--no-fail-fast --test-threads=1`，**保留失敗測試名**〕
+
+| 跑 | 結果 |
+| :-- | :-- |
+| 1 | exit 0／**222 target／2132 passed／0 failed／`^error` 0** |
+| 2 | exit 101／2131 passed／**failed=1** ⟹ `r5_the_rebuilt_index_matches_an_insertion_replay` |
+| 3 | exit 0／**222／2132／0／0** |
+
+**那支紅與本弧無關，而且不是缺陷。** 逐字訊息：
+
+> **no bucket overflowed with 60 peers**, so this probe cannot tell a table
+> rebuilt with the right self id from one rebuilt with zeros
+
+⟹ **它倒在自己的 REACH 守衛上，不是倒在斷言上。**
+〔讀 `advert_persistence_probe_test.rs:834`–`:862`〕它廣告 60 個對等節點，
+需要**至少一個 Kademlia 桶溢出**，斷言才有意義；而節點自身的 id 每次重新鑄，
+桶的分佈因此逐次不同，偶爾沒有任何一個桶溢出。
+**那時它拒絕當一個空洞的綠**——**那是對的行為**，與本專案「全綠不等於被檢驗過」同一條紀律。
+
+〔複驗〕單獨跑該支 **8／8 全綠**；本弧的 diff **沒有碰** peers／routing／advert 任何一行。
+
+**⟹ 但它讓全跑不是決定性的**，而依「一支五次只紅四次的紅不是釘子」的反面，
+**一次全綠也不能單獨當結論** ⟹ **已開 Inbox 一列**（見 `WORK_QUEUE`）。
+**本次的判定用的是三次的名字比對，不是三次的計數。**
+
+**⟹ 而這正是本弧收到的那條常設規則第一次付款**：
+若聚合只留計數，這一次會看到「2 綠 1 紅」而**分不出是交付的缺陷還是別人的探針**。
+
 ### A.4 待裁
 
 1.  **`layout` 升不升？**（見上表；驗收方傾向**升**，理由是誠實性軸與本弧主題同源，
