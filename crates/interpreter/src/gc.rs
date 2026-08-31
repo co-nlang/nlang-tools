@@ -1,7 +1,8 @@
 //! Local store garbage collection (local_gc arc).
 //!
 //! Roots: HEAD → commit predecessors (dual-walk: `Commit.parent` if set,
-//! else the commit circle's covering, D52) + each commit's `root` tree, then
+//! else the `ancestor:` digest on the commit circle, D52/D55/A3) + each
+//! commit's `root` tree, then
 //! every digest referenced by those value objects. **`CommitMeta.abandoned`
 //! is not a root** (R-b). Forgetting never runs automatically (R-c).
 //!
@@ -227,8 +228,9 @@ pub fn mark(
                     }
                 }
                 // D52: `parent: None` contributes zero bytes, so JSON refs
-                // no longer name the predecessor. Dual-walk the commit
-                // circle; `previous_commit` still prefers a set `parent`.
+                // no longer name the predecessor. Dual-walk via
+                // `previous_commit` (parent if set, else `ancestor:` as a
+                // commit digest — a pre-arc HEAD has no circle).
                 push_commit_predecessor(store, base_dir, &d, &seen, &mut stack);
             }
             VerifiedObject::CaidMismatch => {

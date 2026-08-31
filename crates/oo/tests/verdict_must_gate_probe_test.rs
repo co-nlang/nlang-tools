@@ -185,7 +185,7 @@ fn commit_links(dir: &Path, digest: &str) -> (Option<String>, Option<String>) {
 }
 
 /// Independent of the engine walk: directory is truth. D55 ancestor
-/// annotation, not the covering `parents:`.
+/// annotation (commit digest, or Repair-2 circle id), not covering.
 fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
     let sp = dir.join(".oo").join("savepoints");
     let rd = fs::read_dir(&sp).ok()?;
@@ -216,6 +216,14 @@ fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
         .0
         .clone();
     let aid = ancestor_of.get(&start)?.as_ref()?;
+    // A3: `ancestor:` names the predecessor commit's digest. Repair-2
+    // files named a circle local id instead.
+    if aid.len() == 64 && aid.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        if aid == digest {
+            return None;
+        }
+        return Some(aid.clone());
+    }
     let d = commit_of.get(aid)?.as_ref()?;
     if d == digest {
         return None;

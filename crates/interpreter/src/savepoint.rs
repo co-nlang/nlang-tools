@@ -10,8 +10,8 @@
 //! These files survive commit: D43 requires every ○ to already be durable.
 
 use crate::store_codec::{
-    decode_staged, encode_savepoint, parse_savepoint_ancestor, parse_savepoint_commit,
-    parse_savepoint_parents, savepoint_combo_text,
+    decode_commit, decode_staged, encode_savepoint, is_framed, parse_savepoint_ancestor,
+    parse_savepoint_commit, parse_savepoint_parents, savepoint_combo_text,
 };
 use crate::value::{ComboVal, ContentHash};
 use anyhow::Result;
@@ -51,8 +51,8 @@ pub struct Circle {
     pub combo: String,
     /// 64-hex digest of the commit this circle became, if any (D52).
     pub commit_digest: Option<String>,
-    /// Local id of HEAD's commit-circle at mint time (D55). Annotation,
-    /// not a covering edge.
+    /// Predecessor commit: 64-hex digest (A3), or a Repair-2 circle
+    /// local id. Annotation, not a covering edge.
     pub ancestor: Option<String>,
 }
 
@@ -180,8 +180,10 @@ pub fn record(base: &Path, combo: &ComboVal) -> Result<Option<String>> {
 /// `parents:` (unit-test refine / first commit without a disk evolve).
 /// G3 forbids *two* covering parents, not zero.
 ///
-/// Ancestor (annotation, not an H1 edge): the commit-circle of HEAD at
-/// mint time. Omitted on the first commit.
+/// Ancestor (annotation, not an H1 edge): the predecessor commit's
+/// 64-hex digest. Omitted on the first commit. Pre-arc HEADs have no
+/// circle, so naming a circle id would dangle and `gc` would sweep
+/// history that was still on disk.
 pub fn record_commit(
     base: &Path,
     commit: &ContentHash,
@@ -228,29 +230,117 @@ pub fn previous_commit(
         return Ok(Some(p.clone()));
     }
     let nodes = load_circles(base)?;
-    let Some(start) = nodes
+    if let Some(start) = nodes
         .iter()
         .find(|(_, n)| n.commit_digest.as_deref() == Some(digest))
         .map(|(id, _)| id.clone())
-    else {
-        return Ok(None);
-    };
-    let Some(aid) = nodes.get(&start).and_then(|n| n.ancestor.clone()) else {
-        return Ok(None);
-    };
-    let Some(d) = nodes.get(&aid).and_then(|n| n.commit_digest.clone()) else {
-        return Ok(None);
-    };
-    if d == digest {
-        return Ok(None);
+    {
+        let Some(aid) = nodes.get(&start).and_then(|n| n.ancestor.clone()) else {
+            return Ok(None);
+        };
+        return Ok(hash_from_ancestor(&nodes, &aid, digest));
     }
-    let Ok(bytes) = hex::decode(&d) else {
-        return Ok(None);
-    };
+    // Named by no circle: pre-arc annotations were peeled (G7) or the
+    // commit predates this arc and `parent` was already `None`. The
+    // v0.40.0 path never lands here — those objects still carry parent.
+    Ok(predecessor_by_timestamp(base, commit, digest))
+}
+
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn hash_from_hex(d: &str) -> Option<ContentHash> {
+    if !is_hex64(d) {
+        return None;
+    }
+    let bytes = hex::decode(d).ok()?;
     if bytes.len() != 32 {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(ContentHash::v1(bytes)))
+    Some(ContentHash::v1(bytes))
+}
+
+/// A3 spelling: `ancestor:` is the predecessor commit's 64-hex digest.
+/// Repair-2 spelling: a circle local id; look up that circle's `commit:`.
+fn hash_from_ancestor(
+    nodes: &BTreeMap<String, Circle>,
+    aid: &str,
+    current: &str,
+) -> Option<ContentHash> {
+    if let Some(h) = hash_from_hex(aid) {
+        if hex::encode(&h.digest) == current {
+            return None;
+        }
+        return Some(h);
+    }
+    let d = nodes.get(aid).and_then(|n| n.commit_digest.as_deref())?;
+    if d == current {
+        return None;
+    }
+    hash_from_hex(d)
+}
+
+fn decode_stored_commit(text: &str) -> Option<crate::value::Commit> {
+    if is_framed(text) {
+        decode_commit(text).ok()
+    } else {
+        serde_json::from_str(text).ok()
+    }
+}
+
+/// Next-older commit object by `CommitMeta.timestamp`. Only used when
+/// this digest is not named by any circle — otherwise first commits and
+/// rolled-back HEADs would grow a phantom parent chain.
+fn predecessor_by_timestamp(
+    base: &Path,
+    current: &crate::value::Commit,
+    current_digest: &str,
+) -> Option<ContentHash> {
+    let sha = base.join(".oo").join("objects").join("sha256");
+    if !sha.exists() {
+        return None;
+    }
+    let t0 = current.meta.timestamp;
+    let mut best: Option<(u64, String)> = None;
+    let prefixes = fs::read_dir(&sha).ok()?;
+    for a in prefixes.flatten() {
+        if !a.path().is_dir() {
+            continue;
+        }
+        let pre = a.file_name().to_string_lossy().to_string();
+        let Ok(files) = fs::read_dir(a.path()) else {
+            continue;
+        };
+        for b in files.flatten() {
+            if !b.path().is_file() {
+                continue;
+            }
+            let rest = b.file_name().to_string_lossy().to_string();
+            let d = format!("{pre}{rest}");
+            if d == current_digest {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(b.path()) else {
+                continue;
+            };
+            let Some(c) = decode_stored_commit(&text) else {
+                continue;
+            };
+            let t = c.meta.timestamp;
+            if t >= t0 {
+                continue;
+            }
+            let take = match &best {
+                None => true,
+                Some((bt, bd)) => t > *bt || (t == *bt && d > *bd),
+            };
+            if take {
+                best = Some((t, d));
+            }
+        }
+    }
+    best.and_then(|(_, d)| hash_from_hex(&d))
 }
 
 /// Whether `base` is reachable from `head` as a commit ancestor (D55).

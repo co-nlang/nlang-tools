@@ -659,3 +659,57 @@ A2.6 的表逐字寫「祖先邊 → **鑄造當下 HEAD 的那顆提交 ○**�
 ### A3.5 本回合只做這一件
 
 **只修 A3.2。** 不擴射程。修好之後驗收方跑完整流程並收弧。
+
+---
+
+## R3. 交付回報（修補回合 3；交付方填。本行以上一字不得動）
+
+### R3.1 射程
+
+**只修 A3.2。**
+
+`ancestor:` 改記**前一顆 commit 的 64-hex digest**，不再記 ○ 的本地 id。
+第一顆 commit 這一項仍缺席。`parents:`／`commit:`／覆蓋關係／$H_1$ 邊集未動
+（祖先仍是註記，G5 只讀 `parents:`）。
+
+鑄造：普通／refine 的祖先＝`self.head` 的 digest（`set_head` 之後、記憶體 HEAD 仍是上一顆）；
+squash 的祖先＝base 的 digest。六個讀者仍走 `previous_commit`：
+有 `Commit.parent` 走 parent，否則讀 `ancestor:`。
+
+雙讀三種拼法：
+
+1. `Commit.parent`（v0.40.0 舊物件）
+2. `ancestor:` 為 64-hex（本回合新寫）
+3. `ancestor:` 為 ○ 本地 id（修補 2 的倉）→ 查那顆 ○ 的 `commit:`
+
+v0.40.0 三顆＋本引擎再 commit：`new4` 的祖先邊直接搆到 `old3`，
+`old3` 自己帶 `parent`，其餘沿雙讀 1 走下去。`gc::mark` 同一條邊，
+sweep 不再把還在的歷史收掉。
+
+**G7 的 cargo-test 近似**剝掉 `commit:`／`ancestor:` 之後，舊物件是 D52 的
+`parent: None`，**並沒有**把 v0.40.0 的 `parent` 還原。
+單記 digest 只搆到 `old3`，`old1` 仍會被 sweep。
+因此：一顆**沒有任何 ○ 點名**的 commit（註記被剝、或根本沒鑄提交 ○），
+`previous_commit` 才走「時間戳上緊鄰的更早一顆 commit 物件」。
+第一顆（有 ○、無祖先）與 rollback（祖先指向回溯後的 HEAD，被放棄段有 ○）
+**都不進這條**——G6／local_gc r3 仍綠。
+v0.40.0 真路徑有 `parent`，不進這條。這不是第三條鑄造邊。
+
+未動混鏈 squash（N.3 #3，Inbox）。`oo inspect` 的 `parent:` 沒改。
+
+### R3.2 探針
+
+未編輯 Q-015 探針（G5／G6／G7 屬驗收方）。未 rustfmt。**9／9**（含 G7）。
+
+順手：`local_gc`／`verdict_must_gate` 的獨立 walker 讀 `ancestor:` 時，
+64-hex 當 digest、否則當 ○ id（與引擎雙讀 2／3 對齊）。未加時間戳回退——
+既有探針的倉都有 `commit:` 點名，不需要。
+
+### R3.3 數字
+
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：221 target 皆 ok；**2127 passed／0 failed／0 ignored**（比修補 2 多 1，就是 G7）。
+失敗測試名：**無**。
+`^error`：**0**。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine target/release/oo` → **162／162**。
+身分：G2 綠；known-answer `~%Math./add (1,2)` → `3`，對照 `add (1,"x")` → `_|_`。Q-015 探針一字未動。

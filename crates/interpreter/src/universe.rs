@@ -1083,14 +1083,10 @@ impl Universe {
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
         // D52/D55: put_commit → set_head → mint. Covering parent is the
-        // workset tip just submitted (S2 / G5). Ancestor is HEAD's
-        // commit-circle at mint time (`self.head` is still the previous
-        // HEAD) — log/squash/gc walk that annotation, not `parents:`.
-        let ancestor = self.head.as_ref().and_then(|h| {
-            crate::savepoint::circle_id_for_commit(base_dir, &hex::encode(&h.digest))
-                .ok()
-                .flatten()
-        });
+        // workset tip just submitted (S2 / G5). Ancestor is the previous
+        // HEAD's commit digest (`self.head` is still that HEAD) — a
+        // pre-arc HEAD has no circle, so naming a circle id would dangle.
+        let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));
         crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
         self.root = new_root;
         self.standard_root = standard;
@@ -1280,11 +1276,12 @@ impl Universe {
         commit.kind = CommitKind::Squash;
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
-        // Covering: unique tip (HEAD's commit-circle). Ancestor: the base,
-        // so log/squash skip the compressed range without opening a hole.
-        let ancestor =
-            crate::savepoint::circle_id_for_commit(base_dir, &hex::encode(&base.digest))?;
-        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
+        // Covering: unique tip (HEAD's commit-circle). Ancestor: the base
+        // commit's digest, so log/squash skip the compressed range without
+        // opening a hole. Name the commit, not a circle — the base may
+        // predate this arc.
+        let ancestor = hex::encode(&base.digest);
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))?;
         // Root value is the same as before; reload for consistency.
         self.root = engine
             .store
@@ -1612,11 +1609,7 @@ impl Universe {
         };
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
-        let ancestor = self.head.as_ref().and_then(|h| {
-            crate::savepoint::circle_id_for_commit(base_dir, &hex::encode(&h.digest))
-                .ok()
-                .flatten()
-        });
+        let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));
         crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
         self.head = Some(commit_hash.clone());
 

@@ -178,9 +178,11 @@ pub fn encode_savepoint_parents_line(parents: &[String]) -> String {
 /// identity is the filename, not a CAID. `parents` is a frame line, not a
 /// ComboVal field. `commit` is the 64-hex digest of the commit this circle
 /// became (D52); omitted when the circle is not a commit event. `ancestor`
-/// is the local id of HEAD's commit-circle at mint time (D55); omitted
-/// on the first commit and on every evolve circle. It is an annotation,
-/// not a covering edge — `h1()` must not count it.
+/// is the 64-hex digest of the predecessor commit (D55 as used by log /
+/// squash / gc). A pre-arc HEAD has no circle, so the edge names the
+/// commit itself — not a circle local id. Omitted on the first commit and
+/// on every evolve circle. Annotation, not a covering edge; `h1()` must
+/// not count it.
 pub fn encode_savepoint(
     combo: &ComboVal,
     parents: &[String],
@@ -250,8 +252,9 @@ pub fn parse_savepoint_commit(bytes: &str) -> Option<String> {
     None
 }
 
-/// Local id on the `ancestor:` frame line. `None` if absent (evolve
-/// circles, the first commit, and every ○ from before D55).
+/// Token on the `ancestor:` frame line. New writes are a 64-hex commit
+/// digest; Repair-2 files used a circle local id. `None` if absent
+/// (evolve circles, the first commit, and every ○ from before D55).
 pub fn parse_savepoint_ancestor(bytes: &str) -> Option<String> {
     let rest = bytes.trim_start();
     let after = rest
