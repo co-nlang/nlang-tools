@@ -344,20 +344,48 @@ fn g2_circles_outlive_the_commit() {
     std::fs::write(d.join("b.n"), "b: 2\n").unwrap();
     assert!(oo_ok(&d, &["evolve", "a.n"]), "REACH: evolve a failed");
     assert!(oo_ok(&d, &["evolve", "b.n"]), "REACH: evolve b failed");
-    let before = circles(&d).len();
-    assert_eq!(before, 2, "REACH: expected two circles, got {before}");
+    let before_paths = circles(&d);
+    assert_eq!(
+        before_paths.len(),
+        2,
+        "REACH: expected two circles, got {}",
+        before_paths.len()
+    );
+    let before: Vec<(String, Vec<u8>)> = before_paths
+        .iter()
+        .map(|p| {
+            (
+                p.file_name().unwrap().to_string_lossy().to_string(),
+                std::fs::read(p).unwrap(),
+            )
+        })
+        .collect();
 
     assert!(
         oo_ok(&d, &["commit", "-m", "one"]),
         "REACH: the commit failed, so nothing was tested about surviving it"
     );
 
-    assert_eq!(
-        circles(&d).len(),
-        before,
-        "the commit removed circles. SPEC_10 3.1 durability (MUST): every \
-         savepoint is durable at birth and MUST continue to exist after a \
-         commit. Persisted and committed are two different things."
+    let after = circles(&d);
+    for (name, bytes) in &before {
+        let p = d.join(".oo").join("savepoints").join(name);
+        assert!(
+            p.exists(),
+            "the commit removed circle {name}. SPEC_10 3.1 durability (MUST): \
+             every savepoint is durable at birth and MUST continue to exist \
+             after a commit. Persisted and committed are two different things."
+        );
+        assert_eq!(
+            &std::fs::read(&p).unwrap(),
+            bytes,
+            "the commit rewrote circle {name}"
+        );
+    }
+    assert!(
+        after.len() >= before.len(),
+        "the commit dropped the circle count from {} to {}",
+        before.len(),
+        after.len()
     );
 }
 

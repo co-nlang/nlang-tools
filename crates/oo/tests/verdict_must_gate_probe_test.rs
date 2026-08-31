@@ -172,6 +172,7 @@ fn hex_of(v: &serde_json::Value) -> Option<String> {
 /// Deliberately *not* a general walker: the whole point of this file is that
 /// a general walker is what went blind. This reads the two fields a commit
 /// has and nothing else, so it cannot be fooled by what it does not look at.
+/// D52: `parent` may be absent; `chain` then follows the commit circle.
 fn commit_links(dir: &Path, digest: &str) -> (Option<String>, Option<String>) {
     let bytes = fs::read(object_path(dir, digest)).unwrap();
     let j: serde_json::Value = nlang_interpreter::store_codec::commit_json_view(&bytes).unwrap();
@@ -183,14 +184,66 @@ fn commit_links(dir: &Path, digest: &str) -> (Option<String>, Option<String>) {
     (p, r)
 }
 
+/// Independent of the engine walk: directory is truth. D55 ancestor
+/// annotation (commit digest, or Repair-2 circle id), not covering.
+fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
+    let sp = dir.join(".oo").join("savepoints");
+    let rd = fs::read_dir(&sp).ok()?;
+    let mut commit_of: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut ancestor_of: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = p.file_name()?.to_str()?.to_string();
+        if name == "LOG" || name.starts_with('.') {
+            continue;
+        }
+        let text = fs::read_to_string(&p).ok()?;
+        commit_of.insert(
+            name.clone(),
+            nlang_interpreter::store_codec::parse_savepoint_commit(&text),
+        );
+        ancestor_of.insert(
+            name,
+            nlang_interpreter::store_codec::parse_savepoint_ancestor(&text),
+        );
+    }
+    let start = commit_of
+        .iter()
+        .find(|(_, c)| c.as_deref() == Some(digest))?
+        .0
+        .clone();
+    let aid = ancestor_of.get(&start)?.as_ref()?;
+    // A3: `ancestor:` names the predecessor commit's digest. Repair-2
+    // files named a circle local id instead.
+    if aid.len() == 64 && aid.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        if aid == digest {
+            return None;
+        }
+        return Some(aid.clone());
+    }
+    let d = commit_of.get(aid)?.as_ref()?;
+    if d == digest {
+        return None;
+    }
+    Some(d.clone())
+}
+
 /// The commit chain, newest first, with each commit's root.
+/// Dual-walk: JSON `parent` when set, else the D55 ancestor annotation.
 fn chain(dir: &Path) -> Vec<(String, Option<String>)> {
     let mut out = Vec::new();
     let mut cur = Some(head_digest(dir));
+    let mut seen = BTreeSet::new();
     while let Some(d) = cur {
+        if !seen.insert(d.clone()) {
+            break;
+        }
         let (p, r) = commit_links(dir, &d);
-        out.push((d, r));
-        cur = p;
+        out.push((d.clone(), r));
+        cur = p.or_else(|| commit_pred_from_circles(dir, &d));
     }
     out
 }

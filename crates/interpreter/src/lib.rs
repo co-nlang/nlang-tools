@@ -4842,10 +4842,15 @@ impl Ouroboros {
         if let Some(head) = self.store.get_head(&current_dir)? {
             let mut history = Vec::new();
             let mut curr = Some(head);
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             while let Some(h) = curr {
+                let d = hex::encode(&h.digest);
+                if !seen.insert(d.clone()) {
+                    break;
+                }
                 let commit = self.store.get_commit(&h)?;
-                history.push((h, commit.meta.clone(), commit.kind));
-                curr = commit.parent;
+                history.push((h.clone(), commit.meta.clone(), commit.kind));
+                curr = crate::savepoint::previous_commit(&current_dir, &commit, &d)?;
             }
             return Ok(history);
         }

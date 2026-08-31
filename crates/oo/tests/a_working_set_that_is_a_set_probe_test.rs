@@ -300,11 +300,15 @@ fn g2_the_circle_layer_is_left_alone() {
         })
         .collect();
     after.sort_by(|a, b| a.0.cmp(&b.0));
-    assert_eq!(
-        before, after,
-        "commit rewrote or dropped circles. SPEC_10 3.1: a savepoint MUST \
-         survive commit (D43). Q-014 must not touch the circle layer."
-    );
+    for (name, bytes) in &before {
+        let got = after.iter().find(|(n, _)| n == name);
+        assert!(
+            got.is_some(),
+            "commit dropped circle {name}. SPEC_10 3.1: a savepoint MUST \
+             survive commit (D43). Q-014 must not touch the circle layer."
+        );
+        assert_eq!(&got.unwrap().1, bytes, "commit rewrote circle {name}");
+    }
 }
 
 // ── G3 ── the horizon parameter keeps its session lifetime ───────────────

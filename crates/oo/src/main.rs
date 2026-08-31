@@ -1011,7 +1011,7 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
     // AUDIT MARKER is present or only a human message that happens to say so.
     // An audit surface that cannot be verified by inspection is not an audit
     // surface. The message now states what was compressed.
-    let squashed = universe.commits_after(&engine, &base).unwrap_or(0);
+    let squashed = universe.commits_after(&engine, &cur, &base).unwrap_or(0);
     let meta = CommitMeta {
         message: Some(format!("compressed {squashed} commit(s) onto {}", &caid)),
         timestamp: std::time::SystemTime::now()

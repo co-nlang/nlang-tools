@@ -176,13 +176,31 @@ pub fn encode_savepoint_parents_line(parents: &[String]) -> String {
 
 /// Same combo body as staged; the kind marks a local savepoint (○), whose
 /// identity is the filename, not a CAID. `parents` is a frame line, not a
-/// ComboVal field.
-pub fn encode_savepoint(combo: &ComboVal, parents: &[String]) -> String {
-    format!(
-        "{FRAME} savepoint\n{}\n{}",
-        encode_savepoint_parents_line(parents),
-        write_combo(combo, 0)
-    )
+/// ComboVal field. `commit` is the 64-hex digest of the commit this circle
+/// became (D52); omitted when the circle is not a commit event. `ancestor`
+/// is the 64-hex digest of the predecessor commit (D55 as used by log /
+/// squash / gc). A pre-arc HEAD has no circle, so the edge names the
+/// commit itself — not a circle local id. Omitted on the first commit and
+/// on every evolve circle. Annotation, not a covering edge; `h1()` must
+/// not count it.
+pub fn encode_savepoint(
+    combo: &ComboVal,
+    parents: &[String],
+    commit: Option<&str>,
+    ancestor: Option<&str>,
+) -> String {
+    let mut frame = encode_savepoint_parents_line(parents);
+    if let Some(d) = commit {
+        frame.push('\n');
+        frame.push_str("commit: ");
+        frame.push_str(d);
+    }
+    if let Some(id) = ancestor {
+        frame.push('\n');
+        frame.push_str("ancestor: ");
+        frame.push_str(id);
+    }
+    format!("{FRAME} savepoint\n{frame}\n{}", write_combo(combo, 0))
 }
 
 /// Ids listed on the savepoint frame's `parents:` line. `None` if the line
@@ -209,25 +227,81 @@ pub fn parse_savepoint_parents(bytes: &str) -> Option<Vec<String>> {
     None
 }
 
-/// Combo text of a savepoint (after the frame and optional `parents:`).
+/// 64-hex digest on the `commit:` frame line. `None` if the line is absent
+/// (evolve circles, and every ○ from before this arc).
+pub fn parse_savepoint_commit(bytes: &str) -> Option<String> {
+    let rest = bytes.trim_start();
+    let after = rest
+        .strip_prefix(FRAME)
+        .and_then(|s| s.strip_prefix(" savepoint"))
+        .unwrap_or(rest);
+    for line in after.lines() {
+        let l = line.trim_start();
+        if l.starts_with('{') {
+            return None;
+        }
+        if let Some(rest) = l.strip_prefix("commit:") {
+            let s = rest.trim();
+            let hex = s.rsplit(':').next().unwrap_or(s);
+            if hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+                return Some(hex.to_string());
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// Token on the `ancestor:` frame line. New writes are a 64-hex commit
+/// digest; Repair-2 files used a circle local id. `None` if absent
+/// (evolve circles, the first commit, and every ○ from before D55).
+pub fn parse_savepoint_ancestor(bytes: &str) -> Option<String> {
+    let rest = bytes.trim_start();
+    let after = rest
+        .strip_prefix(FRAME)
+        .and_then(|s| s.strip_prefix(" savepoint"))
+        .unwrap_or(rest);
+    for line in after.lines() {
+        let l = line.trim_start();
+        if l.starts_with('{') {
+            return None;
+        }
+        if let Some(rest) = l.strip_prefix("ancestor:") {
+            return rest.split_whitespace().next().map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// Combo text of a savepoint (after the frame, `parents:`, optional
+/// `commit:`, and optional `ancestor:`).
 pub fn savepoint_combo_text(bytes: &str) -> &str {
     let rest = bytes.trim_start();
     let after = rest
         .strip_prefix(FRAME)
         .and_then(|s| s.strip_prefix(" savepoint"))
         .unwrap_or(rest);
-    skip_savepoint_parents_line(after)
+    skip_savepoint_frame_lines(after)
 }
 
-fn skip_savepoint_parents_line(body: &str) -> &str {
-    let body = body.trim_start_matches(['\r', '\n', ' ', '\t']);
-    if let Some(after) = body.strip_prefix("parents:") {
-        match after.find('\n') {
-            Some(i) => after[i + 1..].trim_start_matches(['\r', '\n', ' ', '\t']),
-            None => "",
+fn skip_savepoint_frame_lines(body: &str) -> &str {
+    let mut body = body.trim_start_matches(['\r', '\n', ' ', '\t']);
+    loop {
+        if body.starts_with('{') {
+            return body;
         }
-    } else {
-        body
+        let Some(nl) = body.find('\n') else {
+            return body;
+        };
+        let line = body[..nl].trim_start();
+        if line.starts_with("parents:")
+            || line.starts_with("commit:")
+            || line.starts_with("ancestor:")
+        {
+            body = body[nl + 1..].trim_start_matches(['\r', '\n', ' ', '\t']);
+            continue;
+        }
+        return body;
     }
 }
 
@@ -257,7 +331,7 @@ pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
         },
     };
     let body = if kind == "savepoint" {
-        skip_savepoint_parents_line(body)
+        skip_savepoint_frame_lines(body)
     } else {
         body.trim_start_matches(['\r', '\n', ' ', '\t'])
     };

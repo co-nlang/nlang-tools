@@ -222,9 +222,62 @@ fn reachable(dir: &Path, follow_abandoned: bool) -> BTreeSet<String> {
         };
         let mut r = Vec::new();
         refs_of(&json, follow_abandoned, &mut r);
+        // D55: JSON `parent` when present (already in `r`), else the
+        // ancestor annotation. Covering (`parents:`) is not ancestry.
+        if let Some(p) = commit_pred_from_circles(dir, &d) {
+            r.push(p);
+        }
         stack.extend(r);
     }
     seen
+}
+
+/// Independent of the engine walk: directory is truth. Follows the
+/// `ancestor:` annotation on the circle that names `digest` (commit
+/// digest, or Repair-2 circle id).
+fn commit_pred_from_circles(dir: &Path, digest: &str) -> Option<String> {
+    let sp = dir.join(".oo").join("savepoints");
+    let rd = fs::read_dir(&sp).ok()?;
+    let mut commit_of: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut ancestor_of: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = p.file_name()?.to_str()?.to_string();
+        if name == "LOG" || name.starts_with('.') {
+            continue;
+        }
+        let text = fs::read_to_string(&p).ok()?;
+        commit_of.insert(
+            name.clone(),
+            nlang_interpreter::store_codec::parse_savepoint_commit(&text),
+        );
+        ancestor_of.insert(
+            name,
+            nlang_interpreter::store_codec::parse_savepoint_ancestor(&text),
+        );
+    }
+    let start = commit_of
+        .iter()
+        .find(|(_, c)| c.as_deref() == Some(digest))?
+        .0
+        .clone();
+    let aid = ancestor_of.get(&start)?.as_ref()?;
+    // A3: `ancestor:` names the predecessor commit's digest. Repair-2
+    // files named a circle local id instead.
+    if aid.len() == 64 && aid.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        if aid == digest {
+            return None;
+        }
+        return Some(aid.clone());
+    }
+    let d = commit_of.get(aid)?.as_ref()?;
+    if d == digest {
+        return None;
+    }
+    Some(d.clone())
 }
 
 fn bytes_of(dir: &Path, set: &BTreeSet<String>) -> u64 {

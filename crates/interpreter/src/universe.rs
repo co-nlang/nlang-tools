@@ -1078,10 +1078,16 @@ impl Universe {
         if self.effect_pending.is_some() {
             meta.privileged_effect = Some(true);
         }
-        let mut commit = crate::value::Commit::new(self.head.clone(), root_hash, meta);
+        let mut commit = crate::value::Commit::new(None, root_hash, meta);
         commit.kind = kind;
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
+        // D52/D55: put_commit → set_head → mint. Covering parent is the
+        // workset tip just submitted (S2 / G5). Ancestor is the previous
+        // HEAD's commit digest (`self.head` is still that HEAD) — a
+        // pre-arc HEAD has no circle, so naming a circle id would dangle.
+        let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
         self.root = new_root;
         self.standard_root = standard;
         // Workset injections are consumed. Config is session-scoped (O37):
@@ -1211,15 +1217,26 @@ impl Universe {
     /// How many commits sit between `base` (exclusive) and HEAD (inclusive).
     /// ACCEPTANCE REPAIR: lets the squash audit message state what it removed,
     /// so the machine-set kind marker stays distinguishable from the message.
-    pub fn commits_after(&self, engine: &Ouroboros, base: &ContentHash) -> Result<usize> {
+    pub fn commits_after(
+        &self,
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        base: &ContentHash,
+    ) -> Result<usize> {
         let mut n = 0usize;
         let mut curr = self.head.clone();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         while let Some(h) = curr {
             if &h == base {
                 return Ok(n);
             }
+            let d = hex::encode(&h.digest);
+            if !seen.insert(d.clone()) {
+                break;
+            }
             n += 1;
-            curr = engine.store.get_commit(&h)?.parent;
+            let commit = engine.store.get_commit(&h)?;
+            curr = crate::savepoint::previous_commit(base_dir, &commit, &d)?;
         }
         Err(anyhow::anyhow!("squash base is not an ancestor of HEAD"))
     }
@@ -1245,20 +1262,9 @@ impl Universe {
                 "squash range empty: HEAD is already the base"
             ));
         }
-        // Verify base is an ancestor of HEAD (walk parent chain).
+        // Verify base is an ancestor of HEAD (D50 DAG, dual walk).
         let head_commit = engine.store.get_commit(&head)?;
-        let mut curr = head_commit.parent.clone();
-        let mut found = false;
-        while let Some(ref h) = curr {
-            if h == base {
-                found = true;
-                break;
-            }
-            curr = engine.store.get_commit(h)?.parent;
-        }
-        if !found {
-            // Also accept base existing when HEAD's full ancestry reaches it;
-            // if base is not on the chain, refuse.
+        if !crate::savepoint::commit_is_ancestor(base_dir, &engine.store, &head, base)? {
             return Err(anyhow::anyhow!("squash base is not an ancestor of HEAD"));
         }
         // Confirm base object exists.
@@ -1266,11 +1272,16 @@ impl Universe {
         // New commit: parent=base, root unchanged from HEAD, kind Squash.
         // Intentionally does NOT copy abandoned meta from intermediates —
         // those edges leave with the range (R2: Squash marker is the fact).
-        let mut commit =
-            crate::value::Commit::new(Some(base.clone()), head_commit.root.clone(), meta);
+        let mut commit = crate::value::Commit::new(None, head_commit.root.clone(), meta);
         commit.kind = CommitKind::Squash;
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
+        // Covering: unique tip (HEAD's commit-circle). Ancestor: the base
+        // commit's digest, so log/squash skip the compressed range without
+        // opening a hole. Name the commit, not a circle — the base may
+        // predate this arc.
+        let ancestor = hex::encode(&base.digest);
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))?;
         // Root value is the same as before; reload for consistency.
         self.root = engine
             .store
@@ -1493,7 +1504,8 @@ impl Universe {
                     Ok(v) => v,
                     Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
                         Some(crate::storage::StoreReadError::NotFound { .. }) | None => {
-                            current = commit.parent;
+                            let d = hex::encode(&ch.digest);
+                            current = crate::savepoint::previous_commit(base_dir, &commit, &d)?;
                             continue;
                         }
                         Some(crate::storage::StoreReadError::StandardRootUnavailable {
@@ -1539,7 +1551,8 @@ impl Universe {
                         }
                     }
                 }
-                current = commit.parent;
+                let d = hex::encode(&ch.digest);
+                current = crate::savepoint::previous_commit(base_dir, &commit, &d)?;
             }
         }
 
@@ -1581,7 +1594,7 @@ impl Universe {
             None => engine.store.put_value(&Value::Combo(self.root.clone()))?,
         };
         let commit = Commit {
-            parent: self.head.clone(),
+            parent: None,
             root: current_root_hash,
             meta,
             kind: CommitKind::Refine,
@@ -1596,6 +1609,8 @@ impl Universe {
         };
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
+        let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
         self.head = Some(commit_hash.clone());
 
         // Step 3: update RefineMap
