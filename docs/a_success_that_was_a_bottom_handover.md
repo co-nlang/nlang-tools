@@ -577,3 +577,54 @@ A2.6 的「祖先邊指向提交 ○」漏掉「本弧之前的 commit 沒有 �
 ### C.5 本回合不動
 
 `reported_bottoms` 那一路（回合 1 已過）／`encoding`／身分／Inbox 那列 advert 探針。
+
+---
+
+## R2. 交付回報（修補回合 2；交付方填。本行以上一字不得動）
+
+### R2.1 採甲，為什麼
+
+**甲。** 不變式是「宣告舊 layout 的儲存，不得持有舊引擎驗證不了的東西」。舊引擎驗證不了的是**帶 `reported_bottoms` 的 commit digest**，不是每一次寫入。乙把所有寫入都擋掉，等於強迫每一個既有倉遷移，然後 v0.41.0 對它們全部誠實拒絕——那是修補 1 表上「寬而誠實」的鎖，用戶只把它裁給**新倉**與**已遷移的倉**。乾淨提交的位元組 v0.41.0 本來就讀得懂（修補 1 Q7／Q8）。
+
+不是 B1：拒絕的理由是容器版本。現行 `layout=3` 上帶 ⊥ 的提交仍落地（G2 綠）。
+
+閘在 `project_for_commit` 收集完葉之後、`put_root`／`put_commit` 之前。沒有寫入就沒有標記。
+
+### R2.2 Q9〔量，真 v0.41.0 造倉，未遷移〕
+
+`x: 0` 一次 commit，`.oo/format` = `layout=2`。然後本弧引擎：
+
+```
+printf 'c: c + 1\n' > bot.n
+oo evolve bot.n
+oo commit -m bot
+```
+
+```
+RC=1
+Error: this store declares layout=2; a commit that reports a bottom cannot land until the layout is current. Run `oo migrate --grant migrate`
+```
+
+HEAD 未動（仍是 v0.41.0 那顆 `6777e801…`），宣告仍 `layout=2`。同一支 v0.41.0 `oo log` **rc=0**，不是 `#caid_mismatch`。
+
+對照（另一個未遷移的 v0.41.0 倉，工作集沒有 ⊥）：`y: 1` → `Commit successful` **rc=0**，宣告仍 `layout=2`，v0.41.0 `log`／`status` **rc=0**。
+
+遷移之後同一句 `c: c + 1` → `#divergent at c` 然後 `Commit successful`，**rc=0**（G2 的倉）。
+
+### R2.3 順手改動
+
+沒有。Q-017 探針一字未動。未 rustfmt `storage.rs`／`universe.rs`。
+
+### R2.4 探針
+
+**5／5**。G2 在現行 layout 的倉上綠。
+
+### R2.5 數字
+
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：222 target 皆 ok；**2132 passed／0 failed／0 ignored**。
+失敗測試名：**無**。
+`^error`：**0**。
+conformance：**162／162**。
+身分：G1 綠（`x: 0` 根 `31745ef0…`、3 物件）。known-answer `3`，對照 `_|_`。
+Q-017 探針未動。

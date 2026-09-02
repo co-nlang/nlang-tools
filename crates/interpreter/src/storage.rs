@@ -145,6 +145,23 @@ fn split_layout_is_known(n: u32) -> bool {
     n == STORE_LAYOUT_VERSION || STORE_LAYOUT_MIGRATABLE_FROM.contains(&n)
 }
 
+/// Trimmed `.oo/format` body. A missing file is the same refusal as open.
+pub fn read_layout_declaration(base_dir: &Path) -> Result<String> {
+    let raw = fs::read_to_string(base_dir.join(".oo").join("format")).map_err(|_| {
+        anyhow::anyhow!(
+            "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
+        )
+    })?;
+    Ok(raw.trim().to_string())
+}
+
+/// True only for the layout this engine writes. Migratable past layouts
+/// (`layout=2`) are known and openable, but they are not current — S9
+/// uses this so a marked commit cannot land on them.
+pub fn layout_declaration_is_current(declaration: &str) -> bool {
+    declaration == format!("layout={STORE_LAYOUT_VERSION}")
+}
+
 pub struct ObjectStore {
     root: PathBuf,
     encoding: u32,

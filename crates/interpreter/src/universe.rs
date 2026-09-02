@@ -1060,6 +1060,20 @@ impl Universe {
         let mut reported = Value::Combo(new_root.clone()).bottom_leaves();
         reported.sort();
         reported.dedup();
+        // S9 甲: a store that still declares a past layout must not receive
+        // a commit whose digest includes `reported_bottoms` — v0.41.0 then
+        // reports `#caid_mismatch` (false). Refuse before any write. Clean
+        // commits on the same store still land. Not B1: the reason is the
+        // container version, not the bottom.
+        if !reported.is_empty() {
+            let declaration = crate::storage::read_layout_declaration(base_dir)?;
+            if !crate::storage::layout_declaration_is_current(&declaration) {
+                return Err(anyhow::anyhow!(
+                    "this store declares {declaration}; a commit that reports a bottom \
+                     cannot land until the layout is current. Run `oo migrate --grant migrate`"
+                ));
+            }
+        }
         // O63: the container encoding selects the root-address rule.  An
         // encoding-3 store keeps the standard table it already names; a new
         // encoding-4 store begins with this engine's current table.
