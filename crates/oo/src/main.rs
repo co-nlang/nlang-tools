@@ -1048,12 +1048,11 @@ fn run_commit(
     }
     // ACCEPTANCE REPAIR (privilege escalation, 2026-07-26): the commit is where
     // the privileged overwrite is APPLIED, so the capability must be presented
-    // HERE, through the trusted channel — not inferred from `.oo/pin_pending`.
-    // That file records intent across two CLI processes; it is not authority.
-    // It lives in a directory any n/ program can write (`~%Io./write_file`), so
-    // trusting it let an entirely unprivileged program obtain #pin semantics and
-    // falsely mark its commit — exactly the tokenless backdoor SPEC_08 §6.1.2
-    // forbids. Demonstrated end to end before this repair.
+    // HERE, through the trusted channel — not inferred as authority from the
+    // durable intent (layout 4 injection metadata, or a legacy
+    // `.oo/pin_pending`). Trusting durable intent once let an unprivileged
+    // program obtain #pin semantics and falsely mark its commit — exactly the
+    // tokenless backdoor SPEC_08 §6.1.2 forbids.
     if universe.pin_pending && !engine.privilege.pin {
         anyhow::bail!(
             "#privileged_required: this commit applies a pinned overwrite; \
@@ -1625,7 +1624,7 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
 
 fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {
     let mut u = Universe::load(engine, path)?;
-    let _ = u.load_staged(engine, path);
+    u.load_staged(engine, path)?;
     Ok(u)
 }
 

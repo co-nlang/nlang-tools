@@ -5,15 +5,30 @@
 //! working set is the fold of those files. Local ids are random — never
 //! `ids.len()+1` (`savepoint.rs::mint_id`'s disease).
 
-use crate::store_codec::{decode_staged, encode_injection};
+use crate::store_codec::{decode_staged, encode_injection, FRAME};
 use crate::value::{BottomCause, BottomDetail, ComboVal, Value};
 use crate::Ouroboros;
 use anyhow::Result;
 use ring::rand::{SecureRandom, SystemRandom};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const DIR: &str = "injections";
+
+/// One immutable member of the working-set set. `id` is carried inside the
+/// member: the filename is only a local storage key and cannot be allowed to
+/// give a set an accidental order (D58).
+#[derive(Clone, Debug)]
+pub struct Injection {
+    pub id: String,
+    pub combo: ComboVal,
+    pub pin_coords: BTreeSet<String>,
+    /// Per coordinate, the members this pin observed and replaced at evolve
+    /// time. Two concurrent pins name the same past but not each other, so both
+    /// remain and the ordinary meet reports their conflict (D49).
+    pub absorbs: BTreeMap<String, BTreeSet<String>>,
+}
 
 pub fn dir(base: &Path) -> PathBuf {
     base.join(".oo").join(DIR)
@@ -51,15 +66,75 @@ pub fn paths(base: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-pub fn load_all(base: &Path) -> Result<Vec<ComboVal>> {
+pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
     let mut out = Vec::new();
     for p in paths(base)? {
         let text = fs::read_to_string(&p)?;
-        out.push(if crate::store_codec::is_framed(&text) {
-            decode_staged(&text)?
-        } else {
-            serde_json::from_str(&text)?
-        });
+        let filename_id = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        out.push(
+            if let Some(rest) = text
+                .trim_start()
+                .strip_prefix(&format!("{FRAME} injection\n"))
+                .and_then(|s| s.strip_prefix("id: "))
+            {
+                let (meta, body) = rest.split_once("\n\n").ok_or_else(|| {
+                    anyhow::anyhow!("injection {filename_id}: incomplete metadata frame")
+                })?;
+                let mut lines = meta.lines();
+                let id: String = serde_json::from_str(lines.next().unwrap_or_default())?;
+                let pin_coords: BTreeSet<String> = serde_json::from_str(
+                    lines
+                        .next()
+                        .and_then(|l| l.strip_prefix("pin_coords: "))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("injection {filename_id}: pin_coords absent")
+                        })?,
+                )?;
+                let absorbs: BTreeMap<String, BTreeSet<String>> = serde_json::from_str(
+                    lines
+                        .next()
+                        .and_then(|l| l.strip_prefix("absorbs: "))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("injection {filename_id}: absorbs absent")
+                        })?,
+                )?;
+                if lines.next().is_some() {
+                    anyhow::bail!("injection {filename_id}: unknown metadata");
+                }
+                let framed_body = format!("{FRAME} injection\n{body}");
+                Injection {
+                    id,
+                    combo: decode_staged(&framed_body)?,
+                    pin_coords,
+                    absorbs,
+                }
+            } else {
+                // Layout <= 3 had no in-body id and pin intent lived in
+                // `.oo/pin_pending`. Derive a stable compatibility id from the
+                // immutable bytes: using the filename would reintroduce the
+                // exact rename/order dependency D58 removes.
+                let combo = if crate::store_codec::is_framed(&text) {
+                    decode_staged(&text)?
+                } else {
+                    serde_json::from_str(&text)?
+                };
+                Injection {
+                    id: format!(
+                        "legacy-sha256:{}",
+                        hex::encode(
+                            ring::digest::digest(&ring::digest::SHA256, text.as_bytes()).as_ref()
+                        )
+                    ),
+                    combo,
+                    pin_coords: BTreeSet::new(),
+                    absorbs: BTreeMap::new(),
+                }
+            },
+        );
     }
     Ok(out)
 }
@@ -68,10 +143,27 @@ pub fn load_all(base: &Path) -> Result<Vec<ComboVal>> {
 /// N=100 is already `#fuel_exhausted`).
 pub fn fold(
     engine: &Ouroboros,
-    combos: impl IntoIterator<Item = ComboVal>,
+    injections: impl IntoIterator<Item = Injection>,
 ) -> std::result::Result<ComboVal, BottomDetail> {
+    let injections: Vec<Injection> = injections.into_iter().collect();
+    let mut absorbed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for injection in &injections {
+        for (coord, ids) in &injection.absorbs {
+            absorbed
+                .entry(coord.clone())
+                .or_default()
+                .extend(ids.iter().cloned());
+        }
+    }
     let mut acc = ComboVal::default();
-    for c in combos {
+    for injection in injections {
+        let mut c = injection.combo;
+        for (coord, ids) in &absorbed {
+            if ids.contains(&injection.id) {
+                c.remove_field(coord);
+                c.local.shift_remove(coord.as_str());
+            }
+        }
         match engine.unify(Value::Combo(acc), Value::Combo(c)) {
             Value::Combo(m) => acc = m,
             Value::Bottom(d) => return Err(*d),
@@ -86,16 +178,40 @@ pub fn fold(
     Ok(acc)
 }
 
-pub fn write(base: &Path, combo: &ComboVal) -> Result<String> {
+pub fn write(
+    base: &Path,
+    combo: &ComboVal,
+    pin_coords: &BTreeSet<String>,
+    absorbs: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<String> {
     let d = dir(base);
     fs::create_dir_all(&d)?;
-    let body = encode_injection(combo);
+    let declaration = crate::storage::read_layout_declaration(base)?;
+    let rich_frame = crate::storage::layout_declaration_is_current(&declaration);
     for _ in 0..8 {
         let id = mint_id()?;
         let dest = d.join(&id);
         if dest.exists() {
             continue;
         }
+        let legacy_body = encode_injection(combo);
+        let body = if rich_frame {
+            let combo_body = legacy_body
+                .strip_prefix(&format!("{FRAME} injection\n"))
+                .expect("encode_injection frame");
+            format!(
+                "{FRAME} injection\nid: {}\npin_coords: {}\nabsorbs: {}\n\n{}",
+                serde_json::to_string(&id)?,
+                serde_json::to_string(pin_coords)?,
+                serde_json::to_string(absorbs)?,
+                combo_body,
+            )
+        } else {
+            // A past layout may still receive writes whose representation it
+            // already declares. It must never receive the new metadata frame:
+            // an old engine would parse that as a corrupt injection.
+            legacy_body
+        };
         crate::storage::atomic_write(&dest, body.as_bytes())?;
         return Ok(id);
     }

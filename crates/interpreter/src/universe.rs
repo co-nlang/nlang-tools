@@ -318,8 +318,9 @@ pub struct Universe {
     /// Request flag for this evolve session (`oo evolve --pin`). Capability
     /// alone must not set this — two-step like runPure.
     pub pin_mode: bool,
-    /// Staged under pin; next commit is `CommitKind::Pin` with replace-merge.
-    /// Persisted beside staged so evolve/commit stay separate CLI processes.
+    /// Some staged injection carries pin intent; next commit is
+    /// `CommitKind::Pin` with root/workset replace-merge. Layout 4 persists
+    /// this in each immutable injection; layout <= 3 used `pin_pending`.
     pub pin_pending: bool,
     /// ACCEPTANCE REPAIR: exactly which coordinates were written under `--pin`.
     /// Replace-merge at commit applies to THESE ONLY; every other staged
@@ -331,7 +332,7 @@ pub struct Universe {
     pub pin_coords: std::collections::BTreeSet<String>,
     /// Intent: the active effect tags a `runPure` in the staged content
     /// actually DISCHARGED. Persisted as `.oo/effect_pending` (assertion
-    /// layer, same home as `pin_pending`). `None` = no discharge.
+    /// layer; unlike pin it has not yet moved into injections). `None` = no discharge.
     /// **Not authorization** — commit must re-present a capability that
     /// COVERS these tags (SPEC_08 §6.2 授權時點 / 意圖≠授權).
     ///
@@ -342,6 +343,14 @@ pub struct Universe {
     /// immutable injection at `save_staged`. Empty unless an evolve succeeded.
     session_delta: ComboVal,
     session_has_delta: bool,
+    /// IDs present when this evolve process loaded the immutable workset.
+    injection_ids: std::collections::BTreeSet<String>,
+    /// Pin metadata for the one injection this evolve process will mint.
+    session_pin_coords: std::collections::BTreeSet<String>,
+    session_absorbs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// A layout <= 3 pin sidecar read for compatibility. New pin intent never
+    /// writes this shared cell.
+    legacy_pin_pending: bool,
     /// D49: the on-disk injection set jointly meets to ⊥. The files stay;
     /// this is the leaf the fold reported. Not a ComboVal — ⊥ is not a combo.
     pub workset_bottom: Option<crate::value::BottomDetail>,
@@ -368,6 +377,10 @@ impl Universe {
             effect_pending: None,
             session_delta: ComboVal::default(),
             session_has_delta: false,
+            injection_ids: std::collections::BTreeSet::new(),
+            session_pin_coords: std::collections::BTreeSet::new(),
+            session_absorbs: std::collections::BTreeMap::new(),
+            legacy_pin_pending: false,
             workset_bottom: None,
         }
     }
@@ -738,6 +751,11 @@ impl Universe {
             // still meets normally.
             for c in &evolved_coords {
                 self.pin_coords.insert(c.clone());
+                self.session_pin_coords.insert(c.clone());
+                self.session_absorbs
+                    .entry(c.clone())
+                    .or_default()
+                    .extend(self.injection_ids.iter().cloned());
             }
             self.restamp_thunk_effects(engine);
             return Ok(());
@@ -800,6 +818,11 @@ impl Universe {
                     self.pin_pending = true;
                     for c in &evolved_coords {
                         self.pin_coords.insert(c.clone());
+                        self.session_pin_coords.insert(c.clone());
+                        self.session_absorbs
+                            .entry(c.clone())
+                            .or_default()
+                            .extend(self.injection_ids.iter().cloned());
                     }
                     self.restamp_thunk_effects(engine);
                     return Ok(());
@@ -876,6 +899,16 @@ impl Universe {
     }
 
     pub fn save_staged(&mut self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+        if !self.session_pin_coords.is_empty() {
+            let declaration = crate::storage::read_layout_declaration(base_dir)?;
+            if !crate::storage::layout_declaration_is_current(&declaration) {
+                anyhow::bail!(
+                    "this store declares {declaration}; pinned injections require layout={}. \
+                     Run `oo migrate --grant migrate` before evolving with --pin",
+                    crate::storage::STORE_LAYOUT_VERSION
+                );
+            }
+        }
         // O42 11.6.1 (i): write blur partial bodies into CAS before the
         // injection drops them (partial is CAID-only on disk). Uncommitted
         // bodies are unreachable after the next commit of a different root
@@ -883,29 +916,33 @@ impl Universe {
         Value::Combo(self.staged.clone()).persist_blur_partials(&engine.store)?;
         if self.session_has_delta {
             Value::Combo(self.session_delta.clone()).persist_blur_partials(&engine.store)?;
-            crate::injections::write(base_dir, &self.session_delta)?;
+            crate::injections::write(
+                base_dir,
+                &self.session_delta,
+                &self.session_pin_coords,
+                &self.session_absorbs,
+            )?;
             self.session_delta = ComboVal::default();
             self.session_has_delta = false;
+            self.session_pin_coords.clear();
+            self.session_absorbs.clear();
         }
         Self::unlink_legacy_staged(base_dir);
         // ○ lives beside the working set, not in CAS. Unchanged this arc
         // (D48 split: Q-014b owns identity and order). Identical bodies do
         // not mint a new ○ (D47).
         crate::savepoint::record(base_dir, &self.staged)?;
-        // Pin audit intent lives beside staged, never inside values (CAID).
-        // ACCEPTANCE REPAIR: the file now carries the pinned COORDINATES, not
-        // a bare flag — the commit must know which coordinates the privilege
-        // covers, or it applies replace semantics to everything staged.
+        // Layout 4 pin intent already travelled with session_delta in the
+        // immutable injection. Preserve a layout <= 3 sidecar only while its
+        // legacy injection remains pending; never create or rewrite the shared
+        // cell from a new evolve.
         let pin_path = base_dir.join(".oo").join("pin_pending");
-        if self.pin_pending {
-            let coords: Vec<&String> = self.pin_coords.iter().collect();
-            crate::storage::atomic_write(&pin_path, serde_json::to_string(&coords)?)?;
-        } else if pin_path.exists() {
+        if !self.legacy_pin_pending && pin_path.exists() {
             let _ = std::fs::remove_file(pin_path);
         }
-        // Effect-discharge intent (SPEC_08 §6.2). Same strength as pin_pending:
-        // intent only — commit must re-present the capability. Not writable
-        // from the language layer (store boundary).
+        // Effect-discharge intent (SPEC_08 §6.2). Like injection pin metadata,
+        // this is intent only — commit must re-present the capability. Not
+        // writable from the language layer (store boundary).
         let effect_path = base_dir.join(".oo").join("effect_pending");
         if let Some(tags) = self.effect_pending {
             // The TAG SET, not a bare marker: commit must be able to check
@@ -921,9 +958,14 @@ impl Universe {
         self.workset_bottom = None;
         self.session_delta = ComboVal::default();
         self.session_has_delta = false;
+        self.injection_ids.clear();
+        self.session_pin_coords.clear();
+        self.session_absorbs.clear();
         let pin_path = base_dir.join(".oo").join("pin_pending");
-        self.pin_pending = pin_path.exists();
-        if self.pin_pending {
+        self.legacy_pin_pending = pin_path.exists();
+        self.pin_pending = self.legacy_pin_pending;
+        self.pin_coords.clear();
+        if self.legacy_pin_pending {
             // ACCEPTANCE REPAIR: restore the pinned coordinate set. An
             // unreadable/legacy file means "pinned, coordinates unknown" — the
             // safe reading is the EMPTY set (no coordinate gets replace
@@ -935,31 +977,25 @@ impl Universe {
                 .unwrap_or_default();
         }
         let injections = crate::injections::load_all(base_dir)?;
+        for injection in &injections {
+            self.injection_ids.insert(injection.id.clone());
+            self.pin_coords.extend(injection.pin_coords.iter().cloned());
+        }
+        if !self.pin_coords.is_empty() {
+            self.pin_pending = true;
+        }
         if !injections.is_empty() {
-            if self.pin_pending {
-                // Pin is replace, not meet (SPEC_08 §6.2). Q-016 owns the
-                // order of concurrent pins; sequential pins of one coordinate
-                // must still land, or the pin sidecar itself is never rewritten.
-                let mut acc = ComboVal::default();
-                for c in injections {
-                    acc = Self::replace_merge(&acc, &c);
+            match crate::injections::fold(engine, injections) {
+                Ok(combo) => {
+                    self.staged = combo;
+                    self.restamp_thunk_effects(engine);
+                    self.is_dirty = staged_has_committable_content(&self.staged)
+                        || self.staged.get_field("~%Config").is_some();
                 }
-                self.staged = acc;
-                self.restamp_thunk_effects(engine);
-                self.is_dirty = true;
-            } else {
-                match crate::injections::fold(engine, injections) {
-                    Ok(combo) => {
-                        self.staged = combo;
-                        self.restamp_thunk_effects(engine);
-                        self.is_dirty = staged_has_committable_content(&self.staged)
-                            || self.staged.get_field("~%Config").is_some();
-                    }
-                    Err(d) => {
-                        self.workset_bottom = Some(d);
-                        self.staged = ComboVal::default();
-                        self.is_dirty = true;
-                    }
+                Err(d) => {
+                    self.workset_bottom = Some(d);
+                    self.staged = ComboVal::default();
+                    self.is_dirty = true;
                 }
             }
         } else {
@@ -1122,6 +1158,10 @@ impl Universe {
         Self::unlink_legacy_staged(base_dir);
         self.session_delta = ComboVal::default();
         self.session_has_delta = false;
+        self.injection_ids.clear();
+        self.session_pin_coords.clear();
+        self.session_absorbs.clear();
+        self.legacy_pin_pending = false;
         if let Some(cfg) = retained_config {
             let mut restaged = ComboVal::default();
             restaged.insert_field("~%Config", cfg);

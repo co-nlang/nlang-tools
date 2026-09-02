@@ -180,29 +180,157 @@ S1 之後，兩個並行 `pin` 各自吸收當時所見的集合 ⟹ **兩筆同
 
 ### N.1 射程逐項對照
 
-（S1–S5 逐項：做了什麼、在哪個檔的哪一行、怎麼證明）
+* **S1**：注入成員現在於內容內攜帶 intrinsic `id`，並以
+  `absorbs: { coordinate: [injection-id...] }` 記錄 evolve 當下逐座標吸收的既有成員；
+  檔名只剩本地儲存 key。實作於 `crates/interpreter/src/injections.rs:19-31,69-134,138-173`
+  與 `crates/interpreter/src/universe.rs:744-759,814-826`。R1／R2／R3 全綠；實際循序兩次
+  pin 的第二筆逐字帶 `absorbs: {"x":[第一筆 id]}`，status 為 `x: 3`。
+* **S2**：`load_staged` 已刪除 `pin_pending` 下的 `replace_merge` fold 分支，所有注入一律
+  經 absorption 投影後以 meet fold；根與工作集間的 `pin_commit_merge` 保留不動。
+  見 `injections.rs:138-173`、`universe.rs:987-1000,1056-1068`。R1 改名兩種走訪序仍同答，
+  G3 單一 pin 仍能 commit。
+* **S3**：新 pin intent 與值同住該 immutable injection 的 `pin_coords`；load 時對所有成員
+  取聯集，commit 的 `pin_coords` 由此而來。新引擎不再建立／改寫 `.oo/pin_pending`，僅讀取
+  layout <= 3 留下的 legacy sidecar。見 `injections.rs:23-30,175-212`、
+  `universe.rs:346-353,901-954,957-986`。R4 八回合全綠；既有 atomic-write R3 已改釘
+  「每個 pin 各自一筆 immutable member、intent 與值同檔、sidecar 不存在」。
+* **S4**：未新增鎖、序列化點或共享計數器。以兩個 FIFO 讓兩個行程都在載入相同工作集後
+  才同時取得來源，兩個 evolve 均 rc=0；逐字量測見 N.4 Q3，落 D49 衝突。
+* **S5**：實際 fold 行為為：先將全體 `absorbs` 按座標取聯集，從被指名成員只投影掉該座標，
+  再對所有投影後成員做 meet；無成員吸收另一成員時，同座標不相容值回報
+  `#conflict at <coordinate>`。條文仍留給驗收方收弧。
 
 ### N.2 順手改動（逐項指名）
 
-（**每一項都要單獨列出並說明理由**；「順手清乾淨」不是理由）
+* `crates/oo/src/main.rs:1625-1628`：不再丟棄 `load_staged` 的錯誤。這是 Q4 的誠實拒絕
+  所必需；否則未知／破損的新注入 frame 會被靜默當成空工作集。
+* `crates/interpreter/src/storage.rs:250-269`：已有 `.oo/format` 即視為既有 store，即使尚無
+  HEAD／CAS。這是 Q4／Q5 的無 HEAD 舊倉相容所必需；否則僅有未提交 injection 的 layout=3
+  倉會在「讀取」時被默默重標 layout=4，繞過 migrate。
+* `crates/oo/tests/atomic_write_probe_test.rs:243-275`：舊測試要求 `.oo/pin_pending` 被原子替換，
+  與 S3 裁定直接衝突，改釘 immutable injection 內的 intent；不是產品行為順修。
+* `crates/oo/tests/atomic_write_probe_test.rs` 與
+  `a_commit_that_closes_the_door_probe_test.rs:250-305` 的 layout 守衛由 3 更新為 4，並留下
+  Q-016a／D58 理由。object encoding 守衛仍為 5。
+* 除上列外無順手改動；未碰 Q-016b、commit HEAD CAS、錯誤文案、pin 傳播、CLI 拼法或 ○。
 
 ### N.3 工單哪裡是錯的
 
-（驗收方寫的射程有過四次把機制當不變式的紀錄。**看到就說。**）
+沒有發現射程或驗收不變式寫錯。只有一個實作上必須補足的歧義：§2 S1 建議的「注入 id」
+不能是今天的檔名，因為 R1 合法地只改檔名而不改位元組；所以 id 必須進入 immutable 內容。
+這是把建議具體化，不是推翻裁定。
 
 ### N.4 工單指名要你回答的問題
 
-（Q1–Q5，逐題）
+**Q1 — 磁碟表達。** layout=4 的兩筆循序 pin 實際長這樣（body 間空行為 frame 邊界）：
+
+```text
+#nlang/store injection
+id: "6bb3967958afeca42222204c05aa80b6"
+pin_coords: ["x"]
+absorbs: {"x":[]}
+
+{ x: 2 }
+
+#nlang/store injection
+id: "d1058f1acfad8a1be6c057cc7f579643"
+pin_coords: ["x"]
+absorbs: {"x":["6bb3967958afeca42222204c05aa80b6"]}
+
+{ x: 3 }
+```
+
+`.oo/pin_pending` 不存在。fold 先按座標算被吸收 id 集合，再投影成員，故不使用 paths 排序。
+兩個並行 pin 都只指名同一批舊 id，彼此 id 不在對方的 `absorbs` 中；兩筆都留並 meet 成
+`#conflict`，正是 S4。
+
+**Q2 — commit 的 `pin_coords`。** 每個 layout=4 injection 自帶 `pin_coords`；load 對全體取
+集合聯集（`universe.rs:979-986`）。並行不同座標各寫自己的 immutable member，所以即使寫入
+交錯，聯集仍同時含 x、y；沒有最後寫者覆蓋整格。layout<=3 僅為相容而另併入 legacy
+`.oo/pin_pending` 的座標。
+
+**Q3 — 並行同座標手量。** 量測目錄 `/tmp/q016a-fifo-current.SOmNEv`，layout=4；FIFO barrier
+保證兩行程先各自 load 再同時收到來源。兩個 evolve：`pin_x_rc=0 pin_y_rc=0`。
+
+```text
+$ oo status
+Standard root dependency: 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)
+Conflict
+#conflict at x
+Error: #conflict at x
+```
+
+status 離開碼（不經管線）為 **1**。
+
+```text
+$ oo commit --grant pin -m same-coordinate
+Error: Evolution Conflict: #conflict at x
+```
+
+commit 離開碼（不經管線）為 **1**。
+
+**Q4 — 舊倉相容。** 用 v0.42.0 建 layout=3、commit `x:1`、再留下未提交 pin `x:2`
+（sidecar `["x"]`）；新引擎 `status` rc=0 顯示 staged `x: 2`，接著
+`commit --grant pin` rc=0、`Commit successful`。新 decoder 接受舊 injection body，並以
+immutable bytes 的 SHA-256 導出穩定 legacy id（不讓舊檔名重新成為語義）；commit 後移除
+sidecar。反向量測：已有 HEAD 的 layout=4 倉給 v0.42.0
+開啟時 rc=1，逐字 `store layout declaration "layout=4" is not supported; refusing to open`，
+不是 corrupt／integrity failure。
+
+**Q5 — 版本。** `STORE_LAYOUT_VERSION` **3→4**；`OBJECT_ENCODING_VERSION` 維持 **5**。
+原因是改的是 `.oo/injections` 容器，不是 CAS object bytes。layout=2/3 仍列入可讀／可 migrate；
+舊 layout 的 ordinary evolve 仍寫舊 injection frame，舊引擎可驗證。舊 layout 若要求 `--pin`，
+在寫任何 injection 前 rc=1：
+
+```text
+Error: this store declares layout=3; pinned injections require layout=4. Run `oo migrate --grant migrate` before evolving with --pin
+```
+
+量測 injection_count=0。故不變式成立：**宣告舊 layout 的儲存不得持有舊引擎驗證不了的東西。**
 
 ### N.5 探針
 
-（R1–R4 是否轉綠、G1–G3 是否仍綠；**若你改了探針檔，逐行說明為什麼**）
+`an_overwrite_that_was_a_coin_flip_probe_test`：**7/7**。
+
+* R1 traversal order：綠。
+* R2 later pin wins：綠。
+* R3 coordinate-not-file absorption：綠。
+* R4 immutable privileged intent（8 回合統計）：綠。
+* G1 identity、G2 ordinary conflict boundary、G3 single pin：全綠。
+
+**未修改、未 rustfmt 此探針檔。** 修改的是既有 `atomic_write_probe_test` 的一支過期
+`pin_pending` 測試，理由逐項見 N.2。
 
 ### N.6 數字
 
-（全樹 `cargo test --release --no-fail-fast` ×3：targets／passed／failed／**失敗的測試名**；
-conformance；身分三項）
+全樹 `cargo test --workspace --release --no-fail-fast`（網路測試需非沙箱 bind/connect）：
+
+| 輪 | targets | passed | failed | 失敗測試名 |
+| :-- | --: | --: | --: | :-- |
+| 1 | 223 | 2139 | 0 | 無 |
+| 2 | 223 | 2139 | 0 | 無 |
+| 3 | 223 | 2139 | 0 | 無 |
+
+補充誠實紀錄：沙箱內一輪因 `oo node serve` 得 EPERM 造成 18 targets 假紅，未計；第一次
+非沙箱嘗試有既有 `r3_a_root_written_into_a_pre_sentinel_repo_stays_self_contained` 偶發紅，
+同 binary 精確重跑立即綠，故也未計入上表，之後三輪完整全綠。
+
+* conformance：`162 vectors, 162 pass, 0 fail`。
+* `x: 0` root：
+  `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
+* `x: 0` CAS objects：**3**。
+* standard root：
+  `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（available）。
+* 基線 known-answer：`~%Math./add (1,2)` → `3` rc=0；對照
+  `~%Math./add (1,"x")` → `_|_ (%cause: #conflict)` rc=0；離開碼均直接取得，未經管線。
 
 ### N.7 你認為需要改規格之處
 
-（S5：`SPEC_10` 對 `pin` 路徑的 fold 今天零條文）
+`SPEC_10` §2.2.2 應補 pin 路徑的規範性條文，至少明定：
+
+1. pin 在 evolve 時逐座標吸收當時已存在的工作集成員，不得以檔案為吸收單位；
+2. 吸收關係不引入全序，工作集仍是集合，fold 只做 meet；
+3. 兩筆並行、同座標且互不可見的 pin 都保留，依 D49 回報該座標 ⊥，不得 LWW；
+4. pin intent 必須與它修改的值同住不可變工作集成員，commit 的特權座標取成員聯集；
+5. 根與工作集之間仍按 pin 座標做 replace，而非把整個工作集改成 replace fold；
+6. layout/version 閘須保證舊 layout 不會收到其宣告的舊引擎無法驗證的 injection frame。
