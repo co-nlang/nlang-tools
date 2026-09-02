@@ -127,14 +127,14 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// `STORE_LAYOUT_MIGRATABLE_FROM` are the previous split-axis form this
 /// engine once wrote: still openable, and the source `oo migrate` advances.
 /// A `layout=N` in neither set is a declaration from an engine we are not
-/// — including every future N (`layout=4`, `layout=99`). The past is a
+/// — including every future N (`layout=5`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
-pub const STORE_LAYOUT_VERSION: u32 = 3;
+pub const STORE_LAYOUT_VERSION: u32 = 4;
 pub const OBJECT_ENCODING_VERSION: u32 = 5;
 /// Split-axis layouts this engine has written. Not a range: `layout=1`
-/// was never a form (that era was a bare number), and a future `layout=4`
-/// must not slip through once current is 5.
-const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2];
+/// was never a form (that era was a bare number), and a future `layout=5`
+/// must not slip through while current is 4.
+const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3];
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 fn split_layout_number(declaration: &str) -> Option<u32> {
@@ -156,7 +156,7 @@ pub fn read_layout_declaration(base_dir: &Path) -> Result<String> {
 }
 
 /// True only for the layout this engine writes. Migratable past layouts
-/// (`layout=2`) are known and openable, but they are not current — S9
+/// (`layout=2` and `layout=3`) are known and openable, but they are not current — S9
 /// uses this so a marked commit cannot land on them.
 pub fn layout_declaration_is_current(declaration: &str) -> bool {
     declaration == format!("layout={STORE_LAYOUT_VERSION}")
@@ -254,7 +254,13 @@ impl ObjectStore {
         // misread, so it is safe to initialise. HEAD or a CAS file makes it a
         // store someone may already have written and therefore needs a proven
         // declaration before we open it.
-        let new_store = !oo.join("HEAD").exists() && !has_cas_objects(&oo.join("objects"));
+        // A prior engine may have staged injections without ever committing a
+        // HEAD or CAS object. Its declaration still makes this an existing
+        // store; treating it as new would silently advance the layout merely
+        // by opening it and bypass the explicit migration gate.
+        let new_store = !oo.join("format").exists()
+            && !oo.join("HEAD").exists()
+            && !has_cas_objects(&oo.join("objects"));
         if new_store {
             fs::create_dir_all(&oo)?;
             atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;

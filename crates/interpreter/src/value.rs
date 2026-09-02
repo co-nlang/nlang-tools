@@ -169,7 +169,7 @@ pub struct Privilege {
     /// `#effect_override`: `None` = op not authorized (even pure args refused);
     /// `Some(tags)` = may discharge exactly those active tags (all-or-nothing).
     pub effect_override: Option<EffectTag>,
-    /// `#pin` — re-present at commit when `.oo/pin_pending` is set.
+    /// `#pin` — re-present at commit when the workset carries pin intent.
     pub pin: bool,
     /// Retired as a CLI grant (SPEC_08 §6.2 2026-07-26); field kept absent
     /// from live grants. Do not re-enable without a consumer.

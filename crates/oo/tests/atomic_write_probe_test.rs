@@ -240,16 +240,15 @@ fn r2_head_is_replaced_not_rewritten_in_place() {
     );
 }
 
-/// R3 — the pending files beside `staged` likewise. `pin_pending` stands for
-/// the family: `effect_pending` and `abandoned` are written by the same
-/// `save_staged` / `save_abandoned` code path, so a fix that misses them
-/// would also miss this one.
+/// R3 — D58 moved pin intent out of the shared, repeatedly replaced
+/// `.oo/pin_pending` cell. Each evolve now mints one immutable injection and
+/// the intent travels in that same atomically installed file.
 #[test]
-fn r3_pin_pending_is_replaced_not_rewritten_in_place() {
+fn r3_pin_intent_is_part_of_the_immutable_injection() {
     let d = workspace("r3");
     let pin = d.path().join(".oo").join("pin_pending");
+    let injections = d.path().join(".oo").join("injections");
 
-    let mut seen = Vec::new();
     for n in 1..=4 {
         let f = format!("p{n}.n");
         fs::write(d.path().join(&f), format!("k0: {n}\n")).unwrap();
@@ -258,15 +257,21 @@ fn r3_pin_pending_is_replaced_not_rewritten_in_place() {
             !out.contains("error") && !out.contains("Usage:"),
             "fixture pin {n} did not land: {out}"
         );
-        assert!(pin.exists(), "pin {n} did not write .oo/pin_pending: {out}");
-        seen.push(ino(&pin));
+        assert!(!pin.exists(), "pin {n} recreated the shared intent cell");
+        let members: Vec<_> = fs::read_dir(&injections)
+            .expect("injection directory")
+            .map(|e| e.expect("injection entry").path())
+            .collect();
+        assert_eq!(members.len(), n + 1, "pin {n} did not mint one immutable member");
+        let mut marked = 0;
+        for member in members {
+            let body = fs::read_to_string(member).expect("read injection");
+            if body.contains("pin_coords: [\"k0\"]") {
+                marked += 1;
+            }
+        }
+        assert_eq!(marked, n, "pin intent was not stored with each pinned value");
     }
-
-    let stuck: Vec<_> = seen.windows(2).filter(|w| w[0] == w[1]).collect();
-    assert!(
-        stuck.is_empty(),
-        ".oo/pin_pending kept its inode across writes. inodes: {seen:?}"
-    );
 }
 
 // ── pins ────────────────────────────────────────────────────────────────
@@ -377,11 +382,14 @@ fn p2_format_moves_only_when_declared() {
     //                                        v0.41.0 engine refuses a new
     //                                        store with a true sentence
     //                                        rather than `#caid_mismatch`)
+    //   layout=4     Q-016a / D58            (immutable injections now carry
+    //                                        intrinsic ids, pin coordinates,
+    //                                        and coordinate-wise absorption)
     let oo_dir = d.path().join(".oo");
     let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
         layout.trim(),
-        "layout=3",
+        "layout=4",
         ".oo/format moved without a ruling saying it should"
     );
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();
