@@ -122,9 +122,45 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 
 /// The `.oo/` layout and the CAS encoding are independent declarations.
 /// Legacy stores used one bare number for both; new stores name each axis.
-pub const STORE_LAYOUT_VERSION: u32 = 2;
+///
+/// `STORE_LAYOUT_VERSION` is what this engine writes. Layouts in
+/// `STORE_LAYOUT_MIGRATABLE_FROM` are the previous split-axis form this
+/// engine once wrote: still openable, and the source `oo migrate` advances.
+/// A `layout=N` in neither set is a declaration from an engine we are not
+/// — including every future N (`layout=4`, `layout=99`). The past is a
+/// closed list, not "any value other than current".
+pub const STORE_LAYOUT_VERSION: u32 = 3;
 pub const OBJECT_ENCODING_VERSION: u32 = 5;
+/// Split-axis layouts this engine has written. Not a range: `layout=1`
+/// was never a form (that era was a bare number), and a future `layout=4`
+/// must not slip through once current is 5.
+const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2];
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
+
+fn split_layout_number(declaration: &str) -> Option<u32> {
+    declaration.strip_prefix("layout=")?.parse().ok()
+}
+
+fn split_layout_is_known(n: u32) -> bool {
+    n == STORE_LAYOUT_VERSION || STORE_LAYOUT_MIGRATABLE_FROM.contains(&n)
+}
+
+/// Trimmed `.oo/format` body. A missing file is the same refusal as open.
+pub fn read_layout_declaration(base_dir: &Path) -> Result<String> {
+    let raw = fs::read_to_string(base_dir.join(".oo").join("format")).map_err(|_| {
+        anyhow::anyhow!(
+            "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
+        )
+    })?;
+    Ok(raw.trim().to_string())
+}
+
+/// True only for the layout this engine writes. Migratable past layouts
+/// (`layout=2`) are known and openable, but they are not current — S9
+/// uses this so a marked commit cannot land on them.
+pub fn layout_declaration_is_current(declaration: &str) -> bool {
+    declaration == format!("layout={STORE_LAYOUT_VERSION}")
+}
 
 pub struct ObjectStore {
     root: PathBuf,
@@ -161,7 +197,10 @@ impl ObjectStore {
             "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
         ))?;
         let declaration = raw.trim();
-        if declaration == format!("layout={STORE_LAYOUT_VERSION}") {
+        if let Some(n) = split_layout_number(declaration) {
+            if !split_layout_is_known(n) {
+                anyhow::bail!("store layout declaration {declaration:?} is not supported")
+            }
             let objects = fs::read_to_string(oo.join("objects.format")).map_err(|_| anyhow::anyhow!(
                 "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open"
             ))?;
@@ -187,7 +226,10 @@ impl ObjectStore {
             "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
         ))?;
         let declaration = raw.trim();
-        if declaration == format!("layout={STORE_LAYOUT_VERSION}") {
+        if let Some(n) = split_layout_number(declaration) {
+            if !split_layout_is_known(n) {
+                anyhow::bail!("store layout declaration {declaration:?} is not supported; refusing to open");
+            }
             let objects = fs::read_to_string(oo.join("objects.format")).map_err(|_| anyhow::anyhow!(
                 "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open"
             ))?;

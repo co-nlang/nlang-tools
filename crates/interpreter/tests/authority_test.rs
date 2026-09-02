@@ -121,6 +121,7 @@ fn test_universe_refine_with_authority() {
         message: None,
         abandoned: None,
         privileged_effect: None,
+        reported_bottoms: None,
     };
 
     let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta);

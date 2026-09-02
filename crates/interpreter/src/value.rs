@@ -133,7 +133,11 @@ pub fn effect_tag_value(e: EffectTag) -> Value {
         ("cached", EffectTag::Cached),
     ] {
         if e.contains(member) {
-            atoms.push(Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::Pure, None));
+            atoms.push(Value::Atom(
+                AtomKind::Tag(tag.to_string()),
+                EffectTag::Pure,
+                None,
+            ));
         }
     }
     if atoms.len() == 1 {
@@ -2063,11 +2067,14 @@ impl Value {
                     value.materialize_effect_fields();
                 }
                 if combo.effect.is_pure() {
-                    if matches!(combo.meta.get("effect"), Some(Value::Atom(AtomKind::Tag(tag), _, _)) if tag == "pure") {
+                    if matches!(combo.meta.get("effect"), Some(Value::Atom(AtomKind::Tag(tag), _, _)) if tag == "pure")
+                    {
                         combo.meta.shift_remove("effect");
                     }
                 } else {
-                    combo.meta.insert("effect".to_string(), effect_tag_value(combo.effect));
+                    combo
+                        .meta
+                        .insert("effect".to_string(), effect_tag_value(combo.effect));
                 }
             }
             Value::Union(values) => {
@@ -2092,11 +2099,15 @@ impl Value {
                     }
                 }
             }
-            Value::Thunk { closure, context, .. } => {
+            Value::Thunk {
+                closure, context, ..
+            } => {
                 for frame in closure {
                     let mut value = Value::Combo(std::sync::Arc::make_mut(frame).clone());
                     value.materialize_effect_fields();
-                    let Value::Combo(combo) = value else { unreachable!() };
+                    let Value::Combo(combo) = value else {
+                        unreachable!()
+                    };
                     *std::sync::Arc::make_mut(frame) = combo;
                 }
                 if let Some(context) = context {
@@ -2272,7 +2283,10 @@ impl ContentHash {
         fn parse_sha256_digest(hex_digest: &str) -> anyhow::Result<Vec<u8>> {
             let digest = hex::decode(hex_digest)?;
             if digest.len() != 32 {
-                anyhow::bail!("Invalid sha256 CAID digest length: expected 32 bytes, got {}", digest.len());
+                anyhow::bail!(
+                    "Invalid sha256 CAID digest length: expected 32 bytes, got {}",
+                    digest.len()
+                );
             }
             Ok(digest)
         }
@@ -2328,6 +2342,14 @@ pub struct CommitMeta {
     /// digests stay bit-stable (`Commit::content_hash` formats meta via Debug).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privileged_effect: Option<bool>,
+    /// D57 / SPEC_08 §6.2: this commit printed these bottom leaves
+    /// (coordinate + TAG_REGISTRY cause) and then proceeded. `None` on
+    /// ordinary commits — omitted from serde and from the handwritten
+    /// Debug so clean commit digests stay bit-stable. Asserts only that
+    /// the coordinates were reported and the commit continued — not that
+    /// the operator consented (a one-shot CLI cannot ask).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_bottoms: Option<Vec<(String, String)>>,
 }
 
 impl Default for CommitMeta {
@@ -2338,6 +2360,7 @@ impl Default for CommitMeta {
             message: None,
             abandoned: None,
             privileged_effect: None,
+            reported_bottoms: None,
         }
     }
 }
@@ -2357,7 +2380,57 @@ impl fmt::Debug for CommitMeta {
         if self.privileged_effect.is_some() {
             ds.field("privileged_effect", &self.privileged_effect);
         }
+        if self.reported_bottoms.is_some() {
+            ds.field("reported_bottoms", &self.reported_bottoms);
+        }
         ds.finish()
+    }
+}
+
+fn collect_bottom_leaves(v: &Value, path: &str, out: &mut Vec<(String, String)>) {
+    match v {
+        Value::Bottom(d) => {
+            let coord = if path.is_empty() {
+                d.path.clone().filter(|s| !s.is_empty()).unwrap_or_default()
+            } else {
+                path.to_string()
+            };
+            out.push((coord, format!("#{}", d.cause.as_tag())));
+        }
+        Value::Combo(c) => {
+            let push = |prefix: &str, k: &str, val: &Value, out: &mut Vec<(String, String)>| {
+                let child = if path.is_empty() {
+                    format!("{prefix}{k}")
+                } else {
+                    format!("{path}.{prefix}{k}")
+                };
+                collect_bottom_leaves(val, &child, out);
+            };
+            for (k, val) in &c.data {
+                push("", k, val, out);
+            }
+            for (k, val) in &c.types {
+                push("@", k, val, out);
+            }
+            for (k, val) in &c.rules {
+                push("/", k, val, out);
+            }
+            for (k, val) in &c.meta {
+                push("%", k, val, out);
+            }
+            for (k, val) in &c.system {
+                push("~%", k, val, out);
+            }
+            for (k, val) in &c.local {
+                push("~", k, val, out);
+            }
+        }
+        Value::Union(items) => {
+            for item in items {
+                collect_bottom_leaves(item, path, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -3040,6 +3113,15 @@ impl Value {
             Value::Ref(path) => format!("<<{}>>", path),
             Value::Code(expr) => expr.to_nlang(0),
         }
+    }
+
+    /// Leaf bottoms in this value, as `(coordinate, #cause)` pairs.
+    /// Walks every axis. Does not force thunks and does not read `message`.
+    /// Empty path is a bottom at the root of the walk.
+    pub fn bottom_leaves(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        collect_bottom_leaves(self, "", &mut out);
+        out
     }
 
     pub fn to_nlang(&self, indent: usize) -> String {
