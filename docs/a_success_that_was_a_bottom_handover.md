@@ -391,3 +391,113 @@ open this store」。升版後那句話**指錯了對象**（現在被擋在門�
 **驗收方上一弧在這一格寫過一支假探針並因此逼出一個錯的實作；這次不重蹈。**
 
 既有五支（R1／R2／G1／G2／G3）**必須保持現狀**——可以動的仍然只有 `#[ignore]`，而它們已經沒有了。
+
+---
+
+## R. 交付回報（修補回合 1；交付方填。本行以上一字不得動）
+
+### R.1 射程逐項對照
+
+**S6.** `STORE_LAYOUT_VERSION` **2 → 3**。新倉寫 `layout=3`。`encoding` 仍是 5。
+
+**S7.** 可遷移來源是閉集 `STORE_LAYOUT_MIGRATABLE_FROM = [2]`，與現行常數分開。`ensure_format`／`declared_encoding` 認 `layout=N` 當且僅當 N 是現行或在該閉集；其餘（含未來）走原來那句 `not supported; refusing to open`。`migrate` 仍先走 `ensure_format`，所以同一道閘同時擋 `log` 與 `migrate`。legacy 裸數字未動。
+
+**S8.** `run_migrate` 現在印：`Migrated store layout to layout=3. An engine that only reads layout=2 (oo v0.41.0) will no longer open this store.` 不再提 pre-sentinel。
+
+### R.2 順手改動（逐項指名）
+
+*   `atomic_write` `p2` 的 layout 釘從 `layout=2` 改成 `layout=3`，並在註解裡記下本回合的裁定（該針自己寫著「Whoever moves it next updates this line and says why in the work order」）。
+*   Q-038 探針兩處把「現行 layout」釘成字面 `layout=2`：`r5` 的遷移目的地、`g1` 的 REACH。改成 `layout=3`。**未**改 `g4` 手寫的 `layout=2`（那是 encoding=3 的舊倉，必須仍打得開）。
+*   未 rustfmt `storage.rs`（整檔會重排不相干函數）。`main.rs` 只動訊息那兩行。
+*   **Q-017 探針一字未動。**
+
+### R.3 工單指名要你回答的問題
+
+**Q6.** 可遷移來源是閉集 `STORE_LAYOUT_MIGRATABLE_FROM`，目前只有 `2`。不是 `N < current`：`layout=1` 從未是一種形（那一世代是裸數字），而且現行若再升到 5，`layout=4` 不得因為「比較小」而混進來。未來的宣告（`layout=4`、`layout=99`）不在閉集、也不是現行，故 `log` 與 `migrate` 都是 rc=1，檔案不動。
+
+〔量〕
+
+```
+layout=4   oo log                  RC=1
+Error: store layout declaration "layout=4" is not supported; refusing to open
+           oo migrate --grant migrate  RC=1  （同一句；format 仍是 layout=4）
+layout=99  同上兩支，RC=1，format 仍是 layout=99
+```
+
+**Q7.** 〔量，真 `v0.41.0` 標籤二進位造倉；本弧 `target/debug/oo` 開它〕倉由 `x: 0` 一次 commit 做成，`.oo/format` 為 `layout=2`。
+
+**(i) 直接開**
+
+```
+oo log     RC=0
+commit hash:sha256:v1:4666c780e9057108f582c32cede23e5f9118a10efa3ceebb9bb9a1b2cc827856
+    message: one
+    Date: 2026-09-02T13:45:57.066Z
+oo status  RC=0
+Standard root dependency: 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)
+Universe is static (no staged changes).
+```
+
+layout=2 仍可直接操作（它是過去，不是未來）。遷移是明示推進宣告，不是開啟的前提。
+
+**(ii) `oo migrate --grant migrate`**
+
+```
+RC=0
+Migrated store layout to layout=3. An engine that only reads layout=2 (oo v0.41.0) will no longer open this store.
+```
+
+`.oo/format` → `layout=3`。`objects.format` 仍 `encoding=5`。
+
+**(iii) 遷移後**
+
+```
+oo log     RC=0   （同一顆 4666c780…，message: one）
+oo status  RC=0   （同一句 standard root / static）
+oo commit  RC=0
+Commit successful: hash:sha256:v1:fe3c14eb883559ab402d5f4febf045c24424f24131b48bfc16bfd5a1726eec20
+```
+
+（commit 前先 `evolve` 了 `y: 1`，否則無東西可提交。）
+
+**(iv) 遷移後再用 v0.41.0 開**
+
+```
+oo log     RC=1
+Error: store layout declaration "layout=3" is not supported; refusing to open
+oo status  RC=1
+Error: store layout declaration "layout=3" is not supported; refusing to open
+```
+
+**是那句誠實的拒絕，不是 `#caid_mismatch`。**
+
+新引擎自己造的倉一開始就是 `layout=3`；同一支 v0.41.0 對它也是這句，不必先提交 ⊥。
+
+**Q8.** 遷移前對 `.oo/HEAD`、`.oo/objects.format`、以及 `objects/` 下每一個檔做 `sha256sum`；遷移後 `cmp`。
+
+```
+cd <v0.41.0 所造的倉>
+cp .oo/HEAD /tmp/head.before
+( cd .oo && find objects -type f -print0 | sort -z | xargs -0 sha256sum ) > /tmp/obj.before
+oo migrate --grant migrate
+cmp .oo/HEAD /tmp/head.before          # identical, rc=0
+cmp objects.format 遷移前後            # identical, rc=0
+cmp /tmp/obj.before 遷移後的清單雜湊   # identical, rc=0
+cmp 遷移前的 format 與 .oo/format      # differ: byte 8, line 1（2 → 3）
+```
+
+HEAD 仍是 `hash:sha256:v1:4666c780…`。三個物件路徑與內容未動。只動了容器宣告。
+
+### R.4 探針
+
+Q-017 五支**一字未動**。**5／5**。S6／S7 依工單不在 `cargo test` 裡釘——Q7 用真二進位量。
+
+### R.5 數字
+
+`cargo test --workspace --no-fail-fast -- --test-threads=1` **exit 0**。
+`test result:` 聚合：222 target 皆 ok；**2132 passed／0 failed／0 ignored**。
+失敗測試名：**無**。
+`^error`：**0**。
+conformance：`python3 nlang-spec/scripts/run-conformance.py --engine nlang-tools/target/release/oo` → **162／162**。
+身分：`x: 0` 根仍 `31745ef0…`、3 物件、標準根 `7038e250…`。known-answer `3`，對照 `_|_`（`#conflict`）。
+Q-017 探針未動。

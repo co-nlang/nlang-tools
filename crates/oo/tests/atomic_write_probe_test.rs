@@ -373,11 +373,15 @@ fn p2_format_moves_only_when_declared() {
     //   2 / 3        Q-010a / Q-010b        (encoding, on the same counter)
     //   layout=2     Q-011                  (the axes split; a file was added
     //                                        to `.oo/`, which IS a layout change)
+    //   layout=3     Q-017 repair 1         (user ruled the layout bump so a
+    //                                        v0.41.0 engine refuses a new
+    //                                        store with a true sentence
+    //                                        rather than `#caid_mismatch`)
     let oo_dir = d.path().join(".oo");
     let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
         layout.trim(),
-        "layout=2",
+        "layout=3",
         ".oo/format moved without a ruling saying it should"
     );
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();

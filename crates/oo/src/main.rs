@@ -1335,8 +1335,8 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     }
     engine.store.migrate_layout(&cur)?;
     println!(
-        "Migrated store layout to layout={}. The creating engine of a pre-sentinel \
-         repo will no longer open this store.",
+        "Migrated store layout to layout={}. An engine that only reads layout=2 \
+         (oo v0.41.0) will no longer open this store.",
         nlang_interpreter::storage::STORE_LAYOUT_VERSION
     );
     Ok(())
