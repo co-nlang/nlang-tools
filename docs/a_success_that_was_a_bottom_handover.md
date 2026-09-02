@@ -323,3 +323,71 @@ Error: store layout declaration "layout=3" is not supported; refusing to open
     **而本條逐字相反**。驗收方傾向**重啟**。
 
 **在這兩則裁定之前不切版。** 產品程式碼本身驗收通過，不需要修補回合。
+
+---
+
+## B. 修補回合 1 的射程（驗收方，2026-08-31；用戶已裁「按建議」）
+
+**用戶裁定**：**(1) `layout` 升；(2) 90 天時鐘重啟。**
+時鐘那一件是驗收方切版時寫 `CHANGELOG` 的事，**與你無關**。射程只有下面兩項。
+
+### B.1 ⚠ 開單前驗收方先量到的：**單獨升版本號會把每一個既有的倉擱淺**
+
+〔量 2026-08-31，本弧建置〕
+
+| `.oo/format` | `oo migrate --grant migrate` |
+| :-- | :-- |
+| `layout=2`（現行） | **rc=0** |
+| `layout=99`（不被認得的 `layout=N` 形） | **rc=1**：`store layout declaration "layout=99" is not supported; refusing to open` |
+| 裸 `1`（legacy 混合形） | **rc=0** |
+
+〔讀 `storage.rs:547`–`:556`〕`migrate_layout` 的**第一件事**是 `Self::ensure_format(base_dir)?`，
+而 `ensure_format`（`:189`–`:198`）只認三種：**恰為現行 `layout={N}`** ／ **裸數字（legacy）** ／ 其餘一律 `bail`。
+
+⟹ **把 `STORE_LAYOUT_VERSION` 改成 3 之後，`layout=2` 落進第三支**
+⟹ **新引擎不開它，而 `oo migrate` 也拒絕它** ⟹ **既有的倉沒有任何一條出路。**
+
+**⟹ 所以本回合是兩件，不是一件。只改常數是錯的。**
+
+### B.2 射程
+
+**S6.** `STORE_LAYOUT_VERSION` **2 → 3**。
+
+**S7.** **`migrate` 必須能從「本引擎曾經寫過的上一個 layout」前進。**
+今天的 `ensure_format` 只有「**現行**」與「legacy 裸數字」兩種認得的形；
+需要的是一個**可遷移來源**的概念，與「可直接操作的 layout」分開。
+`layout=99`（來自**未來**的宣告）**仍必須被拒絕**——要放行的是**過去**，不是任何非現行值。
+
+**S8.** `run_migrate` 的訊息今天逐字說「The creating engine of a **pre-sentinel** repo will no longer
+open this store」。升版後那句話**指錯了對象**（現在被擋在門外的是 `v0.41.0`）。**改成準確的。**
+
+### B.3 明確不做
+
+*   **不動 `reported_bottoms` 那一路**——驗收回合 1 已通過，探針 5／5。
+*   不碰 `encoding`（`objects.format` 仍 `encoding=5`）。
+*   不動身分：`x: 0` 根 `31745ef0…`／3 物件／標準根 `7038e250…`。
+*   不碰 Inbox 那列「advert 探針的 REACH 守衛隨機開火」（**不是本弧造的，也不要順手改**）。
+
+### B.4 你必須回答的
+
+**Q6.** S7 的「可遷移來源」你怎麼表達？**逐字說它為什麼擋得住來自未來的宣告**
+（`layout=4`、`layout=99` 必須仍是 rc=1）。
+
+**Q7.** 一個 `v0.41.0` 造的倉（真二進位），在你的引擎下：
+(i) 直接開 → 逐字輸出與 rc；(ii) `oo migrate --grant migrate` → 逐字輸出與 rc；
+(iii) 遷移後 `oo log`／`oo status`／`oo commit` → 逐字輸出與 rc；
+(iv) 遷移後**再用 `v0.41.0` 開它** → 逐字輸出與 rc（**應為那句誠實的拒絕，不是 `#caid_mismatch`**）。
+**四步都要逐字。**
+
+**Q8.** 遷移**不得**動 HEAD、不得重寫任何根（O73 逐字）。**怎麼證明？** 帶指令。
+
+### B.5 探針
+
+**⚠ 逐字記下：S6／S7 這一格在 `cargo test` 裡紅不起來。**
+理由與 Q-015 那次同型——**測試裡的二進位就是新的**，它寫出來的倉一律是新 layout，
+**造不出「上一個 layout 的倉」**（手寫 `layout=2` 進檔案只是把常數抄一遍，
+釘住的是那個字串不是那個情境）。
+⟹ **由驗收方在驗收時用真的 `v0.41.0` 標籤二進位造倉、你的引擎遷移**，即 Q7 的四步。
+**驗收方上一弧在這一格寫過一支假探針並因此逼出一個錯的實作；這次不重蹈。**
+
+既有五支（R1／R2／G1／G2／G3）**必須保持現狀**——可以動的仍然只有 `#[ignore]`，而它們已經沒有了。
