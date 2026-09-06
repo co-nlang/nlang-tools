@@ -639,7 +639,6 @@ dependencies = [
  "clap",
  "hex",
  "indexmap",
- "libc",
  "nlang-interpreter",
  "nlang-parser",
  "ring",

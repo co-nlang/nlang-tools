@@ -7,14 +7,18 @@ use nlang_parser::ast::{AtomKind, FieldKey};
 use nlang_parser::{is_parser_nesting_limit_error, parse_program};
 use std::fs;
 use std::io::{stdin, stdout, Write};
-use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
 /// Exclusive lock over a store's commit critical section (load through
 /// consume). Advisory; evolves do not take it. Not compare-and-swap on HEAD
 /// and not a shared workset cell (S4 / Q4).
+///
+/// The lock is `std::fs::File::{try_lock, lock}` (stable 1.89), the same
+/// exclusive-file API on every target std supports. Taken on the existing
+/// `.oo/format` file — a new lock file would be a layout change. Process-held;
+/// crash releases it. Does not write the file.
 struct CommitLock {
-    _file: fs::File,
+    file: fs::File,
 }
 
 impl CommitLock {
@@ -23,28 +27,30 @@ impl CommitLock {
     fn acquire(base: &Path) -> anyhow::Result<(Self, bool)> {
         let oo = base.join(".oo");
         fs::create_dir_all(&oo)?;
-        let file = fs::OpenOptions::new().read(true).open(&oo)?;
-        let fd = file.as_raw_fd();
-        let nb = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
-        if nb == 0 {
-            return Ok((Self { _file: file }, false));
+        // Lock an already-declared file. A new `.oo/commit.lock` is a layout
+        // change (p1 / p4). `format` exists for any store this path can open.
+        // Open read+write so Windows LockFileEx can take an exclusive lock;
+        // do not truncate.
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(oo.join("format"))
+            .map_err(|_| anyhow::anyhow!("working set unreadable"))?;
+        match file.try_lock() {
+            Ok(()) => Ok((Self { file }, false)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                file.lock()
+                    .map_err(|_| anyhow::anyhow!("working set unreadable"))?;
+                Ok((Self { file }, true))
+            }
+            Err(_) => anyhow::bail!("working set unreadable"),
         }
-        let err = std::io::Error::last_os_error();
-        let blocked = err.raw_os_error() == Some(libc::EWOULDBLOCK)
-            || err.raw_os_error() == Some(libc::EAGAIN);
-        if !blocked {
-            anyhow::bail!("working set unreadable");
-        }
-        if unsafe { libc::flock(fd, libc::LOCK_EX) } != 0 {
-            anyhow::bail!("working set unreadable");
-        }
-        Ok((Self { _file: file }, true))
     }
 }
 
 impl Drop for CommitLock {
     fn drop(&mut self) {
-        let _ = unsafe { libc::flock(self._file.as_raw_fd(), libc::LOCK_UN) };
+        let _ = self.file.unlock();
     }
 }
 

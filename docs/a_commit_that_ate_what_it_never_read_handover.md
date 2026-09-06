@@ -310,3 +310,47 @@ S4 我寫的是**三條禁令**（不得加 compare-and-swap／不得動 HEAD �
 那些行程**為真但不完備**——操作者看到 rc=1，而他的座標其實在歷史裡。
 **訊息沒有宣稱內容遺失，故不是假斷言**；但它可能導致重跑。
 〔量〕重跑無害（meet 冪等、D47 同體不鑄新 ○）。**入 Inbox，不在本弧修。**
+
+---
+
+## R. 交付回報（修補回合 1；交付方填。本行以上一字不得動）
+
+### R.1 射程逐項對照（B1）
+
+工單三條報價：
+
+| | 後果 |
+| :-- | :-- |
+| `#[cfg(unix)]` ＋無鎖繼續 | 建置過關，**靜默退回競態**。B1 禁止。 |
+| `#[cfg(unix)]` ＋非 Unix 拒絕一切 `commit` | 建置過關，循序提交在非 Unix 也死。過嚴。 |
+| 寫進 `REAL_01`「只支援 Unix」 | **改規格**，本修補不是規格弧。 |
+| 跨平台同一把鎖 | 建置過關，行為不退回競態。 |
+
+選最後一條。實作是 **`std::fs::File::{try_lock, lock}`**（1.89 穩定；本樹 rustc **1.96.1**），不是再加 `fs4`／`fd-lock`，也不是本弧加的直接 `libc`。Unix 上 std 走同一類諮詢鎖，Windows 走 `LockFileEx`。**產品碼不再有** `std::os::unix`、`libc::`、`AsRawFd`。拿掉 `oo` 對 `libc` 的直接依賴。
+
+鎖的對象是**既有的** `.oo/format`（開讀寫、不截斷、不改位元組）。曾試過新檔 `.oo/commit.lock`，`p1_the_layout_is_a_short_and_known_list` 與 `p4_no_undeclared_durable_state` 立刻紅——**加檔就是 layout**，本修補不得順手做。不能再鎖目錄 fd：那個在 Windows 打不開。沒有 `File::try_lock` 的目標會在編譯期失敗，而不是跑回競態。
+
+### R.2 順手改動
+
+無。探針未動。未 rustfmt `storage.rs`。
+
+### R.3 工單哪裡是錯的
+
+無。A.3 的 6 處 Unix-only 計數在修補前成立。
+
+### R.4 數字
+
+known-answer（新引擎，離開碼直接取得）：`~%Math./add (1,2)` → `3` rc=0；對照 `~%Math./add (1,"x")` → `_|_ (%cause: #conflict)` rc=0。
+
+本弧探針 6／6。`p1_the_layout_is_a_short_and_known_list`／`p4_no_undeclared_durable_state` 綠（不再多一個檔）。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` |
+| :-- | --: | --: | --: | :-- | --: |
+| 1 | 225 | 2153 | 0 | 無 | 0 |
+| 2 | 225 | 2153 | 0 | 無 | 0 |
+| 3 | 225 | 2153 | 0 | 無 | 0 |
+
+分母 225 行 `test result:`。conformance **162／162**。身分：`31745ef0…`／**3 物件**／`7038e250…`。產品碼對 `unix`／`libc::`／`AsRawFd`／`flock` 的命中 **0**。
+
