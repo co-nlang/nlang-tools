@@ -9,6 +9,51 @@ use std::fs;
 use std::io::{stdin, stdout, Write};
 use std::path::{Path, PathBuf};
 
+/// Exclusive lock over a store's commit critical section (load through
+/// consume). Advisory; evolves do not take it. Not compare-and-swap on HEAD
+/// and not a shared workset cell (S4 / Q4).
+///
+/// The lock is `std::fs::File::{try_lock, lock}` (stable 1.89), the same
+/// exclusive-file API on every target std supports. Taken on the existing
+/// `.oo/format` file — a new lock file would be a layout change. Process-held;
+/// crash releases it. Does not write the file.
+struct CommitLock {
+    file: fs::File,
+}
+
+impl CommitLock {
+    /// Returns whether this process had to wait for another committer.
+    /// Waited-then-empty is "consumed", not "Nothing to commit" (S2/S3).
+    fn acquire(base: &Path) -> anyhow::Result<(Self, bool)> {
+        let oo = base.join(".oo");
+        fs::create_dir_all(&oo)?;
+        // Lock an already-declared file. A new `.oo/commit.lock` is a layout
+        // change (p1 / p4). `format` exists for any store this path can open.
+        // Open read+write so Windows LockFileEx can take an exclusive lock;
+        // do not truncate.
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(oo.join("format"))
+            .map_err(|_| anyhow::anyhow!("working set unreadable"))?;
+        match file.try_lock() {
+            Ok(()) => Ok((Self { file }, false)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                file.lock()
+                    .map_err(|_| anyhow::anyhow!("working set unreadable"))?;
+                Ok((Self { file }, true))
+            }
+            Err(_) => anyhow::bail!("working set unreadable"),
+        }
+    }
+}
+
+impl Drop for CommitLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
 /// Operator-facing coordinate + cause (no file wrapper).
 /// Uses `detail.path` when present; otherwise the field-key fallback.
 /// Never Debug of AST keys or spans.
@@ -1027,14 +1072,57 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
     Ok(())
 }
 
+fn refuse_raw_os(err: anyhow::Error) -> anyhow::Error {
+    let m = err.to_string();
+    if m.to_lowercase().contains("os error") || m.contains("No such file or directory") {
+        anyhow::anyhow!("{}", nlang_interpreter::injections::CONSUMED_MSG)
+    } else {
+        err
+    }
+}
+
 fn run_commit(
     message: Option<String>,
     grants: Vec<String>,
     privileged: bool,
 ) -> anyhow::Result<()> {
-    let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
+    let cur = std::env::current_dir()?;
+    let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
-    let mut universe = load_universe(&engine, &std::env::current_dir()?)?;
+    // Snapshot before the lock: a late waiter that listed members, then
+    // found them gone, consumed them. G3 lists zero (the previous commit
+    // already returned).
+    let listed_before = match nlang_interpreter::injections::paths(&cur) {
+        Ok(v) => v.len(),
+        Err(e) => {
+            let m = e.to_string();
+            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
+                anyhow::bail!("{m}");
+            }
+            return Err(refuse_raw_os(e));
+        }
+    };
+    let (_commit_lock, contended) = CommitLock::acquire(&cur)?;
+    let listed_count = match nlang_interpreter::injections::paths(&cur) {
+        Ok(v) => v.len(),
+        Err(e) => {
+            let m = e.to_string();
+            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
+                anyhow::bail!("{m}");
+            }
+            return Err(refuse_raw_os(e));
+        }
+    };
+    let mut universe = match load_universe(&engine, &cur) {
+        Ok(u) => u,
+        Err(e) => {
+            let m = e.to_string();
+            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
+                anyhow::bail!("{m}");
+            }
+            return Err(refuse_raw_os(e));
+        }
+    };
     if let Some(d) = &universe.workset_bottom {
         anyhow::bail!("Evolution Conflict: {}", format_conflict_where(d, None));
     }
@@ -1044,6 +1132,12 @@ fn run_commit(
     if !universe.is_dirty
         || !nlang_interpreter::universe::staged_has_committable_content(&universe.staged)
     {
+        // O37: a Config-only stage is honestly empty of committable
+        // content. `listed_count > 0` is those knob members, not a race.
+        let config_only = universe.staged.get_field("~%Config").is_some();
+        if !config_only && (listed_count > 0 || listed_before > 0 || contended) {
+            anyhow::bail!("{}", nlang_interpreter::injections::CONSUMED_MSG);
+        }
         anyhow::bail!("Nothing to commit");
     }
     // ACCEPTANCE REPAIR (privilege escalation, 2026-07-26): the commit is where
@@ -1625,8 +1719,17 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
 
 fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {
     let mut u = Universe::load(engine, path)?;
-    u.load_staged(engine, path)?;
-    Ok(u)
+    match u.load_staged(engine, path) {
+        Ok(()) => Ok(u),
+        Err(e) => {
+            let m = e.to_string();
+            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
+                Err(e)
+            } else {
+                Err(refuse_raw_os(e))
+            }
+        }
+    }
 }
 
 fn parse_path_only(s: &str) -> anyhow::Result<nlang_parser::ast::Path> {

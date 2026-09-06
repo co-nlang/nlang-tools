@@ -12,9 +12,34 @@ use anyhow::Result;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 pub const DIR: &str = "injections";
+
+/// Operator-facing refusal when a member vanishes between list and read, or
+/// the directory vanishes between `exists` and `read_dir`. Not a lattice ⊥:
+/// TAG_REGISTRY has no concurrent-commit code, and minting `#conflict` or
+/// `#caid_mismatch` would be the integrity lie REAL_03 §6.8 forbids.
+pub const CONSUMED_MSG: &str = "working set consumed by a concurrent commit";
+
+fn consumed_at(at: &str) -> anyhow::Error {
+    if at.is_empty() {
+        anyhow::anyhow!("{CONSUMED_MSG}")
+    } else {
+        anyhow::anyhow!("{CONSUMED_MSG} at {at}")
+    }
+}
+
+fn refuse_io(err: std::io::Error, at: &str) -> anyhow::Error {
+    if err.kind() == ErrorKind::NotFound {
+        consumed_at(at)
+    } else if at.is_empty() {
+        anyhow::anyhow!("working set unreadable")
+    } else {
+        anyhow::anyhow!("injection {at}: unreadable")
+    }
+}
 
 /// One immutable member of the working-set set. `id` is carried inside the
 /// member: the filename is only a local storage key and cannot be allowed to
@@ -22,6 +47,9 @@ pub const DIR: &str = "injections";
 #[derive(Clone, Debug)]
 pub struct Injection {
     pub id: String,
+    /// Process-local path this member was read from. Not on disk; commit
+    /// unlinks exactly these files (S1) without listing the directory again.
+    pub source: PathBuf,
     pub combo: ComboVal,
     pub pin_coords: BTreeSet<String>,
     /// Per coordinate, the members this pin observed and replaced at evolve
@@ -53,9 +81,17 @@ pub fn paths(base: &Path) -> Result<Vec<PathBuf>> {
     if !d.exists() {
         return Ok(Vec::new());
     }
+    let rd = match fs::read_dir(&d) {
+        Ok(rd) => rd,
+        Err(e) => return Err(refuse_io(e, DIR)),
+    };
     let mut out = Vec::new();
-    for e in fs::read_dir(&d)? {
-        let p = e?.path();
+    for e in rd {
+        let e = match e {
+            Ok(e) => e,
+            Err(e) => return Err(refuse_io(e, DIR)),
+        };
+        let p = e.path();
         if !p.is_file() {
             continue;
         }
@@ -73,12 +109,15 @@ pub fn paths(base: &Path) -> Result<Vec<PathBuf>> {
 pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
     let mut out = Vec::new();
     for p in paths(base)? {
-        let text = fs::read_to_string(&p)?;
         let filename_id = p
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or_default()
             .to_string();
+        let text = match fs::read_to_string(&p) {
+            Ok(t) => t,
+            Err(e) => return Err(refuse_io(e, &filename_id)),
+        };
         out.push(
             if let Some(rest) = text
                 .trim_start()
@@ -143,6 +182,7 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                 let framed_body = format!("{FRAME} injection\n{body}");
                 Injection {
                     id,
+                    source: p.clone(),
                     combo: decode_staged(&framed_body)?,
                     pin_coords,
                     absorbs,
@@ -165,6 +205,7 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                             ring::digest::digest(&ring::digest::SHA256, text.as_bytes()).as_ref()
                         )
                     ),
+                    source: p.clone(),
                     combo,
                     pin_coords: BTreeSet::new(),
                     absorbs: BTreeMap::new(),
@@ -280,14 +321,12 @@ pub fn write(
     anyhow::bail!("injection id: exhausted unique names")
 }
 
-pub fn clear(base: &Path) -> Result<()> {
-    let d = dir(base);
-    if !d.exists() {
-        return Ok(());
-    }
-    for p in paths(base)? {
+/// Unlink only the members this commit folded. Does not list the directory
+/// at call time, and does not `remove_dir`: a member minted after the fold
+/// stays reachable, and `remove_dir` is the `read_dir` ENOENT path (S1/S2).
+pub fn clear(folded: &[PathBuf]) -> Result<()> {
+    for p in folded {
         let _ = fs::remove_file(p);
     }
-    let _ = fs::remove_dir(&d);
     Ok(())
 }

@@ -346,6 +346,9 @@ pub struct Universe {
     session_has_delta: bool,
     /// IDs present when this evolve process loaded the immutable workset.
     injection_ids: std::collections::BTreeSet<String>,
+    /// Paths of the members this process folded. Commit unlinks exactly these
+    /// (S1). Process-local: not a shared on-disk list (Q4 / D48).
+    injection_sources: Vec<std::path::PathBuf>,
     /// Pin metadata for the one injection this evolve process will mint.
     session_pin_coords: std::collections::BTreeSet<String>,
     session_absorbs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -383,6 +386,7 @@ impl Universe {
             session_delta: ComboVal::default(),
             session_has_delta: false,
             injection_ids: std::collections::BTreeSet::new(),
+            injection_sources: Vec::new(),
             session_pin_coords: std::collections::BTreeSet::new(),
             session_absorbs: std::collections::BTreeMap::new(),
             session_effect_tags: crate::value::EffectTag::Pure,
@@ -979,6 +983,7 @@ impl Universe {
         self.session_delta = ComboVal::default();
         self.session_has_delta = false;
         self.injection_ids.clear();
+        self.injection_sources.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
         self.session_effect_tags = crate::value::EffectTag::Pure;
@@ -1001,6 +1006,7 @@ impl Universe {
         self.effect_pending = None;
         for injection in &injections {
             self.injection_ids.insert(injection.id.clone());
+            self.injection_sources.push(injection.source.clone());
             self.pin_coords.extend(injection.pin_coords.iter().cloned());
             if !injection.effect_tags.is_pure() {
                 self.effect_pending = Some(
@@ -1194,11 +1200,12 @@ impl Universe {
         // Workset injections are consumed. Config is session-scoped (O37):
         // write one Config-only injection back so a "clear the directory"
         // cannot drop the horizon (recon Q18, candidate 3).
-        crate::injections::clear(base_dir)?;
+        crate::injections::clear(&self.injection_sources)?;
         Self::unlink_legacy_staged(base_dir);
         self.session_delta = ComboVal::default();
         self.session_has_delta = false;
         self.injection_ids.clear();
+        self.injection_sources.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
         self.session_effect_tags = crate::value::EffectTag::Pure;
