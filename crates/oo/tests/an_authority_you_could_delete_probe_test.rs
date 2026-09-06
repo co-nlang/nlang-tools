@@ -244,6 +244,75 @@ fn r4_two_concurrent_discharges_both_survive() {
 }
 
 // ---------------------------------------------------------------------
+// R5. ACCEPTANCE ROUND 1 (added by the acceptor 2026-09-06).
+//
+// R2 removes the cell. That is one way to remove an authority fact; the
+// other is to edit it, and R2 did not cover it -- the order said "delete
+// a sidecar" where the invariant is "an authority fact must not be
+// removable while the value it describes stays put".
+//
+// The tag set is persisted as bits. Bits this engine does not know are
+// MASKED on the way in, which is the right call where the question is
+// "may this grant something" -- an unknown bit must never become a
+// capability. It is the wrong call here, where the question is "was
+// something discharged": masking turns a set of unknown bits into the
+// empty set, and the empty set reads as "nothing was discharged". That is
+// the same "unreadable became none" this whole arc exists to close, one
+// representation layer down.
+//
+// Measured on the delivered build: `effect_tags: 1` refuses (rc 1),
+// `effect_tags: not-a-number` refuses (rc 1, "effect_tags unreadable"),
+// `effect_tags: 9` refuses because the io bit survives the mask -- and
+// `effect_tags: 8` COMMITS, rc 0. One digit, the value untouched, and the
+// authority requirement is gone.
+//
+// The assertion is refusal, and it stays correct whichever way the future
+// goes: if bit 8 is never a tag, this must refuse as unreadable; if some
+// engine later defines it, it is a discharge and must refuse for want of
+// a capability. Either way, not rc 0.
+// ---------------------------------------------------------------------
+#[test]
+fn r5_a_tag_set_this_engine_cannot_fully_read_is_never_no_discharge() {
+    let s = scratch("r5");
+    let d = s.path();
+    discharged(d, IO, "effect_override:io");
+
+    let dir = d.join(".oo").join("injections");
+    let member = std::fs::read_dir(&dir)
+        .expect("injections")
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.is_file())
+        .expect("one member");
+    let body = std::fs::read_to_string(&member).expect("read member");
+    assert!(
+        body.contains("effect_tags:"),
+        "REACH: the member carries its own tag set:\n{body}"
+    );
+    let edited: String = body
+        .lines()
+        .map(|l| {
+            if l.starts_with("effect_tags:") {
+                "effect_tags: 8".to_string()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&member, edited).expect("write member");
+
+    let (out, rc) = oo(d, &["commit", "-m", "z"]);
+    assert_ne!(
+        rc, 0,
+        "a tag set this engine cannot fully read was taken to mean nothing \
+         was discharged, and the commit landed with no capability presented. \
+         The value in the member was not touched -- only the authority fact \
+         was. Commit said:\n{out}"
+    );
+}
+
+// ---------------------------------------------------------------------
 // G1. Identity is a red line.
 // ---------------------------------------------------------------------
 #[test]
