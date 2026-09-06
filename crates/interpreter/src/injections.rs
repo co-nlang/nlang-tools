@@ -123,6 +123,20 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                         if lines.next().is_some() {
                             anyhow::bail!("injection {filename_id}: unknown metadata");
                         }
+                        // B1: bits this engine cannot fully represent must
+                        // refuse, not shrink to the empty set. `from_bits`
+                        // still masks — that is correct where the question
+                        // is "may this grant something". Here the question
+                        // is "was something discharged".
+                        let representable = EffectTag::IO.to_bits()
+                            | EffectTag::NonDet.to_bits()
+                            | EffectTag::State.to_bits();
+                        if bits & !representable != 0 {
+                            anyhow::bail!(
+                                "injection {filename_id}: this engine cannot fully \
+                                 read the persisted tag set"
+                            );
+                        }
                         EffectTag::from_bits(bits)
                     }
                 };

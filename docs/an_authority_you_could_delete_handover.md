@@ -315,7 +315,51 @@ effect_tags: 8   (只有未知位元) → commit rc=0   Commit successful       
 ## R. 交付回報（修補回合 1；交付方填。本行以上一字不得動）
 
 ### R.1 射程逐項對照（B1）
+
+解碼路徑在 `injections.rs` 把 bits 收成 `u8` 之後、呼叫 `from_bits` **之前**檢查：若有任何位元落在本引擎能完整表示的集合（`io | nondet | state`）之外，立即 `bail`，不把集合縮小。`EffectTag::from_bits` **一字未動**——遮蔽仍只服務「這能不能授予什麼」。未知 metadata 行仍是 `unknown metadata`，未放寬。拒絕句逐字 `this engine cannot fully read the persisted tag set`：不是 `#caid_mismatch`、不是 corrupt、也不是「沒有 discharge」。
+
 ### R.2 順手改動（逐項指名）
+
+無。只動 `injections.rs` 的 `effect_tags` 解碼。未 rustfmt `storage.rs`。**探針一字未動。** `value.rs` 的 `from_bits` 無 diff。
+
 ### R.3 工單指名要你回答的問題
+
+B1 的問句是「讀得出來但不完整時發生什麼」。同一成員只改 `effect_tags` 一行（離開碼不經管線）：
+
+| 寫入 | 無 grant | 有 `--grant effect_override:io` |
+| :-- | :-- | :-- |
+| `1`（io） | rc=1，`discharged #io` | （G3：落地，未在此表重測） |
+| `not-a-number` | rc=1，`effect_tags unreadable` | — |
+| `9`（io\|未知） | rc=1，`cannot fully read the persisted tag set` | rc=1，同一句（不再降成只剩 io 然後放行） |
+| `8`（只有未知） | rc=1，`cannot fully read the persisted tag set` | rc=1，同一句 |
+| 多一行 `extra: 1` | rc=1，`unknown metadata` | — |
+
+`effect_tags: 8` 逐字：
+
+```text
+Error: injection 3c497ba8312565b48e2306eb0a44ff92: this engine cannot fully read the persisted tag set
+```
+
+離開碼 **1**。HEAD 未動。值一個位元組都沒被當成「沒有 discharge」。
+
 ### R.4 探針（R5 是否轉綠；R1–R4／G1–G3 是否仍綠）
+
+`an_authority_you_could_delete_probe_test`：**8／8**。未修改、未 rustfmt。R5 轉綠。R1–R4／G1–G3 仍綠。
+
 ### R.5 數字（全樹 ×3，**`--release`**：targets／passed／failed／**失敗的測試名**）
+
+全樹 `cargo test --workspace --release --no-fail-fast`：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` |
+| :-- | --: | --: | --: | :-- | --: |
+| 1 | 224 | 2147 | 0 | 無 | 0 |
+| 2 | 224 | 2147 | 0 | 無 | 0 |
+| 3 | 224 | 2147 | 0 | 無 | 0 |
+
+passed 比交付回合多 1：R5 從紅轉綠。
+
+* conformance：`162 vectors, 162 pass, 0 fail`。
+* `x: 0` root：`31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
+* `x: 0` CAS objects：**3**。
+* standard root：`7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（available）。
+* known-answer：`3` rc=0；對照 `_|_ (%cause: #conflict)` rc=0。
