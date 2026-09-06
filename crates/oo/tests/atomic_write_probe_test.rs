@@ -385,11 +385,14 @@ fn p2_format_moves_only_when_declared() {
     //   layout=4     Q-016a / D58            (immutable injections now carry
     //                                        intrinsic ids, pin coordinates,
     //                                        and coordinate-wise absorption)
+    //   layout=5     Q-040 / D60             (discharge tags travel on the
+    //                                        same immutable member as the
+    //                                        value they describe)
     let oo_dir = d.path().join(".oo");
     let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
         layout.trim(),
-        "layout=4",
+        "layout=5",
         ".oo/format moved without a ruling saying it should"
     );
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();

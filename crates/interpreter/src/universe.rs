@@ -331,8 +331,9 @@ pub struct Universe {
     /// fields).
     pub pin_coords: std::collections::BTreeSet<String>,
     /// Intent: the active effect tags a `runPure` in the staged content
-    /// actually DISCHARGED. Persisted as `.oo/effect_pending` (assertion
-    /// layer; unlike pin it has not yet moved into injections). `None` = no discharge.
+    /// actually DISCHARGED. Layout 5 persists each member's set on that
+    /// member and this field is the union; layout ≤ 4 used `.oo/effect_pending`.
+    /// `None` = no discharge.
     /// **Not authorization** — commit must re-present a capability that
     /// COVERS these tags (SPEC_08 §6.2 授權時點 / 意圖≠授權).
     ///
@@ -348,6 +349,10 @@ pub struct Universe {
     /// Pin metadata for the one injection this evolve process will mint.
     session_pin_coords: std::collections::BTreeSet<String>,
     session_absorbs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// Discharge tags of the one injection this evolve process will mint.
+    /// The gate reads the union (`effect_pending`); the member stores only
+    /// what this writer discharged, so two concurrent discharges both survive.
+    session_effect_tags: crate::value::EffectTag,
     /// A layout <= 3 pin sidecar read for compatibility. New pin intent never
     /// writes this shared cell.
     legacy_pin_pending: bool,
@@ -380,6 +385,7 @@ impl Universe {
             injection_ids: std::collections::BTreeSet::new(),
             session_pin_coords: std::collections::BTreeSet::new(),
             session_absorbs: std::collections::BTreeMap::new(),
+            session_effect_tags: crate::value::EffectTag::Pure,
             legacy_pin_pending: false,
             workset_bottom: None,
         }
@@ -740,6 +746,7 @@ impl Universe {
                     .unwrap_or(crate::value::EffectTag::Pure)
                     .union(discharged),
             );
+            self.session_effect_tags = self.session_effect_tags.union(discharged);
         }
         if self.pin_mode && engine.privilege.pin {
             self.note_session_incoming(engine, &incoming);
@@ -810,6 +817,7 @@ impl Universe {
                             .unwrap_or(crate::value::EffectTag::Pure)
                             .union(discharged),
                     );
+                    self.session_effect_tags = self.session_effect_tags.union(discharged);
                 }
                 if self.pin_mode && engine.privilege.pin {
                     self.note_session_incoming(engine, &incoming);
@@ -899,15 +907,23 @@ impl Universe {
     }
 
     pub fn save_staged(&mut self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
-        if !self.session_pin_coords.is_empty() {
-            let declaration = crate::storage::read_layout_declaration(base_dir)?;
-            if !crate::storage::layout_declaration_is_current(&declaration) {
-                anyhow::bail!(
-                    "this store declares {declaration}; pinned injections require layout={}. \
-                     Run `oo migrate --grant migrate` before evolving with --pin",
-                    crate::storage::STORE_LAYOUT_VERSION
-                );
-            }
+        let declaration = crate::storage::read_layout_declaration(base_dir)?;
+        let current = crate::storage::layout_declaration_is_current(&declaration);
+        if !self.session_pin_coords.is_empty()
+            && !crate::storage::layout_writes_pin_frame(&declaration)
+        {
+            anyhow::bail!(
+                "this store declares {declaration}; pinned injections require layout=4. \
+                 Run `oo migrate --grant migrate` before evolving with --pin"
+            );
+        }
+        // D60: `effect_tags` is only declared on the current layout. Refuse
+        // before any member (or blur partial) is written.
+        if !self.session_effect_tags.is_pure() && !current {
+            anyhow::bail!(
+                "this store declares {declaration}; a discharged injection cannot \
+                 land until the layout is current. Run `oo migrate --grant migrate`"
+            );
         }
         // O42 11.6.1 (i): write blur partial bodies into CAS before the
         // injection drops them (partial is CAID-only on disk). Uncommitted
@@ -921,11 +937,13 @@ impl Universe {
                 &self.session_delta,
                 &self.session_pin_coords,
                 &self.session_absorbs,
+                self.session_effect_tags,
             )?;
             self.session_delta = ComboVal::default();
             self.session_has_delta = false;
             self.session_pin_coords.clear();
             self.session_absorbs.clear();
+            self.session_effect_tags = crate::value::EffectTag::Pure;
         }
         Self::unlink_legacy_staged(base_dir);
         // ○ lives beside the working set, not in CAS. Unchanged this arc
@@ -940,16 +958,18 @@ impl Universe {
         if !self.legacy_pin_pending && pin_path.exists() {
             let _ = std::fs::remove_file(pin_path);
         }
-        // Effect-discharge intent (SPEC_08 §6.2). Like injection pin metadata,
-        // this is intent only — commit must re-present the capability. Not
-        // writable from the language layer (store boundary).
+        // Layout 5 discharge intent travels with the member. A leftover
+        // `.oo/effect_pending` is still read (Q4) and only cleared at commit;
+        // rewriting it here would recreate the separable cell R2 deletes.
+        // Layout ≤ 4 still writes the sidecar so a v0.43.0 leftover session
+        // keeps today's gate (not looser) and ordinary continue still works.
         let effect_path = base_dir.join(".oo").join("effect_pending");
-        if let Some(tags) = self.effect_pending {
-            // The TAG SET, not a bare marker: commit must be able to check
-            // that the capability re-presented covers what was discharged.
-            crate::storage::atomic_write(&effect_path, tags.to_bits().to_string().as_bytes())?;
-        } else if effect_path.exists() {
-            let _ = std::fs::remove_file(effect_path);
+        if !current {
+            if let Some(tags) = self.effect_pending {
+                crate::storage::atomic_write(&effect_path, tags.to_bits().to_string().as_bytes())?;
+            } else if effect_path.exists() {
+                let _ = std::fs::remove_file(effect_path);
+            }
         }
         Ok(())
     }
@@ -961,6 +981,7 @@ impl Universe {
         self.injection_ids.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
+        self.session_effect_tags = crate::value::EffectTag::Pure;
         let pin_path = base_dir.join(".oo").join("pin_pending");
         self.legacy_pin_pending = pin_path.exists();
         self.pin_pending = self.legacy_pin_pending;
@@ -977,9 +998,17 @@ impl Universe {
                 .unwrap_or_default();
         }
         let injections = crate::injections::load_all(base_dir)?;
+        self.effect_pending = None;
         for injection in &injections {
             self.injection_ids.insert(injection.id.clone());
             self.pin_coords.extend(injection.pin_coords.iter().cloned());
+            if !injection.effect_tags.is_pure() {
+                self.effect_pending = Some(
+                    self.effect_pending
+                        .unwrap_or(crate::value::EffectTag::Pure)
+                        .union(injection.effect_tags),
+                );
+            }
         }
         if !self.pin_coords.is_empty() {
             self.pin_pending = true;
@@ -1012,11 +1041,22 @@ impl Universe {
                 self.is_dirty = true;
             }
         }
-        self.effect_pending = std::fs::read_to_string(base_dir.join(".oo").join("effect_pending"))
+        // Q4: a v0.43.0 leftover sidecar still contributes to the gate on
+        // layout ≤ 4 (and after migrate, until commit). Unreadable sidecar
+        // stays today's `.ok()` path — that hole is not looser, and S2's
+        // refuse-if-unreadable applies to the member, not this cell.
+        if let Some(t) = std::fs::read_to_string(base_dir.join(".oo").join("effect_pending"))
             .ok()
             .and_then(|s| s.trim().parse::<u8>().ok())
             .map(crate::value::EffectTag::from_bits)
-            .filter(|t| !t.is_pure());
+            .filter(|t| !t.is_pure())
+        {
+            self.effect_pending = Some(
+                self.effect_pending
+                    .unwrap_or(crate::value::EffectTag::Pure)
+                    .union(t),
+            );
+        }
         Ok(())
     }
 
@@ -1161,6 +1201,7 @@ impl Universe {
         self.injection_ids.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
+        self.session_effect_tags = crate::value::EffectTag::Pure;
         self.legacy_pin_pending = false;
         if let Some(cfg) = retained_config {
             let mut restaged = ComboVal::default();

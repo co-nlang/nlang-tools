@@ -6,7 +6,7 @@
 //! `ids.len()+1` (`savepoint.rs::mint_id`'s disease).
 
 use crate::store_codec::{decode_staged, encode_injection, FRAME};
-use crate::value::{BottomCause, BottomDetail, ComboVal, Value};
+use crate::value::{BottomCause, BottomDetail, ComboVal, EffectTag, Value};
 use crate::Ouroboros;
 use anyhow::Result;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -28,6 +28,10 @@ pub struct Injection {
     /// time. Two concurrent pins name the same past but not each other, so both
     /// remain and the ordinary meet reports their conflict (D49).
     pub absorbs: BTreeMap<String, BTreeSet<String>>,
+    /// Active tags a `runPure` in this member actually discharged. Layout 5
+    /// persists the set on the member; layout ≤ 4 used `.oo/effect_pending`.
+    /// Commit takes the union over members (D58 / Q-040).
+    pub effect_tags: EffectTag,
 }
 
 pub fn dir(base: &Path) -> PathBuf {
@@ -102,15 +106,33 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                             anyhow::anyhow!("injection {filename_id}: absorbs absent")
                         })?,
                 )?;
-                if lines.next().is_some() {
-                    anyhow::bail!("injection {filename_id}: unknown metadata");
-                }
+                // Layout 4 ends after absorbs. Layout 5 adds `effect_tags:`.
+                // Any other leftover line is still unknown metadata — that
+                // strictness is what makes "the declaration is still true"
+                // enforceable (Q-040 Q1). An unreadable tags value is a
+                // refusal, never "no discharge" (S2).
+                let effect_tags = match lines.next() {
+                    None => EffectTag::Pure,
+                    Some(line) => {
+                        let rest = line.strip_prefix("effect_tags: ").ok_or_else(|| {
+                            anyhow::anyhow!("injection {filename_id}: unknown metadata")
+                        })?;
+                        let bits: u8 = serde_json::from_str(rest).map_err(|_| {
+                            anyhow::anyhow!("injection {filename_id}: effect_tags unreadable")
+                        })?;
+                        if lines.next().is_some() {
+                            anyhow::bail!("injection {filename_id}: unknown metadata");
+                        }
+                        EffectTag::from_bits(bits)
+                    }
+                };
                 let framed_body = format!("{FRAME} injection\n{body}");
                 Injection {
                     id,
                     combo: decode_staged(&framed_body)?,
                     pin_coords,
                     absorbs,
+                    effect_tags,
                 }
             } else {
                 // Layout <= 3 had no in-body id and pin intent lived in
@@ -132,6 +154,7 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                     combo,
                     pin_coords: BTreeSet::new(),
                     absorbs: BTreeMap::new(),
+                    effect_tags: EffectTag::Pure,
                 }
             },
         );
@@ -183,11 +206,22 @@ pub fn write(
     combo: &ComboVal,
     pin_coords: &BTreeSet<String>,
     absorbs: &BTreeMap<String, BTreeSet<String>>,
+    effect_tags: EffectTag,
 ) -> Result<String> {
+    let declaration = crate::storage::read_layout_declaration(base)?;
+    let current = crate::storage::layout_declaration_is_current(&declaration);
+    let pin_frame = crate::storage::layout_writes_pin_frame(&declaration);
+    // D60 / REAL_02 §5.1.1: a past layout must not receive a field it cannot
+    // declare. Refuse before minting a member. Layout 4 already declares the
+    // pin frame; it does not declare `effect_tags`.
+    if !effect_tags.is_pure() && !current {
+        anyhow::bail!(
+            "this store declares {declaration}; a discharged injection cannot \
+             land until the layout is current. Run `oo migrate --grant migrate`"
+        );
+    }
     let d = dir(base);
     fs::create_dir_all(&d)?;
-    let declaration = crate::storage::read_layout_declaration(base)?;
-    let rich_frame = crate::storage::layout_declaration_is_current(&declaration);
     for _ in 0..8 {
         let id = mint_id()?;
         let dest = d.join(&id);
@@ -195,7 +229,21 @@ pub fn write(
             continue;
         }
         let legacy_body = encode_injection(combo);
-        let body = if rich_frame {
+        let body = if current {
+            let combo_body = legacy_body
+                .strip_prefix(&format!("{FRAME} injection\n"))
+                .expect("encode_injection frame");
+            format!(
+                "{FRAME} injection\nid: {}\npin_coords: {}\nabsorbs: {}\neffect_tags: {}\n\n{}",
+                serde_json::to_string(&id)?,
+                serde_json::to_string(pin_coords)?,
+                serde_json::to_string(absorbs)?,
+                serde_json::to_string(&effect_tags.to_bits())?,
+                combo_body,
+            )
+        } else if pin_frame {
+            // Layout 4 form: v0.43.0 can still parse this. Never add
+            // `effect_tags:` — that line is unknown metadata to it.
             let combo_body = legacy_body
                 .strip_prefix(&format!("{FRAME} injection\n"))
                 .expect("encode_injection frame");

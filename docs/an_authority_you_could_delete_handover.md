@@ -125,9 +125,95 @@ oo commit                             → rc=0  Commit successful
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照
+
+* **S1**：discharge 標籤集與它所描述的值同住不可變注入成員。layout=5 的框在 `absorbs:` 之後多一行 `effect_tags: <u8 bits>`；提交側對全體成員取聯集。每個寫者只把自己這次 discharge 的集合寫進自己鑄的那一筆，所以兩個並行 discharge 各自存活，聯集在 load／commit 時才做。新引擎在現行 layout **不再建立或改寫** `.oo/effect_pending`。見 `injections.rs` 的 `Injection.effect_tags`／`write`／`load_all`，與 `universe.rs` 的 `session_effect_tags`。**照抄**：意圖搬進成員不使它免於竄改——改寫成員仍在斷言層。得到的是不再可分離：移除授權事實必須改寫承載值本身的那個物件。
+* **S2**：成員上的 `effect_tags` 讀不出來（JSON 不是 u8）→ `effect_tags unreadable`，rc=1，不落地。未知 metadata 行仍 `unknown metadata`，**未放寬** `injections.rs` 對多餘行的 `bail`。兩種都不會變成「沒有 discharge」。標記仍只在 `effect_pending` 聯集非空時寫入 `privileged_effect`，不因 grant 在場而標記。
+* **S3**：`STORE_LAYOUT_VERSION` **4→5**；可遷移來源閉集改為 `[2, 3, 4]`。layout=4 收到需要新欄位的寫入（新引擎的 discharged evolve）在寫下任何成員之前拒絕，注入數 0，指名 `oo migrate --grant migrate`。layout=4 上的普通 evolve 仍寫 layout=4 框（`id`／`pin_coords`／`absorbs`，**沒有** `effect_tags:`），真 `v0.43.0` `status` rc=0、`commit` rc=0。`--pin` 在 layout=4 仍寫舊 pin 框，真 `v0.43.0` 讀得到並提交得了。`v0.43.0` 開 layout=5：`store layout declaration "layout=5" is not supported; refusing to open`，不是 corrupt。
+* **S4**：未碰 `.oo/abandoned`、未示範 `~%Io./write_file` 進 `.oo/`、未碰 Q-016b／HEAD CAS／`pin` 的吸收語義。為了在 current 變成 5 之後 layout=4 仍能表達 pin，把 pin 的寫入閘從 `layout_declaration_is_current` 改成 `layout_writes_pin_frame`（已知且 ≥4）。那是讓 S3「舊 layout 不得收到它宣告不了的東西」在 pin 這一側保持為真，不是改 pin。
+
 ### N.2 順手改動（逐項指名）
+
+* `crates/oo/tests/atomic_write_probe_test.rs` `p2`：現行 layout 釘 `layout=4`→`layout=5`，註解補 Q-040／D60。該針自己寫著「Whoever moves it next updates this line」。
+* `crates/oo/tests/a_commit_that_closes_the_door_probe_test.rs`：`r5` 遷移目的地與 `g1` REACH 的現行 layout 字面由 4 改 5。**未**改 `g4` 手寫 encoding-3／舊 layout 的倉。
+* `crates/oo/src/main.rs`：註解把 discharge 意圖的住處從單一 sidecar 改成成員 `effect_tags` ＋ layout≤4 遺留 sidecar。行為閘仍讀 `universe.effect_pending`（現為聯集）。
+* 未 rustfmt `storage.rs`（整檔會重排不相干函數）。**Q-040 探針一字未動。**
+
 ### N.3 工單哪裡是錯的
+
+沒有發現射程或釘子寫錯。S3「普通 discharge 仍須寫舊形式」按字面會與「需要新欄位的寫入必須在寫成員之前拒絕」打架：新引擎若在 layout=4 再寫 `.oo/effect_pending`，就是把本弧要拿掉的可分離格子寫回去。實作取 Q-016a 的類比——**新** discharged evolve 在 layout=4 拒絕（注入 0）；v0.43.0 自己寫下的 sidecar 與 layout=4 注入框仍是舊形式，真二進位讀得到、提交得了（Q3／Q4）。這不是推翻裁定，是讓兩句同時為真時優先「不得寫它宣告不了的欄位、也不得把洞寫回去」。
+
 ### N.4 工單指名要你回答的問題（Q1–Q4）
+
+**Q1 — 磁碟形狀。** layout=5、一次 `runPure` 讀時鐘，成員逐字：
+
+```text
+#nlang/store injection
+id: "93f8b671428bb14de7b67edd4a80790b"
+pin_coords: []
+absorbs: {}
+effect_tags: 1
+
+{ p: 1788664707017 }
+```
+
+`.oo/` 下列沒有 `effect_pending`。`effect_tags: 1` 是 `EffectTag::IO` 的 bits（與舊 sidecar 同一個 u8）。普通 evolve 仍寫同一框、`effect_tags: 0`。兩次循序 discharge（`io` 再 `nondet`）是兩筆成員，分別 `effect_tags: 1` 與 `effect_tags: 2`；無 grant 的提交 rc=1，逐字 `discharged #io | #nondet`。未知欄位仍 `unknown metadata`，未放寬。
+
+**Q2 — 讀不出標籤。** 把 `effect_tags: 1` 改成 `effect_tags: not-a-tag-set` 之後，`oo commit --grant effect_override:io -m x`：
+
+```text
+Error: injection 224c6687ebabd475d970588568093812: effect_tags unreadable
+```
+
+離開碼（不經管線）**1**。HEAD 未動。另測在 `effect_tags:` 後加 `extra: 1`：
+
+```text
+Error: injection 5454e5bd77517c1377c0b902e2c96b63: unknown metadata
+```
+
+離開碼 **1**。兩者都不是「沒有 discharge」。
+
+**Q3 — 跨版本矩陣（真 `/home/gali/nlang-baselines/v0.43.0-verify/target/release/oo`）。**
+
+1. 新倉：`.oo/format` 為 `layout=5`。
+2. `v0.43.0` 造 `layout=4` 倉，新引擎普通 `evolve y: 2` 寫出**沒有** `effect_tags:` 的 layout=4 框；宣告仍是 `layout=4`。真 `v0.43.0` `status` rc=0 顯示 `y: 2`，`commit -m from-new` rc=0 `Commit successful`。
+3. 同一類 `layout=4` 倉，新引擎 `evolve --grant effect_override:io`（`runPure` 讀時鐘）→ **rc=1**，注入數 **0**，sidecar 不存在，宣告仍 `layout=4`。逐字：
+
+```text
+Error: this store declares layout=4; a discharged injection cannot land until the layout is current. Run `oo migrate --grant migrate`
+```
+
+4. `v0.43.0` 開 layout=5：`log`／`status` 皆 rc=1，逐字 `store layout declaration "layout=5" is not supported; refusing to open`。不是 `#caid_mismatch`、不是 corrupt。
+
+**Q4 — 遺留 sidecar。** `v0.43.0` 在 layout=4 留下 `.oo/effect_pending` 內容 `1`。新引擎無 grant 提交 rc=1，逐字 `discharged #io`（閘不比今天鬆）。帶 `--grant effect_override:io` 則落地且 log 有 `privileged_effect`。刪掉該 sidecar 之後無 grant 提交 rc=0——與今天 v0.43.0 的洞相同，未遷移的倉沒有被收得更鬆，也沒有被收得更緊。遷移之前的舊注入沒有 per-member 標籤，閘只靠這份 sidecar。
+
 ### N.5 探針（R1–R4／G1–G3；**若你改了探針檔，逐行說明為什麼**）
+
+`an_authority_you_could_delete_probe_test`：**7／7**。未修改、未 rustfmt 此檔。
+
+* R1 無 grant 仍拒：綠。
+* R2 刪 sidecar 仍拒：綠（layout=5 成員帶 `effect_tags: 1`，`.oo/` 根下沒有可刪的格子）。
+* R3：R2 已拒，早退；綠。
+* R4 十回合並行兩種 discharge、只持 `io` 的提交皆 rc=1：綠。
+* G1 身分、G2 普通提交無標記、G3 出示能力仍落地且有 `privileged_effect`：全綠。
+
 ### N.6 數字（全樹 ×3：targets／passed／failed／**失敗的測試名**；conformance；身分三項）
+
+全樹 `cargo test --workspace --no-fail-fast -- --test-threads=1`：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` |
+| :-- | --: | --: | --: | :-- | --: |
+| 1 | 224 | 2146 | 0 | 無 | 0 |
+| 2 | 224 | 2146 | 0 | 無 | 0 |
+| 3 | 224 | 2146 | 0 | 無 | 0 |
+
+補充誠實紀錄：WSL 在第一次全樹中途被關掉，`target/debug/deps` 留下 29 個截斷的 interpreter 測試二進位（`file` 報 `data`，執行是 `Exec format error`）。刪掉那些檔後重編，上表三輪才算。那 29 支不是本弧的產品紅。
+
+* conformance：`162 vectors, 162 pass, 0 fail`。
+* `x: 0` root：`31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
+* `x: 0` CAS objects：**3**。
+* standard root：`7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（available）。
+* 基線 known-answer：`~%Math./add (1,2)` → `3` rc=0；對照 `~%Math./add (1,"x")` → `_|_ (%cause: #conflict)` rc=0；離開碼均直接取得，未經管線。新引擎同樣兩句。新倉宣告 **`layout=5`**。
+
 ### N.7 你認為需要改規格之處
+
+`REAL_02` §5.1.1 已有「宣告未推進者不得收到它宣告不了的東西」；本弧是那一款的第二次行使，條文不必因本弧重寫。收弧時 CHANGELOG／SPEC_00 需記 `layout=5` 與 90 天時鐘重啟（D60；時鐘是切版的事，不是本交付）。`oo migrate` 成功句仍說「只讀 layout=2 的引擎（oo v0.41.0）此後打不開」——對 layout=5 **仍真**（v0.41.0 也打不開），但不完整（擋在門外的還有 v0.43.0）。建議切版時改成指名最新被鎖在門外的那一版，與 Q-017 S8 同一類誠實性。身分未動，標準根表不必改。
