@@ -235,8 +235,14 @@ fn r1_a_definition_that_was_accepted_is_never_deleted_unread() {
 // forbids leaking implementation representation and requires a
 // coordinate and a code.
 //
-// Arming: the round ran twenty overlapping commits. Failures are not
-// required — a queued commit that succeeds is still a contended round.
+// Arming: ACCEPTANCE ROUND 1. The delivery removed the original guard
+// ("at least one commit failed") for a correct reason -- a fixed build
+// can queue and succeed twenty times -- but replaced it with nothing, so
+// `armed` became unconditional and the void-reading guard died. A signal
+// that survives the fix: contention happened if more than one commit
+// landed, or if any commit reported its working set consumed. Both are
+// true on the delivered build (2 landed, 18 consumed) and both would be
+// false in a workspace where the twenty ran one after another.
 // ---------------------------------------------------------------------
 #[test]
 fn r2_no_raw_os_error_reaches_the_operator() {
@@ -268,13 +274,25 @@ fn r2_no_raw_os_error_reaches_the_operator() {
             commits.push(spawn(d, &["commit", "-m", &m]));
         }
         let mut outs = Vec::new();
+        let mut landed = 0;
+        let mut consumed = 0;
         for c in commits {
             let o = c.wait_with_output().expect("commit exits");
-            outs.push(format!(
+            let text = format!(
                 "{}{}",
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
-            ));
+            );
+            if text.contains("Commit successful") {
+                landed += 1;
+            }
+            if text.contains("consumed") {
+                consumed += 1;
+            }
+            outs.push(text);
+        }
+        if landed < 2 && consumed == 0 {
+            continue; // nothing overlapped: one commit had all the work
         }
         armed += 1;
         for o in &outs {
@@ -289,8 +307,9 @@ fn r2_no_raw_os_error_reaches_the_operator() {
     }
     assert!(
         armed > 0,
-        "VOID READING: no round ran overlapping commits, so nothing \
-         contended and this probe proves nothing."
+        "VOID READING: no round overlapped -- every one had a single \
+         commit doing all the work, so nothing contended and this probe \
+         proves nothing."
     );
 }
 
