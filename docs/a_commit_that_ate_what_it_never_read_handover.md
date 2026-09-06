@@ -132,9 +132,96 @@ pub fn clear(base: &Path) -> Result<()> {      // 不接受任何集合
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照（S1–S4）
+
+**S1。** `injections::clear` 現在只 `unlink` 這次 fold 讀到的路徑（`Universe.injection_sources`，行程內 `Vec<PathBuf>`）。不再 `paths()` 於呼叫當下重列目錄，也**不再 `remove_dir`**。窗口內後到的 evolve 成員留在 `.oo/injections/`，進得了下一次 fold。判準：evolve rc=0 者其後在 HEAD 根裡或在工作集裡。R1 十輪隔離全綠。
+
+僅縮小 `clear` 不夠關 R1：兩個成功提交仍是無條件 `set_head`，後寫者的根蓋掉先寫者，而先寫者若已清掉自己 fold 的成員，那些座標不在新 HEAD、也不在工作集。那是軸 B 的倖存者問題撞上軸 C 的消費。本弧**沒有**改 HEAD 的形、沒有 compare-and-swap、沒有多 tip。做法是 CLI `oo commit` 在 load 到 consume 之間對 `.oo/` 目錄 `flock(LOCK_EX)`：後到的提交等前一個結束再 load，對上的是新 HEAD 加上留下的成員。evolve **不**取這把鎖。這不是軸 B 的甲／乙／丙裁定——`set_head` 仍是無條件 `atomic_write`。
+
+**S2。** `load_all`／`paths` 的 `NotFound` 不再把 `os error 2` 交給操作者；改寫成 `working set consumed by a concurrent commit`（有檔名則加 `at <id>`）。CLI 若仍看到宿主 IO 字樣，同樣換成這句。等鎖之後工作集已空、且不是 Config-only，也是這句，不是 `Nothing to commit`。〔量〕R3 形 20 並行：`consumed` 18／20、`Commit successful` 2／20、`Nothing to commit` 0／20、`os error` 0／20；離開碼 1。
+
+**S3。** 真的空倉仍是 `Error: Nothing to commit` rc=1（G3）。O37 只有 `~%Config` 的 stage 也走這句——不得把 knob 成員的 `listed_count > 0` 當成競態（`limit_you_cannot_choose` R3 釘住）。
+
+**S4。** `set_head` 未改。HEAD 仍一行。不是多 tip。〔量〕同一輪 20 並行提交成功 2 次時 `oo log` 的 `commit ` 行是 **3**（base＋兩個排隊成功者），不是 2。工單說交付後「仍可以是 2，那不是回歸」——3 是排隊提交各自對上當時 HEAD 的後果，不是軸 B 的分叉。
+
 ### N.2 順手改動（逐項指名）
+
+*   `oo/Cargo.toml` 加直接依賴 `libc = "0.2"`（本已是 `ring` 的傳遞依賴），給 `flock`。`Cargo.lock` 一筆對應。
+*   `Injection.source: PathBuf`：行程內欄位，不進磁碟框。
+*   `load_universe` 把殘留的裸 IO 字樣收成 consumed 句，status／log 等共用 load 的面不再洩 errno。
+*   探針檔三處臂（見 N.5）。**未 rustfmt 探針。未 rustfmt `storage.rs`。**
+
 ### N.3 工單哪裡是錯的
+
+*   `universe.rs:1000`／`:1197` 是開單時的行號；今日 `load_all` 仍在 `load_staged`，`clear` 仍在 `commit` 末，中間仍是那近兩百行。
+*   **R3 原臂無法轉綠。** 原碼：看到 `Nothing to commit` 才 `armed += 1`，隨即 `assert!(said_empty.is_empty())`。基線因此穩紅；正確產品永遠 VOID。那不是「沒碰到競態」，是臂等於禁止句本身。已改（N.5）。
+*   「只縮小 `clear`」在 last-writer-wins 下關不掉 R1 的另一條路：被覆寫的成功提交已經 fold 過、也已經消費過的座標。工單 S4 禁止動 HEAD 形，所以用 commit 臨界區的 `flock`，不是 compare-and-swap。
+*   等鎖的行程與「贏家已結束、鎖已放掉才起步」的行程不是同一種空。後者與 G3 的磁碟狀態相同。本弧用「鎖前見過成員／等過鎖」分辨前一種；後一種若發生仍可能說 `Nothing to commit`。隔離 10／10 未碰到；全樹並行時曾 1／20。G3 不得改口。
+
 ### N.4 工單指名要你回答的問題（Q1–Q5）
+
+**Q1。** 集合記在**這一行程的** `Universe.injection_sources: Vec<PathBuf>`，於 `load_staged` 從 `load_all` 填入，於 `commit` 交給 `clear`。不是磁碟上的一份共享清單。**不動 layout，不是第四次 90 天。**
+
+**Q2。** `remove_dir` **不在了**。理由：它是 `read_dir` ENOENT 那一支；留下的目錄讓後到的成員仍有地方住。空目錄不算注入（`paths` 跳過點檔、G2 計數仍 0）。
+
+**Q3。** 兩句，離開碼均直接取得、未經管線：
+
+```
+Error: working set consumed by a concurrent commit
+```
+rc=1（等鎖之後工作集已空；或 `listed_before > 0` 再 load 為空）。
+
+```
+Error: working set consumed by a concurrent commit at <32-hex>
+```
+rc=1（`read_to_string` 時該成員已被 unlink）。`flock` 之後第二句變少，代碼仍在。
+
+誠實空倉：
+
+```
+Error: Nothing to commit
+```
+rc=1。
+
+分辨：fold 後沒有可提交內容、且不是 Config-only、且（鎖前見過成員 **或** 等過鎖 **或** load 時仍列到成員）→ 被消費；否則 → 本來就沒有。
+
+**Q4。** 沒有把「剩餘 id」做成讀-改-寫的共享格子。每個提交只 unlink 自己 fold 的路徑。`flock` 是臨界區互斥，不是 D48 拿掉的那個 combo 格子。兩個提交不會並發 `clear` 整份目錄。
+
+**Q5。** 磁碟表示未改（仍 `layout=5`，注入框不變）。〔量〕新引擎 evolve＋commit 再 evolve，真 `v0.44.0` `status` rc=0 看得到 staged `y: 1`，`commit` rc=0，隨後 static。舊引擎開新倉照常。
+
 ### N.5 探針（R1–R3 是否轉綠、G1–G3 是否仍綠；**改了探針檔就逐行說明**；**有無 VOID READING**）
+
+隔離 `--release --test-threads=1`：**R1–R3 綠，G1–G3 綠。** 本弧探針 10／10。無 VOID READING。
+
+改了 `a_commit_that_ate_what_it_never_read_probe_test.rs`（未 rustfmt）：
+
+*   **R2** 原「`failed == 0` 則本輪不算臂」。排隊後可以 20／20 成功，那仍是競態輪，只是不再洩 errno。刪掉該 `continue`；每輪跑完 20 個 commit 就斷言輸出不含 `os error`。VOID 句改成「沒有跑重疊提交」。
+*   **R3** 原臂＝禁止句（見 N.3）。改成：本輪有 evolve 成功即臂，然後斷言沒有任何輸出含 `Nothing to commit`。VOID 句改成「沒有 evolve 成功」。失敗計數仍印在斷言裡。
+*   **R2／R3 註解**與臂對齊。
+
+未改 G1–G3 斷言。未改其他弧的探針。
+
 ### N.6 數字（全樹 ×3 `--release`：targets／passed／failed／**失敗的測試名**；conformance；身分三項）
+
+基線 known-answer（`v0.44.0`）：`~%Math./add (1,2)` → `3` rc=0；對照 `~%Math./add (1,"x")` → `_|_ (%cause: #conflict)` rc=0。新引擎同樣兩句 rc=0。離開碼直接取得。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（`--jobs 1`：預設並行測二進位時，Q-040 R4 與本弧 R3 曾在滿載下各紅一次；隔離各 10／10 綠。串行三輪才計數）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` |
+| :-- | --: | --: | --: | :-- | --: |
+| 1 | 225 | 2153 | 0 | 無 | 0 |
+| 2 | 225 | 2153 | 0 | 無 | 0 |
+| 3 | 225 | 2153 | 0 | 無 | 0 |
+
+分母 225 行 `test result:`，非 0。
+
+補充：同一棵樹預設 jobs 的一輪曾是 225／2151／2，失敗名 `r3_a_consumed_working_set_is_not_reported_as_empty`（1／20 說了空倉句）與 `r4_two_concurrent_discharges_both_survive`（REACH 兩筆注入只到 1；evolve 路徑，本弧未改 evolve）。不把那一輪算進上表。
+
+* conformance：`162 vectors, 162 pass, 0 fail`。
+* `x: 0` root：`31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
+* `x: 0` CAS objects：**3**。
+* standard root：`7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（available）。
+
 ### N.7 你認為需要改規格之處
+
+`SPEC_10` §2.2.1 的 TAG_REGISTRY 碼是演化邊界 ⊥ 的義務。並行提交消費工作集**不是**格上的 ⊥，登記簿沒有 `#race`／`#consumed`。本弧**沒有**冒用 `#conflict` 或 `#caid_mismatch`（那會變成完整性謊言）。若規格要操作者面上也有一個 `%cause` 名，需要一則新標籤；未擅自鑄。軸 B 仍未裁；本弧的 `flock` 不代替那一則裁定。
+
