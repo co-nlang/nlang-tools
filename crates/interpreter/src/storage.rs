@@ -127,14 +127,14 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// `STORE_LAYOUT_MIGRATABLE_FROM` are the previous split-axis form this
 /// engine once wrote: still openable, and the source `oo migrate` advances.
 /// A `layout=N` in neither set is a declaration from an engine we are not
-/// — including every future N (`layout=5`, `layout=99`). The past is a
+/// — including every future N (`layout=6`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
-pub const STORE_LAYOUT_VERSION: u32 = 4;
+pub const STORE_LAYOUT_VERSION: u32 = 5;
 pub const OBJECT_ENCODING_VERSION: u32 = 5;
 /// Split-axis layouts this engine has written. Not a range: `layout=1`
-/// was never a form (that era was a bare number), and a future `layout=5`
-/// must not slip through while current is 4.
-const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3];
+/// was never a form (that era was a bare number), and a future `layout=6`
+/// must not slip through while current is 5.
+const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3, 4];
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 fn split_layout_number(declaration: &str) -> Option<u32> {
@@ -156,10 +156,23 @@ pub fn read_layout_declaration(base_dir: &Path) -> Result<String> {
 }
 
 /// True only for the layout this engine writes. Migratable past layouts
-/// (`layout=2` and `layout=3`) are known and openable, but they are not current — S9
-/// uses this so a marked commit cannot land on them.
+/// (`layout=2`, `layout=3`, `layout=4`) are known and openable, but they are
+/// not current — S9 uses this so a marked commit cannot land on them, and
+/// Q-040 so a discharged injection (the `effect_tags` frame) cannot land
+/// on them either.
 pub fn layout_declaration_is_current(declaration: &str) -> bool {
     declaration == format!("layout={STORE_LAYOUT_VERSION}")
+}
+
+/// Layouts that already declare the Q-016a injection frame (`id`,
+/// `pin_coords`, `absorbs`). Pin intent is expressible there; `effect_tags`
+/// is not. Not `layout_declaration_is_current`: after this engine writes
+/// `layout=5`, a `layout=4` store must still accept `--pin`.
+pub fn layout_writes_pin_frame(declaration: &str) -> bool {
+    match split_layout_number(declaration) {
+        Some(n) if split_layout_is_known(n) => n >= 4,
+        _ => false,
+    }
 }
 
 pub struct ObjectStore {

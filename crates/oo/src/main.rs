@@ -1049,7 +1049,7 @@ fn run_commit(
     // ACCEPTANCE REPAIR (privilege escalation, 2026-07-26): the commit is where
     // the privileged overwrite is APPLIED, so the capability must be presented
     // HERE, through the trusted channel — not inferred as authority from the
-    // durable intent (layout 4 injection metadata, or a legacy
+    // durable intent (layout 5 injection metadata, or a legacy
     // `.oo/pin_pending`). Trusting durable intent once let an unprivileged
     // program obtain #pin semantics and falsely mark its commit — exactly the
     // tokenless backdoor SPEC_08 §6.1.2 forbids.
@@ -1060,7 +1060,8 @@ fn run_commit(
         );
     }
     // SPEC_08 §6.2 授權時點: commit fixes a discharge into history — must
-    // re-present effect_override. `.oo/effect_pending` is intent only.
+    // re-present effect_override. Member `effect_tags` (and a leftover
+    // `.oo/effect_pending` on layout ≤ 4) are intent only.
     //
     // ACCEPTOR REPAIR: the presented capability must COVER the tags actually
     // discharged, not merely exist. The delivered build checked `is_none()`,
