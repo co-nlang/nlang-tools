@@ -31,6 +31,62 @@ impl fmt::Display for ParserNestingLimitExceeded {
 
 impl Error for ParserNestingLimitExceeded {}
 
+/// The host refused to create the parser thread (address-space, thread cap,
+/// `EAGAIN`). Not a shape that is too deep: the operator's remedy is to raise
+/// a process limit, which is exactly the action `#stack_overflow` says will
+/// not help. D62 condition ②.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParserHostResourceDenied;
+
+impl fmt::Display for ParserHostResourceDenied {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("#host_resource_denied")
+    }
+}
+
+impl Error for ParserHostResourceDenied {}
+
+/// The parser thread panicked. An implementation bug, not a depth fence and
+/// not a host limit. D62 condition ③.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParserInternalError;
+
+impl fmt::Display for ParserInternalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("#internal_error")
+    }
+}
+
+impl Error for ParserInternalError {}
+
+/// Failures of the oversized parser thread itself (spawn / join), as distinct
+/// from the two depth gates that sit outside that thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParserThreadFailure {
+    HostResourceDenied,
+    Internal,
+}
+
+impl fmt::Display for ParserThreadFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HostResourceDenied => ParserHostResourceDenied.fmt(f),
+            Self::Internal => ParserInternalError.fmt(f),
+        }
+    }
+}
+
+impl Error for ParserThreadFailure {}
+
+impl ParserThreadFailure {
+    fn into_boxed(self) -> Box<dyn Error> {
+        match self {
+            Self::HostResourceDenied => Box::new(ParserHostResourceDenied),
+            Self::Internal => Box::new(ParserInternalError),
+        }
+    }
+}
+
 /// Guaranteed parser nesting depth. The parser thread is sized to retain a
 /// substantial native-stack margin at this boundary in debug builds.
 pub const PARSER_NESTING_LIMIT: usize = 256;
@@ -43,10 +99,18 @@ pub const PARSER_NESTING_LIMIT: usize = 256;
 /// nearly a twofold margin below the measured ~7,900-level native-stack cliff.
 pub const PARSER_AST_DEPTH_LIMIT: usize = 4096;
 
-/// Lets front ends render the parser fence as the language Bottom rather than
-/// treating it as an ordinary syntax diagnostic.
+/// True only for the shape fence (textual nesting / AST height). Spawn failure
+/// and a panicking parser thread are different conditions and must not match.
 pub fn is_parser_nesting_limit_error(error: &(dyn Error + 'static)) -> bool {
     error.downcast_ref::<ParserNestingLimitExceeded>().is_some()
+}
+
+pub fn is_parser_host_resource_error(error: &(dyn Error + 'static)) -> bool {
+    error.downcast_ref::<ParserHostResourceDenied>().is_some()
+}
+
+pub fn is_parser_internal_error(error: &(dyn Error + 'static)) -> bool {
+    error.downcast_ref::<ParserInternalError>().is_some()
 }
 
 pub fn parse_field(pair: pest::iterators::Pair<Rule>) -> Result<Field, Box<dyn Error>> {
@@ -1162,9 +1226,7 @@ fn parser_ast_gate_program(program: Program) -> Result<Program, Box<dyn Error>> 
 // the promised 256-level worst form; Linux commits that reservation lazily.
 const PARSER_STACK_BYTES: usize = 512 * 1024 * 1024;
 
-fn with_parser_stack<T: Send>(
-    f: impl FnOnce() -> T + Send,
-) -> Result<T, ParserNestingLimitExceeded> {
+fn with_parser_stack<T: Send>(f: impl FnOnce() -> T + Send) -> Result<T, ParserThreadFailure> {
     with_parser_stack_using(
         std::thread::Builder::new().stack_size(PARSER_STACK_BYTES),
         f,
@@ -1172,16 +1234,18 @@ fn with_parser_stack<T: Send>(
 }
 
 /// Keep thread creation fallible: a process under a tight address-space limit
-/// must report a parser incapacity, not turn an allocation failure into panic.
+/// must report a host refusal, not a depth fence and not a panic. `join()`
+/// returning `Err` is a panic in that thread — an internal error, never a
+/// nesting limit (the real fences sit outside this helper).
 fn with_parser_stack_using<T: Send>(
     builder: std::thread::Builder,
     f: impl FnOnce() -> T + Send,
-) -> Result<T, ParserNestingLimitExceeded> {
+) -> Result<T, ParserThreadFailure> {
     std::thread::scope(|s| {
         let parser = builder
             .spawn_scoped(s, f)
-            .map_err(|_| ParserNestingLimitExceeded)?;
-        parser.join().map_err(|_| ParserNestingLimitExceeded)
+            .map_err(|_| ParserThreadFailure::HostResourceDenied)?;
+        parser.join().map_err(|_| ParserThreadFailure::Internal)
     })
 }
 
@@ -1202,7 +1266,7 @@ pub fn parse_expr_only(input: &str) -> Result<Expr, Box<dyn Error>> {
             .ok_or_else(|| "expr_toplevel missing expr".to_string())?;
         parse_expr(inner).map_err(|e| e.to_string())
     })
-    .map_err(|error| -> Box<dyn Error> { Box::new(error) })?
+    .map_err(|error| -> Box<dyn Error> { error.into_boxed() })?
     .map_err(|e: String| -> Box<dyn Error> { e.into() })?;
     parser_ast_gate_expr(expr)
 }
@@ -1221,7 +1285,7 @@ pub fn parse_program(input: &str) -> Result<Program, Box<dyn Error>> {
         }
         Ok(Program { fields })
     })
-    .map_err(|error| -> Box<dyn Error> { Box::new(error) })?
+    .map_err(|error| -> Box<dyn Error> { error.into_boxed() })?
     .map_err(|e: String| -> Box<dyn Error> { e.into() })?;
     parser_ast_gate_program(program)
 }
@@ -1293,6 +1357,26 @@ mod nesting_gate_tests {
         let error =
             with_parser_stack_using(std::thread::Builder::new().stack_size(usize::MAX), || ())
                 .expect_err("an impossible stack reservation must make spawn fail cleanly");
-        assert_eq!(error, ParserNestingLimitExceeded);
+        assert_eq!(error, ParserThreadFailure::HostResourceDenied);
+        assert_eq!(error.to_string(), "#host_resource_denied");
+        let boxed = error.into_boxed();
+        assert!(is_parser_host_resource_error(boxed.as_ref()));
+        assert!(!is_parser_nesting_limit_error(boxed.as_ref()));
+    }
+
+    #[test]
+    fn parser_thread_panic_is_not_a_depth_error() {
+        let error =
+            with_parser_stack_using(std::thread::Builder::new().stack_size(1024 * 1024), || {
+                panic!("unit-test injected parser bug")
+            })
+            .expect_err("a panicking parser closure must surface as a thread failure");
+        assert_eq!(error, ParserThreadFailure::Internal);
+        assert_eq!(error.to_string(), "#internal_error");
+        assert_ne!(error.to_string(), "#stack_overflow");
+        let boxed = error.into_boxed();
+        assert!(is_parser_internal_error(boxed.as_ref()));
+        assert!(!is_parser_nesting_limit_error(boxed.as_ref()));
+        assert!(!is_parser_host_resource_error(boxed.as_ref()));
     }
 }

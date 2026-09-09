@@ -1676,6 +1676,10 @@ pub fn report_to_human(reports: &[FileReport]) -> String {
     for r in reports {
         if let Some(e) = &r.parse_error {
             s.push_str(&format!("[{}] PARSE-SKIP: {}\n", r.file, e));
+            // Unreadable is not absent (REAL_02 §5.1.1). A skipped file is an
+            // error the summary must count, or CI reads `diagnostics: 0`.
+            total_diags += 1;
+            total_errors += 1;
             continue;
         }
         if r.diagnostics.is_empty() && r.graph.contexts.is_empty() {
@@ -1784,6 +1788,10 @@ pub fn has_any_diagnostic(reports: &[FileReport]) -> bool {
     reports.iter().any(|r| !r.diagnostics.is_empty())
 }
 
+pub fn has_parse_error(reports: &[FileReport]) -> bool {
+    reports.iter().any(|r| r.parse_error.is_some())
+}
+
 // =====================================================================
 // §8  CLI entry
 // =====================================================================
@@ -1810,7 +1818,7 @@ pub fn run_cli(path: &FsPath, json: bool) -> i32 {
     }
     if has_r3_error(&reports) {
         2
-    } else if has_any_diagnostic(&reports) {
+    } else if has_any_diagnostic(&reports) || has_parse_error(&reports) {
         1
     } else {
         0

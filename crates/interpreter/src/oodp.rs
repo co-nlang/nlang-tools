@@ -15,7 +15,10 @@ use crate::storage::{value_address_matches, StoreReadError};
 use crate::value::{BottomCause, ComboVal, ContentHash, Identity, Value};
 use crate::{IntegrityKind, Ouroboros, PeerAdvert};
 use nlang_parser::ast::{AtomKind as AstAtom, Expr, ExprKind, FieldKey, Prefix};
-use nlang_parser::{is_parser_nesting_limit_error, parse_expr_only};
+use nlang_parser::{
+    is_parser_host_resource_error, is_parser_internal_error, is_parser_nesting_limit_error,
+    parse_expr_only,
+};
 use ring::rand::{SecureRandom, SystemRandom};
 use ring::signature::{self, UnparsedPublicKey};
 use serde_json::{json, Map, Value as JsonValue};
@@ -202,6 +205,12 @@ pub fn parse_request(line: &str) -> Result<OodpRequest, String> {
             Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
                 return Err("#stack_overflow".into());
             }
+            Err(error) if is_parser_host_resource_error(error.as_ref()) => {
+                return Err("#host_resource_denied".into());
+            }
+            Err(error) if is_parser_internal_error(error.as_ref()) => {
+                return Err("#internal_error".into());
+            }
             Err(_) => {}
         }
     }
@@ -356,6 +365,13 @@ pub fn serve_request(
         Err(e) => {
             let (status, reason) = if e == "#stack_overflow" {
                 (OodpStatus::Rejected, "stack_overflow")
+            } else if e == "#host_resource_denied" {
+                // Receiver cannot answer — same family as `#entropy_unavailable`.
+                // Status set stays closed; reason is open. Not a content
+                // adjudication, so it does not enter the integrity record.
+                (OodpStatus::Rejected, "host_resource_denied")
+            } else if e == "#internal_error" {
+                (OodpStatus::Rejected, "internal_error")
             } else {
                 (OodpStatus::Conflict, "malformed")
             };
