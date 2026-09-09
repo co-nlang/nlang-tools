@@ -4,7 +4,7 @@ use nlang_interpreter::{
     CommitMeta, ContentHash, EffectTag, Ouroboros, Privilege, Universe, Value,
 };
 use nlang_parser::ast::{AtomKind, FieldKey};
-use nlang_parser::{is_parser_nesting_limit_error, parse_program};
+use nlang_parser::parse_program;
 use std::fs;
 use std::io::{stdin, stdout, Write};
 use std::path::{Path, PathBuf};
@@ -118,13 +118,6 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
 
 fn hex_digest(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// The parser fence is an incapacity boundary, so CLI parse entry points render
-/// it as the language's Bottom and succeed cleanly instead of exposing a host
-/// parser failure to the operator.
-fn print_parser_stack_overflow() {
-    println!("{}", Value::from(BottomCause::StackOverflow).to_nlang(0));
 }
 
 /// Simple n/-style label for a field key when `path` was not computed.
@@ -378,11 +371,17 @@ fn main() -> anyhow::Result<()> {
     // main-thread stack before the engine depth horizon engages. Interpreter
     // probes use 64 MiB threads; match that for the CLI entrypoint.
     const STACK: usize = 64 * 1024 * 1024;
-    let handle = std::thread::Builder::new()
+    let handle = match std::thread::Builder::new()
         .name("oo-main".into())
         .stack_size(STACK)
         .spawn(main_on_large_stack)
-        .expect("spawn oo-main thread");
+    {
+        Ok(handle) => handle,
+        // Host refused the thread (EAGAIN / address-space). Same name as the
+        // parser-thread spawn failure: the operator's remedy is a process
+        // limit, not flattening the program. Do not leak Os Debug.
+        Err(_) => anyhow::bail!("#host_resource_denied"),
+    };
     match handle.join() {
         Ok(result) => result,
         Err(payload) => std::panic::resume_unwind(payload),
@@ -488,10 +487,6 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
         let input = fs::read_to_string(&file)?;
         let program = match parse_program(&input) {
             Ok(program) => program,
-            Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
-                print_parser_stack_overflow();
-                return Ok(());
-            }
             Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
         };
         for f in &program.fields {
@@ -1336,9 +1331,6 @@ fn run_repl() -> anyhow::Result<()> {
                     }
                 }
             }
-            Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
-                print_parser_stack_overflow()
-            }
             Err(error) => println!("Parse Error: {}", error),
         }
         // ACCEPTANCE REPAIR (peer-fetch arc). The work order named `oo repl`
@@ -1505,10 +1497,6 @@ fn run_one_shot(
         let input = fs::read_to_string(&file)?;
         let program = match parse_program(&input) {
             Ok(program) => program,
-            Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
-                print_parser_stack_overflow();
-                return Ok(());
-            }
             Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
         };
         for f in &program.fields {
@@ -1538,10 +1526,6 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     let input = fs::read_to_string(&file)?;
     let mut program = match parse_program(&input) {
         Ok(program) => program,
-        Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
-            print_parser_stack_overflow();
-            return Ok(());
-        }
         Err(error) => return Err(anyhow::anyhow!("Parse Error: {}", error)),
     };
     program.canonicalize();
@@ -1568,10 +1552,6 @@ fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Resu
 
     let parsed_expr = match nlang_parser::parse_expr_only(expr.trim()) {
         Ok(expr) => expr,
-        Err(error) if is_parser_nesting_limit_error(error.as_ref()) => {
-            print_parser_stack_overflow();
-            return Ok(());
-        }
         Err(error) => return Err(anyhow::anyhow!("Parse error: {}", error)),
     };
 

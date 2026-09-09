@@ -199,24 +199,124 @@ stdout 的 `_|_` **不是同一件事**。（佇列 Inbox 有一列活的帳正�
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照
-S1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+
+**S1。** `ParserNestingLimitExceeded` 仍只由兩道閘鑄造（文字巢深 256、AST 高度 4096），Display 仍是 `#stack_overflow`。`spawn_scoped` 失敗改鑄 `ParserHostResourceDenied`（`#host_resource_denied`）；`join()` 的 `Err` 改鑄 `ParserInternalError`（`#internal_error`）。三者可分，後兩者都不叫 `#stack_overflow`。判準：本弧 R2、parser 單元測試 `parser_thread_spawn_failure_is_a_typed_fence_error`／`parser_thread_panic_is_not_a_depth_error`。未把新名加進 `BottomCause`（既有值位元組不動）。
+
+**S2。** 刪掉 `print_parser_stack_overflow` 與五處「鑄節點級 `_|_` 然後 `Ok(())`」。剖析期 ①②③ 全部走與普通語法錯誤同一條路：診斷 + `Err` ⟹ rc≠0，stdout 不印 `_|_`。`oo test` 本來就是這條路，本弧把它推廣到 `evolve`／`eval`／`run`／`fmt`／`repl`。判準：R1、R3、G3。
+
+**S3。** 求值期 `#stack_overflow` 仍是工作集裡的 `_|_`、`status` rc=0（G4）。剖析期現在是 stderr `Error: Parse error: #stack_overflow`、rc=1。兩個載體可從形與離開碼判別，不必靠標籤名反推。
+
+**S4。** `main` 的 `oo-main` 執行緒不再 `.expect("spawn oo-main thread")`。宿主拒絕時 `anyhow::bail!("#host_resource_denied")`（不洩 `Os` Debug）。判準：R6。跨平台：`std::thread::Builder::spawn`，無 `cfg(unix)`。
+
+**S5。** `oo lint` 的 `PARSE-SKIP` 計入 summary 的 diagnostics／error，且 `run_cli` 在任一 `parse_error` 上回 rc=1。判準：R4。`oo test` 未改。
 
 ### N.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+
+*   `rustfmt crates/parser/src/lib.rs`（本弧改的檔）。
+*   `rustfmt crates/interpreter/src/oodp.rs` 掃到無關函式（`serve_discover` 折行、`FailingEntropy::fill` 折行），**已 `checkout` 撤回**，只重套本弧三處。
+*   `rustfmt` 曾碰 `crates/parser/src/ast.rs` 一處 `Address { … }` 折行，**已撤回**。
+*   **未 rustfmt** 探針、`main.rs`、`nlint.rs`、`storage.rs`。
+*   無新 crate、無新 `.oo/` 檔、未動 `Cargo.lock`。
 
 ### N.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+
+*   本弧探針**沒有** `#[ignore]`。基線即以 4 綠 6 紅在跑。N.5  accordingly 一字未動。
+*   「`is_parser_nesting_limit_error`：`main.rs` 6 處」今日是 **5** 個 match 臂（evolve／repl／run／fmt／eval）+ 1 個 import；`oodp.rs` 是 parse 1 處 + serve 轉碼 1 處。定位對，計數略高。
+*   §7.1 的對照組「補丁後 `1 + 2` → `3` 先過」與「在 `parse_expr` 開頭 `panic!`」不能同一次建置並存——那個開頭對任何輸入都炸。對照組改在**補丁還原後**以同一顆 release 二進位量（known-answer `3`）。③ 的逐字紀錄取自補丁建置的 `eval 'zzpanicz'`。
 
 ### N.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+
+**1. ③ 的逐字紀錄。** 暫時在 `parse_expr` 開頭插入 `panic!("q002: injected internal parser bug")`，`cargo build --release -p oo`。補丁已還原，產品樹無該行。
+
+補丁建置（stdout／stderr／離開碼分開；離開碼直接取）：
+
+```
+$ oo eval 'zzpanicz'
+stdout: （空）
+stderr:
+thread '<unnamed>' (620565) panicked at crates/parser/src/lib.rs:237:5:
+q002: injected internal parser bug
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+Error: Parse error: #internal_error
+rc: 1
+```
+
+不是 `#stack_overflow`，不是節點級 `_|_`，不是 rc=0。stderr 仍有宿主預設 panic hook 的原始碼路徑——`join()` 已經把 payload 收成 `#internal_error`，hook 是過程全域的，本弧沒有用 `catch_unwind` 去關它（工單說不需要）。補丁還原後 known-answer `eval '~%Math./add (1,2)'` → `3` rc=0。
+
+**2. ③ 的常設看守。** `crates/parser/src/lib.rs` 的 `nesting_gate_tests::parser_thread_panic_is_not_a_depth_error`：以會 panic 的 closure 呼叫 `with_parser_stack_using`，斷言 `ParserThreadFailure::Internal`、`to_string() == "#internal_error"`、且 `!is_parser_nesting_limit_error`。與既有 `parser_thread_spawn_failure_is_a_typed_fence_error` 孿生（後者改斷言 `HostResourceDenied`，不再等於 `ParserNestingLimitExceeded`）。
+
+**3. ②③ 的名字。**
+
+| 條件 | 拼法 | 軸 | 載體 | 誰決定 | 操作者能做什麼 |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| ① | `#stack_overflow`（不動） | 原因 | 剖析期**邊界**／求值期 **⊥** | 實作的遞迴天花板 | 攤平／換實作；調旋鈕沒有用 |
+| ② | `#host_resource_denied` | 原因 | CLI **邊界**；線上 `%reason`（`%status` 仍 `#rejected`） | **宿主** | 調高行程資源上限 |
+| ③ | `#internal_error` | 原因 | 同上 | **實作自己的 bug** | 回報；操作者做不了任何事 |
+
+取這兩個拼法是因為 D62 已經把它們寫成候選，且與 `#stack_overflow` 在「誰決定」那一軸上可分——併回去會重演 §2.7.2。不是 `BottomCause` 新變體。
+
+**4. 既有兩支探針的衝突清單（未改）。**
+
+`crates/oo/tests/a_limit_you_cannot_catch_probe_test.rs`（量，release，12 綠 **3 紅**）：
+
+*   **`r2_a_deep_nest_is_a_clean_bottom_not_a_crash`**（約 L465）：`assert_eq!(code, Some(0))`，註解逐字「exit 0 and `⊥ #stack_overflow`」。今日輸出 `Error: Parse Error: #stack_overflow`、rc=1。與 S2 衝突的是 **離開碼與載體**（不再是值），不是標籤。建議：rc≠0、輸出含 `#stack_overflow`、不含 `_|_`、不含 `overflowed its stack`。
+*   **`assert_deep_input_is_survivable`**（L588–601），**`r5_a_run_of_bangs_does_not_kill_the_parser`** 與 **`r6_a_deep_ast_does_not_kill_the_formatter`** 共用：把 `Some(0)` 當成「活下來」。今日活下來的形是 rc=1 + `#stack_overflow`。建議：信號／native abort 才算死；rc=1 且診斷含 `#stack_overflow` 算活。
+*   其餘（r1 24 層、r3 位元組上限、r4 線上 DoS、r7 承諾 256 層）仍綠。
+
+`crates/oo/tests/limit_you_cannot_choose_probe_test.rs`：**無衝突。** 其 R2／C1 走的是求值期天花板（1000 項鏈 < AST 4096）。量：10／10 仍綠。
+
+**5. ① 改成 rc≠0 之後誰會看見。** 全樹（測試，不含規格歷史敘事）：
+
+*   上一則三支斷言（已量紅）。
+*   沒有 conformance 向量寫 `#stack_overflow` 或 400 層括號（語料 grep 0；符合性 162／162）。
+*   腳本／CI 若把 `oo eval`／`oo fmt`／`oo evolve` 的剖析柵欄當成功（rc=0）會破。這是 D63 明文要記帳的行為變更。
+*   求值期路徑（G4、`limit_you_cannot_choose` R2）看不見。
+
+**6. `oo test` 為什麼今天就是對的。** `run_test` 對 `parse_program` 的 `Err` **沒有**特殊臂：一律 `FAIL: … (Parse error: {e})`、`failed += 1`、最後 `failed > 0` ⟹ `exit(1)`。柵欄錯誤的 Display 是 `#stack_overflow`，所以字面是 `Parse error: #stack_overflow`、rc=1——邊界載體該有的兩樣都有。本弧把這條路推到其他入口，而不是另做一套。
+
+**7. `oodp` 那一格。** 受限節點（②）回 `%status: #rejected`、`%reason: #host_resource_denied`。狀態集仍是那五個（MUST NOT 增長）；可分性住在 `%reason`。選 `#rejected` 是因為它已經有「收方做不到」的先例（`#entropy_unavailable`），說的是**我不作答**，不是「你的請求太深」。依 REAL_02 §3.2.2，`#rejected` ⟹ 客戶端 `#peer_refused`，**不入完整性紀錄**——尚未依內容裁決，這一點仍成立。真陽性 ① 仍是 `#rejected` / `#stack_overflow`（形狀，不是宿主）。③ 若落到線上：`#rejected` / `#internal_error`，同樣不入完整性紀錄。
 
 ### N.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+
+本弧探針沒有 `#[ignore]`，**一字未動**（含 rustfmt）。隔離 `--test-threads=1`：G1–G4 綠，R1–R6 綠，10／10。無 VOID READING。
 
 ### N.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+
+基線 known-answer（本樹 release `oo`）：`eval '~%Math./add (1,2)'` → `3` rc=0；對照 `eval '1 & 2'` → `_|_ (%cause: #conflict)` rc=0。離開碼直接取。
+
+身分紅線（`x: 0` 提交後）：根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`；物件 **3**；標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`；`layout=5`；`encoding=5`。
+
+跨版本：真 `v0.44.0` 與真 `v0.45.0` 讀本版寫的倉，`log`／`status` 皆 rc=0。
+
+交叉編譯 `cargo check --target x86_64-pc-windows-gnu --offline -p oo -p nlang-parser -p nlang-interpreter`：前 `Finished`／0 error／`nlang-interpreter` 16 warnings（9.16s）；後 `Finished`／0 error／同 16 warnings（8.26s）。產品碼對 `unix`／`libc::`／`AsRawFd`／`flock` 命中 0。
+
+符合性：`python3 nlang-spec/scripts/run-conformance.py --engine …/target/release/oo` → **162 vectors, 162 pass, 0 fail**。0 新向量（語料表達不了宿主資源壓力）。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:` 聚合）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 226 | 2160 | 4 | 三支 catch ＋ Q-040 R4 flake | 3 | 101 |
+| 2 | 226 | 2161 | 3 | 僅三支 catch | 2 | 101 |
+| 3 | 226 | 2161 | 3 | 僅三支 catch | 2 | 101 |
+
+三輪皆有、且本弧不得改者（`a_limit_you_cannot_catch_probe_test`，N.4.4）：
+
+*   `r2_a_deep_nest_is_a_clean_bottom_not_a_crash`
+*   `r5_a_run_of_bangs_does_not_kill_the_parser`
+*   `r6_a_deep_ast_does_not_kill_the_formatter`
+
+第 1 輪多一個非本弧 flake：`r4_two_concurrent_discharges_both_survive`（`an_authority_you_could_delete_probe_test`，Q-040；隔離 10 輪 8／10，REACH 1≠2）。第 2、3 輪未再出現。
+
+`^error` 皆 cargo 的 `error: test failed`／`error: N targets failed:`，不是 rustc `error`。
+
+本弧探針 10／10。parser `nesting_gate_tests` 7／7。`limit_you_cannot_choose_probe_test` 10／10。
 
 ### N.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+
+**先回報再動。**
+
+*   `TAG_REGISTRY` 應收 `#host_resource_denied`、`#internal_error`（原因·邊界；線上亦可為 `%reason`）。D62 已裁要分，簿上還是 0 命中。
+*   §2.7.4「載體隨階段而異，標籤不變」對 ① 仍真；對 ②③ 標籤必須變。收尾時請不要把 ②③ 寫回 `#stack_overflow`。
+*   REAL_02 §3.2.1 共用理由表可加 `#rejected` + `#host_resource_denied`（收方做不到，比照 `#entropy_unavailable`）。**不入完整性紀錄**這句請一起寫清。
+
