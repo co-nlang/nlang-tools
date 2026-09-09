@@ -82,6 +82,32 @@
 // The evaluator's ceiling is load-bearing SEMANTICS (the §2.7.3 incapacity
 // boundary). The parser's is DEFENCE (a crash fence). Same tag, two identities.
 
+// ── ACCEPTANCE RULING (Q-002, 2026-09-09) ────────────────────────────────
+//
+// Everything above is this arc's record and stays as written. What changed
+// underneath it is the CARRIER, not the tag.
+//
+// D63 read TAG_REGISTRY 0.2 as what it always was: the carrier decides the
+// exit code. A value carrier (bottom / blur / Top / value) exits 0, because
+// the computation produced something. The BOUNDARY carrier shows itself as
+// "a diagnostic message and an exit code" and 0.2 forbids it to mint a
+// node-level bottom. 2.7.4 classifies the PARSE stage as boundary -- there is
+// no universe yet -- so the fence now answers on stderr with a non-zero exit
+// and mints no bottom. The EVALUATION-stage ceiling is untouched: it is a
+// real bottom in the working set and exits 0, and probes elsewhere pin it.
+//
+// Three assertions here required exit 0. That was the shape of the answer on
+// the day they were written, not the property they exist to pin -- the header
+// above says so in as many words: "these probes pin the PROPERTY, not either
+// constant". The property is that deep input never kills the process. A named
+// refusal is survival; death is a signal or a native stack overflow. So the
+// exit-code assertions are rewritten and R2 is renamed, because a test called
+// "is a clean bottom" that asserts the answer is deliberately NOT a bottom is
+// the same dishonest report this whole line of work is about.
+//
+// Ruled and edited by the acceptor. The delivery listed the conflict and
+// changed nothing, which is what the work order required of it.
+
 use std::fs::{self, File};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -444,7 +470,8 @@ fn r1_deep_grouping_finishes() {
     }
 }
 
-/// R2 (ruling B) — a nest past the native cliff is a clean ⊥, not a crash.
+/// R2 (ruling B) — a nest past the native cliff is a NAMED REFUSAL, not a
+/// crash. (Renamed 2026-09-09; it used to say "a clean ⊥".)
 ///
 /// 2000 levels overflow the parser stack in BOTH profiles (debug 131, release
 /// 1336 — measured), so the fixture is robustly red regardless of how the test
@@ -455,18 +482,29 @@ fn r1_deep_grouping_finishes() {
 /// `#max_depth_exceeded` (a policy the operator could "raise") and forbids
 /// minting a `#blur` (which claims an addressable snapshot an aborted parse has
 /// none of). Same ruling as the evaluator's ceiling, now on the parser.
+///
+/// 2026-09-09 (D63): the carrier moved. The tag and its two prohibitions are
+/// unchanged; the answer is now a diagnostic with a non-zero exit and no
+/// node-level bottom, which is what 0.2 requires of a boundary error.
 #[test]
-fn r2_a_deep_nest_is_a_clean_bottom_not_a_crash() {
+fn r2_a_deep_nest_is_a_named_refusal_not_a_crash() {
     let d = fresh("r2");
     fs::write(d.join("u.n"), format!("z: {}\n", cocoon_chain(2000, "7"))).unwrap();
     match run_within(&d, &["fmt", "u.n"], BUDGET) {
         Ran::OverBudget => panic!("a 2000-level nest neither aborted nor finished — unexpected"),
         Ran::Done { out, code } => {
-            assert_eq!(
+            assert!(
+                code.is_some(),
+                "the parser was killed by a signal on deep input instead of \
+                 answering:\n{out}"
+            );
+            assert_ne!(
                 code,
                 Some(0),
-                "the parser aborted on deep input (native stack overflow) \
-                 instead of reporting a bottom:\n{out}"
+                "the parse stage is a boundary carrier (TAG_REGISTRY 2.7.4) \
+                 and 0.2 gives it a diagnostic and an exit code; exit 0 makes \
+                 it indistinguishable from the evaluation-stage bottom that \
+                 carries the same tag:\n{out}"
             );
             assert!(
                 out.contains("#stack_overflow"),
@@ -590,14 +628,21 @@ fn assert_deep_input_is_survivable(what: &str, out: &str, code: Option<i32>) {
         !out.contains("overflowed its stack"),
         "{what}: the process died on a native stack overflow:\n{out}"
     );
-    assert_eq!(
-        code,
-        Some(0),
-        "{what}: did not exit cleanly (signal or error) — output:\n{out}"
-    );
     assert!(
-        out.contains("#stack_overflow") || !out.trim().is_empty(),
-        "{what}: exited 0 but produced nothing at all"
+        code.is_some(),
+        "{what}: killed by a signal rather than answering — output:\n{out}"
+    );
+    // Either it did the job, or it named the incapacity it hit. A future
+    // parser that reaches deeper satisfies the first arm; today's satisfies
+    // the second. What neither arm allows is dying, or declining silently.
+    //
+    // This helper pins SURVIVAL and deliberately does not pin the exit code:
+    // it would have been green both before and after D63. The carrier rule is
+    // pinned by R2 below and by R1 in a_ceiling_that_was_not_yours_probe_test.
+    // Not every probe has to assert everything.
+    assert!(
+        (code == Some(0) && !out.trim().is_empty()) || out.contains("#stack_overflow"),
+        "{what}: neither did the job nor named the incapacity it hit:\n{out}"
     );
 }
 
