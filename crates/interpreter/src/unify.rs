@@ -435,7 +435,11 @@ impl Ouroboros {
             (a, b) => Value::Bottom(Box::new(BottomDetail {
                 cause: BottomCause::Conflict,
                 path: None,
-                message: Some(format!("Incompatible types: {:?} vs {:?}", a, b)),
+                message: Some(format!(
+                    "Incompatible types: {} vs {}",
+                    a.to_nlang(0),
+                    b.to_nlang(0)
+                )),
                 expected: Some(a.clone()),
                 found: Some(b.clone()),
                 involved: vec![a.content_hash(), b.content_hash()],

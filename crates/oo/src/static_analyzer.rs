@@ -503,7 +503,21 @@ pub fn run_static_tests(files: &[std::path::PathBuf], pattern: Option<&str>) -> 
             }
         }
 
-        let content = std::fs::read_to_string(file).unwrap_or_default();
+        let content = match crate::read_source_file(file) {
+            Ok(c) => c,
+            Err(e) => {
+                results.push(TestResult {
+                    file: file.to_string_lossy().to_string(),
+                    tests_run: 0,
+                    tests_passed: 0,
+                    violations: vec![StaticViolation::TypeConflict {
+                        message: e,
+                        line: 0,
+                    }],
+                });
+                continue;
+            }
+        };
         let program = nlang_parser::parse_program(&content);
 
         let result = match program {
