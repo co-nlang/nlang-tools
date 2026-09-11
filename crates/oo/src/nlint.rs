@@ -623,14 +623,14 @@ pub struct FileReport {
 
 pub fn analyze_file(path: &FsPath) -> FileReport {
     let file = path.to_string_lossy().to_string();
-    let content = match fs::read_to_string(path) {
+    let content = match crate::read_source_file(path) {
         Ok(c) => c,
         Err(e) => {
             return FileReport {
                 file,
                 diagnostics: vec![],
                 graph: empty_graph(),
-                parse_error: Some(format!("read error: {}", e)),
+                parse_error: Some(e),
             }
         }
     };

@@ -193,14 +193,64 @@
 
 ### N.1 射程逐項對照
 
+**S1。** 衝突診斷改印運算元的 `to_nlang`，不再 `{:?}`。`1 & 2` 現在是 `_|_ (%cause: #conflict)  ;; Incompatible types: 1 vs 2`（rc=0）。檔案 IO：新增 `crates/oo/src/operator_io.rs` 的 `read_source_file`／`write_source_file`，把 `io::Error` 收成 `cannot read <path>: file not found` 一類，**永不含 `os error`**。`crates/oo/src` 裡面向操作者的 `read_to_string` 只剩這一個函式。判準：R1、R2、G2、G3。
+
+**S2。** 指令／旗標／位置引數凡空白者皆補上一句對比說明（不是把名字再寫一次）。`main.rs` 加 `cli_must_speak::every_command_flag_and_argument_has_help`，用 `CommandFactory` 走遍 clap 樹；下一個沒說明的旗標會在 `cargo test -p oo --bin oo` 紅。判準：R3、R4、R5。
+
+**S3。** `--grant` 與 `--privileged` 全部改引同一份常數（`HELP_GRANT`／`HELP_PRIVILEGED`），簽名不變。`--to` 同理。`--target` 三處都有說明且都收值（R6 那一半）；說明文字**沒有**併成一句，因為它們是三個概念（§7.3）。G4 地板仍在：沒有靠刪說明達成一致。判準：R6、G4。
+
+**S4。** 本弧探針一字未動，11／11。
+
 ### N.2 順手改動（逐項指名）
+
+*   新檔 `crates/oo/src/operator_io.rs`（S1 的類別入口）。
+*   `rustfmt`：`operator_io.rs`、`lib.rs`、`unify.rs`。
+*   **未 rustfmt** `main.rs`、`nlint.rs`、`static_analyzer.rs`、探針。
+*   無新 crate、無新 `.oo/` 檔、未動 `Cargo.lock`。
 
 ### N.3 工單哪裡是錯的
 
+*   本弧探針**沒有** `#[ignore]`。基線即以 5 綠 6 紅在跑。
+*   開單時的 `run_evolve:487` 等行號已因 Q-002 位移；四處 `read_to_string(&file)?` 仍在，另加 `nlint`／`static_analyzer`／`fmt --write`。
+*   `oo node serve --port` 在基線 help 裡已有 clap 填的 `[default: 8080]`，探針的 `split_entry` 會把它當說明。我們仍補了一句真正的對比（監聽埠 vs `--to`），沒有靠預設值過關。
+
 ### N.4 工單指名要你回答的問題
+
+**1. 類別還是五個點。** 類別。`crates/oo/src` 裡操作者看得到的原始碼讀取**只准**走 `oo::read_source_file`；寫入走 `write_source_file`。第六個入口若直接 `fs::read_to_string(&file)?`，`Display` 又會把 `os error 2` 交出去——那個 `?` 才是漏洞，所以入口收成一個函式，而不是四個 `with_context`。全樹 `crates/oo/src` 的 `read_to_string` 命中只剩 `operator_io.rs:25`。
+
+**2. 最沒有內容的一句。** `oo lint --json`：「Write the report as JSON instead of the human summary。」它只對上「旁邊那個」（人讀 summary），沒說什麼時候該要機器可讀的那一份。留著是因為 R4 的分母包含它，而「空白」比這句更糟。
+
+**3. `--target`。** **(b)**：該改其中兩個的拼法。三個概念共用一個長旗標，操作者無法由一處學會另一處——正是 §1.4 量到的病。**(c)** 把「一個拼法一個概念」寫成新款，是把已經寫在 §1.4 開頭的話再寫一次。**(a)** 不是問題：探針刻意弱於條文，不能拿探針綠當無罪。本弧不得改拼法，故只補三句各自為真的說明，未改名。
+
+**4. `--privileged`。** 統一了。準則是 `HELP_PRIVILEGED`：全量 §6 授與、不得從 n/ 內設定、只需一項能力時用 `--grant`。以 `run` 那份為底（G4 釘住 `run --grant` 非空，同一組對比），把 commit／eval 的短句與 rollback／gc／migrate／squash 的空白一併換成它。
+
+**5. 沒有。** 沒有為了探針綠做自己認為不對的事。`--format` 的簽名未改（工單禁止）；它後面跟一個詞仍會被當成檔名，只是失敗句不再含 errno。
 
 ### N.5 探針
 
+本弧探針沒有 `#[ignore]`，**一字未動**。隔離：G1–G5 綠，R1–R6 綠，11／11。無 VOID READING。
+
 ### N.6 數字
 
+基線 known-answer（本樹 release `oo`）：`eval '~%Math./add (1,2)'` → `3` rc=0；對照 `eval '1 & 2'` → `_|_ (%cause: #conflict)  ;; Incompatible types: 1 vs 2` rc=0。離開碼直接取。缺檔：`fmt nosuch.n` → `Error: cannot read nosuch.n: file not found` rc=1，無 `os error`。
+
+身分：`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`；物件 **3**；標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`；`layout=5`；`encoding=5`。
+
+⊥ 訊息不在根內（複驗）：`bad: 1 & 2` 與 `bad: 1 & 3` 提交後共用根 `cbb7ef81861ad908234741642a1fa33071c183d391cb157dbe2b24ae90677a1c`。
+
+符合性：**162 vectors, 162 pass, 0 fail**。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 227 | 2176 | 0 | 無 | 0 | 0 |
+| 2 | 227 | 2176 | 0 | 無 | 0 | 0 |
+| 3 | 227 | 2176 | 0 | 無 | 0 | 0 |
+
+本弧探針 11／11。`cli_must_speak` 1／1。
+
 ### N.7 你認為需要改規格之處
+
+**先回報再動。** `--target` 三概念同拼法是 §1.4 的下一刀，但拼法本弧不得改，收尾請驗收方決定要不要開一張改名卡。O85（`_|_` 的正準列印形）仍不在本弧；S1 只改了註解裡的內容，形式仍不是合法 n/。
+

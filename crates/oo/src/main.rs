@@ -147,6 +147,15 @@ fn field_key_label(key: &FieldKey) -> String {
     }
 }
 
+/// One concept, one help string (REAL_01 §1.4). Every command that exposes
+/// `--grant` / `--privileged` must cite these, not a local paraphrase.
+const HELP_GRANT: &str = "Grant one named capability (repeatable; union). Use this for pin, rollback, squash, gc, migrate, or effect_override; use --privileged only when you want every capability at once";
+const HELP_PRIVILEGED: &str = "Grant every §6 capability at once. Cannot be set from inside an n/ program (SPEC_08 §6.1.2). Prefer --grant when only one capability is needed";
+const HELP_MESSAGE: &str = "Human-readable message stored on the recorded event";
+const HELP_FILES: &str = "n/ source files to read";
+const HELP_PEER_TO: &str = "Peer address host:port";
+const HELP_OPERATOR_KEY: &str = "Operator public key to trust (64 lowercase hex)";
+
 #[derive(Parser)]
 #[command(author, version = env!("OO_VERSION"), about, long_about = None)]
 struct Cli {
@@ -156,140 +165,180 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Evolve files in a fresh universe and print; does not write this workspace (use evolve+commit for that)
     Run {
-        #[arg(required = true)]
+        #[arg(required = true, help = HELP_FILES)]
         files: Vec<PathBuf>,
+        /// Path to observe after evolving, instead of dumping the whole universe
         #[arg(short, long)]
         observe: Option<String>,
+        /// Print the universe as n/; takes no value — a word after this flag is a file name, not a format
         #[arg(short, long)]
         format: bool,
-        /// Full §6 grant (back-compat: all operations + all active tags).
-        /// Cannot be set from inside an n/ program (SPEC_08 §6.1.2).
-        #[arg(long)]
+        #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
-        /// Selective capability grant (repeatable; accumulates by union).
-        /// SPEC: effect_override[:tag[+tag]*] | pin | commit | rollback | squash | gc
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
     },
+    /// Stage file contents into this workspace's working set; does not record a commit
     Evolve {
-        #[arg(required = true)]
+        #[arg(required = true, help = HELP_FILES)]
         files: Vec<PathBuf>,
-        /// Request privileged overwrite of committed coordinates (SPEC_08 §6.2).
-        /// Requires `--grant pin` (two-step: request + capability).
+        /// Request overwrite of committed coordinates; also requires `--grant pin` (request is not capability)
         #[arg(long)]
         pin: bool,
-        /// Selective capability grant (repeatable). Same SPEC as `run --grant`.
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
     },
+    /// Observe `test_` fields and report pass/fail (use lint for a static graph check that does not run)
     Test {
+        /// Check that `test_` fields parse, without observing them
         #[arg(long)]
         static_only: bool,
+        /// Only run tests whose names contain this substring
         #[arg(short, long)]
         pattern: Option<String>,
+        #[arg(help = HELP_FILES)]
         files: Vec<PathBuf>,
     },
+    /// Read-eval-print loop against this workspace
     Repl,
+    /// Show the staged working set, or that the universe is static
     Status,
+    /// List commits from HEAD backward (the history; status is the working set)
     Log,
+    /// Record the staged working set as a new commit and move HEAD
     Commit {
-        #[arg(short, long)]
+        #[arg(short, long, help = HELP_MESSAGE)]
         message: Option<String>,
-        /// ACCEPTANCE REPAIR: a pin-pending commit APPLIES the privileged
-        /// overwrite, so the capability must be presented here too — the
-        /// staged intent file is not authority (SPEC_08 §6.1.2).
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
-        /// Full §6 grant (back-compat: all operations + all active tags).
-        #[arg(long)]
+        #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
     },
+    /// Write a signed refinement from source coordinates onto target coordinates
     Refine {
+        /// Coordinates this refinement copies from
         #[arg(short, long, required = true, num_args = 1..)]
         source: Vec<String>,
+        /// Coordinates this refinement writes into (the destination, not `--source`)
         #[arg(short, long, required = true, num_args = 1..)]
         target: Vec<String>,
+        /// Sign the refinement with the operator key
         #[arg(long)]
         sign: bool,
-        #[arg(short, long)]
+        #[arg(short, long, help = HELP_MESSAGE)]
         message: Option<String>,
     },
+    /// Print canonical n/ for a file (use --write to replace the file; use evolve to stage it)
     Fmt {
+        /// n/ source file to format
         file: PathBuf,
+        /// Replace the file with the canonical form; without this flag, print to stdout
         #[arg(short, long)]
         write: bool,
     },
-    /// Universe node (REAL_01 §1.2 宇宙節點) — serve / later id, discover.
+    /// Universe node: serve, advertise, and discover over OODP (REAL_01 §1.2)
     Node {
         #[command(subcommand)]
         action: NodeCmd,
     },
-    /// Evaluate a nlang expression inline
+    /// Evaluate one n/ expression and print it (no file, no working set)
     Eval {
-        /// nlang expression to evaluate (wrap in quotes for shell safety)
+        /// n/ expression to evaluate (quote it for the shell)
         expr: String,
-        /// Full §6 grant (same as `run --privileged`).
-        #[arg(long)]
+        #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
-        /// Selective capability grant (repeatable; accumulates by union).
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
     },
-    /// Inspect a value in the local store by CAID
+    /// Print a stored object by CAID (the bytes, not a path in the working set)
     Inspect {
-        /// CAID string (hash:sha256:v2:...)
+        /// CAID of the object to print (hash:sha256:v1:… or v2:…)
         caid: String,
     },
-    /// Move HEAD to a historical commit (SPEC_08 §6.2 `#rollback`).
-    /// Requires `--grant rollback`. Does not create a commit; the next
-    /// ordinary commit records the abandoned former HEAD in its meta.
+    /// Move HEAD to a historical commit without creating one. Requires `--grant rollback`
     Rollback {
-        /// Target commit CAID
+        /// Commit CAID that becomes HEAD
         caid: String,
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
     },
-    /// Compress commits after BASE up to HEAD into one (SPEC_08 §6.2 `#squash`).
-    /// Requires `--grant squash`. Parent of the result is BASE; root content
-    /// is HEAD's root (universe unchanged). Marked `CommitKind::Squash`.
+    /// Fold commits after BASE through HEAD into one. Requires `--grant squash`
     Squash {
-        /// Base commit CAID (survives as parent of the squashed commit)
+        /// Base commit CAID; it survives as the parent of the squashed commit
         caid: String,
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
     },
-    /// Local store GC: remove unreachable objects under `.oo/objects/`.
-    /// Requires `--grant gc`. Never automatic (local_gc / discussion 025).
+    /// Remove unreachable objects under `.oo/objects/`. Requires `--grant gc`; never automatic
     Gc {
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
-        /// Mark phase + report only; remove nothing.
+        /// Report what would be removed; do not delete
         #[arg(long)]
         dry_run: bool,
     },
-    /// Advance the container layout declaration only (O73). Requires
-    /// `--grant migrate`. Does not move HEAD or rewrite any root.
+    /// Advance the container layout declaration only. Requires `--grant migrate`; does not move HEAD
     Migrate {
-        #[arg(long = "grant", value_name = "SPEC", action = clap::ArgAction::Append)]
+        #[arg(
+            long = "grant",
+            value_name = "SPEC",
+            action = clap::ArgAction::Append,
+            help = HELP_GRANT
+        )]
         grants: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
     },
-    /// Show the operator public key (64 hex) and the identity file path.
-    /// Mints at `OO_IDENTITY` or `~/.oo/identity` on first use.
+    /// Show the operator public key and identity file path; mint them on first use
     Identity,
-    /// Tier 1 linter (pure syntax / pure graph theory) — see docs/linter_tier1_handover.md
+    /// Static graph linter (no evaluation; use test to run `test_` fields)
     Lint {
-        /// .n file or directory (recursive)
+        /// .n file, or a directory walked for `.n` files
         path: PathBuf,
-        /// emit JSON (tier1-v1 schema)
+        /// Write the report as JSON instead of the human summary
         #[arg(long)]
         json: bool,
     },
@@ -299,6 +348,7 @@ enum Commands {
 enum NodeCmd {
     /// Serve OODP on TCP (REAL_02 §3.2). Request/response carry `%status`.
     Serve {
+        /// TCP port this process listens on (the peer's address is `--to` on other commands)
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
     },
@@ -307,7 +357,7 @@ enum NodeCmd {
     /// Send a signed OODP `#advertise` to a peer and print `%status` / `%reason`.
     Advertise {
         /// Peer address `host:port`
-        #[arg(long = "to", value_name = "HOST:PORT")]
+        #[arg(long = "to", value_name = "HOST:PORT", help = HELP_PEER_TO)]
         to: String,
         /// Service CAID to list (repeatable; empty list is a liveness announcement)
         #[arg(long = "service", value_name = "CAID", action = clap::ArgAction::Append)]
@@ -319,7 +369,7 @@ enum NodeCmd {
     /// Query a peer's service index for who advertises `--target`.
     Discover {
         /// Peer address `host:port`
-        #[arg(long = "to", value_name = "HOST:PORT")]
+        #[arg(long = "to", value_name = "HOST:PORT", help = HELP_PEER_TO)]
         to: String,
         /// Service CAID to look up
         #[arg(long = "target", value_name = "CAID")]
@@ -328,7 +378,7 @@ enum NodeCmd {
     /// Kademlia FIND_NODE: k closest known peers to a 160-bit id.
     #[command(name = "find-node")]
     FindNode {
-        #[arg(long = "to", value_name = "HOST:PORT")]
+        #[arg(long = "to", value_name = "HOST:PORT", help = HELP_PEER_TO)]
         to: String,
         /// Exactly 40 lowercase hex characters (not a CAID).
         #[arg(long = "target", value_name = "HEX40")]
@@ -356,12 +406,12 @@ enum TrustCmd {
     List,
     /// Add an operator public key (64 lowercase hex).
     Add {
-        #[arg(value_name = "OPERATOR_KEY")]
+        #[arg(value_name = "OPERATOR_KEY", help = HELP_OPERATOR_KEY)]
         operator_key: String,
     },
     /// Remove an operator public key.
     Remove {
-        #[arg(value_name = "OPERATOR_KEY")]
+        #[arg(value_name = "OPERATOR_KEY", help = HELP_OPERATOR_KEY)]
         operator_key: String,
     },
 }
@@ -484,7 +534,7 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
     universe.pin_mode = pin;
 
     for file in files {
-        let input = fs::read_to_string(&file)?;
+        let input = oo::read_source_file(&file).map_err(|m| anyhow::anyhow!("{m}"))?;
         let program = match parse_program(&input) {
             Ok(program) => program,
             Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
@@ -1494,7 +1544,7 @@ fn run_one_shot(
     );
 
     for file in files {
-        let input = fs::read_to_string(&file)?;
+        let input = oo::read_source_file(&file).map_err(|m| anyhow::anyhow!("{m}"))?;
         let program = match parse_program(&input) {
             Ok(program) => program,
             Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
@@ -1523,7 +1573,7 @@ fn run_one_shot(
 }
 
 fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
-    let input = fs::read_to_string(&file)?;
+    let input = oo::read_source_file(&file).map_err(|m| anyhow::anyhow!("{m}"))?;
     let mut program = match parse_program(&input) {
         Ok(program) => program,
         Err(error) => return Err(anyhow::anyhow!("Parse Error: {}", error)),
@@ -1531,7 +1581,7 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     program.canonicalize();
     let formatted = program.to_nlang();
     if write {
-        fs::write(file, formatted)?;
+        oo::write_source_file(&file, &formatted).map_err(|m| anyhow::anyhow!("{m}"))?;
     } else {
         let mut output = stdout();
         let _ = writeln!(output, "{}", formatted);
@@ -1737,7 +1787,14 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
     let mut skipped = 0;
 
     for file in all_files {
-        let input = fs::read_to_string(&file)?;
+        let input = match oo::read_source_file(&file) {
+            Ok(s) => s,
+            Err(m) => {
+                println!("FAIL: {:?} ({})", file, m);
+                failed += 1;
+                continue;
+            }
+        };
         let program = match parse_program(&input) {
             Ok(p) => p,
             Err(e) => {
@@ -1864,6 +1921,59 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
         std::process::exit(1);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_must_speak {
+    use super::*;
+    use clap::{Command, CommandFactory};
+
+    fn walk(cmd: &Command, path: &str, silent: &mut Vec<String>) {
+        for arg in cmd.get_arguments() {
+            if arg.is_hide_set() {
+                continue;
+            }
+            let name = arg.get_id().as_str();
+            if name == "help" || name == "version" {
+                continue;
+            }
+            let help = arg.get_help().map(|h| h.to_string()).unwrap_or_default();
+            if help.trim().is_empty() {
+                let spec = arg
+                    .get_long()
+                    .map(|s| format!("--{s}"))
+                    .or_else(|| arg.get_short().map(|c| format!("-{c}")))
+                    .unwrap_or_else(|| format!("<{name}>"));
+                silent.push(format!("{path} {spec}"));
+            }
+        }
+        for sub in cmd.get_subcommands() {
+            if sub.get_name() == "help" {
+                continue;
+            }
+            let here = if path.is_empty() {
+                sub.get_name().to_string()
+            } else {
+                format!("{path} {}", sub.get_name())
+            };
+            let about = sub.get_about().map(|a| a.to_string()).unwrap_or_default();
+            if about.trim().is_empty() {
+                silent.push(format!("command `{here}`"));
+            }
+            walk(sub, &here, silent);
+        }
+    }
+
+    #[test]
+    fn every_command_flag_and_argument_has_help() {
+        let mut silent = Vec::new();
+        walk(&Cli::command(), "", &mut silent);
+        assert!(
+            silent.is_empty(),
+            "CLI surface has undescribed entries (REAL_01 §1.3 fifth clause):\n{}",
+            silent.join("\n")
+        );
+    }
 }
 
 fn collect_files(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
