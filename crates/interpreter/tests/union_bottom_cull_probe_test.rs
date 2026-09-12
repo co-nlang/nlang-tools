@@ -125,8 +125,8 @@ fn red_nav_all_bottom_primary_verbatim() {
         "all-⊥ union must collapse to a single ⊥: {got:?}"
     );
     assert!(
-        got.contains("#conflict") && got.contains("Incompatible types"),
-        "primary member's ⊥ must pass out verbatim: {got:?}"
+        got.contains("#conflict") && got.contains(";; %cause:"),
+        "primary member's ⊥ must pass out with its cause on the annotation layer: {got:?}"
     );
 }
 
@@ -166,8 +166,8 @@ fn red_root_all_bottom_verbatim_message() {
         "all-⊥ root join stays single ⊥ #conflict: {got:?}"
     );
     assert!(
-        got.contains("Incompatible types") && !got.contains("empty union after normalize"),
-        "verbatim member message, not the normalize jargon: {got:?}"
+        got.contains(";; %cause:") && !got.contains("empty union after normalize"),
+        "cause rides the annotation layer, not the normalize jargon: {got:?}"
     );
 }
 

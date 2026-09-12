@@ -580,13 +580,19 @@ fn write_thunk(
     write_wrapper_fields(&fields, indent)
 }
 
+/// Fields this function may emit, and why they are allowed on a CAS object
+/// (REAL_03 §6.7 / §6.9):
+///
+/// * `__nlang_bottom` / the cause tag — formal channel `.%cause`
+/// * `path` — the coordinate the engine already reports; not a new free-text
+///   member. `message` is neither hashed nor channelled: **do not write it**.
+///
+/// Adding a name here is the act that must name a channel. A unit test
+/// (`stored_bottom_writes_only_channelled_fields`) locks the allowlist.
 fn write_bottom(d: &BottomDetail, indent: usize) -> String {
     let mut fields = vec![(BOTTOM, write_tag(d.cause.as_tag()))];
     if let Some(p) = &d.path {
         fields.push(("path", quote_string(p)));
-    }
-    if let Some(m) = &d.message {
-        fields.push(("message", quote_string(m)));
     }
     write_wrapper_fields(&fields, indent)
 }
@@ -1679,6 +1685,44 @@ fn refs_of_commit(c: &Commit, follow_abandoned: bool, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_bottom_writes_only_channelled_fields() {
+        let d = BottomDetail {
+            cause: BottomCause::Conflict,
+            path: Some("bad".into()),
+            message: Some("Incompatible types: 1 vs 2".into()),
+            expected: Some(Value::from(BottomCause::Conflict)),
+            found: Some(Value::from(BottomCause::Conflict)),
+            involved: vec![],
+            obstruction_degree: None,
+            holonomy: None,
+        };
+        let s = write_bottom(&d, 0);
+        assert!(s.contains("__nlang_bottom"), "cause wrapper missing: {s}");
+        assert!(s.contains("#conflict"), "cause tag missing: {s}");
+        assert!(
+            !s.contains("message"),
+            "unchannelled field was persisted: {s}"
+        );
+        assert!(
+            !s.contains("expected") && !s.contains("found") && !s.contains("involved"),
+            "non-channel fields leaked into the object: {s}"
+        );
+        // Read side still accepts a legacy `message` (S3).
+        let legacy = "{ ~%__nlang_bottom: #divergent message: \"from an older engine\" }";
+        let v = expr_to_value(&parse_body(legacy).expect("parse")).expect("decode");
+        match v {
+            Value::Bottom(detail) => {
+                assert_eq!(detail.cause, BottomCause::Divergent);
+                assert_eq!(
+                    detail.message.as_deref(),
+                    Some("from an older engine")
+                );
+            }
+            other => panic!("expected a bottom, got {other:?}"),
+        }
+    }
 
     #[test]
     fn thunk_wrapper_roundtrips_as_thunk() {
