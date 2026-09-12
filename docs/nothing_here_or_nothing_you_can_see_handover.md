@@ -220,12 +220,100 @@ HEAD 或 CAS 物件，把那種倉當成新的會**只因為打開它就偷偷�
 
 ### N.1 做了什麼
 
+**I1。** `ObjectStore::init` 仍以 `.oo/format` 判定「這是不是別人的 store」（G3／v0.43.0）。新倉落地時**先寫** `objects.format`（`encoding=5\n`）**再寫** `format`（`layout=5\n`）。看見 `format` 的觀察者已經看見完整的 split-axis 對；還沒看見 `format` 的觀察者走 `new_store`，寫入同一對位元組。沒有重試、沒有睡眠。宣告內容位元組未改。`.oo` 布局未改。
+
+`format`／`HEAD` 的前置檢查改 `try_exists`：`Err` 具名拒絕，不再被 `exists()` 壓成「沒有」。
+
+**I2。** 全樹 34 處 `.exists()` 的表在 §N.4.1。另改一格同族：`object_exists_digest`（GC 走訪）在 `try_exists` 的 `Err` 上改當成「在」，讓讀取路徑命名失敗，而不是把不透明走成不存在。
+
+探針一字未動。`write_object` 那一格未動。`~%Io./exists` 未動。
+
 ### N.2 量測（每一項都要有分母與對照組）
+
+本弧探針 R1 自己跑兩組檔案系統（`CARGO_TARGET_TMPDIR` 32 行程 × 30 回合 ＋ `std::env::temp_dir()` 4 行程 × 30 回合 ＝ 1080 個 `oo status`）：**0 拒絕**，約 4.1 s。G1–G4 綠。
+
+對照：工單對 v0.49.0 標籤二進位在同一探針形下為 373／1080 拒絕。
+
+跨版本：真 `v0.49.0-verify` 讀本版寫的 `x: 0` 倉，`status`／`log` rc=0；本版讀真 `v0.49.0` 寫的倉，同樣 rc=0。宣告仍逐字 `layout=5\n`／`encoding=5\n`。
+
+身分：`eval '~%Math./add (1,2)'` → `3` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`；標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`；物件 **3**；`layout=5`；`encoding=5`。
+
+符合性：**162 vectors, 162 pass, 0 fail**。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 230 | 2203 | 0 | — | 0 | 0 |
+| 2 | 230 | 2203 | 0 | — | 0 | 0 |
+| 3 | 230 | 2203 | 0 | — | 0 | 0 |
 
 ### N.3 我認為驗收方寫錯的地方（探針／射程／量測）
 
+無。R1 兩組都跑到了，不是空讀數。
+
 ### N.4 §7 六問的回答
+
+**1. 34 列。** 原點在 `crates/interpreter/src`（非測試）。「答錯」＝ `exists()` 把 `Err` 壓成 `false`。
+
+| # | 位置 | 缺席被讀成 | 答錯時下一步抓不抓得到 | 改了？ | 為什麼安全／為什麼動 |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| 1 | `storage.rs` `ensure_format` `oo.exists()` | 沒有 `.oo` → 不檢查宣告 | `declared_encoding` 仍讀 `format` 並具名 | 否 | 抓得到 |
+| 2 | `storage.rs` `init` `format.exists()` | 沒有宣告 → 新倉 | **決定走哪一枝且不回頭**（I1） | **是** → `try_exists`；落地順序見 N.1 | I1 用構造消掉「尚未」；`Err` 具名 |
+| 3 | `storage.rs` `init` `HEAD.exists()` | 沒有 HEAD | 與 #2 合取；`Err` 曾被壓成新倉 | **是** → `try_exists` | 與 #2 同一前置檢查 |
+| 4 | `storage.rs` `init` `objects/.exists()` | 沒有 objects 目錄 → 建 | `create_dir_all` 失敗 | 否 | 抓得到 |
+| 5 | `storage.rs` `object_exists_digest` | 沒有物件 → GC 當不存在 | **沒有**：走訪 `continue`（§6.6 不透明變不存在） | **是** → `try_exists`，`Err` 當在 | 同族；讓讀取路徑說話 |
+| 6 | `storage.rs` `remove_digest` 物件 | 不刪 | 留下檔案 | 否 | 冪等跳過，不是宣告 |
+| 7 | `storage.rs` `remove_digest` 父目錄 | 不 rmdir | 留下空目錄 | 否 | 無害 |
+| 8 | `storage.rs` `set_head` `oo.exists()` | 建 `.oo` | `create_dir_all` 失敗 | 否 | 抓得到 |
+| 9 | `storage.rs` `write_object` 路徑 | 已在則跳過 | `atomic_write`（註解已寫） | **否（紅線）** | 工單 §3.6 |
+| 10 | `storage.rs` `migrate_layout` `oo.exists()` | 「沒有 store」 | 直接 bail | 否 | 不可讀的 `.oo` 本來就不能 migrate |
+| 11 | `storage.rs` `load_architects` | 空集合 | 接著的讀已分 NotFound／unreadable，但 `exists` 先短路 | 否 | fail-soft 空集合；不是宣告對 |
+| 12 | `universe.rs` `unlink_legacy_staged` | 不刪 | 殘留 sidecar | 否 | 無害 |
+| 13 | `universe.rs` evolve 清 `pin_pending` | 不刪 | 殘留 | 否 | 無害 |
+| 14 | `universe.rs` evolve 清 `effect_pending` | 不刪 | 殘留 | 否 | 無害 |
+| 15 | `universe.rs` `load_staged` `pin_pending` | 不當成 legacy pin | 不讀 sidecar | 否 | 舊 sidecar；不是 I1 |
+| 16 | `universe.rs` `load_staged` `staged` | 不當成有 staged | 不讀 | 否 | 舊格子；不是 I1 |
+| 17 | `universe.rs` commit 清 `pin_pending` | 不刪 | 殘留 | 否 | 無害 |
+| 18 | `universe.rs` commit 清 `effect_pending` | 不刪 | 殘留 | 否 | 無害 |
+| 19 | `universe.rs` `load_abandoned` | 沒有 abandoned | `read.ok()` 本會吞 | 否 | 不是宣告對 |
+| 20 | `universe.rs` `clear_abandoned` | 不刪 | 殘留 | 否 | 無害 |
+| 21 | `universe.rs` `append_abandoned` `oo.exists()` | 建 `.oo` | `create_dir_all` 失敗 | 否 | 抓得到 |
+| 22 | `lib.rs` `init` node key `exists` | 不載入 | 之後 `create_new`／AlreadyExists | 否 | §3.5 已關閉 |
+| 23 | `lib.rs` `init` 第二處 node key | 同上 | 同上 | 否 | 同上 |
+| 24 | `lib.rs` `node_id_if_present` | 回 None | 鑄造路徑走 `create_new` | 否 | 同上 |
+| 25 | `value.rs` `create_new_at` 父目錄 | 不 chmod 既有目錄 | 工單 §3.5 | 否 | 不動身分鑄造 |
+| 26 | `value.rs` `load_or_mint` | 走 `create_new` | `AlreadyExists` → `load_after_race` | 否 | §3.5 |
+| 27 | `savepoint.rs` leftover `LOG` | 不刪 | 殘留 | 否 | 無害 |
+| 28 | `savepoint.rs` mint `dest.exists()` | 換下一個 id | `atomic_write` | 否 | 抓得到 |
+| 29 | `peers.rs` directory `exists` | 冷啟動 | **沒有**（不可讀也當沒有） | **否** | §3.3 要裁定 |
+| 30 | `peers.rs` `need_header` | 寫 header | `open` 失敗 | 否 | 抓得到 |
+| 31 | `injections.rs` `paths` | 空清單 | 〔量〕000 時 `exists` 仍 true，落到 `read_dir` 具名 | 否 | 工單已列為安全 |
+| 32 | `injections.rs` mint `dest.exists()` | 換 id | `atomic_write` | 否 | 抓得到 |
+| 33 | `builtins/io.rs` `io.exists` | `#false` | **答案就是輸出** | **否** | O86 (ii)，§3.1 |
+| 34 | `builtins/fs_guard.rs` 最長既有前綴 | 較短的 canonicalize | 可能弱化 symlink 邊界 | 否 | 不是 I1；未動 |
+
+**2.** 構造是「被觀察的那一份最後落地」。觀察者問的是 `format`。`objects.format` 先在，`format` 後在 ⟹ 看見 `format` 時對已經齊；沒看見時兩個行程都當新倉寫同一對位元組（`atomic_write` 同文）。不去「偵測尚未」：那個差別不在檔案系統裡。
+
+**3.** 除 `new_store` 與 `io.exists` 外，找到 **兩格**仍不安全且本弧能動／不能動分得清：`object_exists_digest`（動了，同上族）與 `peers.rs` 冷啟動（§3.3，不動）。其餘「答錯留下殘檔／跳過 sidecar」不是宣告對，也不是通道上的三種結果。
+
+**4.** **R3／G2**（裸數字、無 `objects.format`）：`format` 在 → `new_store=false` → `ensure_format` 走數字枝，不寫 `objects.format`，`format` 仍是 `3\n`。**R2／G3**（`layout=4`、有注入、無 HEAD、無 CAS）：`format` 在 → `new_store=false` → `ensure_format` 走 split-axis 枝，兩份宣告原樣。若改以 `objects.format` 判新倉，G2 會被當成新的並寫上 `layout=5`——所以謂詞仍是 `format`。
+
+**5.** **兩個**：探針 R1 的 `CARGO_TARGET_TMPDIR`（標為 ext4）與 `std::env::temp_dir()`（標為 tmpfs）。沒有另造第三個。
+
+**6.** 無（見 N.3）。
 
 ### N.5 規格側的發現（不要自己改）
 
+無 MUST 要改寫。I1 用構造滿足既有 §6.6 判例的延伸；O86 兩問仍開著。
+
 ### N.6 我沒做的事（明說，不要讓沉默看起來像覆蓋）
+
+*   `~%Io./exists`（O86 (ii)）。
+*   `REAL_03` §6.6 第四款（O86 (i)）。
+*   `.oo/peers/directory` 不可讀 → 冷啟動。
+*   並行提交語義、身分鑄造競態、`write_object` 的 `exists`。
+*   重試／睡眠／退避。
+*   宣告內容或 `.oo` 布局。
+*   規格正文。
+*   本弧探針。
