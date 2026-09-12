@@ -754,7 +754,9 @@ impl ObjectStore {
             }
             Err(e) => return Err(cannot_read(".oo/architects.json", &e)),
         };
-        let list: Vec<String> = serde_json::from_str(&json)?;
+        let list: Vec<String> = serde_json::from_str(&json).map_err(|e| {
+            anyhow::anyhow!("cannot parse .oo/architects.json: {e}")
+        })?;
         Ok(list.into_iter().collect())
     }
 

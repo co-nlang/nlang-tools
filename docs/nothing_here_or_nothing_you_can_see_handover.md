@@ -509,3 +509,21 @@ Error: expected ident at line 1 column 2
 一個具名檔案卻洩 errno，另一個不洩 errno 卻不具名檔案——**而它們在同一個函數裡相隔兩行。**
 
 ## R. 修補回報（R-2，交付方填）
+
+### R.1 做了什麼
+
+`load_architects` 的 JSON 解析失敗改為具名 `.oo/architects.json`（`cannot parse .oo/architects.json: …`）。未指定措辭；探針只要求出現檔名。缺席仍是空集合。R-1 的不可讀路徑未改。
+
+**未動** `DiscoveryConfig::load` 不可讀時的裸 errno（工單明文不併入）。未動探針。未 rustfmt `storage.rs` 整檔。
+
+### R.2 數字
+
+探針 7／7（R3 綠；R1／R2 未回歸）。known-answer `3` rc=0。身分 `31745ef0…`／`7038e250…`／物件 3／layout=5／encoding=5。conformance 162／162。`DiscoveryConfig::load` 不可讀的裸 errno 未修。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 230 | 2205 | 0 | — | 0 | 0 |
+| 2 | 230 | 2205 | 0 | — | 0 | 0 |
+| 3 | 230 | 2205 | 0 | — | 0 | 0 |
