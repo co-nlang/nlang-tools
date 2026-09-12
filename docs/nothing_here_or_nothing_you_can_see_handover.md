@@ -439,3 +439,23 @@ I1 這一格做得很乾淨：**謂詞留在 `format`（G2／G3 都保住了）�
 描述的是**形狀**而不是**那一問**。
 
 ## R. 修補回報（R-1，交付方填）
+
+### R.1 做了什麼
+
+`Ouroboros::init` 不再把 `load_architects` 的錯誤吞成空集合。不可讀（與畸形）是邊界錯誤，rc≠0，句為 `cannot read .oo/architects.json: permission denied`。缺席仍是空集合，`bootstrap_exempt` 未動。
+
+`load_architects` 拿掉 `.exists()` 短路：缺席只認 `ErrorKind::NotFound`；其餘宿主錯誤具名上拋。只換 `try_exists` 不夠——答案必須抵達呼叫端。
+
+未動 `authority.rs`／`universe.rs` 的豁免語義。本弧探針一字未動。
+
+### R.2 數字
+
+探針 6／6（R1、R2 皆綠）。known-answer `3` rc=0。身分 `31745ef0…`／`7038e250…`／物件 3／layout=5／encoding=5。conformance 162／162。`universe_determinism` 12／12。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 230 | 2204 | 0 | — | 0 | 0 |
+| 2 | 230 | 2204 | 0 | — | 0 | 0 |
+| 3 | 230 | 2204 | 0 | — | 0 | 0 |

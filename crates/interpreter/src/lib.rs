@@ -935,9 +935,9 @@ impl Ouroboros {
         // Lazy identity: do not mint on init (P5 — ordinary work must not
         // create ~/.oo/identity). Loaded on first signature / `oo identity`.
         // Assertion layer: load provisioned whitelist from .oo/architects.json.
-        let architects = store
-            .load_architects(base_dir)
-            .unwrap_or_else(|_| std::collections::HashSet::new());
+        // Unreadable/malformed is a named boundary error (D63), never an
+        // empty set: empty is bootstrap-exempt (Q-045 R-1).
+        let architects = store.load_architects(base_dir)?;
         // discovery_trust: load affiliation roots loudly (not fail-soft).
         let discovery = crate::discovery_config::DiscoveryConfig::load(base_dir)?;
         // Durable peer directory (advert_persistence): load signed records;

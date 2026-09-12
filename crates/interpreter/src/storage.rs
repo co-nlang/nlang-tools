@@ -745,9 +745,8 @@ impl ObjectStore {
         base_dir: &Path,
     ) -> anyhow::Result<std::collections::HashSet<String>> {
         let path = base_dir.join(".oo").join("architects.json");
-        if !path.exists() {
-            return Ok(std::collections::HashSet::new());
-        }
+        // Absence is an empty set (bootstrap exemption). Any other host
+        // error is named: the caller must not turn it into empty.
         let json = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
