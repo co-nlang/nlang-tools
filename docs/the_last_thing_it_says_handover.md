@@ -234,6 +234,10 @@ Error: Permission denied (os error 13)          rc=1
 | `r4_two_concurrent_discharges_both_survive` | **1／10 失敗** | **2／10 失敗** |
 | `pin_concurrent_first_mint_yields_one_key` | 0／10 | 0／10 |
 
+**⟹ 驗收方全樹 ×3（`--release --no-fail-fast`）：`229／2198／0`，三輪皆淨，兩支 flake 一次都沒出現。**
+（229 ＝ 228 ＋ 本弧探針檔；2198 ＝ 2188 ＋ 本弧 9 支 ＋ 交付的 `every_mapped_kind_is_engine_words`。）
+**⚠ 三輪皆淨不是證據**——交付自己的第 2／3 輪各報一支，而 §9.3 的隔離量測顯示它在隔離下也會失敗。
+
 ⟹ **`SIG_DFL` 沒有讓並行測試變差。**
 **⚠ 但第一列的數字要回寫 Inbox**：先前記的是「隔離 10 輪 8／10」（Q-002）與「隔離 8／8 過」（Q-043），
 **本次量到它在隔離下也會失敗（1–2／10）** ⟹ **它不只是負載敏感，而 Inbox 那一列的「未再現」讀數要作廢。**
