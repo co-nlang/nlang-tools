@@ -459,3 +459,53 @@ I1 這一格做得很乾淨：**謂詞留在 `format`（G2／G3 都保住了）�
 | 1 | 230 | 2204 | 0 | — | 0 | 0 |
 | 2 | 230 | 2204 | 0 | — | 0 | 0 |
 | 3 | 230 | 2204 | 0 | — | 0 | 0 |
+
+### 9.5 修補複驗（驗收方，2026-09-13）
+
+**R-1 通過。** 修法是**刪掉** `load_architects` 的 `.exists()` 短路、並把呼叫端的
+`.unwrap_or_else(|_| empty)` 換成 `?`。**刪是對的**——緊接的 `read_to_string` 本來就把
+`NotFound` 與其他錯誤分開，那層短路是多餘的一層，換成 `try_exists` 只會把多餘留著。
+
+〔量，本修補二進位，**四個對照組**〕
+
+| 情形 | 結果 |
+| :-- | :-- |
+| 沒有名冊檔（正當的空） | `Refine commit: …` rc=0 ✅ 豁免仍在 |
+| 名冊不含本鑰、可讀 | rc=1 `signer … not in architect_registry` ✅ |
+| 名冊含本鑰 | rc=0 ✅ |
+| **名冊不含本鑰、`chmod 000`** | **rc=1 `Error: cannot read .oo/architects.json: permission denied`** ✅ **具名、無裸 errno、載體依 D63** |
+| 移除名冊後 `oo status` | rc=0 ✅ 可回復 |
+
+* 探針：**6／6 綠**（R1、R2 皆轉綠；G1–G4 未動）
+* 全工作區 ×3：**230 targets／2204 passed／0 failed**，三輪皆 `cargo_rc=0`
+* 探針檔 `git diff 9cbaff4..53a00b7 -- crates/oo/tests/` **0 行**
+* diff 純度 ✅（`lib.rs` +3/−3、`storage.rs` +2/−3、本工單 §R）
+
+### 9.6 R-2：修補讓一條路徑第一次可達，而它沒有座標
+
+R-1 之前，壞掉的 `.oo/architects.json` 被靜默吞成空集合。**現在它會說話了，但沒說是哪個檔**：
+
+```
+Error: expected ident at line 1 column 2
+```
+
+`SPEC_10` §2.2.1 要求指出座標。**而這不是新標準，是它隔壁那一行已經達到的標準**——
+`Ouroboros::init` 下兩行的 `DiscoveryConfig::load` 逐字給出
+`Error: discovery.n: parse error in /…/.oo/discovery.n: --> 1:1`。
+**R-1 自己修好的那一格也是證明**：不可讀時逐字 `cannot read .oo/architects.json: permission denied`。
+
+#### R-2 的不變式
+
+> **一個因為內容壞掉而被拒絕的設定檔，必須說出是哪一個檔。**
+
+不指定措辭。**探針 R3 已加**（`r3_a_malformed_whitelist_says_which_file`，**現況紅**），
+帶兩個對照組：空名冊仍須 rc=0（證明夾具沒壞）／不可讀那格仍須具名（證明 R-1 沒回歸）。
+**本弧探針基線更新為 6 綠 1 紅。**
+
+**⚠ 明文不併入**：`DiscoveryConfig::load` 在**不可讀**時逐字洩漏
+`Permission denied (os error 13)`——**裸 errno，`REAL_01` §1.3 第一條與 Q-044 的 S2 皆禁**。
+那是 `crates/interpreter` 的 Q-044 殘留，**不是本弧射程，也不是本次修補造成的**
+⟹ 已於 `WORK_QUEUE` Inbox 開列。**兩個載入器互為對方的反例**：
+一個具名檔案卻洩 errno，另一個不洩 errno 卻不具名檔案——**而它們在同一個函數裡相隔兩行。**
+
+## R. 修補回報（R-2，交付方填）

@@ -454,3 +454,62 @@ fn r2_an_unreadable_whitelist_is_not_an_absent_one() {
          Said:\n{out}"
     );
 }
+
+// ---------------------------------------------------------------------
+// R3 (repair round 2). Added by the acceptor after repair 1.
+//
+// R-1 stopped `.oo/architects.json` errors being swallowed into an empty
+// set. That was right, and it made a path reachable for the first time:
+// a malformed whitelist now reaches the operator. What it says is
+//
+//     Error: expected ident at line 1 column 2
+//
+// which names no file. `SPEC_10` §2.2.1 requires the coordinate, and the
+// sibling loader two lines below in `Ouroboros::init` already does it:
+//
+//     Error: discovery.n: parse error in <path>: --> 1:1
+//
+// So this is not a new standard, it is the standard already met by the
+// file the repair sits next to. The unreadable case, repaired in R-1,
+// is the other proof: it says `cannot read .oo/architects.json:
+// permission denied` -- named, and with no host errno.
+//
+// This probe does not require any particular wording. It requires the
+// operator to be told which file they have to go and fix.
+// ---------------------------------------------------------------------
+#[test]
+fn r3_a_malformed_whitelist_says_which_file() {
+    let s = architect_repo("r3");
+    let d = s.path();
+    let list = d.join(".oo").join("architects.json");
+
+    // Control 1: a well-formed whitelist keeps the command working, so a
+    // failure below is caused by the content and not by the fixture.
+    fs::write(&list, "[]").expect("whitelist");
+    let (out, rc) = oo(d, &["status"]);
+    assert_eq!(rc, 0, "CONTROL: an empty whitelist must still open: {out}");
+
+    // Control 2: the unreadable case (R-1) names the file. If this ever
+    // goes red, R-1 regressed and the comparison below is meaningless.
+    fs::write(&list, "[]").expect("whitelist");
+    seal(&list);
+    let (unreadable, unreadable_rc) = oo(d, &["status"]);
+    unseal(&list);
+    assert_ne!(unreadable_rc, 0, "CONTROL: R-1 regressed: {unreadable}");
+    assert!(
+        unreadable.contains("architects.json"),
+        "CONTROL: R-1 regressed -- the unreadable case stopped naming the \
+         file: {unreadable}"
+    );
+
+    // Target: malformed.
+    fs::write(&list, "not json at all").expect("whitelist");
+    let (out, rc) = oo(d, &["status"]);
+    assert_ne!(rc, 0, "a malformed whitelist answered success: {out}");
+    assert!(
+        out.contains("architects.json"),
+        "the operator is told a parse failed but not which file failed to \
+         parse. The unreadable case one branch away names it, and so does \
+         discovery.n in the same function. Said:\n{out}"
+    );
+}
