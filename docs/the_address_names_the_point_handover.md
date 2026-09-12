@@ -192,14 +192,61 @@ R3 另自檢量測器（`v: 1` 必過、壞形式必不過）。
 
 ### N.1 射程逐項對照
 
+**S1。** `write_bottom` 不再寫 `message`。讀取側仍認 `message:`（S3／G6）。`write_bottom` 的允許名單寫在函式註解裡：`__nlang_bottom`（通道 `.%cause`）與 `path`。單元測試 `stored_bottom_writes_only_channelled_fields` 用填滿的 `BottomDetail`（含 message／expected／found）斷言寫出的物件不含那些無通道欄位，並 decodes 一份帶舊 `message` 的物件。判準：R1、G6。**R2 見 N.3。**
+
+**S2。** `to_nlang` 印裸 `_|_`，成因走與 `%effect` 同一條 `nlang_annotation`（`  ;; %cause: #<tag>`）。人話診斷（運算元、缺址的 CAID 等）仍接在後面當 `;;` 註解，不進值本體、不進 CAS。判準：R3、R4、R5、G2、G3。
+
+**S3。** 解碼仍讀 `message`。真 `v0.47.0` 寫的倉（物件裡有 `message: "Incompatible types: 1 vs 2"`）本版 `status`／`log`／`inspect` rc=0。本版寫的倉舊引擎也讀得動。
+
+**S4。** 探針一字未動。G1–G6、R1、R3–R5 綠。**R2 紅**（N.3）。
+
 ### N.2 順手改動（逐項指名）
+
+*   `to_string_plain` 的 ⊥ 改成裸 `_|_`（與 to_nlang 值本體對齊）。
+*   三支**非本弧、非紅線**探針的期望字串改成新列印形：`slash_shadow_multiparam`、`tuple_destructure`（兩處）、`union_bottom_cull`（兩處「verbatim message」改認 `;; %cause:`）。
+*   **未 rustfmt** `value.rs`／`store_codec.rs` 整檔。未動本弧探針、Q-042、兩支 limit 探針。
 
 ### N.3 工單哪裡是錯的
 
+**R2 與 D65 打架，未改探針。** 拿掉 `message` 之後，四個宇宙仍共用 `cbb7ef81…`，其中三個（皆 `#conflict`）位元組已相同；剩下 `bad: bad + 1` 寫的是 `#divergent`。那不是無通道欄位，是纖維——D65 明文 `%cause` 必須隨值旅行、不得入址。讓 R2 綠的辦法只有兩條，都是本弧禁止的：把 cause 從物件拿掉（纖維不旅行），或讓 cause 進位址（乙，已否決）。基線「3 份相異」裡有兩份是 message、一份是 cause；修 S1 只能消掉前兩份。
+
 ### N.4 工單指名要你回答的問題
+
+**1.** 不是「只刪一個名字」。`write_bottom` 是允許名單；新欄位必須寫進那個函式，而單元測試對一份帶著 message／expected／found 的 `BottomDetail` 斷言那些字不出現。這擋得住 `BottomDetail` 上的下一格，擋不住別種 wrapper 私自加欄。不是型別系統。
+
+**2.** **進。** `Commit::content_hash` 把 `format!("{:?}", self.meta)` 餵進 digest，而手寫 `Debug` **一律**寫 `message` 欄（即使 `None`）。兩個不同的 `Some("a")`／`Some("b")` 在相同 timestamp 下會得到不同 digest。本弧不動它。
+
+**3.** **沒有**像 `.%cause` 那樣的正式觀測通道。`members: []` 寫在 `~%__nlang_top_cause` 裡，bn_serial 把 `TopCaused` 當裸 Top 雜湊，所以它也不入址。與 `message` 同族（不入址、無通道、卻寫進物件）。本弧不動。
+
+**4.** **evolve／commit 本來就不說「1 vs 2」。** 它們走 `format_conflict_where`：`#conflict at bad`，從不印 `message`。`eval` 仍說得出運算元：`_|_  ;; %cause: #conflict  ;; Incompatible types: 1 vs 2`——人話在註解層，不在值本體、不在 CAS。缺址的探針靠的也是這段人話裡的 CAID。
+
+**5.** 沒有為了探針綠去做自己認為不對的事。R2 沒有拿掉 `#divergent`。
 
 ### N.5 探針
 
+本弧探針沒有 `#[ignore]`，**一字未動**。G1–G6 綠；R1、R3、R4、R5 綠；**R2 紅**（N.3）。無 VOID READING。
+
 ### N.6 數字
 
+known-answer：`eval '~%Math./add (1,2)'` → `3` rc=0。`eval '1 & 2'` → `_|_  ;; %cause: #conflict  ;; Incompatible types: 1 vs 2` rc=0。離開碼直接取。
+
+身分：`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`；⊥ 根 **`cbb7ef81861ad908234741642a1fa33071c183d391cb157dbe2b24ae90677a1c` 未動**；標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`；物件 **3**；`layout=5`；`encoding=5`。
+
+跨版本：真 `v0.47.0` 讀本版倉 `status`／`log` rc=0；本版讀真 `v0.47.0` 寫的帶 `message:` 的根，`inspect` rc=0。
+
+符合性：**162 vectors, 162 pass, 0 fail**（note 未另計；runner 對 `%cause` 行未印出只 note，今日與基線同為可選）。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 228 | 2187 | 1 | `r2_one_address_holds_one_byte_string` | 2 | 101 |
+| 2 | 228 | 2187 | 1 | 同上 | 2 | 101 |
+| 3 | 228 | 2187 | 1 | 同上 | 2 | 101 |
+
+`^error` 皆 cargo 的 `error: test failed`／`error: 1 target failed:`。
+
 ### N.7 你認為需要改規格之處
+
+**先回報再動。** R2 若要綠，規格／探針必須承認：同一個 ⊥ 位址上，**纖維不同 ⟹ 物件位元組可以不同**（這正是 §6.9 第二款）。現在的 R2 把 §6.7 第一款讀成「連通道上的欄位也不能讓位元組分開」，與 D65 衝突。建議驗收方收窄 R2：只釘 `message` 造成的分裂，或改寫成「無通道欄位不得造成分裂」。
+

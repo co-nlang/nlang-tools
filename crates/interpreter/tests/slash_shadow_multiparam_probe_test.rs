@@ -199,7 +199,7 @@ fn retired_by_o65_shadow_builtin_add_atom_no_longer_collides() {
 #[test]
 fn red_atom_meet_morphism_is_bottom() {
     // today: absorbs into the dispatch combo as %val
-    assert_obs("m: (x -> x)\nout: m & 7", "_|_ (%cause: #conflict)");
+    assert_obs("m: (x -> x)\nout: m & 7", "_|_  ;; %cause: #conflict");
 }
 
 // ─────────────────────────────────────────────────────────────────────────

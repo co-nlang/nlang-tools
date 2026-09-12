@@ -111,7 +111,7 @@ fn red_tuple_arity_mismatch_bottom() {
     // 2-param tuple, 3-tuple argument — exact arity, no partial destructure
     assert_obs(
         "tf: ((x, y) -> x + y)\nout: tf (1, 2, 3)",
-        "_|_ (%cause: #conflict)",
+        "_|_  ;; %cause: #conflict",
     );
 }
 
@@ -120,7 +120,7 @@ fn red_tuple_nontuple_arg_bottom() {
     // definition side chose tuple → application side must use tuple
     assert_obs(
         "tf: ((x, y) -> x + y)\nout: tf 5",
-        "_|_ (%cause: #conflict)",
+        "_|_  ;; %cause: #conflict",
     );
 }
 

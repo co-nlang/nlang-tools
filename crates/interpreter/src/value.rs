@@ -3089,8 +3089,8 @@ impl Value {
                 _ => format!("{:?}", kind),
             },
             Value::Top | Value::TopCaused { .. } => "_".to_string(),
-            // Align with to_nlang: `#<tag>` not Debug variant name.
-            Value::Bottom(d) => format!("_|_ (%cause: #{})", d.cause.as_tag()),
+            // Align with to_nlang: the atom is bare; the cause is annotation.
+            Value::Bottom(_) => "_|_".to_string(),
             Value::Combo(c) => {
                 if c.is_pure_wrapper() {
                     if let Some(v) = c.get_field("%val") {
@@ -3124,6 +3124,12 @@ impl Value {
         out
     }
 
+    /// SPEC_11 §3.4 annotation layer. `%cause` and `%effect` share this
+    /// spelling so a bottom's fibre sits on the same layer as an effect.
+    fn nlang_annotation(key: &str, spelled: &str) -> String {
+        format!("  ;; %{key}: {spelled}")
+    }
+
     pub fn to_nlang(&self, indent: usize) -> String {
         let pad = "  ".repeat(indent);
         match self {
@@ -3151,7 +3157,7 @@ impl Value {
                     s.push_str(&format!("  ;; %rank: {}", r));
                 }
                 if !effect.is_pure() {
-                    s.push_str(&format!("  ;; %effect: {}", effect));
+                    s.push_str(&Self::nlang_annotation("effect", &effect.to_string()));
                 }
                 s
             }
@@ -3230,7 +3236,7 @@ impl Value {
                 // SPEC_08 §4.1 / effect_union: non-pure combo carries the
                 // set-rendered diagnostic tail (same order as `.%effect`).
                 if !c.effect.is_pure() {
-                    s.push_str(&format!("  ;; %effect: {}", c.effect));
+                    s.push_str(&Self::nlang_annotation("effect", &c.effect.to_string()));
                 }
                 s
             }
@@ -3241,12 +3247,18 @@ impl Value {
                 let parts: Vec<String> = ordered.iter().map(|b| b.to_nlang(indent)).collect();
                 parts.join(" | ")
             }
-            // L2-17: Blur-precedent cause tag on the display axis (bn_serial
-            // identity axis untouched — Bottom hashes by cause discriminant).
+            // Bare atom (SYNTAX_02). The fibre rides the annotation layer,
+            // same spelling as `%effect` (D65 / O85).
             Value::Bottom(d) => {
-                let mut s = format!("_|_ (%cause: #{})", d.cause.as_tag());
+                let mut s = format!(
+                    "_|_{}",
+                    Self::nlang_annotation("cause", &format!("#{}", d.cause.as_tag()))
+                );
+                // Human remainder of the old `;;` tail. Not a registered
+                // SPEC_11 member and not persisted (S1); the cause already
+                // rode `nlang_annotation`.
                 if let Some(ref m) = d.message {
-                    s.push_str(&format!("  ;; {}", m));
+                    s.push_str(&format!("  ;; {m}"));
                 }
                 s
             }
@@ -3271,7 +3283,7 @@ impl Value {
             Value::Thunk { expr, effect, .. } => {
                 let mut s = expr.to_nlang(indent);
                 if !effect.is_pure() {
-                    s.push_str(&format!("  ;; %effect: {}", effect));
+                    s.push_str(&Self::nlang_annotation("effect", &effect.to_string()));
                 }
                 s
             }
