@@ -315,3 +315,142 @@ fn r1_a_concurrent_observer_never_sees_half_a_declaration() {
             .join("\n")
     );
 }
+
+// ---------------------------------------------------------------------
+// R2 (repair round 1). Added by the acceptor after delivery 1.
+//
+// The order's I2 asks one question of every `.exists()`: is a wrong answer
+// here caught by the next step? Row 11 of the delivered table answered
+// "safe" for `load_architects`. It is not, and the reason is one line
+// above the `.exists()`:
+//
+//     lib.rs:939   .load_architects(base_dir)
+//                  .unwrap_or_else(|_| HashSet::new())
+//
+// `load_architects` does build a named `cannot_read` error for an
+// unreadable whitelist. The call site throws it away. So "the next step"
+// is precisely the thing that guarantees nobody catches it.
+//
+// What that costs, measured, with three controls:
+//
+//   no file at all (a legitimate empty set)  -> refine succeeds, rc 0
+//   whitelist without this key, readable     -> refused, "not in
+//                                               architect_registry", rc 1
+//   whitelist with this key                  -> refine succeeds, rc 0
+//   whitelist without this key, chmod 000    -> REFINE SUCCEEDS, rc 0
+//
+// because an empty registry makes `bootstrap_exempt` true
+// (universe.rs:1547) and `skip_membership` true (authority.rs:64). So an
+// unreadable whitelist does not fail closed. It silently stops being a
+// whitelist.
+//
+// This is not new law. `store_boundary_probe_test` records the same rule
+// from v0.2.41: "a refusal that renders as #false is indistinguishable
+// from 'the file is not there', so it is not an audit face." And the
+// discovery_trust arc wrote the contract verbatim -- "Malformed,
+// unreadable, non-canonical or unknown input is a NAMED error -- never
+// silently empty" -- while noting that architects.json was the precedent
+// R4-R7 forbid copying. It was never repaired.
+//
+// This probe does not say WHICH answer. Refusing at init and naming the
+// failure at refine both pass. It says only that an unreadable whitelist
+// and an absent one must not be the same event. Carrier follows D63.
+
+fn architect_repo(tag: &str) -> nlang_interpreter::ScratchDir {
+    let s = scratch(tag);
+    fs::write(s.path().join("a.n"), "x: 1\n").expect("source");
+    let (out, rc) = oo(s.path(), &["evolve", "a.n"]);
+    assert_eq!(rc, 0, "REACH: evolve: {out}");
+    let (out, rc) = oo(s.path(), &["commit", "-m", "one"]);
+    assert_eq!(rc, 0, "REACH: commit: {out}");
+    s
+}
+
+/// A CAID for `expr`, the way universe_determinism's `stored()` does it.
+fn stored(d: &Path, expr: &str) -> String {
+    fs::write(
+        d.join("i.n"),
+        format!("id: ~%Discovery./identify_and_store {expr}\n"),
+    )
+    .expect("write i.n");
+    let (out, _) = oo(d, &["run", "i.n", "--observe", "id"]);
+    let caid = out
+        .trim()
+        .trim_start_matches('"')
+        .split('"')
+        .next()
+        .unwrap_or("")
+        .split(";;")
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    assert!(
+        caid.starts_with("hash:sha256:"),
+        "REACH: stored() got {caid:?}"
+    );
+    caid
+}
+
+fn my_key(d: &Path) -> String {
+    let (out, rc) = oo(d, &["identity"]);
+    assert_eq!(rc, 0, "REACH: identity: {out}");
+    out.split(|c: char| !c.is_ascii_hexdigit())
+        .find(|w| w.len() == 64)
+        .unwrap_or_else(|| panic!("REACH: no 64-hex key in: {out}"))
+        .to_string()
+}
+
+#[test]
+fn r2_an_unreadable_whitelist_is_not_an_absent_one() {
+    let s = architect_repo("r2");
+    let d = s.path();
+    let src = stored(d, "{ old: 1 }");
+    let tgt = stored(d, "{ old: 1, new: 2 }");
+    let list = d.join(".oo").join("architects.json");
+    let refine = ["refine", "-s", &src, "-t", &tgt, "-m", "m", "--sign"];
+    let other = r#"["00000000000000000000000000000000000000000000000000000000000000ff"]"#;
+
+    // Control 1: no whitelist at all is a legitimate empty set.
+    let _ = fs::remove_file(&list);
+    let (out, _) = oo(d, &refine);
+    assert!(
+        out.contains("Refine commit:"),
+        "CONTROL: with no whitelist a signed refine must run: {out}"
+    );
+
+    // Control 2: a readable whitelist without this key refuses. If this
+    // ever goes green the target below proves nothing.
+    fs::write(&list, other).expect("whitelist");
+    let (out, _) = oo(d, &refine);
+    assert!(
+        !out.contains("Refine commit:"),
+        "CONTROL: a whitelist without this key must refuse: {out}"
+    );
+    assert!(
+        out.contains("architect_registry"),
+        "CONTROL: the refusal must name the registry: {out}"
+    );
+
+    // Control 3: with this key it runs again.
+    let key = my_key(d);
+    fs::write(&list, format!("[\"{key}\"]")).expect("whitelist");
+    let (out, _) = oo(d, &refine);
+    assert!(
+        out.contains("Refine commit:"),
+        "CONTROL: a whitelist containing this key must run: {out}"
+    );
+
+    // Target: the same whitelist, unreadable.
+    fs::write(&list, other).expect("whitelist");
+    seal(&list);
+    let (out, rc) = oo(d, &refine);
+    unseal(&list);
+    assert!(
+        !out.contains("Refine commit:"),
+        "an unreadable whitelist was read as no whitelist: the refine ran \
+         with rc={rc} and no membership check. Absence and unreadability \
+         collapse, and the collapse silently removes an authority control. \
+         Said:\n{out}"
+    );
+}

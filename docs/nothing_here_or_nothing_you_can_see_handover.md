@@ -317,3 +317,125 @@ HEAD 或 CAS 物件，把那種倉當成新的會**只因為打開它就偷偷�
 *   宣告內容或 `.oo` 布局。
 *   規格正文。
 *   本弧探針。
+
+---
+
+## 9. 驗收回合（驗收方，2026-09-13）
+
+**結論：通過，一個修補回合（R-1）。** I1 完全兌現且經獨立複驗；I2 的 34 列表交了，
+**其中一列的判定是錯的**，見 §9.3。
+
+### 9.1 通過的部分
+
+| 檢查 | 結果 |
+| :-- | :-- |
+| diff 純度 | ✅ 只動 `crates/interpreter/src/storage.rs`（+39/−7）與本工單的 §N |
+| 探針完整性 | ✅ `git diff 76e786d..9a5f0ad -- <探針>` **0 行**；其他探針檔零改動 |
+| 全工作區 ×3，`--release --no-fail-fast` | ✅ **230 targets／2203 passed／0 failed**，三輪皆 `cargo_rc=0`（驗收方獨立跑，與交付自報一致） |
+| conformance | ✅ **162 vectors, 162 pass, 0 fail** |
+| 身分紅線（真二進位，known-answer 已過並帶對照：`add(1,2)`→`3`／`add(1,3)`→`4`） | ✅ 根 `31745ef0…`、物件 **3**、`layout=5`、`encoding=5` |
+| 跨版本雙向 | ✅ 本版寫 → v0.49.0 讀 rc=0；v0.49.0 寫 → 本版讀 rc=0 |
+| 紅線 R2／R3（真二進位，非只靠探針） | ✅ legacy `3` 仍是 `3` 且未鑄 `objects.format`；`layout=4`／`encoding=4` 原樣 |
+| 構造為真 | ✅ `stat` 顯示 `objects.format` 的 mtime 早於 `format` **120 µs** ⟹ 被觀察的那一份確實最後落地 |
+
+**I1 獨立複驗**（驗收方自己的量測器，不透過探針，**每一組都有 v0.49.0 對照**）：
+
+| 檔案系統 | 並行度 × 回合 | v0.49.0 | 本版 |
+| :-- | :-- | --: | --: |
+| ext4 | 32 × 30 | **29／30 回合紅**（271 個行程被拒） | **0** |
+| tmpfs | 4 × 100 | 5／100 回合紅 | **0** |
+| tmpfs | 32 × 50 | — | **0** |
+
+**⟹ 順帶結掉一筆舊帳**：纏了三弧的 `r4_two_concurrent_discharges_both_survive`
+**三輪全跑都沒有再出現**——因為 Q-045 修的正是它真正的成因。
+（該列在 `WORK_QUEUE` 的改判已於 2026-09-12 更正，本弧是它的收尾。）
+
+### 9.2 §7 六問的複核
+
+**2**（構造）✅ 且已由 `stat` 證實。**4**（兩條紅線各走哪枝）✅ 與量測一致。
+**5**（幾個檔案系統）✅ 兩個，且交付明說沒有第三個。**6** ✅。
+**3**（除已知外找到幾格）——**這一題的答案不完整，見 §9.3。**
+
+**第 34 列（`fs_guard` 最長既有前綴）驗收方替它量了**，因為交付自己寫的是
+「**可能**弱化 symlink 邊界」，而那是 `.oo` 的安全邊界，不能以「可能」結案。
+〔量，含活對照組〕四種分量寫法——`.oo/HEAD`／`sub/../.oo/HEAD`／
+**`dangling/../.oo/HEAD`**（斷掉的符號連結分量，`exists()` 為 false 的無權限路徑）／
+**`alias/HEAD`**（符號連結指向 `.oo`）——**全部得到 `_|_ ;; %cause: #store_boundary`**，
+`.oo/HEAD` 的 sha256 前後相同；〔對照〕同一支程式寫 `ok2.txt` 得 `#true ;; %effect: #io`
+且檔案確實出現 ⟹ **量測碰得到目標**。
+**⟹ 未重現。記為「未重現且有對照」，不是「安全」**——EACCES 那個變體不可達，
+因為不可搜尋的分量本來就讓寫入失敗。
+
+### 9.3 R-1 修補：第 11 列的判定是錯的，而錯的地方在它上面一行
+
+`load_architects`（`storage.rs:748`）的 `.exists()` 交付判為「安全 / fail-soft 空集合」。
+**不安全**，而 I2 的那一問正好指到成因：**「下一步會有別的東西抓到」的那個下一步，
+就是保證沒有人抓得到的那一行**——
+
+```rust
+lib.rs:939    .load_architects(base_dir)
+              .unwrap_or_else(|_| std::collections::HashSet::new())
+```
+
+`load_architects` **確實**為不可讀的名冊建了具名的 `cannot_read`。呼叫端把它丟掉。
+
+〔量 2026-09-13，本交付二進位，**三個對照組**〕
+
+| 情形 | 結果 |
+| :-- | :-- |
+| 沒有名冊檔（正當的空） | `Refine commit: …` rc=0 ✅ 依設計豁免 |
+| 名冊不含本鑰、可讀 | rc=1 `signer … not in architect_registry` ✅ **檢查是活的** |
+| 名冊含本鑰 | rc=0 ✅ |
+| **名冊不含本鑰、`chmod 000`** | **`Refine commit: …` rc=0** ❌ |
+| 〔另量〕`.oo` 整個不可搜尋 | rc=1 `cannot read \`.oo/format\`: permission denied` ← **本交付新加的 `try_exists` 擋掉了外圈** |
+
+**為什麼是 fail-open 不是 fail-safe**：空的名冊使
+`bootstrap_exempt = self.head.is_none() \|\| architect_reg.is_empty()`（`universe.rs:1547`）為真，
+於是 `skip_membership = bootstrap_exempt && registry.is_empty()`（`authority.rs:64`）為真
+⟹ **成員檢查整個跳過**。一個讀不到的白名單**不會關閉，它會靜默地不再是白名單**。
+
+**⚠ 這不是新法，而且本專案已經對同一個塌陷判過一次。**
+`store_boundary_probe_test::red_exists_on_store_is_refused_not_answered_false` 的註解逐字：
+「Legibility (**the v0.2.41 rule**): a refusal that renders as `#false` is
+**indistinguishable from "the file is not there"**, so it is not an audit face.」
+而 `discovery_trust` 那一弧把契約寫死了：「Malformed, unreadable, non-canonical or unknown
+input is a **NAMED error — never silently empty**」，並在同一份註解裡把
+`architects.json` 點名為「**R4–R7 forbid copying that precedent**」的那個先例。
+**先例被禁止複製，本體從來沒有被修。**
+
+#### R-1 的不變式（不是機制）
+
+> **一個讀不到的 `.oo/architects.json`，不得與一個不存在的 `.oo/architects.json`
+> 得到同一個結果。**
+
+三點界定：
+
+1. **修補必須讓答案抵達某個人。** 只把 `load_architects` 的 `.exists()` 換成 `try_exists`
+   **不改變任何可觀測行為**，因為呼叫端仍會吞掉。這條不變式講的是答案的去向，不是拼法。
+2. **載體由 D63 決定，不由本工單指定**：不可讀的設定檔是**邊界**的載體 ⟹ rc≠0。
+   **在 init 就具名拒絕，或在 refine 時具名拒絕，兩者都通過 R2。**
+3. **不要順手改 `bootstrap_exempt` 的語義。** 「沒有名冊 ⟹ 豁免」是既有設計
+   （R2 的對照組 1 釘住它）。本修補只要求**讀不到**不要走進那一枝。
+
+#### 探針 R2（驗收方所加，現況紅）
+
+`r2_an_unreadable_whitelist_is_not_an_absent_one`，**三個對照組全部在同一次執行內**
+（沒有名冊 → 過／不含本鑰且可讀 → 拒且具名 `architect_registry`／含本鑰 → 過），
+目標為不含本鑰且 `chmod 000`。逐字失敗訊息：
+
+```
+an unreadable whitelist was read as no whitelist: the refine ran with rc=0
+and no membership check.
+```
+
+**本弧探針基線更新為 5 綠 1 紅**（R1 已由本交付轉綠）。
+
+### 9.4 給交付方的話
+
+I1 這一格做得很乾淨：**謂詞留在 `format`（G2／G3 都保住了），只把被觀察的那一份挪到最後落地**
+——那正是「用構造消掉尚未」而不是「偵測尚未」。`try_exists` 那三處也順手把外圈關掉了，
+連帶擋住了 `.oo` 不可搜尋時的 architects 塌陷（見 §9.3 最後一列）。
+**R-1 只有一格**，而它是那張 34 列表上唯一一列，交付自己的答案（「fail-soft 空集合」）
+描述的是**形狀**而不是**那一問**。
+
+## R. 修補回報（R-1，交付方填）
