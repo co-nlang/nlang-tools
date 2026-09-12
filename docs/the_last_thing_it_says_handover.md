@@ -307,3 +307,33 @@ known-answer：`eval '~%Math./add (1,2)'` → `3` rc=0。離開碼直接取。
 ### N.7 你認為需要改規格之處
 
 **先回報再動。** `REAL_03` §6.6 的三種驗證結果之外，本弧讓「不透明」成為第四種可觀測答案，但沒有給它 `%cause`。若規格要把不透明收成標籤，那是登記簿的事，不是本弧該造的詞。`#[unix_sigpipe]` 若日後在本工具鏈穩定，可以換掉 `signal(2)` 呼叫，行為應相同。
+
+---
+
+## R. 修補回報（R-1，交付方填）
+
+### R.1 射程
+
+`.oo/savepoints` 不可讀時，`oo evolve` 回 `cannot read .oo/savepoints: permission denied`，rc=1，不含 `os error`／宿主 Debug。`savepoint.rs` 的 `read_dir`、讀檔、`create_dir_all` 走與儲存層同一個 `operator_io_reason`。缺席仍是空清單（目錄不存在不是失敗）。
+
+**未動** `builtins/io.rs`／`csv.rs`／`peers.rs`／`discovery_config.rs`。§9.2 nit 與 §9.3 flake 不在本修補。
+
+### R.2 順手改動
+
+無。未 rustfmt `savepoint.rs` 整檔。本弧探針一字未動。§9 未動。
+
+### R.3 數字
+
+known-answer：`eval '~%Math./add (1,2)'` → `3` rc=0。身分：`31745ef0…`／`7038e250…`／物件 3／layout=5／encoding=5。conformance 162／162。本弧探針 9／9。
+
+量：`chmod 000 .oo/savepoints` → `evolve` 如上；`status` 仍 rc=0 且不洩漏；`commit` 現在也走同一句（寫 ○ 必須讀該目錄），仍無 errno。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 229 | 2197 | 1 | `r4_two_concurrent_discharges_both_survive` | 2 | 101 |
+| 2 | 229 | 2198 | 0 | — | 0 | 0 |
+| 3 | 229 | 2198 | 0 | — | 0 | 0 |
+
+第 1 輪那支是 §9.3 已對照的並行 flake，非本修補引入。`^error` 皆 cargo 包裝。
