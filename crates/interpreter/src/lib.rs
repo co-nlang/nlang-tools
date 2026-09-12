@@ -25,6 +25,7 @@ pub mod ladd;
 pub mod lattice_sketch;
 pub mod observation;
 pub mod oml;
+pub mod operator_io;
 pub mod oodp;
 pub mod peers;
 pub mod routing;
@@ -39,6 +40,7 @@ use crate::builtins::create_default_builtins;
 pub use crate::dispatch::{MorphismDispatchResult, MorphismDispatchResult as DispatchResult};
 pub use crate::observation::{handle_resource_exhausted, ObservationState};
 pub use crate::scratch::ScratchDir;
+pub use crate::operator_io::operator_io_reason;
 pub use crate::storage::{value_address_matches, ObjectStore, StoreReadError};
 use crate::type_constraint::{
     get_type_constraint_name, is_type_constraint_combo, is_user_field_type_combo, TypeConstraint,
@@ -4274,9 +4276,10 @@ impl Ouroboros {
                     Ok(v) => v,
                     Err(e) => {
                         // Q-031 class: do not fold "held but unopenable" into
-                        // absence. The four StoreReadError variants already
-                        // name the four answers; `Err(_)` was the only
-                        // spelling the compiler could not see.
+                        // absence. Unreadable is a fifth answer (the store
+                        // could not be read); it is not MissingKey. No new
+                        // %cause: `#object_undecodable` is the registered
+                        // tag for "integrity unknown".
                         use crate::storage::StoreReadError;
                         let (cause, message) = match e.downcast_ref::<StoreReadError>() {
                             Some(StoreReadError::NotFound { .. }) => {
@@ -4286,6 +4289,9 @@ impl Ouroboros {
                                 (BottomCause::CaidMismatch, err.to_string())
                             }
                             Some(err @ StoreReadError::ObjectUndecodable { .. }) => {
+                                (BottomCause::ObjectUndecodable, err.to_string())
+                            }
+                            Some(err @ StoreReadError::Unreadable { .. }) => {
                                 (BottomCause::ObjectUndecodable, err.to_string())
                             }
                             Some(err @ StoreReadError::StandardRootUnavailable { .. }) => {

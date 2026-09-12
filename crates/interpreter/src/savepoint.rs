@@ -17,9 +17,24 @@ use crate::value::{ComboVal, ContentHash};
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 pub const DIR: &str = "savepoints";
+
+fn cannot_read_savepoints(err: &io::Error) -> anyhow::Error {
+    anyhow::anyhow!(
+        "cannot read .oo/savepoints: {}",
+        crate::operator_io_reason(err)
+    )
+}
+
+fn cannot_write_savepoints(err: &io::Error) -> anyhow::Error {
+    anyhow::anyhow!(
+        "cannot write .oo/savepoints: {}",
+        crate::operator_io_reason(err)
+    )
+}
 
 fn dir(base: &Path) -> PathBuf {
     base.join(".oo").join(DIR)
@@ -27,12 +42,15 @@ fn dir(base: &Path) -> PathBuf {
 
 fn paths(base: &Path) -> Result<Vec<PathBuf>> {
     let d = dir(base);
-    if !d.exists() {
-        return Ok(Vec::new());
-    }
+    let rd = match fs::read_dir(&d) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(cannot_read_savepoints(&e)),
+    };
     let mut out = Vec::new();
-    for e in fs::read_dir(&d)? {
-        let p = e?.path();
+    for e in rd {
+        let e = e.map_err(|err| cannot_read_savepoints(&err))?;
+        let p = e.path();
         if !p.is_file() {
             continue;
         }
@@ -75,7 +93,13 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
             .and_then(|s| s.to_str())
             .ok_or_else(|| anyhow::anyhow!("savepoint: unreadable name"))?
             .to_string();
-        let text = fs::read_to_string(p)?;
+        let text = match fs::read_to_string(p) {
+            Ok(t) => t,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                continue;
+            }
+            Err(e) => return Err(cannot_read_savepoints(&e)),
+        };
         let parents = parse_savepoint_parents(&text);
         let combo = savepoint_combo_text(&text).to_string();
         let commit = parse_savepoint_commit(&text);
@@ -130,7 +154,7 @@ fn tips_of(nodes: &BTreeMap<String, Circle>) -> Vec<String> {
 
 fn write_circle(base: &Path, body: &str) -> Result<String> {
     let d = dir(base);
-    fs::create_dir_all(&d)?;
+    fs::create_dir_all(&d).map_err(|e| cannot_write_savepoints(&e))?;
     let leftover = d.join("LOG");
     if leftover.exists() {
         let _ = fs::remove_file(&leftover);
@@ -310,6 +334,9 @@ pub fn commit_is_ancestor(
 
 #[allow(dead_code)]
 pub fn load(base: &Path, id: &str) -> Result<ComboVal> {
-    let text = fs::read_to_string(dir(base).join(id))?;
+    let text = match fs::read_to_string(dir(base).join(id)) {
+        Ok(t) => t,
+        Err(e) => return Err(cannot_read_savepoints(&e)),
+    };
     decode_staged(&text)
 }

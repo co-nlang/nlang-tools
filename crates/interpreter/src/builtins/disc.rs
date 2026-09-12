@@ -181,6 +181,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     Mismatch,
                     Absent,
                     StandardRootUnavailable,
+                    Unreadable,
                 }
 
                 fn try_local(
@@ -210,6 +211,9 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             Some(crate::storage::StoreReadError::StandardRootUnavailable { .. }) => {
                                 Err(LocalRead::StandardRootUnavailable)
                             }
+                            Some(crate::storage::StoreReadError::Unreadable { .. }) => {
+                                Err(LocalRead::Unreadable)
+                            }
                         },
                     }
                 }
@@ -228,6 +232,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                     Ok(val) => return observe(val),
                                     Err(LocalRead::Mismatch) => return BottomCause::CaidMismatch.into(),
                                     Err(LocalRead::StandardRootUnavailable) => return BottomCause::Conflict.into(),
+                                    Err(LocalRead::Unreadable) => return BottomCause::ObjectUndecodable.into(),
                                     Err(LocalRead::Absent) => {}
                                 }
                             }
@@ -257,6 +262,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         Ok(val) => results.push(observe(val)),
                         Err(LocalRead::Mismatch) => saw_mismatch = true,
                         Err(LocalRead::StandardRootUnavailable) => saw_standard_root_unavailable = true,
+                        Err(LocalRead::Unreadable) => saw_mismatch = true,
                         Err(LocalRead::Absent) => {}
                     }
 
@@ -279,6 +285,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                     Ok(val) => results.push(observe(val)),
                                     Err(LocalRead::Mismatch) => saw_mismatch = true,
                                     Err(LocalRead::StandardRootUnavailable) => saw_standard_root_unavailable = true,
+                                    Err(LocalRead::Unreadable) => saw_mismatch = true,
                                     Err(LocalRead::Absent) => {}
                                 }
                             }
