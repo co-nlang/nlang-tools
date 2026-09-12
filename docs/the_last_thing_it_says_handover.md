@@ -177,6 +177,69 @@ R3 要求六格**全部**真的失敗，否則讀數作廢。
 
 ---
 
+## 9. 驗收回合（驗收方填，2026-09-12）
+
+**探針 9／9、身分紅線全過、conformance 162／162、正常路徑逐位元組未變。**
+**一項修補。**
+
+### 9.1 修補 R-1：`.oo/savepoints/` 不可讀時仍回裸 errno
+
+〔量 2026-09-12，交付建置，離開碼直接取，**共掃 12 格注入**（工單的 6 格 ＋ 驗收方另造 6 格）〕
+
+```
+chmod 000 .oo/savepoints  →  oo evolve m.n
+Error: Permission denied (os error 13)          rc=1
+```
+
+**對照組（同一批注入，全部是引擎自己的話）**：
+
+| 注入 | 答句 |
+| :-- | :-- |
+| `.oo/objects.format` 不可讀 → `log` | ``cannot read `.oo/objects.format`: permission denied`` ✅ |
+| `.oo/injections` 不可讀 → `evolve` | `injection injections: unreadable` ✅ |
+| `.oo/savepoints` 不可讀 → `status`／`commit` | 不洩漏 ✅ |
+| `.oo/HEAD` 內容壞掉 → `log` | `Invalid CAID format` ✅ |
+| **`.oo/savepoints` 不可讀 → `evolve`** | **`Permission denied (os error 13)`** ❌ |
+
+⟹ **全樹只剩這一格。**
+
+**成因是交付自己在 §N.4 第 2 題寫下的判準把線畫錯了地方。** 逐字：
+「沒有改的：⋯`savepoint.rs` 的 `?`⋯**那些不是「引擎自己的倉」**」。
+**而 `.oo/savepoints/` 就在 `.oo/` 裡——引擎建立、引擎擁有、只有引擎讀寫。它正是「引擎自己的倉」。**
+
+**這不是射程寫得不夠。** S2 逐字寫的是「**引擎自己的 IO 失敗，必須由引擎說出來**」，
+且其下逐字寫著「**這句話做得字面正確，還有什麼會壞：只修 `.oo/HEAD` 那兩格**」。
+**排除清單本身沒有錯——錯的是它把一個 `.oo/` 內的路徑放進了「不是引擎自己的倉」那一欄。**
+
+**射程**：只有這一格。**不得**順手把 `builtins/io.rs`／`csv.rs`／`peers.rs`／`discovery_config.rs`
+一起改——那些是 n/ 程式自己的 IO 與網路面，交付把它們排除是對的。
+
+### 9.2 兩件記錄，不要求修
+
+*   **`.oo` 整個不可讀時 `status` 的答句帶著一個內部函數名**：
+    〔量〕`Error: atomic_write temp create <工作區絕對路徑>: permission denied`。
+    理由是引擎的話、路徑是操作者自己的工作區，**但 `atomic_write` 在 n/ 裡沒有拼法**。
+    **記為 nit，不列修補**；若日後 §1.3 要把「內部函數名」也收進去，這是它的判例。
+*   **交付 §N.4 第 1 題末句未被重現**：該句稱 `fmt` 「現在會被 SIGPIPE 殺掉而不是假裝寫成功」。
+    〔量〕`oo fmt big.n | head -1` **仍為 rc=0**（`status`／`log` 為 **rc=141**，即 128+13，被 SIGPIPE 結束、stderr 0 位元組）。
+    **不影響任何射程或探針**——工單明文允許安靜退出——但那句陳述本身沒有被重現，記此以免日後被當成量到的事實。
+
+### 9.3 兩支 flake 已對照量測，非本弧引入
+
+交付第 2／3 輪各報一支：`r4_two_concurrent_discharges_both_survive`（連續第四弧）與
+`pin_concurrent_first_mint_yields_one_key`。〔驗收方對照量測，各 10 輪隔離〕
+
+| | 交付樹 | `v0.48.0` |
+| :-- | :-- | :-- |
+| `r4_two_concurrent_discharges_both_survive` | **1／10 失敗** | **2／10 失敗** |
+| `pin_concurrent_first_mint_yields_one_key` | 0／10 | 0／10 |
+
+⟹ **`SIG_DFL` 沒有讓並行測試變差。**
+**⚠ 但第一列的數字要回寫 Inbox**：先前記的是「隔離 10 輪 8／10」（Q-002）與「隔離 8／8 過」（Q-043），
+**本次量到它在隔離下也會失敗（1–2／10）** ⟹ **它不只是負載敏感，而 Inbox 那一列的「未再現」讀數要作廢。**
+
+---
+
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照
