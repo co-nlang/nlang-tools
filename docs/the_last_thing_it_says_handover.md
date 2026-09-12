@@ -337,3 +337,30 @@ known-answer：`eval '~%Math./add (1,2)'` → `3` rc=0。身分：`31745ef0…`�
 | 3 | 229 | 2198 | 0 | — | 0 | 0 |
 
 第 1 輪那支是 §9.3 已對照的並行 flake，非本修補引入。`^error` 皆 cargo 包裝。
+
+---
+
+## 9.4 修補複驗（驗收方，2026-09-12）
+
+**通過。**
+
+*   **diff 純度**：修補只動 `savepoint.rs` ＋ §R；**探針與其他測試 0 行變動**；
+    **明文禁止順手改的四個檔（`builtins/io.rs`／`csv.rs`／`peers.rs`／`discovery_config.rs`）皆 0 行**。
+*   **R-1 已修**：`chmod 000 .oo/savepoints` → `oo evolve` 逐字
+    `Error: cannot read .oo/savepoints: permission denied`、rc=1。
+*   **重掃 18 格注入**（原 12 格 ＋ 修補後另造 6 格），
+    **命中 `os error`／`panicked`／`/rustc/` 者：0**。
+*   **S3 仍可分**：`objects` 不可讀 → `cannot read object hash:…: permission denied`；
+    根物件被移除 → `CAID not found in local store`。**兩者不同。**
+*   **SIGPIPE 複驗**：`status`／`log` **rc=141、stderr 0 位元組**。
+*   探針 **9／9**；身分 `31745ef0…`／⊥ 根 `cbb7ef81…`／標準根 `7038e250…`／物件 3／`layout=5`／`encoding=5`；
+    正常路徑 `status`／`log` 與 `v0.48.0` **逐位元組相同**；**conformance 162／162**；跨版本雙向 rc=0。
+*   **全樹 ×3**：`229／2198／0` 兩輪；另一輪為 §9.3 已對照的並行 flake。
+
+### 記其功：修補把 S3 的教訓帶到了沒有被要求的地方
+
+修補**順手移除了 `savepoint.rs` 裡的 `if !d.exists()` 前置檢查**，
+改為只以 `ErrorKind::NotFound` 判定「缺席」。
+**那正是 §9.1 之外、`REAL_03` §6.6 判例所描述的同一個陷阱**
+——`exists()` 在權限被拒時回 false，於是「讀不到」被寫成「不在」。
+**工單沒有要求這一步，R-1 也沒有；交付自己把類別帶過去了。**
