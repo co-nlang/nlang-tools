@@ -417,6 +417,7 @@ enum TrustCmd {
 }
 
 fn main() -> anyhow::Result<()> {
+    oo::restore_sigpipe_default();
     // Eval recursion (morphism apply / left-deep math) can exceed the default
     // main-thread stack before the engine depth horizon engages. Interpreter
     // probes use 64 MiB threads; match that for the CLI entrypoint.

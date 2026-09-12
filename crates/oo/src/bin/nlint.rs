@@ -17,6 +17,7 @@ struct Cli {
 }
 
 fn main() -> std::process::ExitCode {
+    oo::restore_sigpipe_default();
     let cli = Cli::parse();
     let code = oo::nlint::run_cli(&cli.path, cli.json);
     std::process::ExitCode::from(code as u8)

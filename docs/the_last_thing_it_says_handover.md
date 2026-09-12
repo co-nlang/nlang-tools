@@ -181,14 +181,62 @@ R3 要求六格**全部**真的失敗，否則讀數作廢。
 
 ### N.1 射程逐項對照
 
+**S1。** 行程啟動時把 `SIGPIPE` 從 rustc 的 `SIG_IGN` 恢復成 `SIG_DFL`（`oo::restore_sigpipe_default`，`oo` 與 `nlint` 的 `fn main` 第一行都呼叫）。關閉的讀者讓行程被訊號結束，而不是 `println!` panic。這一個地方覆蓋全部操作者輸出，含 `main.rs` 的 101 個 `print!` 點。安靜退出（被 SIGPIPE 殺掉、stderr 空）是本弧允許的兩個答案之一。判準：R1、R2、G2。
+
+**S2。** `operator_io_reason` 下放到 interpreter，儲存層所有會把宿主 `io::Error` 交到操作者面前的路徑都走它（收尾臂 `_ => "unreadable"` 仍在）。`.oo/HEAD` 不可讀 → `cannot read .oo/HEAD: permission denied`，不再是 `Permission denied (os error 13)`。判準：R3、G4、G5。
+
+**S3。** `read_object_raw` 不再先 `Path::exists()`（EACCES 時 `exists` 回 false，於是把不透明報成不存在）。`NotFound` 只來自 `ErrorKind::NotFound`；`InvalidData`（物件在、不是 UTF-8）仍是 `#object_undecodable`；權限等其餘錯誤是新的 `StoreReadError::Unreadable`，Display 為 `cannot read object {caid}: {reason}`。判準：R4。
+
+**S4。** 探針一字未動。G1–G5、R1–R4 全綠。
+
 ### N.2 順手改動（逐項指名）
+
+*   `operator_io_reason` 從 `crates/oo` 移到 `crates/interpreter`（`oo` 再 `pub use`）。兩個 crate 共用同一個全函數；Q-042 的來源檔入口行為不變。
+*   `atomic_write` 與儲存層 `create_dir_all`／`list_digests`／`read_raw_digest`／`architects.json` 的錯誤同樣走 `operator_io_reason`，不再夾 `{e}`。
+*   `.oo/format`／`.oo/objects.format` 的讀取改成「缺席」與「不可讀」分開；缺席句仍是原來那句。
+*   `StoreReadError::Unreadable` 加進 refine／OODP／`disc.find`／位址解析的窮盡 match，不當成 `NotFound`。
+*   單元測試 `operator_io::tests::every_mapped_kind_is_engine_words`。
+*   `read_to_string` 的 `InvalidData`（物件在、但不是 UTF-8）仍走 `#object_undecodable`，不走 Unreadable。位元組被翻掉是完整性事件（`wire_says_why` R4），不是倉不透明。
+*   **未 rustfmt** `storage.rs` 整檔，也未掃任何探針。
 
 ### N.3 工單哪裡是錯的
 
+`#[unix_sigpipe = "sig_dfl"]` 在本機 `rustc 1.96.1` 上無論當 crate 屬性還是掛在 `fn main` 上都是 `cannot find attribute unix_sigpipe`。探針沒有錯。改用 POSIX `signal(SIGPIPE, SIG_DFL)`，效果與工單建議的「行程啟動時恢復預設處置」相同。
+
 ### N.4 工單指名要你回答的問題
+
+**1.** 決定它的不是輸出大小，是**寫出路徑有沒有 unwrap**。`status`／`log` 用 `println!`：libstd 在 EPIPE 上 panic（`stdio.rs` 那一行）。`fmt` 走 `let _ = writeln!(stdout(), …)`，把同一個 EPIPE 丟掉，所以 71,787 B 穿過關閉的讀者也不 panic。`SIG_DFL` 在行程啟動設一次，所有 `print!`／`println!`／`writeln!` 都不再有機會把 EPIPE 變成 panic——包括那 101 個點，也包括 `fmt`（它現在會被 SIGPIPE 殺掉而不是假裝寫成功；這仍是安靜退出，本弧允許）。
+
+**2.** 工單量的是 25 點／10 檔／7 個直接 `?`。本弧處理的是**儲存層那一類**，落點是 `storage.rs` 裡每一條會把 `io::Error` 交出去的路徑（HEAD、物件讀取、format／objects.format、list、raw digest、atomic_write、create_dir_all、architects.json），不是只改 R3 點名的兩條 HEAD。沒有改的：n/ 程式自己的 `%io`／csv（`builtins/io.rs`、`csv.rs`）、`peers.rs`、`discovery_config.rs`、`savepoint.rs` 的 `?`、`injections.rs` 的讀、`universe.rs` 的 pin／staged 讀（多數 `.ok()`／`let _ =`）、`value.rs` 的身分檔、`scratch.rs`。那些不是「引擎自己的倉」。`atomic_write` 被注入／savepoint／peers 共用，它們的寫失敗現在也不再夾 errno。
+
+**3.** 操作者看到的詞是 **`cannot read object …: permission denied`**（`operator_io_reason` 的 `PermissionDenied` 臂；其他 kind 走 `unreadable`）。**不是新造的 `%cause`，也沒進 `TAG_REGISTRY`。** 登記簿裡 `#object_undecodable` 是「路徑上有物件但解不開」；`#store_boundary` 是語言層用路徑觸及 `.oo/`。兩者都不是「倉在、讀不到」。CLI 用散文，與 Q-042 的 `permission denied` 同一本詞彙。n/ 位址解析沒有第五個 `BottomCause` 可用，把 `Unreadable` 映到既有的 `#object_undecodable`（完整性未知），訊息仍是上面那句散文——這是為了不登記新標籤，不是為了讓探針綠（探針不測 n/ 位址）。
+
+**4.** 沒有變差。缺席仍說 `.oo/format` is absent。不可讀現在說 `cannot read `.oo/format`: permission denied`，仍然點出是哪個檔，而且不再把不可讀壓成缺席。
+
+**5.** 沒有。沒有吞掉失敗（G4），沒有讓正常路徑變安靜（G2），沒有改探針，沒有給不透明登記一個未登記的 `%cause`。SIGPIPE 走安靜退出而不是具名報錯，是本弧明確允許的。
 
 ### N.5 探針
 
+本弧探針沒有 `#[ignore]`，**一字未動**（`git diff` 該檔為空）。G1–G5 綠；R1–R4 綠。無 VOID READING。
+
 ### N.6 數字
 
+known-answer：`eval '~%Math./add (1,2)'` → `3` rc=0。離開碼直接取。
+
+身分：`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`；標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`；物件 **3**；`layout=5`；`encoding=5`。
+
+符合性：**162 vectors, 162 pass, 0 fail**。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 229 | 2198 | 0 | — | 0 | 0 |
+| 2 | 229 | 2197 | 1 | `r4_two_concurrent_discharges_both_survive` | 2 | 101 |
+| 3 | 229 | 2196 | 2 | `r4_two_concurrent_discharges_both_survive`；`pin_concurrent_first_mint_yields_one_key` | 3 | 101 |
+
+第 2／3 輪的失敗是既有的並行注入／並行 mint 競態（隔離重跑皆綠），不是本弧引入的。`^error` 皆 cargo 的 `error: test failed`／`error: N target failed:`。
+
 ### N.7 你認為需要改規格之處
+
+**先回報再動。** `REAL_03` §6.6 的三種驗證結果之外，本弧讓「不透明」成為第四種可觀測答案，但沒有給它 `%cause`。若規格要把不透明收成標籤，那是登記簿的事，不是本弧該造的詞。`#[unix_sigpipe]` 若日後在本工具鏈穩定，可以換掉 `signal(2)` 呼叫，行為應相同。

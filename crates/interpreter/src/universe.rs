@@ -1513,6 +1513,9 @@ impl Universe {
                             Some(crate::storage::StoreReadError::StandardRootUnavailable {
                                 ..
                             }) => Err(anyhow::anyhow!("refine operand cannot be opened: {}", e)),
+                            Some(crate::storage::StoreReadError::Unreadable { .. }) => {
+                                Err(anyhow::anyhow!("refine operand cannot be read: {}", e))
+                            }
                             // Present and lying, or present and undecodable:
                             // the check cannot be performed, and pretending it
                             // passed is the fail-open this arc exists to close.
@@ -1593,6 +1596,12 @@ impl Universe {
                                 e
                             ));
                         }
+                        Some(crate::storage::StoreReadError::Unreadable { .. }) => {
+                            return Err(anyhow::anyhow!(
+                                "refine shadow scan cannot read commit {ch}: {}",
+                                e
+                            ));
+                        }
                         Some(other) => {
                             let kind = match other {
                                 crate::storage::StoreReadError::CaidMismatch { .. } => {
@@ -1605,6 +1614,9 @@ impl Universe {
                                 crate::storage::StoreReadError::StandardRootUnavailable {
                                     ..
                                 } => {
+                                    unreachable!("handled by the abort arm above")
+                                }
+                                crate::storage::StoreReadError::Unreadable { .. } => {
                                     unreachable!("handled by the abort arm above")
                                 }
                             };
@@ -1629,6 +1641,12 @@ impl Universe {
                                 e
                             ));
                         }
+                        Some(crate::storage::StoreReadError::Unreadable { .. }) => {
+                            return Err(anyhow::anyhow!(
+                                "refine shadow scan cannot read root of commit {ch}: {}",
+                                e
+                            ));
+                        }
                         Some(other) => {
                             let kind = match other {
                                 crate::storage::StoreReadError::CaidMismatch { .. } => {
@@ -1641,6 +1659,9 @@ impl Universe {
                                 crate::storage::StoreReadError::StandardRootUnavailable {
                                     ..
                                 } => {
+                                    unreachable!("handled by the abort arm above")
+                                }
+                                crate::storage::StoreReadError::Unreadable { .. } => {
                                     unreachable!("handled by the abort arm above")
                                 }
                             };

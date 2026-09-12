@@ -3,8 +3,26 @@ use crate::StandardRootSet;
 use anyhow::Result;
 use serde::Serialize;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+fn cannot_read(what: impl std::fmt::Display, err: &io::Error) -> anyhow::Error {
+    anyhow::anyhow!("cannot read {what}: {}", crate::operator_io_reason(err))
+}
+
+fn cannot_write(what: impl std::fmt::Display, err: &io::Error) -> anyhow::Error {
+    anyhow::anyhow!("cannot write {what}: {}", crate::operator_io_reason(err))
+}
+
+/// Read a store file. Absence keeps its existing sentence; any other host
+/// error is named by the engine, never by errno.
+fn read_named_file(path: &Path, named: &str, absent: &str) -> Result<String> {
+    match fs::read_to_string(path) {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => anyhow::bail!("{absent}"),
+        Err(e) => Err(cannot_read(named, &e)),
+    }
+}
 
 /// Write `contents` so a concurrent reader never sees a truncated (or briefly
 /// absent) target. Same-directory temp + `fsync` + `rename`. The temp is
@@ -18,7 +36,7 @@ pub fn atomic_write(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
+    fs::create_dir_all(parent).map_err(|e| cannot_write(parent.display(), &e))?;
 
     // Prefix avoids the letters "tmp" so a leaked file cannot pass for an
     // object shard name under P1's leftover scan — and leading-dot keeps it
@@ -26,17 +44,17 @@ pub fn atomic_write(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
     let mut tmp = tempfile::Builder::new()
         .prefix(".partial-")
         .tempfile_in(parent)
-        .map_err(|e| anyhow::anyhow!("atomic_write temp create {}: {e}", parent.display()))?;
+        .map_err(|e| anyhow::anyhow!("atomic_write temp create {}: {}", parent.display(), crate::operator_io_reason(&e)))?;
     tmp.write_all(contents)
-        .map_err(|e| anyhow::anyhow!("atomic_write write {}: {e}", path.display()))?;
+        .map_err(|e| anyhow::anyhow!("atomic_write write {}: {}", path.display(), crate::operator_io_reason(&e)))?;
     tmp.as_file()
         .sync_all()
-        .map_err(|e| anyhow::anyhow!("atomic_write fsync {}: {e}", path.display()))?;
+        .map_err(|e| anyhow::anyhow!("atomic_write fsync {}: {}", path.display(), crate::operator_io_reason(&e)))?;
 
     // persist = rename over the target; on failure the TempPath still deletes
     // the temp when dropped, so nothing is left for a directory walk to find.
     tmp.persist(path)
-        .map_err(|e| anyhow::anyhow!("atomic_write install {}: {}", path.display(), e.error))?;
+        .map_err(|e| anyhow::anyhow!("atomic_write install {}: {}", path.display(), crate::operator_io_reason(&e.error)))?;
     Ok(())
 }
 
@@ -63,6 +81,13 @@ pub enum StoreReadError {
     StandardRootUnavailable {
         requested: ContentHash,
         standard_digest: String,
+    },
+    /// The digest path could not be read. Distinct from [`Self::NotFound`]:
+    /// an unreadable store is not an absent object (REAL_03 §6.6). `reason`
+    /// is [`crate::operator_io_reason`], never host Display.
+    Unreadable {
+        requested: ContentHash,
+        reason: &'static str,
     },
 }
 
@@ -92,6 +117,9 @@ impl std::fmt::Display for StoreReadError {
                 f,
                 "refusing root: standard root digest {standard_digest} is unavailable for {requested}"
             ),
+            StoreReadError::Unreadable { requested, reason } => {
+                write!(f, "cannot read object {requested}: {reason}")
+            }
         }
     }
 }
@@ -147,11 +175,11 @@ fn split_layout_is_known(n: u32) -> bool {
 
 /// Trimmed `.oo/format` body. A missing file is the same refusal as open.
 pub fn read_layout_declaration(base_dir: &Path) -> Result<String> {
-    let raw = fs::read_to_string(base_dir.join(".oo").join("format")).map_err(|_| {
-        anyhow::anyhow!(
-            "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
-        )
-    })?;
+    let raw = read_named_file(
+        &base_dir.join(".oo").join("format"),
+        "`.oo/format`",
+        "cannot determine this store's layout: `.oo/format` is absent; refusing to open",
+    )?;
     Ok(raw.trim().to_string())
 }
 
@@ -206,17 +234,21 @@ impl ObjectStore {
 
     fn declared_encoding(base_dir: &Path) -> Result<u32> {
         let oo = base_dir.join(".oo");
-        let raw = fs::read_to_string(oo.join("format")).map_err(|_| anyhow::anyhow!(
-            "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
-        ))?;
+        let raw = read_named_file(
+            &oo.join("format"),
+            "`.oo/format`",
+            "cannot determine this store's layout: `.oo/format` is absent; refusing to open",
+        )?;
         let declaration = raw.trim();
         if let Some(n) = split_layout_number(declaration) {
             if !split_layout_is_known(n) {
                 anyhow::bail!("store layout declaration {declaration:?} is not supported")
             }
-            let objects = fs::read_to_string(oo.join("objects.format")).map_err(|_| anyhow::anyhow!(
-                "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open"
-            ))?;
+            let objects = read_named_file(
+                &oo.join("objects.format"),
+                "`.oo/objects.format`",
+                "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open",
+            )?;
             objects.trim().strip_prefix("encoding=").and_then(|v| v.parse::<u32>().ok()).ok_or_else(|| {
                 anyhow::anyhow!("object encoding declaration {:?} is not supported", objects.trim())
             })
@@ -235,17 +267,21 @@ impl ObjectStore {
             return Ok(());
         }
         let layout = oo.join("format");
-        let raw = fs::read_to_string(&layout).map_err(|_| anyhow::anyhow!(
-            "cannot determine this store's layout: `.oo/format` is absent; refusing to open"
-        ))?;
+        let raw = read_named_file(
+            &layout,
+            "`.oo/format`",
+            "cannot determine this store's layout: `.oo/format` is absent; refusing to open",
+        )?;
         let declaration = raw.trim();
         if let Some(n) = split_layout_number(declaration) {
             if !split_layout_is_known(n) {
                 anyhow::bail!("store layout declaration {declaration:?} is not supported; refusing to open");
             }
-            let objects = fs::read_to_string(oo.join("objects.format")).map_err(|_| anyhow::anyhow!(
-                "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open"
-            ))?;
+            let objects = read_named_file(
+                &oo.join("objects.format"),
+                "`.oo/objects.format`",
+                "cannot determine this store's object encoding: `.oo/objects.format` is absent; refusing to open",
+            )?;
             let Some(v) = objects.trim().strip_prefix("encoding=").and_then(|v| v.parse::<u32>().ok()) else {
                 anyhow::bail!("object encoding declaration {:?} is not supported; refusing to open", objects.trim());
             };
@@ -275,7 +311,7 @@ impl ObjectStore {
             && !oo.join("HEAD").exists()
             && !has_cas_objects(&oo.join("objects"));
         if new_store {
-            fs::create_dir_all(&oo)?;
+            fs::create_dir_all(&oo).map_err(|e| cannot_write(oo.display(), &e))?;
             atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;
             atomic_write(&oo.join("objects.format"), format!("encoding={OBJECT_ENCODING_VERSION}\n"))?;
         } else {
@@ -288,7 +324,7 @@ impl ObjectStore {
         };
         let root = oo.join("objects");
         if !root.exists() {
-            fs::create_dir_all(&root)?;
+            fs::create_dir_all(&root).map_err(|e| cannot_write(root.display(), &e))?;
         }
         Ok(Self { root, encoding })
     }
@@ -313,22 +349,25 @@ impl ObjectStore {
     pub fn list_digests(&self) -> Result<Vec<(String, u64)>> {
         let mut out = Vec::new();
         let sha = self.root.join("sha256");
-        if !sha.exists() {
-            return Ok(out);
-        }
-        for a in fs::read_dir(&sha)? {
-            let a = a?;
+        let entries = match fs::read_dir(&sha) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(cannot_read("store objects", &e)),
+        };
+        for a in entries {
+            let a = a.map_err(|e| cannot_read("store objects", &e))?;
             if !a.path().is_dir() {
                 continue;
             }
             let pre = a.file_name().to_string_lossy().to_string();
-            for b in fs::read_dir(a.path())? {
-                let b = b?;
+            let nested = fs::read_dir(a.path()).map_err(|e| cannot_read("store objects", &e))?;
+            for b in nested {
+                let b = b.map_err(|e| cannot_read("store objects", &e))?;
                 if !b.path().is_file() {
                     continue;
                 }
                 let rest = b.file_name().to_string_lossy().to_string();
-                let len = b.metadata()?.len();
+                let len = b.metadata().map_err(|e| cannot_read("store objects", &e))?.len();
                 out.push((format!("{pre}{rest}"), len));
             }
         }
@@ -338,12 +377,15 @@ impl ObjectStore {
     pub fn remove_digest(&self, digest_hex: &str) -> Result<()> {
         let p = self.digest_path(digest_hex);
         if p.exists() {
-            fs::remove_file(&p)?;
+            fs::remove_file(&p).map_err(|e| cannot_write(p.display(), &e))?;
         }
         // Empty two-hex-digit directory.
         if let Some(parent) = p.parent() {
-            if parent.exists() && fs::read_dir(parent)?.next().is_none() {
-                let _ = fs::remove_dir(parent);
+            if parent.exists() {
+                let mut rd = fs::read_dir(parent).map_err(|e| cannot_read(parent.display(), &e))?;
+                if rd.next().is_none() {
+                    let _ = fs::remove_dir(parent);
+                }
             }
         }
         Ok(())
@@ -351,10 +393,11 @@ impl ObjectStore {
 
     pub fn read_raw_digest(&self, digest_hex: &str) -> Result<Vec<u8>> {
         let p = self.digest_path(digest_hex);
-        if !p.exists() {
-            anyhow::bail!("not found");
+        match fs::read(&p) {
+            Ok(b) => Ok(b),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => anyhow::bail!("not found"),
+            Err(e) => Err(cannot_read("store object", &e)),
         }
-        Ok(fs::read(p)?)
     }
 
     pub fn put_value(&self, value: &Value) -> Result<ContentHash> {
@@ -565,10 +608,11 @@ impl ObjectStore {
 
     pub fn get_head(&self, base_dir: &Path) -> Result<Option<ContentHash>> {
         let head_path = base_dir.join(".oo").join("HEAD");
-        if !head_path.exists() {
-            return Ok(None);
-        }
-        let s = fs::read_to_string(head_path)?;
+        let s = match fs::read_to_string(&head_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(cannot_read(".oo/HEAD", &e)),
+        };
         ContentHash::parse(&s.trim())
             .map(Some)
             .map_err(|e| anyhow::anyhow!("{:?}", e))
@@ -577,7 +621,7 @@ impl ObjectStore {
     pub fn set_head(&self, base_dir: &Path, hash: &ContentHash) -> Result<()> {
         let oo_dir = base_dir.join(".oo");
         if !oo_dir.exists() {
-            fs::create_dir_all(&oo_dir)?;
+            fs::create_dir_all(&oo_dir).map_err(|e| cannot_write(oo_dir.display(), &e))?;
         }
         let head_path = oo_dir.join("HEAD");
         atomic_write(&head_path, hash.to_string())?;
@@ -596,7 +640,7 @@ impl ObjectStore {
             return Ok(());
         }
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(|e| cannot_write(parent.display(), &e))?;
         }
         atomic_write(&path, content)?;
         Ok(())
@@ -628,21 +672,33 @@ impl ObjectStore {
     }
 
     /// Read raw bytes at the digest path. Absence → `NotFound` (not IO prose).
+    /// A host error other than NotFound is `Unreadable`, never "not found":
+    /// `Path::exists` returns false on EACCES, which is how an unreadable
+    /// `.oo/objects` used to be reported as an intact miss.
     fn read_object_raw(&self, hash: &ContentHash) -> Result<String> {
         let path = self.hash_to_path(hash);
-        if !path.exists() {
-            return Err(StoreReadError::NotFound {
+        match fs::read_to_string(path) {
+            Ok(s) => Ok(s),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StoreReadError::NotFound {
                 requested: hash.clone(),
             }
-            .into());
+            .into()),
+            // Present, but not UTF-8: a flipped byte is an integrity event,
+            // not an opaque store (wire_says_why R4). Permission / EACCES
+            // stay Unreadable.
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                Err(StoreReadError::ObjectUndecodable {
+                    requested: hash.clone(),
+                    detail: crate::operator_io_reason(&e).to_string(),
+                }
+                .into())
+            }
+            Err(e) => Err(StoreReadError::Unreadable {
+                requested: hash.clone(),
+                reason: crate::operator_io_reason(&e),
+            }
+            .into()),
         }
-        fs::read_to_string(path).map_err(|e| {
-            StoreReadError::ObjectUndecodable {
-                requested: hash.clone(),
-                detail: format!("read failed: {e}"),
-            }
-            .into()
-        })
     }
 
     pub fn save_architects(
@@ -651,7 +707,7 @@ impl ObjectStore {
         architects: &std::collections::HashSet<String>,
     ) -> anyhow::Result<()> {
         let dir = base_dir.join(".oo");
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(&dir).map_err(|e| cannot_write(dir.display(), &e))?;
         let path = dir.join("architects.json");
         let list: Vec<&String> = architects.iter().collect();
         let json = serde_json::to_string(&list)?;
@@ -667,7 +723,13 @@ impl ObjectStore {
         if !path.exists() {
             return Ok(std::collections::HashSet::new());
         }
-        let json = std::fs::read_to_string(path)?;
+        let json = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Ok(std::collections::HashSet::new());
+            }
+            Err(e) => return Err(cannot_read(".oo/architects.json", &e)),
+        };
         let list: Vec<String> = serde_json::from_str(&json)?;
         Ok(list.into_iter().collect())
     }

@@ -433,6 +433,13 @@ pub fn serve_request(
                             format!("OODP integrity #object_undecodable: {requested} ({detail})"),
                         )
                     }
+                    Some(StoreReadError::Unreadable { requested, reason }) => {
+                        let body = refuse(OodpStatus::Conflict, "unreadable", source_id);
+                        (
+                            body,
+                            format!("OODP store unreadable: {requested} ({reason})"),
+                        )
+                    }
                 },
             }
         }
