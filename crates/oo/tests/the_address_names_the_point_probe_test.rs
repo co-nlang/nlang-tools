@@ -164,6 +164,34 @@ fn reads_back(d: &Path, printed: &str) -> Run {
     oo(d, &["fmt", "back.n"])
 }
 
+/// Blank out the fields a formal channel answers for, so that what remains is
+/// exactly what the address is supposed to determine. `%cause` at either end
+/// of the lattice is such a field (REAL_03 6.9's second clause, precedent
+/// TopCaused); everything else is not.
+fn blank_channelled(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    for marker in ["~%__nlang_bottom: #", "cause: #"] {
+        loop {
+            let Some(i) = rest.find(marker) else { break };
+            let after = i + marker.len();
+            let end = rest[after..]
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .map(|k| after + k)
+                .unwrap_or(rest.len());
+            out.push_str(&rest[..after]);
+            out.push_str("<CHANNELLED>");
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        rest = "";
+        // Second pass runs over what the first pass produced.
+        let carried = std::mem::take(&mut out);
+        rest = Box::leak(carried.into_boxed_str());
+    }
+    rest.to_string()
+}
+
 // =====================================================================
 // G1-G6: green at the baseline, and they are this arc's red lines.
 // =====================================================================
@@ -304,10 +332,23 @@ fn r1_no_stored_object_carries_a_field_with_no_channel() {
     );
 }
 
-/// R2 -- S1's other half, stated as REAL_03 6.7's first clause: the bytes at
-/// an address are a function of the value alone.
+/// R2 -- S1's other half. REAL_03 6.7's first clause says the bytes at an
+/// address are a function of the value alone, and 6.9's second clause carves
+/// out one exception: a field outside the address MAY differ if it is
+/// readable on a formal channel. D65 puts `%cause` inside that exception on
+/// purpose, at both ends of the lattice.
+///
+/// So the property is not "one address, one byte string" -- that reading
+/// contradicts the ruling this arc implements, and the acceptor wrote it
+/// that way by mistake (see the handover's acceptance round). It is:
+///
+///     two objects at one address may differ ONLY where a channel answers.
+///
+/// The comparison therefore blanks the channelled fields and requires the
+/// remainder to be byte-identical. At the baseline the remainder still
+/// differs, by a field with no channel at all.
 #[test]
-fn r2_one_address_holds_one_byte_string() {
+fn r2_addresses_differ_only_where_a_channel_answers() {
     let sources = ["bad: 1 & 2", "bad: 1 & 3", "bad: bad + 1", "bad: ~%Math./add (1, \"x\")"];
     let mut by_address: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for (i, src) in sources.iter().enumerate() {
@@ -328,11 +369,20 @@ fn r2_one_address_holds_one_byte_string() {
 
     let mut split: Vec<String> = Vec::new();
     for (addr, uses) in &shared {
-        let first = &uses[0].1;
-        let differing: Vec<&str> = uses.iter().filter(|(_, b)| b != first).map(|(s, _)| s.as_str()).collect();
+        let blanked: Vec<(String, String)> =
+            uses.iter().map(|(src, body)| (src.clone(), blank_channelled(body))).collect();
+        // Reachability: blanking must actually have removed something,
+        // otherwise this probe is comparing raw bytes under another name.
+        assert!(
+            blanked.iter().zip(uses.iter()).any(|((_, b), (_, raw))| b != raw),
+            "VOID READING: no channelled field was recognised in {addr}"
+        );
+        let first = &blanked[0].1;
+        let differing: Vec<&str> =
+            blanked.iter().filter(|(_, b)| b != first).map(|(s, _)| s.as_str()).collect();
         if !differing.is_empty() {
             split.push(format!(
-                "  {addr}\n    is shared by {} universes and {} of them store different bytes: {differing:?}",
+                "  {addr}\n    is shared by {} universes and {} of them differ OUTSIDE any channel: {differing:?}",
                 uses.len(),
                 differing.len()
             ));
@@ -340,7 +390,7 @@ fn r2_one_address_holds_one_byte_string() {
     }
     assert!(
         split.is_empty(),
-        "{} of {} shared addresses hold more than one byte string:\n{}",
+        "{} of {} shared addresses differ where no channel answers:\n{}",
         split.len(),
         shared.len(),
         split.join("\n")
