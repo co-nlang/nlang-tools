@@ -18,24 +18,54 @@
 // boundary refuses, both return `_|_ ;; %cause: #store_boundary` -- a
 // carrier plus a registered cause. Only the host-error path collapses.
 //
-// D66 splits it by the question, not by the error:
+// D67 (which re-rules D66) splits it by the question, not by the error,
+// and the carrier for "no answer" is the UNDER-determined end of the
+// lattice, not the over-determined one:
 //
-//   the question is good and answerable   -> the value  (#true/#false/text)
+//   the question is good and answerable      -> the value (#true/#false/text)
 //   the question is good, the world will
-//     not say (EACCES, EIO)               -> #blur + a registered %cause
-//   the question itself is broken
-//     (ENOTDIR, ELOOP)                    -> _|_  + a registered %cause
-//   you may not ask (store boundary)      -> _|_  + #store_boundary  (done)
+//     not say (EACCES, EIO)                  -> _  + a registered %cause
+//   a pure reference cycle (ELOOP)           -> _  + a registered %cause
+//   you may not ask (store boundary)         -> _|_ + #store_boundary  (done)
 //
-// ENOENT stays as it is: nothing is wrong with the question and "it is not
-// there" is a real answer.
+// Two cases that look like failures are NOT failures, and G3 pins them:
+//
+//   ENOENT                     nothing is there. #false is true.
+//   ENOTDIR (a/b where a is a
+//     regular file)            nothing CAN be there, for anyone, ever.
+//                              #false is true, and it is the same answer.
+//   a dangling symlink         the OS resolves it and finds nothing:
+//                              try_exists() is Ok(false), not Err. #false.
+//
+// Why not `_|_` for the two that have no answer: `_|_` says the coordinate
+// is over-determined -- that is what `1 & 2` gives. A filesystem never
+// hands you contradictory information; it either tells you or it does not.
+// And `_|_` is the meet annihilator (measured: `(1 & 2) & 1` is `_|_`),
+// so one operator's permission problem would destroy another's data, and
+// a later successful read would turn `_|_` into `#true`, which refinement
+// forbids. `_` is the meet identity (measured: `_ & 1` is `1`), so it
+// pollutes nobody, and narrowing it later is an ordinary refinement.
+//
+// Why not `#blur`: TAG_REGISTRY 2.7.3 -- `#blur` claims an addressable
+// snapshot, and measured, every `#blur` really does carry a %caid
+// (`fuel: 0` on `c: 3` still prints one). EACCES produces no partial
+// observation to address. And 1.2 gives `#blur` the remedy "raise
+// %fuel", which for a permission denial is an invalid remedy -- the exact
+// failure 2.7.1, 2.7.2 and 2.7.3 all exist to prevent.
+//
+// ELOOP is `_` and not `_|_` because the registry already draws this line
+// for cycles: `#divergent` (dynamic non-termination, a cycle WITH a
+// transformation) is carried on `_|_`, while `#static_cycle` (a pure
+// reference cycle) is carried on Top and is explicitly 非錯誤. A symlink
+// loop is a name pointing at a name. It is the second one.
 //
 // NOT PROBED, stated so no one mistakes silence for coverage:
 //   * `~%Io./write_file` and `~%Io./append_file` answer #none on every
 //     failure too, which is the same collapse. They are ACTIONS, not
-//     observations, and #blur means an observation that could not complete
-//     -- so what a failed write should answer is a separate question.
-//     Measured and filed as O87. Do not change them here.
+//     observations, so what a write that provably did not happen should
+//     answer is a separate question. Measured and filed as O87.
+//   * ENAMETOOLONG, ENOMEM and every other errno. The order asks for a
+//     TOTAL mapping, and the acceptor will test errnos this file does not.
 
 use std::fs;
 use std::path::Path;
@@ -179,33 +209,64 @@ fn r1_exists_separates_absent_from_unreadable() {
 }
 
 // ---------------------------------------------------------------------
-// R2. A broken question is not an absent file either.
+// G3. RED LINE. Two things that are not failures must keep the answer
+// they have. A path through a regular file, and a symlink that resolves
+// to nothing, are both simply absent -- `#false` is true for each, and
+// inventing a difference here would be the same mistake in the other
+// direction.
 // ---------------------------------------------------------------------
 #[test]
-fn r2_a_broken_question_is_not_an_absent_file() {
+fn g3_a_path_that_cannot_hold_anything_is_simply_absent() {
+    let s = world("g3");
+    let d = s.path();
+    std::os::unix::fs::symlink("nowhere-at-all", d.join("open/dangling"))
+        .expect("dangling symlink");
+    let absent = eval(d, r#"(~%Io./exists "open/nosuch.txt")"#);
+    let notdir = eval(d, r#"(~%Io./exists "open/f.txt/x")"#);
+    let dangling = eval(d, r#"(~%Io./exists "open/dangling")"#);
+    unseal(d);
+
+    assert!(absent.contains("#false"), "CONTROL: {absent}");
+    assert_eq!(
+        strip_effect(&absent),
+        strip_effect(&notdir),
+        "a path through a regular file can never hold anything, for anyone, \
+         so `nothing is there` is the true and complete answer -- the same \
+         one an absent file gets:\n  absent: {absent}\n  notdir: {notdir}"
+    );
+    assert_eq!(
+        strip_effect(&absent),
+        strip_effect(&dangling),
+        "the host resolves a dangling symlink and finds nothing \
+         (try_exists is Ok(false), not Err), so it is absent, not opaque:\n  \
+         absent: {absent}\n  dangling: {dangling}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// R2. A pure reference cycle is not an absent file. Something IS at that
+// path -- symlink_metadata succeeds -- so `#false` is false.
+// ---------------------------------------------------------------------
+#[test]
+fn r2_a_symlink_loop_is_not_an_absent_file() {
     let s = world("r2");
     let d = s.path();
     let absent = eval(d, r#"(~%Io./exists "open/nosuch.txt")"#);
-    let notdir = eval(d, r#"(~%Io./exists "open/f.txt/x")"#);
     let loopy = eval(d, r#"(~%Io./exists "open/loop")"#);
     unseal(d);
 
     assert!(absent.contains("#false"), "CONTROL: {absent}");
-    for (what, out) in [
-        ("a path through a file", &notdir),
-        ("a symlink loop", &loopy),
-    ] {
-        assert_ne!(
-            strip_effect(&absent),
-            strip_effect(out),
-            "{what} answers exactly what an absent file answers, and nothing \
-             could have been there at all:\n  absent: {absent}\n  target: {out}"
-        );
-        assert!(
-            out.contains("%cause"),
-            "{what} must carry a registered cause (D66): {out}"
-        );
-    }
+    assert_ne!(
+        strip_effect(&absent),
+        strip_effect(&loopy),
+        "a symlink loop answers exactly what an absent file answers, and \
+         yet something is at that path -- symlink_metadata succeeds on it, \
+         so `nothing is there` is not true:\n  absent: {absent}\n  loop: {loopy}"
+    );
+    assert!(
+        loopy.contains("%cause"),
+        "a pure reference cycle must carry a registered cause (D67): {loopy}"
+    );
 }
 
 // ---------------------------------------------------------------------
