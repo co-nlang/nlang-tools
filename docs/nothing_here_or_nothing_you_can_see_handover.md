@@ -527,3 +527,27 @@ Error: expected ident at line 1 column 2
 | 1 | 230 | 2205 | 0 | — | 0 | 0 |
 | 2 | 230 | 2205 | 0 | — | 0 | 0 |
 | 3 | 230 | 2205 | 0 | — | 0 | 0 |
+
+### 9.7 R-2 複驗與收弧（驗收方，2026-09-13）
+
+**R-2 通過。Q-045 驗收完成，兩個修補回合。**
+
+〔量，本修補二進位，**R-1 的三個對照組全數重跑，未回歸**〕
+
+| 情形 | 結果 |
+| :-- | :-- |
+| 沒有名冊檔 / 含本鑰 | rc=0 ✅ |
+| 不含本鑰、可讀 | rc=1 具名 `not in architect_registry` ✅ |
+| 不含本鑰、`chmod 000` | rc=1 `cannot read .oo/architects.json: permission denied` ✅ |
+| **壞 JSON** | rc=1 **`cannot parse .oo/architects.json: expected ident at line 1 column 2`** ✅ |
+| 〔驗收方另造〕合法 JSON、元素型別錯 `[1,2,3]` | rc=1 `cannot parse .oo/architects.json: invalid type: integer …` ✅ |
+| 〔驗收方另造〕合法 JSON、容器型別錯 `{"a":1}` | rc=1 `cannot parse .oo/architects.json: invalid type: map …` ✅ |
+| 移除名冊 | rc=0 ✅ |
+| 裸 errno 掃描（兩種壞法） | **`os error` 命中 0** ✅ |
+
+**修在對的層級**：包住整個 `from_str` 而不是補一句話 ⟹ 驗收方另造的兩種壞法（探針沒測的）
+同樣具名。
+
+**最終**：探針 **7／7**；全工作區 ×3 **230 targets／2205 passed／0 failed**，三輪皆 `cargo_rc=0`；
+conformance **162／162**；身分 `31745ef0…`／標準根 `7038e250…`／物件 3／`layout=5`／`encoding=5`；
+跨版本雙向 rc=0；探針檔跨兩個修補回合 **0 行改動**。
