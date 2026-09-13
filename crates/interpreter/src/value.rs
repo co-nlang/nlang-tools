@@ -591,8 +591,6 @@ fn quote_nlang_field_key(prefix: &str, name: &str) -> String {
 /// peeling its hybrid shape. Strips local axis (#4). Does **not** alter `to_nlang`.
 pub fn project_value_context(v: Value) -> Value {
     match v {
-        // Display: caused Top looks like bare `_` (provenance meta-only).
-        Value::TopCaused { .. } => Value::Top,
         Value::Combo(c) => {
             // Structural view: full node, no hybrid peel (still strip local).
             if is_structural_view(&c) {
@@ -3133,7 +3131,26 @@ impl Value {
     pub fn to_nlang(&self, indent: usize) -> String {
         let pad = "  ".repeat(indent);
         match self {
-            Value::Top | Value::TopCaused { .. } => "_".to_string(),
+            Value::Top => "_".to_string(),
+            // D65's other end: the fibre rides the annotation layer, same
+            // spelling as ⊥ `%cause` and as `%effect`. Lattice identity is
+            // still bare Top (bn_serial 0xFF / hash 0x00).
+            Value::TopCaused { cause, members } => {
+                // D65 annotation for fibres that have no other display
+                // (IO "world would not say"). `#no_coordinate` and n/
+                // `#static_cycle` (non-empty members) stay bare `_`;
+                // `.%cause` remains the channel (conformance L2-26..92).
+                if cause == "no_coordinate"
+                    || (cause == "static_cycle" && !members.is_empty())
+                {
+                    "_".to_string()
+                } else {
+                    format!(
+                        "_{}",
+                        Self::nlang_annotation("cause", &format!("#{cause}"))
+                    )
+                }
+            }
             Value::Atom(kind, effect, rank) => {
                 let mut s = match kind {
                     AtomKind::Int(i) => i.to_string(),

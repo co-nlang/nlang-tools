@@ -178,12 +178,75 @@
 
 ### N.1 做了什麼
 
+**I1／I2。** `~%Io./exists` 改 `try_exists`；`read_file` 的 `Err` 走同一個全函數 `host_obs`。ENOENT／ENOTDIR（POSIX 20）仍是 `#false`／`#none`。EACCES 與總括臂 → ⊤ `%cause: #unreadable`。ELOOP（POSIX 40／Darwin 62）→ ⊤ `%cause: #static_cycle`。`write_file`／`append_file` 未動。store 邊界未動。
+
+**D65 欠帳（⊤ 半邊）。** `to_nlang` 對「世界不肯說」的 ⊤ 印 `  ;; %cause: #…`。`#no_coordinate` 與帶 members 的 n/ `#static_cycle` 仍印裸 `_`（conformance L2-26..92／`.%cause` 通道）。觀測投影不再把 TopCaused 剝成裸 Top，否則 eval 永遠看不見纖維。
+
+**提交時纖維。** `decode_top_cause` 原先只讀 `~%` 軸，`cause:` 寫在 data 軸，reload 一律變成 `#no_coordinate`。改為讀 data 軸。Unify memo 以 CAID 為鍵，⊤ 與 TopCaused 同位址，會讓 `plain: _` 把帶因 ⊤ 教成蒸發；top-like 的 meet 不再進 memo。
+
 ### N.2 量測（每一項都要有分母與對照組）
+
+| 問 | 答 |
+| :-- | :-- |
+| exists 可讀檔 | `#true  ;; %effect: #io` |
+| exists ENOENT | `#false  ;; %effect: #io` |
+| exists ENOTDIR（`f.txt/x`） | `#false  ;; %effect: #io`（＝ ENOENT） |
+| exists 斷連結 | `#false`（G3） |
+| exists EACCES（父目錄 000） | `_  ;; %cause: #unreadable` rc=0 |
+| exists ELOOP | `_  ;; %cause: #static_cycle` rc=0 |
+| exists ENAMETOOLONG（5000 字路徑） | `_  ;; %cause: #unreadable` |
+| `.oo/HEAD` exists／read | `_|_ ;; %cause: #store_boundary`（未變） |
+| 提交 `a: exists EACCES` 後 inspect 根 | `a: _  ;; %cause: #unreadable`（纖維在物件裡） |
+| 同上 vs `a: exists ELOOP` 的根 CAID | **同一個** `97f54d2c…`；位元組裡 cause 分別是 `#unreadable`／`#static_cycle` |
+
+對照：bare `plain: _` 仍不進根（unify_combo 丟 `Value::Top`）。
+
+身分：`eval '~%Math./add (1,2)'` → `3` rc=0。`x: 0` 根 `31745ef0…`／標準根 `7038e250…`／物件 3／layout=5／encoding=5。
+
+符合性：**162 vectors, 162 pass, 0 fail**。跨版本真 `v0.49.0` 雙向 `status`／`log` rc=0。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 231 | 2210 | 1 | `pin_concurrent_first_mint_yields_one_key` | 2 | 101 |
+| 2 | 231 | 2211 | 0 | — | 0 | 0 |
+| 3 | 231 | 2211 | 0 | — | 0 | 0 |
+
+第 1 輪是既有並行 mint 競態（隔離重跑綠），非本弧引入。
 
 ### N.3 我認為驗收方寫錯的地方
 
+無。`FilesystemLoop`／`NotADirectory` 在 rustc 1.96.1 仍是 unstable `io_error_more`，用 `raw_os_error` 對 POSIX 號，不是探針錯。
+
 ### N.4 §6 六問的回答
+
+**1.** 印得出來。EACCES／ELOOP 的 eval 是 `_  ;; %cause: #unreadable`／`#static_cycle`。補的是 `to_nlang` 的 TopCaused 臂，以及觀測不再剝掉 TopCaused。`#no_coordinate` 與帶 members 的 `#static_cycle` 仍裸 `_`，通道是 `.%cause`。
+
+**2.** **會進物件，不會進位址。** 提交後 inspect 根看得到 `cause: #unreadable`。`plain: _` 仍整格不進。先前 decode 把所有 TopCaused 讀成 `#no_coordinate`，那才是「提交蒸發」；已修。
+
+**3.** **不進 CAID。** 兩個宇宙只有 `a:` 的纖維不同（`#unreadable` vs `#static_cycle`），根 digest **同為** `97f54d2cb3afa655b3a34ffe7ce506fa8e7074d794590de86a95ed02859cfc85`。bn_serial 把 TopCaused 寫成 `0xFF`（與裸 Top 同）。物件位元組仍帶 cause（§6.9 第二款）。
+
+**4.** 全函數：
+
+| `ErrorKind`／errno | §1.1 列 |
+| :-- | :-- |
+| `NotFound` | 答案是沒有（`#false`／`#none`） |
+| `raw 20` ENOTDIR | 答案是沒有（D67） |
+| `PermissionDenied`、`TimedOut`、`Interrupted`、`UnexpectedEof` | ⊤ `#unreadable` |
+| `raw 40`／`62` ELOOP | ⊤ `#static_cycle` |
+| `_`（含 ENAMETOOLONG、EIO、IsADirectory 讀檔等） | ⊤ `#unreadable` |
+
+**ENAMETOOLONG** 放總括臂：syscall 沒有回答存在性，只拒絕了這個名字；〔量〕5000 字路徑 → `_  ;; %cause: #unreadable`。不是 ENOTDIR 那種「路徑上不可能有東西」。
+
+**5.** ELOOP → 既有 `#static_cycle`（純引用環、Top、非錯誤）。EACCES → **`#unreadable`**：與 Q-042 總括臂同一拼法，不是新的存在性值（exists 不回 `#unreadable` 原子），是 ⊤ 上的纖維。登記由驗收方做。拿掉「父目錄 000 與 ENOENT 在語言層不可分」這一量，就只剩命名偏好。
+
+**6.** 見 N.3。
 
 ### N.5 規格側的發現（不要自己改）
 
+`#unreadable` 作為 Top 的 `%cause` 尚未在 `TAG_REGISTRY`。`decode_top_cause` 讀錯軸是實作債，不是條文。
+
 ### N.6 我沒做的事
+
+`write_file`／`append_file`（O87）。O86 (i)。`.oo/peers` 冷啟動。`DiscoveryConfig` 裸 errno。規格正文。本弧探針。ENOTDIR／斷連結的語義。store 邊界。身分。
