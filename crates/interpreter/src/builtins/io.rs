@@ -1,5 +1,5 @@
 use crate::builtins::fs_guard::{crosses_store_boundary, store_boundary_refusal};
-use crate::value::{static_cycle_top, EffectTag, Value};
+use crate::value::{EffectTag, Value};
 use crate::{BuiltinFn, EvalContext, Ouroboros};
 use nlang_parser::ast::AtomKind;
 use std::collections::HashMap;
@@ -27,20 +27,16 @@ fn host_obs(err: &io::Error) -> HostObs {
         }
         _ => match err.raw_os_error() {
             Some(20) => HostObs::Absent,
-            Some(40) | Some(62) => HostObs::NoAnswer("static_cycle"),
+            Some(40) | Some(62) => HostObs::NoAnswer("path_cycle"),
             _ => HostObs::NoAnswer("unreadable"),
         },
     }
 }
 
 fn no_answer_top(cause: &str) -> Value {
-    if cause == "static_cycle" {
-        static_cycle_top(Vec::new())
-    } else {
-        Value::TopCaused {
-            cause: cause.to_string(),
-            members: Vec::new(),
-        }
+    Value::TopCaused {
+        cause: cause.to_string(),
+        members: Vec::new(),
     }
 }
 

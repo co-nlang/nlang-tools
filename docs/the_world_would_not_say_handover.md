@@ -371,6 +371,38 @@ REACH 守衛證明符號連結環真的產生了一個成因。
 
 ### R.1 做了什麼
 
+`host_obs` 的 ELOOP 臂改答 `"path_cycle"`，不再呼叫 `static_cycle_top`。`no_answer_top` 一律鑄 `TopCaused`（空 members）——EACCES 與 ELOOP 同一形狀，差在纖維名字。`static_cycle_top`／unify 對 `#static_cycle` 的偏好／列印規則／`#unreadable`／ENOENT／ENOTDIR／斷連結／store 邊界／write／append **未動**。本弧探針一字未動。規格未動。
+
 ### R.2 量測（分母與對照組）
 
+| 問 | 答 |
+| :-- | :-- |
+| n/ 純引用環 `a: b`／`b: a` 的 `.%cause` | `#static_cycle`（對照組 1，沒搬家） |
+| exists EACCES（父目錄 000） | `_  ;; %cause: #unreadable`；`.%cause` → `#unreadable` |
+| exists ELOOP | `_  ;; %cause: #path_cycle`；`.%cause` → `#path_cycle`（≠ `#static_cycle`） |
+| read_file ELOOP／EACCES | 同上兩個纖維 |
+| ENOENT／ENOTDIR | `#false`（G3） |
+| `.oo/HEAD` | `_|_ ;; %cause: #store_boundary` |
+| write 失敗 | `#none`（O87，未動） |
+| 提交 EACCES vs ELOOP 的根 CAID | **同一個** `c5364f7e39c7f355…`；inspect 分別是 `a: _  ;; %cause: #unreadable`／`#path_cycle` |
+| 真 v0.49.0 inspect 同一顆 ELOOP 根 | `a: _`（資訊損失，仍是真的） |
+
+探針 **7／7**。`static_cycle_probe` 17／17；`caused_top_probe` 11／11。
+
+身分：`eval '~%Math./add (1,2)'` → `3` rc=0（對照 `(1,3)` → `4`）。`x: 0` 根 `31745ef0…`／標準根 `7038e250…`／物件 3／layout=5／encoding=5。
+
+符合性：**162／162**。跨版本真 `v0.49.0` 雙向 `status`／`log` rc=0。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 231 | 2212 | 0 | — | 0 | 0 |
+| 2 | 231 | 2212 | 0 | — | 0 | 0 |
+| 3 | 231 | 2212 | 0 | — | 0 | 0 |
+
+2212＝上一弧驗收的 2211＋本修補探針 R4。
+
 ### R.3 我認為驗收方寫錯的地方（**包含 `#path_cycle` 這個字**）
+
+無。沿用 `#path_cycle`。`l217_path_cycle_divergent` 是 n/ 路徑座標環走 `#divergent` 的舊測名，載體是 ⊥ 不是 Top，規格對 `path_cycle` 作為標籤零命中——不是同名衝突。登記由驗收方做。
