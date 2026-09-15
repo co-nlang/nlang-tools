@@ -306,3 +306,90 @@ fn strip_effect(s: &str) -> String {
         .trim()
         .to_string()
 }
+
+// ---------------------------------------------------------------------
+// R4 (repair round 1). Added by the acceptor after delivery 1, on the
+// user's ruling (乙): the host-level loop gets its own tag.
+//
+// Delivery 1 marked a filesystem symlink loop `#static_cycle`. The shape
+// is right -- a name pointing at a name, pure reference, no
+// transformation -- and the acceptor's own order invited the reuse by
+// calling it "a precedent of the same shape". Same shape is not the same
+// tag, and three things follow from reusing it:
+//
+//   * the registry defines `#static_cycle` by reference to an n/
+//     construct (SPEC_12 1.1), and marks it 非錯誤 / 消費即蒸發;
+//   * a broken symlink is something an operator can go and fix, so it is
+//     not 非錯誤;
+//   * measured, the two are told apart today only by `members` being
+//     empty. `.%cause` gives the same name to both, so once the value
+//     travels, the receiver cannot tell whether to look at the `.n` or at
+//     the filesystem -- and D65 is explicit that the cause must travel
+//     with the value and stand on its own.
+//
+// The name: `#path_cycle`, following the registry's `<domain>_cycle`
+// pattern (`#static_cycle`, `#refinement_cycle`), axis 原因 (an operator
+// must act) and carrier Top -- the same cell as `#unreadable`, which this
+// arc also creates. Renaming stays cheap: measured, the cause is not in
+// the address.
+//
+// This probe does not require that spelling. It requires that the two
+// cycles do not answer with the same cause.
+// ---------------------------------------------------------------------
+
+/// `oo run FILE --observe FIELD`, for the causes that need a universe.
+fn observe(dir: &Path, program: &str, field: &str) -> String {
+    fs::write(dir.join("obs.n"), program).expect("write obs.n");
+    let o = cmd(dir)
+        .args(["run", "obs.n", "--observe", field])
+        .output()
+        .expect("oo runs");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
+    .trim()
+    .to_string()
+}
+
+#[test]
+fn r4_a_symlink_loop_and_an_n_cycle_do_not_share_a_cause() {
+    let s = world("r4");
+    let d = s.path();
+
+    // Control 1: n/'s own pure reference cycle keeps its registered cause.
+    // If this ever changes, the repair went the wrong way -- the arc must
+    // not move n/'s tag, only stop borrowing it.
+    let n_cycle = observe(d, "a: b\nb: a\nc: (a.%cause)\n", "c");
+    assert!(
+        n_cycle.contains("#static_cycle"),
+        "CONTROL: an n/ pure reference cycle must still answer \
+         #static_cycle: {n_cycle}"
+    );
+
+    // Control 2: the other fibre this arc mints is untouched.
+    let opaque = eval(d, r#"((~%Io./exists "locked/f.txt").%cause)"#);
+    let host_loop = eval(d, r#"((~%Io./exists "open/loop").%cause)"#);
+    unseal(d);
+    assert!(
+        opaque.contains("#unreadable"),
+        "CONTROL: EACCES must still answer #unreadable: {opaque}"
+    );
+
+    // Control 3: the measurement reaches the loop at all.
+    assert!(
+        !host_loop.trim().is_empty() && !host_loop.trim_end().ends_with('_'),
+        "REACH: the symlink loop produced no cause at all: {host_loop}"
+    );
+
+    assert!(
+        !host_loop.contains("#static_cycle"),
+        "a filesystem symlink loop answers with n/'s own tag for a pure \
+         reference cycle between definitions. Once this value travels, the \
+         receiver reads `#static_cycle` and cannot tell whether to look at \
+         the .n or at the filesystem -- and the registry marks that tag \
+         非錯誤 / 消費即蒸發, while a broken symlink is something an \
+         operator can go and fix. Said: {host_loop}"
+    );
+}
