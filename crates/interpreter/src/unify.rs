@@ -317,12 +317,16 @@ impl Ouroboros {
 
         let nondet =
             a.effect().contains(EffectTag::NonDet) || b.effect().contains(EffectTag::NonDet);
+        // Top and TopCaused share a CAID (cause is not in the address). Memo
+        // keyed on that digest would let `plain: _` teach `opaque: ⊤+%cause`
+        // to evaporate. D67: the fibre must survive meet with a hole.
+        let top_like = a.is_top() || b.is_top();
         let cache_key = if id_a.digest <= id_b.digest {
             (id_a, id_b)
         } else {
             (id_b, id_a)
         };
-        if !nondet {
+        if !nondet && !top_like {
             if let Ok(memo) = self.unify_memo.read() {
                 if let Some(cached_res) = memo.get(&cache_key) {
                     return cached_res.clone();
@@ -334,7 +338,11 @@ impl Ouroboros {
         if let Value::Combo(ref mut cv) = result {
             cv.effect = cv.effect.union(combined_effect);
         }
-        if !nondet && !matches!(result, Value::Bottom(_)) && !result.contains_blur() {
+        if !nondet
+            && !top_like
+            && !matches!(result, Value::Bottom(_))
+            && !result.contains_blur()
+        {
             if let Ok(mut memo) = self.unify_memo.write() {
                 const UNIFY_MEMO_CAP: usize = 100_000;
                 if memo.len() >= UNIFY_MEMO_CAP {

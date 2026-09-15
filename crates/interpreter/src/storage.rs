@@ -306,14 +306,33 @@ impl ObjectStore {
         // A prior engine may have staged injections without ever committing a
         // HEAD or CAS object. Its declaration still makes this an existing
         // store; treating it as new would silently advance the layout merely
-        // by opening it and bypass the explicit migration gate.
-        let new_store = !oo.join("format").exists()
-            && !oo.join("HEAD").exists()
-            && !has_cas_objects(&oo.join("objects"));
+        // by opening it and bypass the explicit migration gate. The predicate
+        // is therefore still `format` (G3 / v0.43.0), not `objects.format`
+        // (that would mint a layout onto a legacy bare-number store — G2).
+        //
+        // I1: "not yet" is another process's intent, not a filesystem
+        // answer. Land `objects.format` first so any observer that sees
+        // `format` already sees a complete split-axis pair. Do not retry.
+        let format_here = match oo.join("format").try_exists() {
+            Ok(b) => b,
+            Err(e) => return Err(cannot_read("`.oo/format`", &e)),
+        };
+        let head_here = match oo.join("HEAD").try_exists() {
+            Ok(b) => b,
+            Err(e) => return Err(cannot_read(".oo/HEAD", &e)),
+        };
+        let new_store =
+            !format_here && !head_here && !has_cas_objects(&oo.join("objects"));
         if new_store {
             fs::create_dir_all(&oo).map_err(|e| cannot_write(oo.display(), &e))?;
-            atomic_write(&oo.join("format"), format!("layout={STORE_LAYOUT_VERSION}\n"))?;
-            atomic_write(&oo.join("objects.format"), format!("encoding={OBJECT_ENCODING_VERSION}\n"))?;
+            atomic_write(
+                &oo.join("objects.format"),
+                format!("encoding={OBJECT_ENCODING_VERSION}\n"),
+            )?;
+            atomic_write(
+                &oo.join("format"),
+                format!("layout={STORE_LAYOUT_VERSION}\n"),
+            )?;
         } else {
             Self::ensure_format(base_dir)?;
         }
@@ -342,7 +361,13 @@ impl ObjectStore {
         if digest_hex.len() < 4 {
             return false;
         }
-        self.digest_path(digest_hex).exists()
+        // `Path::exists` collapses EACCES to false, so GC would walk an
+        // unreadable object as absent (REAL_03 §6.6). Err → treat as
+        // present and let the reader name the failure.
+        match self.digest_path(digest_hex).try_exists() {
+            Ok(b) => b,
+            Err(_) => true,
+        }
     }
 
     /// List every object digest (64 hex) under the store.
@@ -720,9 +745,8 @@ impl ObjectStore {
         base_dir: &Path,
     ) -> anyhow::Result<std::collections::HashSet<String>> {
         let path = base_dir.join(".oo").join("architects.json");
-        if !path.exists() {
-            return Ok(std::collections::HashSet::new());
-        }
+        // Absence is an empty set (bootstrap exemption). Any other host
+        // error is named: the caller must not turn it into empty.
         let json = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -730,7 +754,9 @@ impl ObjectStore {
             }
             Err(e) => return Err(cannot_read(".oo/architects.json", &e)),
         };
-        let list: Vec<String> = serde_json::from_str(&json)?;
+        let list: Vec<String> = serde_json::from_str(&json).map_err(|e| {
+            anyhow::anyhow!("cannot parse .oo/architects.json: {e}")
+        })?;
         Ok(list.into_iter().collect())
     }
 

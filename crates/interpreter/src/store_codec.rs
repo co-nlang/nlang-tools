@@ -1025,7 +1025,7 @@ fn combo_expr_to_value(fields: &[Field], closed: bool) -> Result<Value> {
         return Ok(v);
     }
     if sys.contains_key(TOP_CAUSE) {
-        return decode_top_cause(&sys);
+        return decode_top_cause(&sys, &combo);
     }
     if sys.contains_key("__nlang_atom") {
         return decode_atom_wrap(&sys);
@@ -1219,28 +1219,52 @@ fn decode_atom_wrap(sys: &IndexMap<String, (Expr, Option<Value>)>) -> Result<Val
     }
 }
 
-fn decode_top_cause(sys: &IndexMap<String, (Expr, Option<Value>)>) -> Result<Value> {
-    let cause = sys
+fn decode_top_cause(
+    sys: &IndexMap<String, (Expr, Option<Value>)>,
+    combo: &ComboVal,
+) -> Result<Value> {
+    // write_wrapper puts `cause` / `members` on the data axis (`cause: #tag`),
+    // not on `~%`. Reading only `sys` dropped every fibre to `#no_coordinate`.
+    let tag_of = |v: &Value| match v {
+        Value::Atom(AtomKind::Tag(t), _, _) => Some(t.clone()),
+        _ => None,
+    };
+    let cause = combo
+        .data
         .get("cause")
-        .and_then(|(e, _)| match expr_to_value(e).ok()? {
-            Value::Atom(AtomKind::Tag(t), _, _) => Some(t),
-            _ => None,
+        .and_then(tag_of)
+        .or_else(|| {
+            sys.get("cause")
+                .and_then(|(e, _)| expr_to_value(e).ok())
+                .as_ref()
+                .and_then(tag_of)
         })
         .unwrap_or_else(|| "no_coordinate".into());
-    let members = match sys.get("members") {
-        Some((e, _)) => match &e.kind {
-            ExprKind::List(xs) => {
-                let mut m = Vec::new();
-                for x in xs {
-                    if let Some(s) = string_of(&expr_to_value(x)?) {
-                        m.push(s);
-                    }
+    let members = match combo.data.get("members") {
+        Some(Value::Combo(c)) => {
+            let mut m = Vec::new();
+            for (_, v) in c.all_fields_iter() {
+                if let Some(s) = string_of(&v) {
+                    m.push(s);
                 }
-                m
             }
-            _ => Vec::new(),
+            m
+        }
+        _ => match sys.get("members") {
+            Some((e, _)) => match &e.kind {
+                ExprKind::List(xs) => {
+                    let mut m = Vec::new();
+                    for x in xs {
+                        if let Some(s) = string_of(&expr_to_value(x)?) {
+                            m.push(s);
+                        }
+                    }
+                    m
+                }
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
         },
-        None => Vec::new(),
     };
     Ok(Value::TopCaused { cause, members })
 }
