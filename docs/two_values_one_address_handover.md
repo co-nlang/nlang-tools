@@ -142,12 +142,65 @@ AtomKind::Str(s) | AtomKind::MultilineStr(s) => {
 
 ### N.1 做了什麼
 
+`bn_serial` 字串臂改 `encode_string(s, buf)`，雜湊前不再 `trim`。`Str` 與 `MultilineStr` 仍共用 `TAG_ATOM`（多行二等公民不在本弧）。`=` 未動。標準根未重算。本弧探針一字未動。
+
 ### N.2 量測（每一項都要有分母與對照組）
+
+| 問 | 答 |
+| :-- | :-- |
+| `"a" = " a "`／`"a" = "a"` | `#false`／`#true`（G2） |
+| 儲存 `"a"`／`"b"`／`" a "` | 三個不同 CAID；`"a"` 仍 `cdf2d551…` |
+| 儲存 `"hello"`／`"""\nhello\n"""` | `d709d6e9…`／`6f79e3c9…`（對照：修前同址 `d709d6e9…`） |
+| tab／全形空白／`"   "`／`""` | 四個彼此不同、亦異於 `"a"` |
+| 新鮮倉 `v: "a"` 根 | **仍** `3f9c002b…`，inspect `v: "a"` |
+| 新鮮倉 `v: " a "` 根 | **`267c7a88…`**，inspect `v: " a "` |
+| 同一倉先 `"a"` 再 `" a "` | **Evolution Conflict `#conflict at v` rc=1**（見 N.3） |
+| `"a".%id`／`" a ".%id` | 不同（`9c6649eb29bb…`／`62d8775bc650…`） |
+| 標準根／`x: 0` | `7038e250…`／`31745ef0…`／物件 3／layout=5／encoding=5 |
+
+**紀元範圍（R4）**：位址會動的，是字串內容 `s != s.trim()` 的值，以及內文帶前後空白／換行的多行字串。**不含**前後無空白的單行——`"a"` 的儲存 CAID 與 `v: "a"` 根都沒動。標準根 258 字串：前後空白 0、換行 0。conformance `.n`：padded 0、`"""` 0。引擎 `.n` 測試：padded 字面 **5／4 檔**（字串庫測試，不釘 CAID）。真 `v0.51.0` 讀新的 padded 倉 → `#caid_mismatch`（它按 trim 重算，得到舊的 `3f9c002b…`）；讀新的 `"a"` 倉 rc=0。
+
+探針 **5 綠 1 紅**（R1 保持紅，N.3）。符合性 **162／162**。跨版本：新讀舊 `x: 0` 雙向 `status`／`log` rc=0。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 233 | 2222 | 1 | `r1_a_commit_stores_what_was_committed` | 2 | 101 |
+| 2 | 233 | 2222 | 1 | `r1_a_commit_stores_what_was_committed` | 2 | 101 |
+| 3 | 233 | 2222 | 1 | `r1_a_commit_stores_what_was_committed` | 2 | 101 |
+
+233＝上一弧 232＋本弧探針 target；2222＝2217＋5 綠。`^error` 是 cargo 對那一支紅的包裝。
 
 ### N.3 我認為驗收方寫錯的地方
 
+**R1 把「第二筆提交必須成功」寫成了 I1。** 同一倉先 `v: "a"` 再 evolve `v: " a "`：根座標單調（G2-S）對已提交的 `"a"` 做 meet。修前成功，是因為 trim 讓兩個值 **CAID 相同**，unify 早退當成同一個值——**那正是這個 bug 的成功形**。修後 `"a" & " a "` 是 ⊥ ⟹ **Evolution Conflict `#conflict at v` rc=1**，這是真話，不是還沒修好。I1 要的「不得同址」由 R2／R3 與兩顆新鮮倉的不同根兌現。探針未改，R1 保持紅。
+
 ### N.4 §6 五問的回答
+
+**1.** **有還原。** 剖析 `parse_multiline_body`：`inner.replace("\\\"\"\"", "\"\"\"")`。〔量〕源碼 `"""\nx\"""y\n"""` 印回 `"""\nx\"""y\n"""`——印表機 `quote_nlang_multiline` 是反運算（把 `"""` 再逃成 `\"""`）；若沒還原，值裡會留下反斜線，印出會多一層反斜線。`~%Str./contains` **不接受多行**（施用形是 `(pattern, haystack)` 且兩臂皆 `AtomKind::Str`）。對照：`contains ("b", "abc")` → `#true`；`contains ("z", "abc")` → `#false`（證明呼叫發生；驗收方寫的 `contains("abc","b")` 是反序，故 `#false`）。`write_file` 不接受多行＝Inbox 那列，不是「沒還原」的證據。
+
+**2.** `bn_serial.rs` 雜湊前改動內容的每一處：
+
+| 處 | 做了什麼 | |
+| :-- | :-- | :-- |
+| `:191` `s.trim()` | 去掉字串前後空白 | **本弧刪掉** |
+| `:212` `trim_start_matches('#')` | tag 拼法；剖析已剝 `#` | 安全。〔量〕`#x = "x"` `#false`，標記位元組不同 |
+| `:198` 大整數溢位寫 `0` | 把值改成別的值 | **不安全**，不是本弧；未修 |
+| union 排序去重／combo 鍵排序 | 正準形 | 不改成員內容 |
+| Thunk `to_nlang`／Code `Debug` | 結構的編碼 | 不是 trim |
+| TagStart／TagEnd／Unit／Bytes hex／float fixed128 | 種類的編碼 | 不是 trim |
+
+**3.** 見 N.2 紀元表。量法：對照組 `"a"` 的 CAID／根在修前後相同；padded／多行變了；標準根 digest 不變；語料 `.n` 掃描 padded／`"""`；舊引擎對新 padded 倉重算成舊 digest。
+
+**4.** `%id` 是 `content_hash_with_salt`（v1、`hash_recursive`，字串本來就不 trim）；儲存 CAID 是 `bn_serial` digest＋sketch（v2）。兩個數本來就不同。修後「分得開」一致：`"a"` 與 `" a "` 的 `%id` 不同、儲存 CAID 也不同（修前只有 `%id` 分得開）。
+
+**5.** 見 N.3。
 
 ### N.5 規格側的發現（不要自己改）
 
+`REAL_03` §6.7 仍缺「不同的值不得共用位址」那一款。舊引擎把新 padded 物件判成 `#caid_mismatch` 而重算結果是**別人的根**——這是 trim 紀元對舊讀者的形狀。
+
 ### N.6 我沒做的事
+
+`=` 的語義。MultilineStr 二等公民（`contains`／`concat`／`write_file`）。值編碼表缺五個標記。規格正文。本弧探針。標準根。大整數溢位寫 0。

@@ -188,7 +188,7 @@ fn serialize_atom(kind: &AtomKind, buf: &mut Vec<u8>) {
     match kind {
         AtomKind::Str(s) | AtomKind::MultilineStr(s) => {
             buf.push(TAG_ATOM);
-            encode_string(s.trim(), buf);
+            encode_string(s, buf);
         }
         AtomKind::Int(n) => {
             buf.push(TAG_INT64);
