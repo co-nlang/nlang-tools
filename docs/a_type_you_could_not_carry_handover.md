@@ -126,12 +126,75 @@ m: { t: @list } ⟹ m.t.%fmap  _                     ← 放進 combo 也沒了
 
 ### N.1 做了什麼
 
+**I1。** 多段 `@X.f` 在名字找不到時改鑄 marker 再取欄位，不再對 Top 投影。`@int.%name` 與 `(@int).%name` 同答。單段 builtin 短路只留給**不在標準根上的**保留名（E4：`@int & 10` 仍走 marker）；`@list`／`@option`／`@result` 落入普通查找，值就是那顆已存在的節點。
+
+**I2。** `t: @list` 與 `m: { t: @list }` 綁到的是節點，`t.%fmap`／`m.t.%fmap` 與字面 `@list.%fmap` 同答。
+
+**§6.1 那一格。** 新增 `is_type_value_combo`：閉合 ＋ `%kind: #type` ＋ `%name`（不論有沒有 `%fmap`）。衍生 `%super`、meet、`≤` 認它。手造開 combo `{ %kind: #type, %name: "int" }` 仍不是型別值（G2 第三格）。兩欄 marker 形 `is_type_constraint_combo` 留給巢狀 marker 掃描。標準根未重算。
+
 ### N.2 量測（每一項都要有分母與對照組）
+
+| 問 | 答 |
+| :-- | :-- |
+| `@list`／`(@list)` | 同為節點 `{{ %kind: #type %name: "list" %fmap: … }}` |
+| `@list.%fmap`／`(@list).%fmap` | 同為 `list.map` 繭 |
+| `@int.%name`／`(@int).%name` | 同為 `"int"` |
+| `@zzz.%name`／`@zzz.%fmap` | `"zzz"`／`_`（開放，沒有節點） |
+| `@list.%super.%name`／`(@list).%super.%name` | 同為 `"any"`（節點現在算型別值） |
+| 手造 `{ %kind: #type, %name: "int" }.%super` | `_`（G2） |
+| `@list = (@list)` | `#true` |
+| `@list = {{ %kind: #type, %name: "list" }}` | `#false`（節點 ≠ 兩欄 marker） |
+| `@list.%id` | `c596dc99…`（既有節點，不是第三個位址） |
+| `1 & @int`／`@int & "x"` | `1`／`_|_ #conflict` |
+| 提交 `v: @list` | 根裡是節點；物件 **3**；標準根 digest 仍 `7038e250…` |
+| `@int: { hacked: 1 }` 後 `@int & 10` | `10`（E4） |
+
+探針 **5／5**。`type_super` 14／14。
+
+身分：`eval '~%Math./add (1,2)'` → `3` rc=0（對照 `(1,3)` → `4`）。`x: 0` 根 `31745ef0…`／標準根 `7038e250…`／物件 3／layout=5／encoding=5。
+
+符合性：**162／162**。跨版本真 `v0.50.0` 雙向 `status`／`log` rc=0；舊引擎 inspect `v: @list` 倉看見同一個節點（資訊沒有掉成 marker）。
+
+全樹 `cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`（逐 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1 | 232 | 2217 | 0 | — | 0 | 0 |
+| 2 | 232 | 2217 | 0 | — | 0 | 0 |
+| 3 | 232 | 2217 | 0 | — | 0 | 0 |
+
+232＝上一弧 231＋本弧探針 target；2217＝2212＋5。
 
 ### N.3 我認為驗收方寫錯的地方
 
+無。
+
 ### N.4 §6 六問的回答
+
+**1.** 讓標準根節點算型別值：`is_type_value_combo`。牽動 `%super`（`@list.%super` 現在得 `@any`，先前是 `_`）、meet／`≤`（`@list & [1,2]` 仍走 List 校驗，不是欄位交集）。不牽動標準根位元組。手造開 combo 仍不獲 `%super`。E4 的 `@int` 短路仍在，因為它不在標準根上。
+
+**2.** **`c596dc99…`（節點）**。不是第三個。沒有移動任何既有位址：標準根仍 `7038e250…`，`x: 0` 仍 `31745ef0…`。改變的是拼法 `@list` 指到哪一個已存在的值。
+
+**3.** **進得了。** 提交 `v: @list` 後根裡是那顆節點（含 `%fmap`），物件數 **3**（節點內聯在使用者根裡，不另鑄 CAS 物件）。
+
+**4.** **`@list = (@list)` 仍 `#true`**，現在是節點比節點。對照：`@list = {{ %kind: #type, %name: "list" }}` 現在是 `#false`（先前兩邊都是 marker，那一格是 `#true`）。
+
+**5.** 全函數：
+
+| 名字 | `@X` 是什麼 | `@X.f` |
+| :-- | :-- | :-- |
+| 標準根有節點的（`list`／`option`／`result`） | 那顆節點 | 節點上的欄位；沒有的欄（含未存的 `%super`）走衍生或 `_` |
+| `SPEC_09` §2.1 其餘（`int`／`num`／`str`／`bool`／`any`／`float`／`combo`／`record`／`unit`／`morphism`／`type`／`caid`／`complex`／定寬整數） | 兩欄 marker | marker 的欄；`%fmap` → `_` |
+| 不在樹裡的（`zzz` 與任何未知名） | 同樣 marker（開放） | 同上 |
+
+沒有落點的欄 → `_`（開 miss）。沒有落點的名字 → 仍是型別值，只是沒有節點欄。
+
+**6.** 見 N.3。
 
 ### N.5 規格側的發現（不要自己改）
 
+`SPEC_09` §2.1／§2.5 兩張表仍是驗收方結案。`@list` 印出來現在帶 `%fmap`；`REAL_01` §1.3「印出必須是合法 n/」仍夠不到「讀回同一個值」，但讀回來的 `%fmap` **不再是 `_`**——那個缺口對標準根三個節點合上了。
+
 ### N.6 我沒做的事
+
+`%super` 的樹與語義（G2）。`@zzz` 的開放性。D3′／D4。規格正文與那兩張表。本弧探針。標準根重算。身分。

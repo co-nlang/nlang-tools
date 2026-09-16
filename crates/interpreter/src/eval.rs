@@ -1,5 +1,5 @@
 use crate::observation::{handle_resource_exhausted, needs_partial_body};
-use crate::type_constraint::{get_type_constraint_name, is_type_constraint_combo, TypeConstraint};
+use crate::type_constraint::{get_type_constraint_name, is_type_value_combo, TypeConstraint};
 use crate::value::{
     normalize_union, primary_bottom_from_culled, BottomCause, BottomDetail, ComboVal, EffectTag,
     RelOp as ValRelOp, ValRelation, Value,
@@ -2733,11 +2733,11 @@ impl Ouroboros {
             });
         }
 
-        let is_tc = |v: &Value| matches!(v, Value::Combo(c) if is_type_constraint_combo(c));
+        let is_tc = |v: &Value| matches!(v, Value::Combo(c) if is_type_value_combo(c));
 
         // Type-marker ≤ via subtype table (pin @int <= @num).
         if let (Value::Combo(ac), Value::Combo(bc)) = (&ca, &cb) {
-            if is_type_constraint_combo(ac) && is_type_constraint_combo(bc) {
+            if is_type_value_combo(ac) && is_type_value_combo(bc) {
                 if let (Some(na), Some(nb)) =
                     (get_type_constraint_name(ac), get_type_constraint_name(bc))
                 {

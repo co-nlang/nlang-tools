@@ -265,25 +265,32 @@ pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
     }
 }
 
-/// True iff this combo is a **constraint marker** (builtin / Unknown `@Name`
-/// refine payload). Markers are the closed two-field cocoon
-/// `{{%kind: #type, %name: "…"}}` minted by [`TypeConstraint::marker_value`].
-/// Rich stdlib type nodes (`@option`/`@result`/`@list` on root) also carry
-/// `%kind`+`%name` but have additional members — they are not markers.
-/// Path resolution short-circuits builtins to markers, so meet sites see
-/// markers; this predicate keys on the closed marker shape (no extra public
-/// data fields beyond the reflection pair).
-pub fn is_type_constraint_combo(cv: &crate::value::ComboVal) -> bool {
+/// Closed combo that is a type value (D68): an engine-minted marker **or**
+/// a standard-root type node. Both carry `%kind: #type` and `%name`; the
+/// node may also carry `%fmap` / `%some` / … . Handmade open
+/// `{ %kind: #type, %name: "int" }` is not closed, so it is not a type
+/// value — `%super` stays derived on engine type values, not reconstructed
+/// from a field pair (G2).
+pub fn is_type_value_combo(cv: &crate::value::ComboVal) -> bool {
+    if !cv.closed {
+        return false;
+    }
     let kind_is_type = cv
         .get_field("%kind")
         .map(|k| k.to_string_plain().trim_start_matches('#') == "type")
         .unwrap_or(false);
-    if !kind_is_type || get_type_constraint_name(cv).is_none() {
-        return false;
-    }
-    // Marker = closed cocoon whose only public payload is %kind + %name.
-    // (stdlib type nodes add %fmap / %some / … and must not take the meet arm.)
-    cv.closed && marker_field_count(cv) <= 2
+    kind_is_type && get_type_constraint_name(cv).is_some()
+}
+
+/// True iff this combo is a **constraint marker** (builtin / Unknown `@Name`
+/// refine payload). Markers are the closed two-field cocoon
+/// `{{%kind: #type, %name: "…"}}` minted by [`TypeConstraint::marker_value`].
+/// Rich stdlib type nodes (`@option`/`@result`/`@list` on root) also carry
+/// `%kind`+`%name` but have additional members — they are type values
+/// ([`is_type_value_combo`]) but not markers. Nested-marker walks still
+/// key on this narrower shape.
+pub fn is_type_constraint_combo(cv: &crate::value::ComboVal) -> bool {
+    is_type_value_combo(cv) && marker_field_count(cv) <= 2
 }
 
 fn marker_field_count(cv: &crate::value::ComboVal) -> usize {

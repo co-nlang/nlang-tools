@@ -1,7 +1,7 @@
 use crate::lattice_sketch;
 use crate::observation::handle_resource_exhausted;
 use crate::type_constraint::{
-    get_type_constraint_name, is_type_constraint_combo, type_constraint_meet, TypeConstraint,
+    get_type_constraint_name, is_type_value_combo, type_constraint_meet, TypeConstraint,
 };
 use crate::value::{
     normalize_union, primary_bottom_from_culled, BlurDetail, BottomCause, BottomDetail, ComboVal,
@@ -240,26 +240,26 @@ impl Ouroboros {
         // Union distribution: `(10|20) & @int` regressed to ⊥ (5b501e5 arm-order
         // bug class, 4th occurrence).
         if let Value::Combo(ac) = &a {
-            if is_type_constraint_combo(ac) && matches!(&b, Value::Range { .. }) {
+            if is_type_value_combo(ac) && matches!(&b, Value::Range { .. }) {
                 if let Some(type_name) = get_type_constraint_name(ac) {
                     return type_constraint_meet(b.clone(), &type_name);
                 }
             }
         }
         if let Value::Combo(bc) = &b {
-            if is_type_constraint_combo(bc) && matches!(&a, Value::Range { .. }) {
+            if is_type_value_combo(bc) && matches!(&a, Value::Range { .. }) {
                 if let Some(type_name) = get_type_constraint_name(bc) {
                     return type_constraint_meet(a.clone(), &type_name);
                 }
             }
         }
         if let (Value::Combo(ac), Value::Combo(bc)) = (&a, &b) {
-            if is_type_constraint_combo(ac) && !is_type_constraint_combo(bc) {
+            if is_type_value_combo(ac) && !is_type_value_combo(bc) {
                 if let Some(type_name) = get_type_constraint_name(ac) {
                     return type_constraint_meet(b.clone(), &type_name);
                 }
             }
-            if is_type_constraint_combo(bc) && !is_type_constraint_combo(ac) {
+            if is_type_value_combo(bc) && !is_type_value_combo(ac) {
                 if let Some(type_name) = get_type_constraint_name(bc) {
                     return type_constraint_meet(a.clone(), &type_name);
                 }
@@ -366,7 +366,7 @@ impl Ouroboros {
             }
             (Value::Atom(ak, ae, ra), Value::Combo(mut cv))
             | (Value::Combo(mut cv), Value::Atom(ak, ae, ra)) => {
-                if is_type_constraint_combo(&cv) {
+                if is_type_value_combo(&cv) {
                     if let Some(type_name) = get_type_constraint_name(&cv) {
                         return type_constraint_meet(Value::Atom(ak, ae, ra), &type_name);
                     }
@@ -478,7 +478,7 @@ impl Ouroboros {
             MergeDecision::Merge => {}
         }
 
-        if is_type_constraint_combo(&a) && is_type_constraint_combo(&b) {
+        if is_type_value_combo(&a) && is_type_value_combo(&b) {
             let ta = get_type_constraint_name(&a);
             let tb = get_type_constraint_name(&b);
             if let (Some(na), Some(nb)) = (ta, tb) {
