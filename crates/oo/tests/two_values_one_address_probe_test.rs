@@ -188,24 +188,61 @@ fn g3_the_standard_root_does_not_move() {
 }
 
 // ---------------------------------------------------------------------
-// R1. THE ONE THAT MATTERS. A commit must store what was committed.
+// G4. RED LINE, and the sharpest thing this arc found.
+//
+// The acceptor's first version of this slot was called
+// `r1_a_commit_stores_what_was_committed`, and it committed `v: "a"` and
+// then `v: " a "` into one store expecting two roots. That test was
+// wrong, and wrong in an instructive way: the second evolve narrows a
+// committed coordinate to a value the language calls different, which
+// the monotone law forbids. It only ever passed BECAUSE of the defect
+// under repair -- with the trim in place the meet saw one value, so the
+// evolve was a silent no-op and the commit legitimately reported success
+// on an unchanged universe.
+//
+// So the operator-visible harm was never "the store handed back the wrong
+// bytes". It was one layer earlier and worse:
+//
+//     v0.51.0   ("a" & " a ")  ->  "a"
+//     repaired  ("a" & " a ")  ->  _|_  ;; %cause: #conflict
+//
+// A meet absorbed a value the language distinguishes and said nothing.
+// That is what must not come back.
 // ---------------------------------------------------------------------
 #[test]
-fn r1_a_commit_stores_what_was_committed() {
-    let s = scratch("r1");
+fn g4_a_meet_does_not_absorb_a_value_it_can_tell_apart() {
+    let s = scratch("g4");
     let d = s.path();
-    let first = commit_root(d, PLAIN, "first");
-    let second = commit_root(d, PADDED, "second");
 
-    assert_ne!(
-        first, second,
-        "committing `v: \" a \"` after `v: \"a\"` produced the same root, so \
-         the second commit reported success and stored the first value"
-    );
-    let (shown, _) = run(d, &["inspect", &second]);
+    // Control: a meet of one value with itself is still that value, so a
+    // red below is about distinguishability and not about meet being broken.
+    let (same, _) = run(d, &["eval", "(\"a\" & \"a\")"]);
     assert!(
-        shown.contains("\" a \""),
-        "the root HEAD points at does not contain what was committed:\n{shown}"
+        same.contains("\"a\""),
+        "CONTROL: a value met with itself must survive: {same}"
+    );
+
+    let (mixed, _) = run(d, &["eval", "(\"a\" & \" a \")"]);
+    assert!(
+        mixed.contains("_|_") && mixed.contains("#conflict"),
+        "`=` calls these two strings different, and the meet swallowed one \
+         of them without saying so. Whatever the operator wrote second is \
+         gone and the exit code was zero: {mixed}"
+    );
+
+    // And the same thing through the door an operator actually uses.
+    let root = commit_root(d, PLAIN, "first");
+    assert!(!root.is_empty(), "REACH: the first commit landed");
+    fs::write(d.join("a.n"), PADDED).expect("write a.n");
+    let (out, rc) = run(d, &["evolve", "a.n"]);
+    assert_ne!(
+        rc, 0,
+        "evolving a committed coordinate to a value the language calls \
+         different reported success: {out}"
+    );
+    assert!(
+        out.contains("#conflict"),
+        "the refusal must name the conflict: {out}"
     );
 }
 
@@ -281,3 +318,58 @@ fn r3_the_address_hands_back_its_own_bytes() {
 }
 
 const _: &str = MULTI;
+
+// ---------------------------------------------------------------------
+// R4 (repair round 1). Added by the acceptor after delivery 1.
+//
+// The delivery's own sweep of "every place that changes content before
+// hashing" found a second one and reported it honestly:
+//
+//     bn_serial.rs:198
+//     if let Some(i) = n.to_i64() { encode_signed_leb128(i, buf) }
+//     else { encode_signed_leb128(0, buf) }   // overflow fallback
+//
+// It was left unfixed as "not this arc". It is this arc: I1 says two
+// values the language tells apart must not share a store address, and
+// measured, every integer too large for i64 shares an address with `0`:
+//
+//     store(0)                           08da7c45…
+//     store(99999999999999999999999999)  08da7c45…
+//     store(88888888888888888888888888)  08da7c45…
+//
+// while `=` calls all three different. That is a wider class than the
+// trim ever was -- whitespace-padded strings are unusual, and this
+// collides every big integer with the most common value there is.
+//
+// REAL_03 6.1 already says what to do: integers are LEB128, which is
+// variable-length and does not stop at 64 bits. The fallback is not a
+// normalisation anybody chose; it is a value being discarded because it
+// did not fit a host type.
+// ---------------------------------------------------------------------
+#[test]
+fn r4_a_big_integer_is_not_zero() {
+    let s = scratch("r4");
+    let d = s.path();
+
+    // Control: two small integers already differ, so a red below is about
+    // magnitude and not about integers being broken.
+    let one = stored(d, "1");
+    let two = stored(d, "2");
+    assert_ne!(one, two, "CONTROL: 1 and 2 must differ");
+
+    let zero = stored(d, "0");
+    let big_a = stored(d, "99999999999999999999999999");
+    let big_b = stored(d, "88888888888888888888888888");
+
+    assert_ne!(
+        zero, big_a,
+        "an integer too large for the host's i64 was given the address of \
+         `0`. Everything that overflows lands on the most common value \
+         there is."
+    );
+    assert_ne!(
+        big_a, big_b,
+        "two different large integers share one address, so all of them \
+         are one value to the store"
+    );
+}
