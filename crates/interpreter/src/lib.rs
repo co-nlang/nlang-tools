@@ -43,7 +43,8 @@ pub use crate::scratch::ScratchDir;
 pub use crate::operator_io::operator_io_reason;
 pub use crate::storage::{value_address_matches, ObjectStore, StoreReadError};
 use crate::type_constraint::{
-    get_type_constraint_name, is_type_constraint_combo, is_user_field_type_combo, TypeConstraint,
+    get_type_constraint_name, is_type_constraint_combo, is_type_value_combo,
+    is_user_field_type_combo, TypeConstraint,
 };
 pub use crate::value::{
     normalize_union, primary_bottom_from_culled, AuthorityInfo, BlurCause, BlurDetail, BottomCause,
@@ -3894,14 +3895,18 @@ impl Ouroboros {
                 return crate::value::BottomCause::Conflict.into();
             }
 
-            // E4: only *builtin* `@name` short-circuits to a type_constraint
-            // marker. User `@Name` falls through the normal lookup chain
-            // (scopes → staged → root; force + record_dep). Not-found keeps
-            // the Unknown marker pass-through (e4_undefined_typeref_passthrough).
-            // Builtins are reserved and not shadowable.
+            // E4: builtin `@name` that is *not* a standard-root type node
+            // short-circuits to a constraint marker, so `&` still validates
+            // even if the user wrote a combo on that name (`@int: {…}`).
+            // Names that *do* live on the standard root (`@list` / `@option`
+            // / `@result`) fall through: D68, the node *is* the type value.
+            // User `@Name` and not-found Unknown keep the marker pass-through.
             if TypeConstraint::is_type_constraint_path(name) {
                 let type_name = name.trim_start_matches('@');
-                if TypeConstraint::is_builtin_type_name(type_name) {
+                if TypeConstraint::is_builtin_type_name(type_name)
+                    && ctx.standard_root.get_field(name).is_none()
+                    && ctx.standard_root.get_local_field(name).is_none()
+                {
                     return TypeConstraint::marker_value(type_name);
                 }
             }
@@ -4192,6 +4197,23 @@ impl Ouroboros {
                 match found {
                     None if name.starts_with("~%") => {
                         return BottomCause::MissingKey.into();
+                    }
+                    // D68: `@X.f` is field access on the type value. A name
+                    // with no standard-root node is still a type (open world);
+                    // mint the marker and navigate the rest of the path so
+                    // `@int.%name` agrees with `(@int).%name`.
+                    None if TypeConstraint::is_type_constraint_path(name) => {
+                        let minted =
+                            TypeConstraint::marker_value(name.trim_start_matches('@'));
+                        if path.segments.len() > 1 {
+                            return self.navigate_segments(
+                                minted,
+                                &path.segments[1..],
+                                ctx,
+                                name,
+                            );
+                        }
+                        minted
                     }
                     Some(v) => {
                         let is_ref = matches!(&v, Value::Ref(_));
@@ -4552,7 +4574,7 @@ impl Ouroboros {
                             return effect_tag_atom(c.effect);
                         }
                         None if seg == "%super" => {
-                            if is_type_constraint_combo(&c) {
+                            if is_type_value_combo(&c) {
                                 match get_type_constraint_name(&c)
                                     .as_deref()
                                     .and_then(TypeConstraint::super_parent)
