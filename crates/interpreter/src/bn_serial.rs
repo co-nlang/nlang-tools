@@ -192,11 +192,11 @@ fn serialize_atom(kind: &AtomKind, buf: &mut Vec<u8>) {
         }
         AtomKind::Int(n) => {
             buf.push(TAG_INT64);
-            if let Some(i) = n.to_i64() {
-                encode_signed_leb128(i, buf);
-            } else {
-                encode_signed_leb128(0, buf); // overflow fallback
-            }
+            // REAL_03 §6.1: signed LEB128 is variable-length. Values that
+            // fit in i64 keep the existing encoding (no epoch for small
+            // integers). Wider values continue with more bytes — they
+            // must not collapse to 0.
+            encode_signed_leb128_int(n, buf);
         }
         AtomKind::Float(f) => {
             buf.push(TAG_FLOAT);
@@ -316,6 +316,27 @@ pub fn encode_signed_leb128(mut val: i64, buf: &mut Vec<u8>) {
         let byte = (val as u8) & 0x7f;
         val >>= 7;
         let more = !((val == 0 && (byte & 0x40) == 0) || (val == -1 && (byte & 0x40) != 0));
+        buf.push(if more { byte | 0x80 } else { byte });
+        if !more {
+            break;
+        }
+    }
+}
+
+fn encode_signed_leb128_int(n: &num_bigint::BigInt, buf: &mut Vec<u8>) {
+    if let Some(i) = n.to_i64() {
+        encode_signed_leb128(i, buf);
+        return;
+    }
+    let mut val = n.clone();
+    let neg_one = num_bigint::BigInt::from(-1);
+    loop {
+        let byte = (&val & num_bigint::BigInt::from(0x7fu8))
+            .to_u8()
+            .expect("7-bit mask");
+        val >>= 7u32;
+        let more = !((val.sign() == num_bigint::Sign::NoSign && (byte & 0x40) == 0)
+            || (val == neg_one && (byte & 0x40) != 0));
         buf.push(if more { byte | 0x80 } else { byte });
         if !more {
             break;
