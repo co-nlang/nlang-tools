@@ -293,3 +293,93 @@ fn r4_a_meet_does_not_absorb_a_value_it_can_tell_apart() {
         );
     }
 }
+
+const QUOTE3: &str = "\"\"\"";
+
+
+// ---------------------------------------------------------------------
+// R5. REPAIR ROUND 1 (D70, ruled 2026-09-18).
+//
+// A triple-quoted block is a way of WRITING a string, not a kind of
+// value. The same text written both ways is one value.
+//
+// This slot exists because R1-R4 above, by making the address agree with
+// `=`, cast an answer nobody had ruled. The arc did not create the
+// question -- the collision had been hiding it -- but it was about to be
+// cut into an address, so it was ruled first.
+// ---------------------------------------------------------------------
+#[test]
+fn r5_one_text_written_two_ways_is_one_value() {
+    let s = scratch("r5");
+    let d = s.path();
+
+    // Control: two different texts are still two values, so a red below is
+    // about spelling and not about strings collapsing wholesale.
+    assert_ne!(
+        stored(d, "\"hello\""),
+        stored(d, "\"world\""),
+        "CONTROL: two different texts must stay two values"
+    );
+    let (ctl, _) = run(d, &["eval", "(\"hello\" = \"world\")"]);
+    assert!(ctl.contains("#false"), "CONTROL: {ctl}");
+
+    let single = stored(d, "\"hello\"");
+    let triple = stored(d, &format!("{q}hello{q}", q = QUOTE3));
+    assert_eq!(
+        single, triple,
+        "the same text written single-line and triple-quoted got two \
+         addresses; D70 says a triple-quoted block is a way of writing a \
+         string, not a kind of value"
+    );
+
+    let expr = format!("(\"hello\" = {q}hello{q})", q = QUOTE3);
+    let (out, _) = run(d, &["eval", &expr]);
+    assert!(
+        out.contains("#true"),
+        "`=` must call the two spellings one value: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// R6. REPAIR ROUND 1. The harm, as the invariant rather than the
+// mechanism.
+//
+// This is what made D70 forced rather than preferred. A value printed in
+// its own canonical form and read back was a DIFFERENT value:
+//
+//     v: "a<newline>b"        -> 2024d616...   prints as a triple-quoted block
+//     that text, re-read      -> ecb0980d...
+//
+// SYNTAX_02 116 says a single-line string cannot hold a quote character,
+// and 129 says a multiline must print triple-quoted. So the printer is
+// forbidden from telling the two apart -- which means identity must not
+// either, or writing a value down stops being lossless.
+//
+// Note this probe does not hard-code either address. It asserts the
+// round-trip, which is the property; the addresses are free to be
+// whatever the repair makes them.
+// ---------------------------------------------------------------------
+#[test]
+fn r6_a_value_survives_being_written_down_and_read_back() {
+    let s = scratch("r6");
+    let d = s.path();
+
+    for text in ["a\nb", "hello"] {
+        // Mint the value, then mint whatever its own printed form denotes.
+        let src = format!("v: \"{text}\"\n");
+        std::fs::write(d.join("v.n"), &src).expect("write v.n");
+        let (printed, rc) = run(d, &["run", "v.n", "--observe", "v"]);
+        assert_eq!(rc, 0, "REACH: {src:?} did not evaluate: {printed}");
+        let printed = printed.trim();
+        assert!(!printed.is_empty(), "REACH: nothing printed for {src:?}");
+
+        let before = stored(d, &format!("\"{text}\""));
+        let after = stored(d, printed);
+        assert_eq!(
+            before, after,
+            "a value printed in its own canonical form and read back \
+             became a different value: {src:?} printed as {printed:?}"
+        );
+    }
+}
+
