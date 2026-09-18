@@ -840,6 +840,11 @@ fn expr_to_value(expr: &Expr) -> Result<Value> {
                 cause: BottomCause::Conflict,
                 ..Default::default()
             }))),
+            AtomKind::MultilineStr(s) => Ok(Value::Atom(
+                AtomKind::Str(s.clone()),
+                EffectTag::Pure,
+                None,
+            )),
             other => Ok(Value::Atom(other.clone(), EffectTag::Pure, None)),
         },
         ExprKind::Combo { fields, closed, .. } => combo_expr_to_value(fields, *closed),

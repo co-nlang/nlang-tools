@@ -36,6 +36,22 @@ const TAG_THUNK: u8 = 0x17;
 // Range [start, end] (optional step) — new CAID tag (2026-07-10); no prior
 // values existed (all ranges were ⊥ via wildcard), so no CAID invalidation.
 const TAG_RANGE: u8 = 0x18;
+// Q-049: each AtomKind that used to share TAG_ATOM (0x10) gets its own
+// byte so the kind enters the address (REAL_03 §6.7 clause 2). 0x10
+// stays Str. 0x15 remains the unused Bool reservation.
+const TAG_UNIT: u8 = 0x19;
+const TAG_REGEX: u8 = 0x1A;
+const TAG_URI: u8 = 0x1B;
+const TAG_TIME: u8 = 0x1C;
+const TAG_PATH: u8 = 0x1D;
+const TAG_BYTES: u8 = 0x1E;
+// D70: 0x1F was the Q-049 MultilineStr tag. Triple-quote is a spelling,
+// not a kind, so this byte is dead and must not be reused.
+#[allow(dead_code)]
+const TAG_MULTILINE: u8 = 0x1F;
+const TAG_BLUR: u8 = 0xFD;
+const TAG_BOTTOM: u8 = 0xFE;
+const TAG_TOP: u8 = 0xFF;
 
 // ── Public API ────────────────────────────────────────────────
 
@@ -63,8 +79,8 @@ pub fn content_digest_combo(cv: &ComboVal) -> [u8; 32] {
 fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
     match val {
         // Caused Top serializes as bare Top (provenance is observation-only).
-        Value::Top | Value::TopCaused { .. } => buf.push(0xFF),
-        Value::Bottom(_) => buf.push(0xFE),
+        Value::Top | Value::TopCaused { .. } => buf.push(TAG_TOP),
+        Value::Bottom(_) => buf.push(TAG_BOTTOM),
         Value::Atom(kind, _effect, _rank) => serialize_atom(kind, buf),
         Value::Combo(cv) => serialize_combo(cv, buf),
         Value::Union(items) => serialize_union(items, buf),
@@ -139,7 +155,7 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
             // O42 R-5: identity encoding is the CHS digest (same as blur_caid).
             // Full record set is recoverable from display/runtime fields only
             // for in-memory values; content-addressed store keys use CHS.
-            buf.push(0xFD);
+            buf.push(TAG_BLUR);
             let chs = bd.blur_caid();
             buf.extend_from_slice(&chs.digest);
             // Preserve runtime payload for reconstruct (not identity):
@@ -220,30 +236,30 @@ fn serialize_atom(kind: &AtomKind, buf: &mut Vec<u8>) {
             encode_string("_|_", buf);
         }
         AtomKind::PathLit(p) => {
-            buf.push(TAG_ATOM);
+            buf.push(TAG_PATH);
             encode_string(p, buf);
         }
-        AtomKind::Top => buf.push(0xFF),
-        AtomKind::Bottom => buf.push(0xFE),
+        AtomKind::Top => buf.push(TAG_TOP),
+        AtomKind::Bottom => buf.push(TAG_BOTTOM),
         AtomKind::Unit => {
-            buf.push(TAG_ATOM);
-            encode_string("()", buf);
+            buf.push(TAG_UNIT);
         }
         AtomKind::Regex(r) => {
-            buf.push(TAG_ATOM);
+            buf.push(TAG_REGEX);
             encode_string(r, buf);
         }
         AtomKind::Uri(u) => {
-            buf.push(TAG_ATOM);
+            buf.push(TAG_URI);
             encode_string(u, buf);
         }
         AtomKind::Time(t) => {
-            buf.push(TAG_ATOM);
+            buf.push(TAG_TIME);
             encode_string(t, buf);
         }
         AtomKind::Bytes(b) => {
-            buf.push(TAG_ATOM);
-            encode_string(&hex::encode(b), buf);
+            buf.push(TAG_BYTES);
+            encode_unsigned_leb128(b.len() as u64, buf);
+            buf.extend_from_slice(b);
         }
     }
 }
