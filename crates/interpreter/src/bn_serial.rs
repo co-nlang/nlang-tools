@@ -45,6 +45,9 @@ const TAG_URI: u8 = 0x1B;
 const TAG_TIME: u8 = 0x1C;
 const TAG_PATH: u8 = 0x1D;
 const TAG_BYTES: u8 = 0x1E;
+// D70: 0x1F was the Q-049 MultilineStr tag. Triple-quote is a spelling,
+// not a kind, so this byte is dead and must not be reused.
+#[allow(dead_code)]
 const TAG_MULTILINE: u8 = 0x1F;
 const TAG_BLUR: u8 = 0xFD;
 const TAG_BOTTOM: u8 = 0xFE;
@@ -199,12 +202,8 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
 
 fn serialize_atom(kind: &AtomKind, buf: &mut Vec<u8>) {
     match kind {
-        AtomKind::Str(s) => {
+        AtomKind::Str(s) | AtomKind::MultilineStr(s) => {
             buf.push(TAG_ATOM);
-            encode_string(s, buf);
-        }
-        AtomKind::MultilineStr(s) => {
-            buf.push(TAG_MULTILINE);
             encode_string(s, buf);
         }
         AtomKind::Int(n) => {

@@ -1181,6 +1181,10 @@ impl Ouroboros {
                 // same object as empty AnonSet `@{}` (eval wildcard → Conflict).
                 AtomKind::Top => Value::Top,
                 AtomKind::Bottom => BottomCause::Conflict.into(),
+                // D70: leftover MultilineStr (if any) is the same value as Str.
+                AtomKind::MultilineStr(s) => {
+                    Value::Atom(AtomKind::Str(s), EffectTag::Pure, None)
+                }
                 k => Value::Atom(k, EffectTag::Pure, None),
             },
             ExprKind::Combo {
