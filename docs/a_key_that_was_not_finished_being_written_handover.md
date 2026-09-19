@@ -86,18 +86,83 @@ if path.exists() { return Self::load(path); }   // 一次，沒有重試
 ## N. 交付回報（交付方填；本行以上一字不得動）
 
 ### N.1 射程逐項對照
-I1／I2 各做了什麼、怎麼驗的。
 
-### N.2 順手改動（逐項指名）　**沒有就寫「無」。**
+**I1**　`load_or_mint` 在 `path.exists()` 時改走同一個 `load_after_race`（100 × 1ms）。
+暫時不完整的檔被等到，不再一次 `load` 就報 PKCS#8 毀損。
+R1：先佔名為 0 B、20ms 後寫入完整金鑰，`oo identity` rc=0，印出的 hex ＝那把。
+同構造的節點金鑰（`oo node id`）修後亦 rc=0（見 Q1）。
 
-### N.3 工單哪裡是錯的　**沒有就寫「無」。**
+**I2**　`load_after_race` 仍只 `load`，永不 `create_new`／永不覆寫。G2：永久 0 B 與截成 20 B
+皆 rc≠0、訊息含 `not a valid PKCS#8`、事後位元組逐字未變。G3：拒絕時不印金鑰；等到時印的是檔案裡那把。
 
-### N.4 Q1–Q3 逐題作答　**答案不利也照寫。**
+### N.2 順手改動（逐項指名）
+
+無。只動 `Identity::load_or_mint` 的 `exists()` 分支（及 docstring）。未 `rustfmt`。
+
+### N.3 工單哪裡是錯的
+
+無。Q3 說明乙**單獨**過不了本弧的 R1，那是選法的理由，不是工單寫錯。
+
+### N.4 Q1–Q3 逐題作答
+
+**Q1　節點金鑰走的是同一個 `load_or_mint` 嗎？**
+
+是。〔讀〕`Ouroboros::node_identity` 在 `identity_persist` 時呼叫
+`Identity::load_or_mint(&node_key_path(ws))`（`lib.rs`），與 `oo identity` 同一函式。
+
+〔量，`v0.54.0`〕把已鑄的節點金鑰弄成 0 B、背景 20ms 後寫回完整 83 B，同時 `oo node id`
+→ **rc=1**，訊息逐字 `not a valid PKCS#8 Ed25519 key … file left unchanged`
+——**與操作者金鑰同一個視窗、同一句話。**
+
+修後同構造：`oo node id` **rc=0**（22.3 ms）。本弧的修補同時治了它，因為沒有第二條路。
+
+另：`node_id_if_present` 走一次 `load`、失敗當「不在」。那條**從不鑄**，不是 `oo node id`，不在本弧。
+
+**Q2　`load_after_race` 的 100 × 1ms 在全樹 ×3 的負載下夠嗎？**
+
+夠。量測不是估計：
+
+*   鑄一把金鑰（含行程啟動）p50 **1.90 ms**／max **2.74 ms**（n=30，`v0.54.0`）。
+    PKCS#8 **83 B**。寫入遠短於 1 ms 的一格。
+*   R1 形（20 ms 晚寫）：修後等到 **21.4 ms** 就 rc=0，沒用完預算。
+*   永久無效：耗盡預算後拒絕，**114.3 ms**（0 B 與 20 B 各一次），檔案未變。
+*   全樹 ×3 負載下 `pin_concurrent_first_mint_yields_one_key`：**0／3 紅**（三輪皆 `ok`）。
+
+若不夠，那會是本弧的一部分（同一條重試）。今天量不到不夠。
+
+**Q3　甲還是乙，為什麼？**
+
+**甲。**
+
+乙（獨佔暫存名再 `link`／`rename` 到位）治的是**我們自己的寫入視窗**。
+I1／R1 的判準是讀端：檔案現在不完整、片刻之後完整——R1 用 `std::fs::write("")`
+再晚 20 ms 寫入，**不經 `create_new_at`**。只做乙，`exists()` 仍一次 `load`，R1 仍紅。
+⟹ 乙不是這條不變式的替代，重試也**不會**因此變成不必要。
+
+乙的代價〔量，本機 `/tmp` tmpfs〕：
+
+*   `os.link` 到不存在的 dest：成功，同 inode。
+*   `os.link` 到已存在的 dest：**EEXIST**，dest 位元組不變 → **D2 可守**。
+*   `os.rename` 覆寫已存在的 dest：**成功換成新位元組** → 這就是舊修補禁 `tmp+rename` 的理由。
+
+乙若做，必須用 `link` 不能用 `rename`，暫存名必須隨機且與身分檔同目錄（舊固定名曾被語言層讀到私鑰）。
+那是額外工程，且仍要甲才能過 R1。故只做甲。
 
 ### N.5 探針
-動了什麼（應為「無」）。認為某支校準錯了：寫在這裡，**不要改**。
-**特別是**：若你認為 R1 的 20ms／100ms 構造不穩，寫出來。
+
+無。R1 的 20 ms／100 ms 在本機穩定（等到 21.4 ms）。不認為構造不穩。
 
 ### N.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-**`pin_concurrent_first_mint_yields_one_key` 在你的三輪裡紅了幾次**。
+
+探針 **4／4**（G1–G3／R1）。符合性 **162／162**。
+身分：`~%Math./add (1,2)` → `3`（對照 `(1,3)` → `4`）。
+
+全樹 ×3（`--release --no-fail-fast --jobs 1 -- --test-threads=1`，逐 target 聚合 `test result:`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit | `pin_concurrent_first_mint_yields_one_key` |
+| :-- | --: | --: | --: | :-- | --: | --: | :-- |
+| 1 | 236 | 2242 | 0 | — | 0 | 0 | **ok** |
+| 2 | 236 | 2242 | 0 | — | 0 | 0 | **ok** |
+| 3 | 236 | 2242 | 0 | — | 0 | 0 | **ok** |
+
+**`pin_concurrent_first_mint_yields_one_key` 在三輪裡紅了 0 次。** 推論（工單 §6：不是本弧斷言）與量測一致。
