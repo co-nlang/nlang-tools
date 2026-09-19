@@ -2641,9 +2641,16 @@ impl Identity {
     /// Under a concurrent first mint exactly one process wins the
     /// `create_new`; every loser loads the winner's file, so the key a
     /// process reports is always the key on disk.
+    ///
+    /// Q-051: a file that exists is not necessarily finished. `create_new`
+    /// claims the name before the bytes land, and a bystander that never
+    /// raced used to `load` once and report PKCS#8 corruption. Both the
+    /// racer and the bystander now wait out a bounded window. A file that
+    /// stays invalid is still refused (D2: never overwritten, never replaced
+    /// with a freshly minted key).
     pub fn load_or_mint(path: &std::path::Path) -> anyhow::Result<Self> {
         if path.exists() {
-            return Self::load(path);
+            return Self::load_after_race(path);
         }
         let id = Self::new_random();
         match id.create_new_at(path) {
@@ -2657,18 +2664,15 @@ impl Identity {
         }
     }
 
-    /// Load a file the winner of a `create_new` race has claimed.
+    /// Load a key file that may still be mid-write.
     ///
-    /// `create_new` claims the path before the bytes are written, so a loser
-    /// arriving inside that window would read an empty file and report it as
-    /// a corrupt key. Not observed in 5 rounds of 8 — a loser generates an
-    /// Ed25519 keypair between the two, which is far longer than the winner's
-    /// write — but "not observed" is not "cannot happen", and this arc exists
-    /// because a check that cannot fail is not a check.
-    ///
-    /// Bounded, and only on the cold-start path. Failure stays D2-honest: the
-    /// file is never overwritten, so the worst case is a loud transient error
-    /// and a re-run, never a wrong key.
+    /// `create_new` claims the path before the bytes are written. A loser
+    /// of that race, or a bystander that found the name already claimed,
+    /// can arrive inside the window and read an empty / truncated file.
+    /// Bounded (100 × 1ms). Failure stays D2-honest: the file is never
+    /// overwritten, so the worst case is a loud transient error and a
+    /// re-run, never a wrong key. A permanently invalid file exhausts the
+    /// budget and is refused with the last parse error.
     fn load_after_race(path: &std::path::Path) -> anyhow::Result<Self> {
         let mut last = None;
         for attempt in 0..100 {
