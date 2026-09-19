@@ -3529,10 +3529,12 @@ impl Value {
                 hasher.update(&[effect.to_serial_byte()]);
             }
             Value::Code(expr) => {
-                // Span-free (O42 M4). See bn_serial Code arm — to_nlang is
-                // too stack-heavy for deep left-associated chains.
+                // Q-050: same specified Expr encoding as bn_serial (not Debug,
+                // not to_nlang). Spans omitted by the encoder. Iterative.
                 hasher.update([0x06]);
-                hasher.update(format!("{:?}", expr.without_spans()).as_bytes());
+                let mut buf = Vec::new();
+                crate::bn_serial::encode_expr(expr, &mut buf);
+                hasher.update(&buf);
             }
             Value::Ref(path) => {
                 hasher.update([0x07]);

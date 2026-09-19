@@ -55,7 +55,7 @@ FieldKey::Quoted(name) => vec![name.trim().to_string()],
 
 ### 2.3 `field_key` 補多行字串（跳脫）
 
-〔讀〕SYNTAX_02 §106 #11 **逐字指名 `quoted_key`**，並為它與 `str_lit` 指定同一條
+〔讀〕SYNTAX_02 §4.11 **逐字指名 `quoted_key`**，並為它與 `str_lit` 指定同一條
 出路：「需要引號的內容用多行字串」。
 〔讀〕但 SYNTAX_03 §1／SPEC_14 §102 的
 `field_key = { anon_set | path | named_key | quoted_key | tag }` **沒有多行形式**，

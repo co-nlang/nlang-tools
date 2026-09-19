@@ -543,12 +543,15 @@ fn p4_a_unify_side_blur_has_a_literal_address() {
 /// So the honest boundary is not "blur / not blur". It is "does the universe
 /// contain a value whose identity encoding this arc touched" — `#blur` and
 /// `Value::Code`.
+///
+/// Q-050 (2026-09-19) moved it again: Code identity left `Debug` for a
+/// specified Expr tree. Measured: `e59ea11d…` → `43f838bf…`.
 #[test]
 fn p5_a_morphism_bearing_universe_has_its_new_root() {
     assert_eq!(
         committed_root("p5", "inc: (x) -> x + 1\nv: 5\n"),
-        "e59ea11df0a66853f655c854e2234f6aefe0d3515809d0d8d58e6dafb9a7fbb1",
-        "a universe holding a morphism moved again — M4's span-free Code \
-         identity is the last change that was allowed to move it"
+        "43f838bf5805d87491b7409d37f726b819372b03edb542832ea51bfb0e3c608e",
+        "a universe holding a morphism moved — Q-050 replaced Debug with a \
+         specified Expr encoding; that is an authorized move of Code"
     );
 }
