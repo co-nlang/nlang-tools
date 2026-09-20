@@ -517,9 +517,13 @@ fn r7_absorption_does_not_rewrite_the_snapshot() {
 /// Measured three times on the accepted tree, byte-identical. If this moves,
 /// the CHS inputs moved — which is a breaking change (entry #11 was this arc)
 /// and must be a ruling, not a side effect.
+///
+/// Q-052 (2026-09-20) moved it: Thunk identity left `to_nlang` for the Expr
+/// node table, and a unify-side `#blur`'s `node_content` is a combo of
+/// field-thunks. Measured: `d0967392…` → `41ec191e…`.
 #[test]
 fn p4_a_unify_side_blur_has_a_literal_address() {
-    const KNOWN: &str = "d0967392f92cc2e77b156ae18dc98d8d1b3d31ba5ec570901ca5beb19e2561d3";
+    const KNOWN: &str = "41ec191e6a2504c1154ea5d56f9a0e2d03502bf177eda78aa62eb95c496c1d3c";
     let got = caid("p4", &format!("{KNOB}p: {DEEP_A}\ncp: p.%caid\n"));
     assert_eq!(got, KNOWN, "the CHS inputs of a depth-exhausted #blur moved");
 }
