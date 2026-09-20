@@ -116,6 +116,52 @@ fn head(dir: &Path) -> String {
     fs::read_to_string(dir.join(".oo/HEAD")).unwrap_or_default()
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  RE-SCOPED AT Q-052 ACCEPTANCE (2026-09-20, acceptor; ruling D72 = 甲+丙)
+//
+//  Q-052 changed `Thunk` identity from a pretty-printed string to the
+//  specified Expr node table. `fixtures/pre_sentinel_repo` was built by the
+//  real `oo v0.20.0` binary and its root embeds `Thunk{expr: Atom(Int 1)}`,
+//  so this engine now recomputes a different digest for it:
+//
+//      requested   …:16ba5683…
+//      recomputed  …:cef5e484…   -> #caid_mismatch
+//
+//  Measured on four real binaries with the same fixture: v0.53.0, v0.54.0
+//  and v0.55.0 all open it; the Q-052 build does not. The fixture cannot be
+//  regenerated -- see its README: no pre-sentinel binary ships here, and a
+//  current engine writes the opposite shape.
+//
+//  D72 (user): this is the ordinary cost of an identity epoch (甲), and the
+//  claims this fixture can no longer witness get their own card (丙).
+//
+//  What was re-scoped, and what each test still proves:
+//
+//   * r1 -- KILLED as written. Its claim ("one successful commit must not
+//     make a repo unopenable") cannot be witnessed by a fixture that no
+//     longer opens at all. It now pins the epoch's honest statement: the
+//     pre-epoch repo is refused BY NAME, on read and on write, and the
+//     refusal names both digests. Measured while re-scoping: the write side
+//     refuses too and HEAD does not move -- which is Q-038's claim ("one
+//     successful commit must not make a repo unopenable") in its strongest
+//     form, because the commit does not happen at all.
+//     What IS lost is the witness for the original phrasing -- a fixture that
+//     opens, is written to, and still opens. That is 丙's card, not a silent
+//     deletion.
+//
+//   * r3 -- claim SURVIVES. It failed only on a blanket `!contains
+//     ("unavailable")`, while the output it was written to check still reads
+//     `Standard root dependency: self-contained (pre-sentinel)`. The
+//     assertion was over-broad: it was meant to say "no root names a
+//     dependency this engine lacks", and it caught an unrelated "Universe
+//     unavailable". Narrowed to what it meant.
+//
+//   * r5 -- claim SURVIVES. Every migrate assertion still passes (layout
+//     advances to 5, an encoding declaration appears, HEAD does not move).
+//     Only the trailing "history still reads" failed, which is the epoch and
+//     not migration. That half now pins a named refusal instead.
+// ═══════════════════════════════════════════════════════════════════════
+
 // ─────────────────────────────────────────────────────────────────────────
 // RED — what the arc must make true.
 // ─────────────────────────────────────────────────────────────────────────
@@ -125,27 +171,44 @@ fn head(dir: &Path) -> String {
 ///
 /// Baseline: `status` answers `… 47dc540c… (unavailable)` and `log` errors.
 #[test]
-fn r1_a_pre_sentinel_repo_stays_openable_after_a_commit() {
+fn r1_a_pre_sentinel_repo_is_refused_by_name_after_the_thunk_epoch() {
     let d = lay_out_legacy("r1");
     let before = oo(d.path(), &["log"]);
+    // Q-052/D72: this fixture predates the Thunk identity encoding, so it no
+    // longer verifies. What must stay true is that the refusal is named and
+    // names both digests -- never a silent wrong answer.
     assert!(
-        before.contains("commit hash:"),
-        "REACH: the fixture must open before we write to it; got {before:?}"
+        before.contains("#caid_mismatch"),
+        "a repo from before the Thunk epoch must be refused by name; got {before:?}"
+    );
+    assert!(
+        before.contains("16ba5683") && before.contains("cef5e484"),
+        "the refusal must name what was requested and what was recomputed; got {before:?}"
     );
 
+    // And the write side refuses too, which is Q-038's claim in its strongest
+    // form: rather than committing on top of a history it cannot verify, the
+    // engine declines. HEAD is left where it was.
+    let head_before = head(d.path());
     fs::write(d.path().join("main.n"), "app: { k1: 1, k2: 2 }\n").expect("write");
     let ev = oo(d.path(), &["evolve", "main.n"]);
     let ci = oo(d.path(), &["commit", "-m", "x"]);
     assert!(
-        ci.contains("Commit successful"),
-        "REACH: the commit must report success (it does today); got {ev:?} / {ci:?}"
+        ci.contains("#caid_mismatch"),
+        "a write into a pre-epoch repo must be refused by name, not layered \
+         on top of a history that will not verify; got {ev:?} / {ci:?}"
+    );
+    assert_eq!(
+        head(d.path()),
+        head_before,
+        "a refused commit must not move HEAD"
     );
 
     let after = oo(d.path(), &["log"]);
     assert!(
-        after.contains("commit hash:"),
-        "a commit that reported success left a repo whose history will not \
-         open. got {after:?}"
+        after.contains("#caid_mismatch"),
+        "the refusal must stay named after a commit, not degrade into \
+         something else. got {after:?}"
     );
 }
 
@@ -201,10 +264,20 @@ fn r3_a_root_written_into_a_pre_sentinel_repo_stays_self_contained() {
         "the empty standard table's digest must never be written into a root. \
          got {st:?}"
     );
+    // Narrowed at Q-052 acceptance: the claim is about the STANDARD ROOT
+    // DEPENDENCY line, not about the word "unavailable" appearing anywhere.
+    // Post-epoch the universe line reads `Universe unavailable: #caid_mismatch`
+    // for an unrelated reason, while the line this test is about still reads
+    // `self-contained (pre-sentinel)` -- which is the claim.
     assert!(
-        !st.contains("unavailable"),
-        "no root written by this engine may name a dependency this engine \
-         does not have. got {st:?}"
+        st.contains("Standard root dependency: self-contained"),
+        "a root written into a pre-sentinel repo must stay self-contained. \
+         got {st:?}"
+    );
+    assert!(
+        !st.contains("Standard root dependency:") || !st.contains("(unavailable)"),
+        "no root written by this engine may name a standard root dependency \
+         this engine does not have. got {st:?}"
     );
 
     // And the store must not have gained the empty table either: the ruling
@@ -272,10 +345,15 @@ fn r5_a_granted_migrate_moves_the_container_and_not_the_root() {
         head_before,
         "migration is a container operation: HEAD must not move"
     );
+    // Q-052/D72: the roots are pre-epoch, so the history no longer verifies.
+    // Migration is still a container operation -- every assertion above this
+    // one is the claim, and it holds. What this line now pins is that
+    // migrating does not turn the epoch refusal into something unnamed.
     let lg = oo(d.path(), &["log"]);
     assert!(
-        lg.contains("commit hash:"),
-        "the history must still read after migrating; got {lg:?}"
+        lg.contains("#caid_mismatch"),
+        "after migrating, a pre-epoch history must still be refused by name; \
+         got {lg:?}"
     );
 }
 
