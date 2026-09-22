@@ -31,10 +31,10 @@ const TAG_COMPLEX: u8 = 0x14;
 const TAG_BOOL: u8 = 0x15;
 #[allow(dead_code)]
 const TAG_REF: u8 = 0x16;
-// Stage 2: Thunk serializes expr (canonical to_nlang) + closure frames
-// (each ComboVal) + context (#open or content hash) + effect — the full
-// GUIDE_03 §11.3 memo-key triple. Without context, two thunks with the
-// same expr but different bindings collide (deepen-memo bug).
+// Stage 2: Thunk serializes expr (Q-052: specified Expr node table, not
+// to_nlang) + closure frames (each ComboVal) + context (#open or value)
+// + effect — the full GUIDE_03 §11.3 memo-key triple. Without context,
+// two thunks with the same expr but different bindings collide.
 const TAG_THUNK: u8 = 0x17;
 // Range [start, end] (optional step) — new CAID tag (2026-07-10); no prior
 // values existed (all ranges were ⊥ via wildcard), so no CAID invalidation.
@@ -144,10 +144,11 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
             buf.push(TAG_REF);
             encode_path(path, buf);
         }
-        // Stage 2: full Thunk serialization — expr (canonical) + closure
-        // (frame) + context (binding | #open) + effect. The context slot is
-        // load-bearing: without it, `Thunk{$, ctx=lv1}` and `Thunk{$, ctx=j1}`
-        // hash identically and lazy unify's CAID early-out collapses the
+        // Stage 2: full Thunk serialization — expr (Q-052: specified Expr
+        // node table, not to_nlang) + closure (frame) + context
+        // (binding | #open) + effect. The context slot is load-bearing:
+        // without it, `Thunk{$, ctx=lv1}` and `Thunk{$, ctx=j1}` hash
+        // identically and lazy unify's CAID early-out collapses the
         // self-referential deepening (019 prop 3). GUIDE_03 §11.3 memo key.
         Value::Thunk {
             expr,
@@ -156,7 +157,7 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
             effect,
         } => {
             buf.push(TAG_THUNK);
-            encode_string(&expr.to_nlang(0), buf);
+            encode_expr(expr, buf);
             // Identity encoding (store CAID): still inlines frames via
             // serialize_combo so digests stay bit-stable (D1 success §5).
             // Force/in_flight uses a separate cycle key that hashes frame

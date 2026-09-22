@@ -3511,10 +3511,10 @@ impl Value {
                 // GUIDE_03 §11.3 memo key: (expr CAID, frame CAID, context CAID | #open).
                 // Must be deterministic and evaluation-independent.
                 hasher.update([0x05]);
-                // expr: canonical serialization (to_nlang) rather than Debug format,
-                // so structurally-equivalent exprs hash identically regardless of
-                // internal span/field-order differences that canonicalize() resolves.
-                hasher.update(expr.to_nlang(0).as_bytes());
+                // Q-052: same specified Expr encoding as bn_serial (not to_nlang).
+                let mut buf = Vec::new();
+                crate::bn_serial::encode_expr(expr, &mut buf);
+                hasher.update(&buf);
                 // frame (closure scopes): hash each ComboVal in the scope stack.
                 hasher.update(b"|frame:");
                 for cv in closure.iter() {
