@@ -112,6 +112,19 @@ fn read_decl(dir: &Path) -> (String, Option<String>) {
     (layout, enc)
 }
 
+/// Every 64-hex-character token in a message, deduplicated in order. Used to
+/// assert that a refusal names two DIFFERENT digests without pinning either
+/// one to a value this engine currently computes (Q-053).
+fn digests_named_in(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for token in text.split(|c: char| !c.is_ascii_hexdigit()) {
+        if token.len() == 64 && !found.iter().any(|d| d == token) {
+            found.push(token.to_string());
+        }
+    }
+    found
+}
+
 fn head(dir: &Path) -> String {
     fs::read_to_string(dir.join(".oo/HEAD")).unwrap_or_default()
 }
@@ -181,9 +194,22 @@ fn r1_a_pre_sentinel_repo_is_refused_by_name_after_the_thunk_epoch() {
         before.contains("#caid_mismatch"),
         "a repo from before the Thunk epoch must be refused by name; got {before:?}"
     );
+    // Q-053: this used to read `before.contains("cef5e484")`. `cef5e484` is
+    // not a fact about the fixture -- it is what THIS engine recomputes, so
+    // pinning it here made every future identity epoch look like a regression
+    // in Q-038's arc. The claim is the SHAPE: two different digests, named,
+    // one of them the one the artifact asked for. The literal now lives alone
+    // in `evidence_that_needs_a_binary_probe_test.rs::e5`, where a failure
+    // says "an epoch moved the recomputed digest" by its test name.
+    let digests = digests_named_in(&before);
     assert!(
-        before.contains("16ba5683") && before.contains("cef5e484"),
-        "the refusal must name what was requested and what was recomputed; got {before:?}"
+        digests.iter().any(|d| d.starts_with("16ba5683")),
+        "the refusal must name what the artifact asked for; got {before:?}"
+    );
+    assert!(
+        digests.len() >= 2,
+        "the refusal must name what was requested AND what was recomputed, so the \
+         two can be compared; got {digests:?} from {before:?}"
     );
 
     // And the write side refuses too, which is Q-038's claim in its strongest

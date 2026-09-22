@@ -944,22 +944,18 @@ impl Ouroboros {
         // Durable peer directory (advert_persistence): load signed records;
         // restore observations only when the file's owner matches this node.
         // Do not mint a node key here (node_identity P5).
-        let this_node_id = match crate::value::Identity::node_key_path(base_dir) {
-            Ok(path) if path.exists() => crate::value::Identity::load(&path)
-                .ok()
-                .map(|id| id.node_id_caid().to_string()),
-            _ => None,
+        // Q-054: one read, not two. A file that exists is waited out (Q-051).
+        // Still unreadable after that wait is a refusal, not "no key".
+        let loaded_node = match crate::value::Identity::node_key_path(base_dir) {
+            Ok(path) => crate::value::Identity::load_if_present(&path)?,
+            Err(_) => None,
         };
+        let this_node_id = loaded_node
+            .as_ref()
+            .map(|id| id.node_id_caid().to_string());
         let (peer_adverts, routing, peer_dir_state, load_report) =
             crate::peers::load(base_dir, this_node_id.as_deref());
-        // Prefill node identity when we already loaded it (no second mint).
-        let node_identity_cell = match crate::value::Identity::node_key_path(base_dir) {
-            Ok(path) if path.exists() => match crate::value::Identity::load(&path) {
-                Ok(id) => RwLock::new(Some(id)),
-                Err(_) => RwLock::new(None),
-            },
-            _ => RwLock::new(None),
-        };
+        let node_identity_cell = RwLock::new(loaded_node);
         let oo = Self {
             store,
             standard_roots: StandardRootSet::default(),
@@ -1111,12 +1107,21 @@ impl Ouroboros {
         }
         let base = self.base_dir.as_ref()?;
         let path = crate::value::Identity::node_key_path(base).ok()?;
-        if !path.exists() {
-            return None;
+        // Same wait as init. A permanent failure stays "unreadable", which
+        // this Option cannot name — init already refused that case.
+        // Cache a late success so the next call does not wait again.
+        match crate::value::Identity::load_if_present(&path).ok().flatten() {
+            Some(id) => {
+                let node_id = id.node_id_caid().to_string();
+                if let Ok(mut cell) = self.node_identity_cell.write() {
+                    if cell.is_none() {
+                        *cell = Some(id);
+                    }
+                }
+                Some(node_id)
+            }
+            None => None,
         }
-        crate::value::Identity::load(&path)
-            .ok()
-            .map(|id| id.node_id_caid().to_string())
     }
 
     /// Record an accepted OODP advertisement and update the Kademlia index.
