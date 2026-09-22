@@ -74,7 +74,8 @@
 //     whole-workspace run x3: `~/.oo/nodes` held 297 files before and 297
 //     after. Not proof of absence -- disclosed so it is not a surprise.
 //
-// Baseline measured 2026-09-22 on dev cbfd95d / oo v0.56.0: 5 green, 4 red.
+// Baseline measured 2026-09-22 on dev cbfd95d / oo v0.56.0: 5 green, 4 red
+// (r5 added at acceptance: red on that baseline too -> 5 green, 5 red).
 // If a pin here is wrong, say so in the report -- do not edit it.
 
 use nlang_interpreter::peers;
@@ -169,37 +170,39 @@ fn identity_as_read(ws: &Path) -> Option<String> {
 /// Hold the key empty, complete it after `WINDOW`, and run `reader` in
 /// between. Returns what the reader saw.
 ///
-/// ⚠ A timing probe must be able to say "this reading is void". `init` was
-/// measured at 14–18ms and reads the key near its end; `WINDOW` is 60ms, so
-/// the margin is 3–4x, and 60ms is still inside the 100ms budget
-/// `load_after_race` already spends. If the reader nevertheless outlasts the
-/// window, the observation never hit the transient state at all, and this
-/// helper panics rather than returning a green that means nothing.
+/// ⚠ ACCEPTOR REPAIR, 2026-09-22, Q-054 acceptance. The first version of this
+/// helper asserted `read_done < wrote_at`, meaning "the reader finished before
+/// the key was completed, so it must have seen the incomplete file". That
+/// guard has inverted polarity: **a reader that waits for the key necessarily
+/// finishes after the writer**, so the guard voided precisely the fixed state
+/// and could never go green. It was calibrated only against the broken engine,
+/// where it never fires. The delivery hit it, reported `VOID READING` rather
+/// than editing the probe, and was right to.
+///
+/// What is checked now is the only precondition that is both necessary and
+/// observable from outside: the reader was invoked while the key was empty.
+/// That the reader then WAITED rather than merely being slow is not provable
+/// here -- `r5` proves it separately, and without `r5` these two could pass
+/// for the wrong reason.
 const WINDOW: u64 = 60;
 
 fn observed_mid_write<T: std::fmt::Debug>(key: &Path, reader: impl FnOnce() -> T) -> T {
     let complete = std::fs::read(key).expect("read key");
     std::fs::write(key, b"").expect("truncate");
-    let done = std::sync::Arc::new(std::sync::Mutex::new(None::<std::time::Instant>));
+    assert_eq!(
+        std::fs::metadata(key).expect("stat").len(),
+        0,
+        "precondition: the key must be empty when the reader is invoked"
+    );
     let late = {
-        let (key, done) = (key.to_path_buf(), std::sync::Arc::clone(&done));
+        let key = key.to_path_buf();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(WINDOW));
             std::fs::write(&key, &complete).expect("late write");
-            *done.lock().expect("lock") = Some(std::time::Instant::now());
         })
     };
     let seen = reader();
-    let read_done = std::time::Instant::now();
     late.join().expect("late writer");
-    let wrote_at = done.lock().expect("lock").expect("writer ran");
-    assert!(
-        read_done < wrote_at,
-        "VOID READING: the reader finished at {read_done:?} but the key was only \
-         completed at {wrote_at:?}, so this run never observed a mid-write key. \
-         Raise WINDOW (budget is 100ms) or run on a less loaded machine. \
-         Saw {seen:?} -- do not record this as a result."
-    );
     seen
 }
 
@@ -378,6 +381,43 @@ fn r4_two_victims_do_not_agree_on_an_order_neither_could_read() {
         "two nodes that cannot read their own identity must not compute the \
          same admission order: that is C′, a tie broken by the peer's identity \
          alone. got {outcomes:?}"
+    );
+}
+
+/// R5 (I1, and what keeps `r1`/`r2` from being vacuous). `r1` and `r2` assert
+/// the OUTCOME: the identity was read. They cannot tell a reader that waited
+/// from a reader that happened to be slow enough to miss the window. This one
+/// can, and it is the only assertion in this file that is about time.
+///
+/// With a key that is empty and stays empty, a reader that gives the writer
+/// the already-ruled budget must spend most of it before concluding; a reader
+/// that looks once concludes immediately. Measured on the baseline build:
+/// `oo status` took 12–14ms for every key state, good or corrupt. A lower
+/// bound on a sleep is safe to assert; an upper bound would not be.
+///
+/// Baseline (before the repair): concludes in ~1ms -> red.
+#[test]
+fn r5_a_key_that_never_completes_still_costs_the_ruled_budget() {
+    let ws = workspace("r5");
+    mint(ws.path());
+    std::fs::write(key_path(ws.path()), b"").expect("truncate");
+
+    let t0 = std::time::Instant::now();
+    let outcome = Ouroboros::init(ws.path());
+    let spent = t0.elapsed();
+
+    assert!(
+        spent >= std::time::Duration::from_millis(WINDOW),
+        "a reader that concludes in {spent:?} never gave the writer the window \
+         Q-051 already ruled on; r1/r2 would then be green by luck"
+    );
+    // Which way it concludes is I2's question, not this test's: either it
+    // refuses, or it reports no identity. What is pinned here is that it
+    // waited first.
+    let concluded_absent = matches!(&outcome, Ok(e) if e.node_id_if_present().is_none());
+    assert!(
+        outcome.is_err() || concluded_absent,
+        "control: a permanently empty key must not somehow yield an identity"
     );
 }
 
