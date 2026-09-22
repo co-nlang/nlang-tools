@@ -103,3 +103,76 @@
     〔量〕`WINDOW=60ms` 對 `init` 的 14–18 ms 有 3–4 倍餘裕，且仍在 100 ms 預算內。
     **若你在你的機器上看到 `VOID READING`，那不是失敗也不是通過——回報它。**
 *   `rustfmt` **不得**掃這個檔案。
+
+---
+
+## 9. 交付回報（交付方填；本行以上一字不得動）
+
+### 9.1 射程
+
+**I1**　`Identity::load_if_present`：檔案不在 → `Ok(None)`；在 → `load_after_race`（100×1ms）。
+`Ouroboros::init` 與 `node_id_if_present` 的磁碟讀取都走它。不鑄造。
+
+**I2**　等完仍讀不到 → `init` 回傳那個 `Err`（訊息含 `not a valid PKCS#8`），
+**不**把引擎建起來再當成沒有節點。R3／R4 因此與「不存在」不同（一個 `Err`、一個 `Ok`）。
+`node_id_if_present` 的回傳型別沒改（見 Q2）。
+
+**I3**　`Identity::load` 本身不重試、不覆寫。G1 綠。永久 0 B／20 B 的 `oo status` rc=1，位元組未變。
+
+**I4**　G2 綠。`load_if_present` 不呼叫 `create_new`。
+
+### 9.2 順手改動
+
+無。未動 `bn_serial`、未動探針、未 `rustfmt`。
+
+### 9.3 工單哪裡是錯的
+
+無。R1／R2 的時鐘見 9.5，不是工單寫錯。
+
+### 9.4 Q1–Q4
+
+**Q1**　等待加在 `load_if_present`，呼叫點是 `init`（原 948 與 957）和 `node_id_if_present` 的磁碟回讀。
+948／957 **併成一次**：同一把 `Identity` 填 `this_node_id` 與 `node_identity_cell`。
+
+永久損壞金鑰，每次 `oo status`（n=5）：
+
+| 狀態 | rc | 耗時 min／p50／max | 相對完好 |
+| :-- | --: | :-- | :-- |
+| 不存在 | 0 | 12.4／12.9／13.4 ms | — |
+| 完好 | 0 | 12.2／13.3／13.8 ms | 0 |
+| 0 B | 1 | 113.1／113.8／118.7 ms | **約 +100 ms** |
+| 20 B | 1 | 113.8／116.3／119.2 ms | **約 +103 ms** |
+
+是**一次** 100 ms 預算，不是三點各一次。位元組未變。訊息：`not a valid PKCS#8 … file left unchanged`。
+
+**Q2**　形式是 **`init` 具名拒絕**。理由：下游把 `None` 讀成「還沒有節點」；只要 `init` 成功，R3 的觀測就會再塌回去。拒絕讓工作區根本開不起來，觀測上不同於「開得起來且沒有節點」。
+
+`node_id_if_present` 仍回 `Option`。改成 `Result` 會擴散到 `reconstruct_automatic_remotes`、`peers::verify_loaded`。那些呼叫發生在 `init` 已經成功之後；永久讀不到的情況在 `init` 就停了，到不了它們。
+冷回讀（cell 空、檔後來壞了）仍把 `Err` 收成 `None`——`Option` 說不出第三態。這是留下的縫，不是 R3 的路徑。
+
+**Q3**　裸 `.ok()`／`unwrap_or` 讀節點金鑰：修補前是 `init` 兩處和 `node_id_if_present`。現在 `node_id_if_present` 的回讀仍 `.ok().flatten()`（見 Q2）。
+`oodp` 只讀 affiliation 檔，不讀節點私鑰。
+`node_key_path` → `resolve_node_home` 失敗（相對 `OO_NODE_HOME`、無 `HOME`）在 `init` 仍走 `Err(_) => None`。那是永久設定錯誤，等待碰不到，今天仍變成「沒有節點」。未改。
+
+**Q4**　不決定。R4 現在兩側都是 `init` 拒絕，所以「兩個讀不到的節點默默算出同一個順序」這條路斷了。`seat_order_probe_test.rs` 要不要再長一支 C′ 探針，是規格問題；本弧沒加。
+
+### 9.5 探針
+
+一字未改。C1／C2／G1／G2／G3／R3／R4 綠。
+
+**R1／R2：`VOID READING`，不是失敗也不是通過。** 兩支 panic 印出的 `Saw` 都是 `Some(<那把金鑰的 CAID>)`——等是等到了。
+但讀完時刻晚於寫入戳記約 **11 ms**（R1）／**25 ms**（R2）：`load_after_race` 在寫入之後才返回，後面還有 `init` 的尾巴，探針因此作廢這次讀數。
+三輪全樹皆同。未改 `WINDOW`、未改宣稱。
+
+### 9.6 數字
+
+探針：7 綠；R1／R2 為 VOID（上）。符合性 **162／162**。
+身分：`~%Math./add (1,2)` → `3`（對照 `(1,3)` → `4`）。未動 `bn_serial`。
+
+全樹 ×3（`--release --no-fail-fast --jobs 1 -- --test-threads=1`）：
+
+| 輪 | targets | passed | failed | 失敗測試名 | `^error` | cargo exit |
+| :-- | --: | --: | --: | :-- | --: | --: |
+| 1／2／3 | 239 | 2259 | 2 | `r1_…`、`r2_…`（VOID） | 2 | 101 |
+
+沒有 digest 針失敗。`^error` 2 行是 cargo 包「test failed／1 target failed」。

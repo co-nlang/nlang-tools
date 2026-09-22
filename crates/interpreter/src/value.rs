@@ -2664,6 +2664,18 @@ impl Identity {
         }
     }
 
+    /// Read a node key that must not be minted.
+    ///
+    /// Absent → `Ok(None)`. Present → the same bounded wait as
+    /// [`Self::load_or_mint`]. Still unreadable after that wait → `Err`
+    /// (not `None`): a file that exists is not "no key".
+    pub fn load_if_present(path: &std::path::Path) -> anyhow::Result<Option<Self>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        Self::load_after_race(path).map(Some)
+    }
+
     /// Load a key file that may still be mid-write.
     ///
     /// `create_new` claims the path before the bytes are written. A loser
