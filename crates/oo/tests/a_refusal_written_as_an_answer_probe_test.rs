@@ -62,6 +62,7 @@
 // r9, r10 added at acceptance. r9 (repair round R-1): green on v0.57.0, red on the
 // delivery e2831a3. r10: red on v0.57.0, green on e2831a3 (pins an ordering
 // the delivery relies on). Both poles measured with real builds; see §9.
+// r11 added at acceptance of R-1 (repair round R-2): red on 7187b95; see §11.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -485,4 +486,45 @@ fn r10_an_unreadable_node_key_refuses_even_before_there_is_a_store() {
     let (o, rc) = w.oo(&["eval", "~%Math./add (1,2)"]);
     assert!(rc != 0, "eval walked past an unreadable node key in a workspace with no store yet: {o}");
     assert!(o.contains("PKCS#8"), "the refusal must name the key: {o}");
+}
+
+// ── Added at acceptance of R-1 (2026-09-23), repair round R-2 ────────────
+
+/// REAL_02 §5.1.1 again, and this time the acceptor's own error. The order
+/// said "measured: after layout 2 → 5, v0.40.0–v0.43.0 are locked out" —
+/// but the acceptor had only run engines from v0.40.0 up. Measured at R-1
+/// acceptance with every real binary on hand (v0.20.0, v0.22.0–v0.27.0,
+/// v0.32.0–v0.44.0), on stores MADE by older engines:
+///
+///   made by   declares            locked out by migrating to layout=5
+///   v0.22.0   layout=2/encoding=3 v0.22.0 … v0.43.0
+///   v0.27.0   layout=2/encoding=4 v0.26.0 … v0.43.0
+///   v0.36.0+  layout=2/encoding=5 v0.36.0 … v0.43.0
+///
+/// (v0.28.0–v0.31.0 were not on hand; they sit inside each range.) The
+/// delivered sentence names "v0.40.0 through v0.43.0" for all three, and
+/// `names_the_boundary` (r6/r7) passed it because it also says "oo v0.44.0
+/// and later still open" — the predicate accepted the wrong end. This probe
+/// asks for the OLDEST engine locked out, per start state, and uses a
+/// read-only `.oo` so only the sentence is measured and nothing is written.
+/// Baseline: red on the R-1 delivery 7187b95.
+#[test]
+fn r11_the_cost_names_the_oldest_engine_it_locks_out() {
+    for (enc, oldest) in [("encoding=3", "v0.22.0"), ("encoding=4", "v0.26.0"), ("encoding=5", "v0.36.0")] {
+        let w = Ws::new(&format!("r11-{enc}"));
+        let _ = w.committed();
+        fs::write(w.oo_dir().join("format"), "layout=2\n").unwrap();
+        fs::write(w.oo_dir().join("objects.format"), format!("{enc}\n")).unwrap();
+        let before = w.declarations();
+        chmod(&w.oo_dir(), 0o555);
+        let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
+        chmod(&w.oo_dir(), 0o755);
+        if rc == 0 || w.declarations() != before {
+            panic!("VOID READING: the write was supposed to fail ({enc}): rc={rc} {o}");
+        }
+        assert!(
+            o.contains(oldest) && o.contains("v0.43.0"),
+            "layout=2/{enc}: the cost must name {oldest} through v0.43.0: {o}"
+        );
+    }
 }
