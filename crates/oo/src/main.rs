@@ -1498,56 +1498,104 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Engines that can open `declaration` today and cannot open layout 5.
+/// Engines that open this store today and will not open it after migration.
 ///
-/// The table is the tagged sources, not a live probe of other binaries:
-/// `STORE_LAYOUT_VERSION` / `STORE_LAYOUT_MIGRATABLE_FROM` at each tag.
-///   v0.40.0 and v0.41.0 write layout 2 and open only that split-axis form.
-///   v0.42.0 writes layout 3 and opens 2..=3.
-///   v0.43.0 writes layout 4 and opens 2..=4.
-///   v0.44.0 writes layout 5 and opens 2..=5.
-/// A legacy bare number is still opened by v0.40.0 through v0.43.0, so
-/// moving it to layout 5 locks the same set as moving layout 2.
+/// Source is `storage.rs` at each tag (`STORE_FORMAT_VERSION` through v0.21.0,
+/// then `STORE_LAYOUT_VERSION` / `OBJECT_ENCODING_VERSION`), not a live run
+/// of those binaries. v0.44.0 is the first tag that writes and opens layout 5;
+/// its encoding max is already 5, so an encoding advance on a layout=5 store
+/// locks out nobody. v0.28.0–v0.31.0 are in the git tags and match their
+/// neighbours (layout 2, encoding max 4); they sit inside the ranges below.
+///
+/// Split-axis, oldest opener (then through v0.43.0, intersected with encoding):
+///   layout 2: v0.22.0.  layout 3: v0.42.0.  layout 4: v0.43.0.
+///   encoding 1..=3: v0.22.0.  encoding 4: v0.26.0.  encoding 5: v0.36.0.
+/// Bare number (the pre-split `.oo/format`), oldest opener:
+///   1: v0.2.55 (exact `"1"`).  2: v0.20.0 (writes 2, reads 1..=2).
+///   3: v0.21.0 (writes 3, reads 1..=3).  4: v0.26.0.  5: v0.36.0.
+/// v0.22.0 onward still open a bare number whose value is inside their
+/// encoding max. v0.19.0 and earlier open only bare `"1"`.
 fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     let target = nlang_interpreter::storage::STORE_LAYOUT_VERSION;
-    let mut parts = Vec::new();
-    if !nlang_interpreter::storage::layout_declaration_is_current(declaration) {
-        let layout_sentence = match declaration
-            .strip_prefix("layout=")
-            .and_then(|n| n.parse::<u32>().ok())
-        {
-            Some(2) => Some(("layout=2", "oo v0.40.0 through v0.43.0")),
-            Some(3) => Some(("layout=3", "oo v0.42.0 through v0.43.0")),
-            Some(4) => Some(("layout=4", "oo v0.43.0")),
-            Some(n) => {
-                parts.push(format!(
-                    "Migrating this store from layout={n} to layout={target} will make it \
-                     unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout={target}."
-                ));
-                None
-            }
-            None => Some((
-                "a legacy layout declaration",
-                "oo v0.40.0 through v0.43.0",
-            )),
-        };
-        if let Some((from, locked)) = layout_sentence {
-            parts.push(format!(
-                "Migrating this store from {from} to layout={target} will make it unopenable \
-                 by {locked}. oo v0.44.0 and later still open layout={target}."
-            ));
-        }
-    }
-    // Encoding 4 → 5 on a store that is already layout=5. Every tag that
-    // opens layout=5 (v0.44.0 onward) already opens encoding 1 through 5,
-    // so this axis locks out nobody who can open the store today.
-    if from_enc != to_enc {
-        parts.push(format!(
+    let Some(oldest) = first_engine_that_opens(declaration, from_enc) else {
+        return format!(
             "Advancing object encoding from encoding={from_enc} to encoding={to_enc} \
              locks out no engine."
-        ));
+        );
+    };
+    let newest = "v0.43.0";
+    let who = if oldest == newest {
+        format!("oo {oldest}")
+    } else {
+        format!("oo {oldest} through {newest}")
+    };
+    let from = if declaration.starts_with("layout=") {
+        declaration.to_string()
+    } else {
+        format!("bare declaration {declaration}")
+    };
+    let encoding_note = if from_enc != to_enc {
+        format!(
+            " Object encoding advances from encoding={from_enc} to encoding={to_enc}."
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "Migrating this store from {from} to layout={target} will make it unopenable \
+         by {who}. oo v0.44.0 and later still open layout={target}.{encoding_note}"
+    )
+}
+
+/// Oldest tagged engine that opens this declaration. `None` when the
+/// declaration is already layout 5 (only an encoding advance remains, and
+/// every layout-5 engine already reads encoding 1 through 5).
+fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> {
+    let layout = declaration
+        .strip_prefix("layout=")
+        .and_then(|n| n.parse::<u32>().ok());
+    let floor = if let Some(layout) = layout {
+        let by_layout = match layout {
+            2 => "v0.22.0",
+            3 => "v0.42.0",
+            4 => "v0.43.0",
+            _ => return None,
+        };
+        let by_encoding = match enc {
+            0..=3 => "v0.22.0",
+            4 => "v0.26.0",
+            _ => "v0.36.0",
+        };
+        later_engine(by_layout, by_encoding)
+    } else if declaration.parse::<u32>().is_ok() {
+        match enc {
+            1 => "v0.2.55",
+            2 => "v0.20.0",
+            3 => "v0.21.0",
+            4 => "v0.26.0",
+            _ => "v0.36.0",
+        }
+    } else {
+        return None;
+    };
+    if engine_ord(floor) > engine_ord("v0.43.0") {
+        None
+    } else {
+        Some(floor)
     }
-    parts.join(" ")
+}
+
+fn later_engine<'a>(a: &'a str, b: &'a str) -> &'a str {
+    if engine_ord(a) >= engine_ord(b) { a } else { b }
+}
+
+/// `vMAJOR.MINOR.PATCH` as a single integer so v0.2.55 sorts before v0.20.0.
+fn engine_ord(v: &str) -> u32 {
+    let mut parts = v.trim_start_matches('v').split('.');
+    let major: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    let minor: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    let patch: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    major * 1_000_000 + minor * 1_000 + patch
 }
 
 fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {

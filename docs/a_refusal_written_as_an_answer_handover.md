@@ -300,21 +300,42 @@ r9 綠；本檔其餘全綠；`layout=5`／`encoding=4` 由再跑一次 `migrate
 ## 12. 修補回合 R-2 回報（交付方填；本行以上一字不得動）
 
 ### 12.1 射程逐項對照
+S1 代價句改為「遷移前打得開、遷移後打不開」的整段，由兩份宣告一起算。layout=2／encoding=3 點名 `v0.22.0 through v0.43.0`；encoding=4 點名 `v0.26.0`；encoding=5 點名 `v0.36.0`。三句都含 `v0.43.0`，並仍寫 `layout=5`。驗：r11、r6、r7。layout 已是 5、只推進 encoding 4→5 時仍說 `locks out no engine`。驗：r9。
 
 ### 12.2 順手改動（逐項指名）
+無。`cargo fmt` 未跑。只改 `crates/oo/src/main.rs` 的代價句。`migrate_layout` 的寫入未動。
 
 ### 12.3 工單哪裡是錯的
+無。11.1 說 v0.28.0–v0.31.0 手上沒有二進位；git 標籤裡這四個的 `STORE_LAYOUT_VERSION`／`OBJECT_ENCODING_VERSION` 與鄰居相同（layout 2、encoding 上限 4），所以落在 encoding=3 與 encoding=4 那兩段裡面。沒有把它們另列成一段。
 
 ### 12.4 工單指名要你回答的問題
-（11.1 的表與來源；裸數字起點的名單。）
+來源是各標籤 `crates/interpreter/src/storage.rs` 的常數，不是這次重跑舊二進位。v0.44.0 是第一個 `STORE_LAYOUT_VERSION = 5` 的標籤，且其 encoding 上限已是 5。被鎖在門外的最新一個因此總是 v0.43.0；最舊一個是「開得了這份 layout」與「讀得懂這份 encoding」兩者中較晚的那個。
+
+| 遷移前 | 最舊開得了的標籤 | 代價句點名 |
+| :-- | :-- | :-- |
+| layout=2／encoding=3 | v0.22.0（分軸起點，encoding 上限 3） | v0.22.0 through v0.43.0 |
+| layout=2／encoding=4 | v0.26.0（encoding 上限升到 4；v0.22.0–v0.25.0 讀不了 4） | v0.26.0 through v0.43.0 |
+| layout=2／encoding=5 | v0.36.0（encoding 上限升到 5；v0.26.0–v0.35.0 讀不了 5） | v0.36.0 through v0.43.0 |
+| layout=3／encoding=5 | v0.42.0（第一個開 layout=3） | v0.42.0 through v0.43.0 |
+| layout=4／encoding=5 | v0.43.0 | v0.43.0 |
+| layout=5／encoding=4 → 5 | v0.44.0 兩種 encoding 都開 | 沒有引擎被鎖在門外 |
+
+與 11.1 的三行真二進位量測一致。layout=3／4 這兩行是常數推出來的，這次沒有用舊二進位再量。
+
+裸數字：v0.20.0 寫的是 `2`（讀 1..=2）；v0.21.0 寫的是 `3`（讀 1..=3）。v0.19.0 與更早只接受裸 `1`，所以不在這兩段裡。v0.22.0 起把裸數字當成 encoding，上限之內仍開。遷到 layout=5 之後：
+- 裸 `2`：`oo v0.20.0 through v0.43.0`
+- 裸 `3`：`oo v0.21.0 through v0.43.0`
 
 ### 12.5 探針
-兩個探針檔皆不得動。r11 應轉綠，其餘不得轉紅。
+兩個探針檔都沒動。r11 轉綠。本檔 17 支皆綠。無 `VOID READING`。
 
 ### 12.6 數字
-全樹 ×3（`--release --no-fail-fast`、逐 target 聚合、**失敗測試名**、`^error` 行數、exit code）／conformance／身分紅線。
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：240 行，2279 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1,2)` → `3` rc=0；`add (1,3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。未改 `bn_serial`。
 
 ### 12.7 你認為需要改規格之處
+無。
 
 ---
 
