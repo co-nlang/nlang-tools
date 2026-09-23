@@ -166,11 +166,31 @@ fn g3_a_declared_store_without_history_is_not_a_new_store() {
     fs::create_dir_all(d.join(".oo/injections")).expect("mkdir");
     fs::write(d.join(".oo/format"), "layout=4\n").expect("layout");
     fs::write(d.join(".oo/objects.format"), "encoding=4\n").expect("encoding");
-    fs::write(d.join(".oo/injections/deadbeef"), "{}\n").expect("injection");
+    // ACCEPTOR REPAIR (Q-055, 2026-09-23). This fixture used to write `{}`
+    // as the injection. That is not an injection of any layout — it is not
+    // the layout-4 frame and it does not decode as a legacy body — so the
+    // working set could never be read, and the REACH below was green only
+    // because `status` printed "Universe unavailable" and exited 0 anyway.
+    // That is Q-055's M1. When Q-055 made `status` exit non-zero, this REACH
+    // went red while the property it guards (no declaration advanced) still
+    // held. The injection is now a real layout-4 frame (no `effect_tags:`
+    // line, which layout 5 added), and REACH now also requires the staged
+    // value to be read back, so it cannot ride on a lying status again. The
+    // inputs to init's new-store decision (`format`, `HEAD`, CAS objects)
+    // are unchanged, so what this probe detects is unchanged.
+    fs::write(
+        d.join(".oo/injections/deadbeef"),
+        "#nlang/store injection\nid: \"deadbeef\"\npin_coords: []\nabsorbs: {}\n\n{ x: 1 }\n",
+    )
+    .expect("injection");
     fs::write(d.join("a.n"), "x: 1\n").expect("source");
 
     let (out, rc) = oo(d, &["status"]);
     assert_eq!(rc, 0, "REACH: such a store still opens: {out}");
+    assert!(
+        out.contains("Staged changes") && out.contains("x: 1"),
+        "REACH: the staged injection must actually be read back: {out}"
+    );
     assert_eq!(
         read(d, ".oo/format").as_deref(),
         Some("layout=4\n"),

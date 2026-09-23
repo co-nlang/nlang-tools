@@ -2563,18 +2563,17 @@ impl Identity {
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("identity file {}: read failed: {}", path.display(), e))?;
-        Self::from_pkcs8(&bytes).map_err(|e| {
+        Self::from_pkcs8(&bytes).map_err(|_| {
             anyhow::anyhow!(
-                "identity file {}: not a valid PKCS#8 Ed25519 key ({}); file left unchanged",
-                path.display(),
-                e
+                "identity file {}: not a valid PKCS#8 Ed25519 key; file left unchanged",
+                path.display()
             )
         })
     }
 
     pub fn from_pkcs8(bytes: &[u8]) -> anyhow::Result<Self> {
-        let key_pair =
-            signature::Ed25519KeyPair::from_pkcs8(bytes).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let key_pair = signature::Ed25519KeyPair::from_pkcs8(bytes)
+            .map_err(|_| anyhow::anyhow!("not a valid PKCS#8 Ed25519 key"))?;
         Ok(Self {
             public_key: key_pair.public_key().as_ref().to_vec(),
             private_key: bytes.to_vec(),

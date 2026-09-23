@@ -192,6 +192,18 @@ pub fn layout_declaration_is_current(declaration: &str) -> bool {
     declaration == format!("layout={STORE_LAYOUT_VERSION}")
 }
 
+/// Encoding `migrate_layout` writes for a store that currently declares
+/// `declared`. Encoding 4 and above is brought up to this engine's encoding;
+/// an older encoding is left as declared. One formula for the write and for
+/// "both declarations are already what this engine would write".
+pub fn encoding_after_migration(declared: u32) -> u32 {
+    if declared >= 4 {
+        OBJECT_ENCODING_VERSION
+    } else {
+        declared
+    }
+}
+
 /// Layouts that already declare the Q-016a injection frame (`id`,
 /// `pin_coords`, `absorbs`). Pin intent is expressible there; `effect_tags`
 /// is not. Not `layout_declaration_is_current`: after this engine writes
@@ -225,6 +237,51 @@ fn has_cas_objects(path: &Path) -> bool {
         let path = entry.path();
         path.is_file() || (path.is_dir() && has_cas_objects(&path))
     })
+}
+
+/// A directory already holds a store. This is the complement of `new_store`
+/// in [`ObjectStore::init`]: a layout declaration, a `HEAD`, or any CAS
+/// object. An `.oo` that cannot be stated counts as present — a permission
+/// error is not the same fact as absence, and a caller must not replace it
+/// with an empty store.
+pub fn durable_store_present(base_dir: &Path) -> bool {
+    let oo = base_dir.join(".oo");
+    match oo.try_exists() {
+        Ok(false) => false,
+        Err(_) => true,
+        Ok(true) => match stated(&oo.join("format")) {
+            Presence::Yes | Presence::Unstatable => true,
+            Presence::No => match stated(&oo.join("HEAD")) {
+                Presence::Yes | Presence::Unstatable => true,
+                Presence::No => objects_hold_anything(&oo.join("objects")),
+            },
+        },
+    }
+}
+
+enum Presence {
+    Yes,
+    No,
+    Unstatable,
+}
+
+fn stated(path: &Path) -> Presence {
+    match path.try_exists() {
+        Ok(true) => Presence::Yes,
+        Ok(false) => Presence::No,
+        Err(_) => Presence::Unstatable,
+    }
+}
+
+fn objects_hold_anything(path: &Path) -> bool {
+    match fs::read_dir(path) {
+        Ok(entries) => entries.flatten().any(|entry| {
+            let path = entry.path();
+            path.is_file() || (path.is_dir() && objects_hold_anything(&path))
+        }),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
 }
 
 impl ObjectStore {
@@ -684,11 +741,7 @@ impl ObjectStore {
             &oo.join("format"),
             format!("layout={STORE_LAYOUT_VERSION}\n"),
         )?;
-        let encoding = if self.encoding >= 4 {
-            OBJECT_ENCODING_VERSION
-        } else {
-            self.encoding
-        };
+        let encoding = encoding_after_migration(self.encoding);
         atomic_write(
             &oo.join("objects.format"),
             format!("encoding={encoding}\n"),
