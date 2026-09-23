@@ -59,6 +59,9 @@
 // report. `rustfmt` must not touch it.
 //
 // Baseline measured 2026-09-23 on dev b87f226 / oo v0.57.0: see the order.
+// r9, r10 added at acceptance. r9 (repair round R-1): green on v0.57.0, red on the
+// delivery e2831a3. r10: red on v0.57.0, green on e2831a3 (pins an ordering
+// the delivery relies on). Both poles measured with real builds; see §9.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -438,4 +441,48 @@ fn r8b_the_d73_refusal_is_in_the_engines_words() {
     w.break_node_key();
     let (o, _) = w.oo(&["status"]);
     assert!(!speaks_host(&o), "the D73 refusal speaks the host: {o}");
+}
+
+// ── Added at acceptance (2026-09-23), repair round R-1 ───────────────────
+
+/// `migrate` advances TWO declarations — `format` and `objects.format`
+/// (`storage.rs` `migrate_layout`). The delivered "already current" check
+/// reads only the layout, so a store at `layout=5` / `encoding=4` — exactly
+/// the half-migrated state the delivery measured for Q4 — is told "Nothing
+/// was changed" and can no longer be completed by the one explicit action
+/// that advances the encoding. v0.57.0 completed it (encoding → 5).
+/// Baseline: green on v0.57.0; red on the delivery e2831a3.
+#[test]
+fn r9_a_half_migrated_store_can_still_be_completed() {
+    let w = Ws::new("r9");
+    let _ = w.committed();
+    fs::write(w.oo_dir().join("objects.format"), "encoding=4\n").unwrap();
+    let (o, rc) = w.oo(&["status"]);
+    if rc != 0 {
+        panic!("VOID READING: a layout=5 / encoding=4 store was supposed to open: {o}");
+    }
+    let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
+    assert_eq!(rc, 0, "migrate on a half-migrated store: {o}");
+    let (_, enc) = w.declarations();
+    assert_eq!(
+        String::from_utf8_lossy(&enc).trim(),
+        "encoding=5",
+        "an explicit migrate left the encoding axis behind and said: {o}"
+    );
+}
+
+/// D73 holds before any store exists. The delivery tells "absent" from
+/// "present but unopenable" by asking whether a durable store is there
+/// AFTER `init` failed — and that works here only because `init` lays down
+/// `.oo/format` before it reads the node key. This pins the observation so a
+/// reordering of `init` cannot quietly reopen the path `r4` closed.
+/// Baseline: v0.57.0 answers `3`, rc=0 (red); the delivery refuses (green).
+#[test]
+fn r10_an_unreadable_node_key_refuses_even_before_there_is_a_store() {
+    let w = Ws::new("r10");
+    w.break_node_key();
+    fs::remove_dir_all(w.oo_dir()).unwrap();
+    let (o, rc) = w.oo(&["eval", "~%Math./add (1,2)"]);
+    assert!(rc != 0, "eval walked past an unreadable node key in a workspace with no store yet: {o}");
+    assert!(o.contains("PKCS#8"), "the refusal must name the key: {o}");
 }
