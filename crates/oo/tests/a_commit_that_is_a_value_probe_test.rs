@@ -47,6 +47,8 @@
 // report. `rustfmt` must not touch it.
 //
 // Baseline measured 2026-09-24 on dev fe7f578 / oo v0.58.0: see the order.
+// r7 added at acceptance (repair round R-1): VOID on v0.58.0 (no v2 HEAD),
+// red on the delivery 44cbe32; see the order §9.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -331,4 +333,33 @@ fn r6_a_migrated_store_writes_commits_that_are_values() {
     assert!(l.contains(LEGACY_BASE) && l.contains(LEGACY_REFINE), "legacy history after migrate: {l}");
     let new = w.commit("z: 3\n", "after");
     assert_eq!(digest_of(&new), digest_of(&w.value_address_of_body(&new)), "post-migrate commit is not its value");
+}
+
+// ── Added at acceptance (2026-09-24), repair round R-1 ───────────────────
+
+/// REAL_03 §6.6 "驗證範圍 (MUST)": a v2 request compares content_digest,
+/// lattice_sketch AND masa_ref. The delivery verifies a v2 commit address by
+/// digest only, so a HEAD whose sketch is altered still opens, and `oo log`
+/// prints the altered string as this commit's address — F3 again, one level
+/// up: an address the commit never had.
+/// Baseline: VOID on v0.58.0 (HEAD is v1); red on the delivery 44cbe32.
+#[test]
+fn r7_a_commit_address_is_verified_in_full() {
+    let w = Ws::new("r7");
+    let head = w.commit("x: 1\n", "one");
+    let parts: Vec<&str> = head.split(':').collect();
+    if parts.len() != 6 || parts[2] != "v2" {
+        panic!("VOID READING: HEAD is not a v2 address: {head}");
+    }
+    let sketch = parts[4];
+    let i = sketch.char_indices().find(|(_, c)| c.is_ascii_alphanumeric() && *c != 'A').map(|(i, _)| i).unwrap();
+    let mut forged_sketch: String = sketch.to_string();
+    forged_sketch.replace_range(i..i + 1, if &sketch[i..i + 1] == "Z" { "Y" } else { "Z" });
+    let forged = [parts[0], parts[1], parts[2], parts[3], &forged_sketch, parts[5]].join(":");
+    fs::write(w.ws.join(".oo/HEAD"), format!("{forged}\n")).unwrap();
+    let (o, rc) = w.oo(&["log"]);
+    assert!(
+        rc != 0 && !o.contains(&forged),
+        "a commit address with an altered sketch was accepted and shown as the commit's address: rc={rc} {o}"
+    );
 }
