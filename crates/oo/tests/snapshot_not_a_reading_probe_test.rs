@@ -151,8 +151,8 @@ fn committed_root(tag: &str, src: &str) -> String {
     let _ = oo_out(&d, &["commit", "-m", "t"]);
     let log = oo(&d, &["log"]);
     let commit = log
-        .split_whitespace()
-        .find(|t| t.starts_with("hash:sha256:v1:"))
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("commit ").map(str::trim))
         .unwrap_or_else(|| panic!("{tag}: no commit in log:\n{log}"))
         .to_string();
     let insp = oo(&d, &["inspect", &commit]);

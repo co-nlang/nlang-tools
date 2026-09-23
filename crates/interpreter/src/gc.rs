@@ -139,7 +139,7 @@ fn verify_reachable_object(
         let Ok(bytes_digest) = hex::decode(digest_hex) else {
             return VerifiedObject::Undecodable;
         };
-        let h = ContentHash::v1(bytes_digest);
+        let h = ContentHash::v1(bytes_digest.clone());
         let is_mismatch = |e: &anyhow::Error| {
             matches!(
                 e.downcast_ref::<crate::storage::StoreReadError>(),
@@ -153,7 +153,22 @@ fn verify_reachable_object(
         }
         match store.get_commit(&h) {
             Ok(_) => return VerifiedObject::Ok(refs),
-            Err(e) if is_mismatch(&e) => return VerifiedObject::CaidMismatch,
+            Err(e) if is_mismatch(&e) => {
+                // A layout-6 commit's digest is a v2 value address. The v1
+                // check above does not match it. One algorithm will.
+                let v2 = crate::value::ContentHash {
+                    algorithm: crate::value::HashAlgorithm::Sha256,
+                    version: crate::value::CaidVersion::V2,
+                    masa_ref: crate::value::MasaRef::Top,
+                    lattice_sketch: String::new(),
+                    digest: bytes_digest.clone(),
+                };
+                match store.get_commit(&v2) {
+                    Ok(_) => return VerifiedObject::Ok(refs),
+                    Err(e2) if is_mismatch(&e2) => return VerifiedObject::CaidMismatch,
+                    Err(_) => return VerifiedObject::Undecodable,
+                }
+            }
             Err(_) => {}
         }
         return VerifiedObject::Undecodable;
@@ -262,8 +277,21 @@ fn push_commit_predecessor(
     if raw.len() != 32 {
         return;
     }
-    let Ok(commit) = store.get_commit(&ContentHash::v1(raw)) else {
-        return;
+    let commit = match store.get_commit(&ContentHash::v1(raw.clone())) {
+        Ok(c) => c,
+        Err(_) => {
+            let v2 = ContentHash {
+                algorithm: crate::value::HashAlgorithm::Sha256,
+                version: crate::value::CaidVersion::V2,
+                masa_ref: crate::value::MasaRef::Top,
+                lattice_sketch: String::new(),
+                digest: raw,
+            };
+            match store.get_commit(&v2) {
+                Ok(c) => c,
+                Err(_) => return,
+            }
+        }
     };
     let Ok(Some(p)) = crate::savepoint::previous_commit(base_dir, &commit, digest) else {
         return;

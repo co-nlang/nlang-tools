@@ -243,14 +243,14 @@ fn r2_inspect_shows_values_not_rust() {
 
     let log = oo(&d, &["log"]);
     let commit_caid = log
-        .split_whitespace()
-        .find(|t| t.starts_with("hash:sha256:v1:"))
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("commit ").map(str::trim))
         .expect("LIVENESS: no commit CAID in log")
         .to_string();
     let head = oo(&d, &["inspect", &commit_caid]);
     let root_caid = head
-        .split_whitespace()
-        .find(|t| t.starts_with("hash:sha256:v2:"))
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("root:").map(str::trim))
         .expect("LIVENESS: no root CAID in inspect")
         .to_string();
 
@@ -471,14 +471,14 @@ fn p4_root_caid_does_not_move() {
 
     let log = oo(&d, &["log"]);
     let commit_caid = log
-        .split_whitespace()
-        .find(|t| t.starts_with("hash:sha256:v1:"))
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("commit ").map(str::trim))
         .expect("LIVENESS: no commit CAID")
         .to_string();
     let head = oo(&d, &["inspect", &commit_caid]);
     let root = head
-        .split_whitespace()
-        .find(|t| t.starts_with("hash:sha256:v2:"))
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("root:").map(str::trim))
         .expect("LIVENESS: no root CAID")
         .to_string();
 

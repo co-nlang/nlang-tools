@@ -145,8 +145,9 @@ fn run_src(tag: &str, src: &str) -> String {
 fn head_root(dir: &Path) -> Option<String> {
     let log = oo(dir, &["log"]);
     let c = log
-        .split_whitespace()
-        .find(|t| t.starts_with("hash:sha256:v1:"))?
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("commit "))
+        .map(str::trim)?
         .to_string();
     oo(dir, &["inspect", &c])
         .lines()

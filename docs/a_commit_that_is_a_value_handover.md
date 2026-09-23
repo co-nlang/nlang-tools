@@ -99,27 +99,53 @@
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
 ### 8.1 射程逐項對照
-S1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+S1 I1：layout=6 的新提交，位址＝把框線下的 n/ 本文交給 `~%Discovery./identify` 得到的值位址（先求值再 `content_hash`，不是 `expr_to_value`）。竄改本文就換位址。驗：r1、r2、r3、r4。
+S2 I2：layout≤5 仍用舊算法 `Commit::content_hash`。不改寫舊物件、遷移不移動 HEAD。驗：g1、g2、g3、r6 的 log。
+S3 I3：選擇子是位址上的版本。`v1` 只跑舊算法；`v2` 只算本文的值位址。見 Q2。
+S4 I4：推進的是佈局軸，號碼 6。新建倉寫 `layout=6`／`encoding=5`。layout=5 再提交仍是舊式、宣告不動。驗：g3、r6。
+S5 I5：舊提交的 `refine authority` 印 `unattested`，不印檔裡的 `verified`。新提交的 `authority_status` 在值位址裡，照字印。驗：r5、r2。
+S6 I6：代價上界改為 `v0.58.0`。從 layout=5 起是 `v0.44.0 through v0.58.0`；更舊的起點最舊一個不變、上界同樣是 `v0.58.0`。句子裡仍有 `layout=5`。驗：r6，以及 Q-055 的 r6／r7／r11。
 
 ### 8.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+`cargo fmt` 未跑。`bn_serial` 未改。
+為了「log 裡的提交位址變成 v2 長形」之後，下列檔案裡「在 log 裡找 `hash:sha256:v1:` 當成提交」或「新建倉必是 layout=5」的讀法改成對應當前輸出。斷言的性質沒改：
+- `knob_that_does_nothing_probe_test.rs`、`limit_you_cannot_choose_probe_test.rs`、`snapshot_not_a_reading_probe_test.rs`、`print_what_can_be_read_probe_test.rs`：提交位址改讀 `commit ` 那一行；根改讀 `root:` 那一行。
+- `nothing_here_or_nothing_you_can_see_probe_test.rs`、`a_commit_that_closes_the_door_probe_test.rs`、`a_type_you_could_not_carry_probe_test.rs`、`atomic_write_probe_test.rs`：本引擎現在寫下的佈局是 6。
+- `crates/interpreter/tests/refine_test.rs`：`put_commit` 回傳的是值位址，不再等於 `Commit::content_hash`。
+另外 `open_commit`：只有呼叫者手上是 v1、而舊算法對不上、本文的值位址摘要卻相同時，才改認成 layout-6 提交。舊算法對得上就停，不改口。
 
 ### 8.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。
 
 ### 8.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+Q1. 推進佈局軸到 **6**。物件位元組仍是 encoding 5 的 n/ 框，變的是 HEAD 與 ○ 註記所指的位址算法，所以不是編碼軸。新建倉宣告 `layout=6` 與 `encoding=5`。v0.44.0–v0.58.0 的 `ensure_format` 對 `layout=6` 的句子是 `store layout declaration "layout=6" is not supported; refusing to open`。那是宣告看不懂，不是 `#caid_mismatch`。
+
+Q2. 選擇子是位址自己的版本，不在物件裡自陳編碼。`HEAD` 與提交本文裡的 parent 哈希都帶版本。`commit:`／`ancestor:` 今天仍是 64-hex：先用舊算法；對上了就是舊提交（I5 維持 `unattested`）。對不上，才看本文的值位址摘要是否就是這 64 個 hex；是，才是新提交。兩條都對不上才是 `#caid_mismatch`。沒有「兩個都試、哪個過了算哪個」的平手：舊算法先，而且一對上就不再看值位址，所以竄改舊提交的 `authority_status` 仍被當成舊提交，不會印成 `verified`。
+
+Q3. 舊算法，不看原始碼也能實作的描述。位址是 `hash:sha256:v1:` 加上 SHA-256(`buf`) 的 64 hex。`buf` 依序是：
+1. 若有 parent，接它的 32 位元組摘要。沒有 parent 就什麼都不接。parent 的 version／masa／sketch 不進。
+2. 接 root 的 32 位元組摘要。root 的 version／masa／sketch 不進。
+3. 一個 kind 位元組：Standard=0，Refine=1，Pin=2，Squash=3。
+4. 若有 refine：先每個 source 的 32 位元組摘要（列表順序），再每個 target 的，中間沒有個數、沒有分隔。`authority`、`authority_status`、`shadow` 不進。把一顆摘要從 source 挪到 target，這一段位元組不變（F2）。
+5. `meta` 的 Rust `Debug` 字串 `M = format!("{:?}", meta)`，再用無號 LEB128 寫 `M` 的位元組長度，然後接 `M` 的 UTF-8。手寫的 `Debug` 形狀是 `CommitMeta { author: …, timestamp: …, message: … }`，欄位之間是 `, `。`abandoned`、`privileged_effect`、`reported_bottoms` 只在 `Some` 時出現。`Option<String>`：`None` 或 `Some("…")`。`u64` 是十進位。`bool` 是 `true`／`false`。`Vec<String>` 是 `[…]`。`Vec<(String, String)>` 是 `[(…, …), …]`。字串跳脫是這個工具鏈的 `char::escape_debug`，`char::UNICODE_VERSION = 17.0.0`：`"` 與 `\` 一定跳脫成 `\"`、`\\`；`\n` `\r` `\t` 用那些短跳脫；其餘「不可印」碼點用 `\u{hex}`。哪些碼點算可印，由 Unicode 17.0.0 那張表決定，不是一份與工具鏈無關的閉合規則。換一個 Unicode 表較新的 rustc，同一筆舊提交會算出另一個 CAID。這條留下，不修。
+6. LEB128：每次取低 7 bit；後面還有值就把最高 bit 設 1。
+
+Q4. `authority.timestamp` 在簽署時放進記憶體，`write_refine` 不寫它，讀回時固定填 `None`。它不是「讀回來才消失的欄位」——磁碟上從來沒有那些位元組，所以也沒有被解進提交。新式提交走同一份 writer，它一樣不在。沒有補上。
+
+Q5. 對等節點的 `#fetch` 只呼叫 `get_value`。提交物件解不開成值，回答是沒有這份物件，不另做提交驗證。新舊提交在這條路上一樣。
+
+Q6. `oo log` 仍是一行 `commit ` 接位址的 Display。新提交是 v2 長形（`hash:sha256:v2:<masa>:<sketch>:<digest>`）。舊提交仍是 `hash:sha256:v1:<digest>`。`inspect` 的 `kind: commit`／`parent:`／`root:` 三行還在。訊息行沒改。
 
 ### 8.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+沒有 `#[ignore]` 可拿。本弧探針與 Q-055 探針都沒改。本弧 11 支皆綠。Q-055 檔 17 支皆綠。無 `VOID READING`。
 
 ### 8.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：241 行，2290 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1,2)` → `3` rc=0；`add (1,3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 由 g4 釘住 `f4f32e7b…`。未改 `bn_serial`。新建倉 `layout=6` `encoding=5`。
 
 ### 8.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無。Q3 那段是給驗收方寫進 `REAL_03` 的，這裡不動規格。
 
 ---
 

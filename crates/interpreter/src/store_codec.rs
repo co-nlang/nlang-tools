@@ -156,6 +156,33 @@ pub fn encode_commit(commit: &Commit) -> String {
     format!("{FRAME} commit\n{}", write_commit(commit))
 }
 
+/// The n/ body under the commit frame. The value address of a layout-6
+/// commit is `content_hash` of this text parsed as a value, not a second
+/// encoder.
+pub fn commit_body(commit: &Commit) -> String {
+    write_commit(commit)
+}
+
+pub fn commit_body_address(body: &str) -> Result<ContentHash> {
+    // Same path as `~%Discovery./identify`: evaluate the body, then the
+    // value's address. `expr_to_value` is the store decoder and does not
+    // match that address (a hash literal stays a combo there, and eval
+    // rebuilds it as the value `identify` hashes).
+    let engine = crate::Ouroboros::new_in_memory();
+    let expr = nlang_parser::parse_expr_only(body.trim())
+        .map_err(|e| anyhow!("store n/ parse: {e}"))?;
+    let mut ctx = engine.eval_context();
+    let value = engine.eval(&expr, &mut ctx);
+    Ok(value.content_hash())
+}
+
+/// Address of a framed commit file: the body after the first line, which is
+/// what `~%Discovery./identify` is applied to.
+pub fn commit_document_address(text: &str) -> Result<ContentHash> {
+    let body = text.split_once('\n').map(|(_, b)| b).unwrap_or(text);
+    commit_body_address(body)
+}
+
 pub fn encode_staged(combo: &ComboVal) -> String {
     format!("{FRAME} staged\n{}", write_combo(combo, 0))
 }

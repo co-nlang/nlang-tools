@@ -358,7 +358,7 @@ fn r5_a_granted_migrate_moves_the_container_and_not_the_root() {
     let (after, after_enc) = read_decl(d.path());
     assert_eq!(
         after.trim(),
-        "layout=5",
+        "layout=6",
         "a granted migrate advances the layout declaration; got {after:?}"
     );
     assert!(
@@ -396,7 +396,7 @@ fn g1_a_current_repo_keeps_its_own_declarations() {
     oo(d.path(), &["evolve", "main.n"]);
     oo(d.path(), &["commit", "-m", "one"]);
     let (l1, e1) = read_decl(d.path());
-    assert_eq!(l1.trim(), "layout=5", "REACH: a fresh repo declares its layout");
+    assert_eq!(l1.trim(), "layout=6", "REACH: a fresh repo declares its layout");
     assert!(e1.is_some(), "REACH: a fresh repo declares its encoding");
 
     fs::write(d.path().join("main.n"), "app: { a: 1, b: 2 }\n").expect("write");
@@ -449,7 +449,7 @@ fn g3_the_identity_of_a_current_repo_does_not_move() {
     let ci = oo(d.path(), &["commit", "-m", "x"]);
     let caid = ci
         .split_whitespace()
-        .find(|w| w.starts_with("hash:sha256:v1:"))
+        .find(|w| w.starts_with("hash:sha256:"))
         .expect("commit prints a CAID")
         .to_string();
 

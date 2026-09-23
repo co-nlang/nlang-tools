@@ -1019,8 +1019,14 @@ fn run_log() -> anyhow::Result<()> {
         match engine.store.get_commit(&hash) {
             Ok(commit) => {
                 if let Some(ri) = commit.refine_info {
-                    if let Some(ref status) = ri.authority_status {
-                        println!("    refine authority: {}", status);
+                    if ri.authority_status.is_some() {
+                        // D74 ②: a v1 address does not cover this field.
+                        // Printing the stored word would present a forgery as fact.
+                        if hash.version == nlang_interpreter::CaidVersion::V1 {
+                            println!("    refine authority: unattested");
+                        } else if let Some(ref status) = ri.authority_status {
+                            println!("    refine authority: {}", status);
+                        }
                     }
                 }
             }
@@ -1307,8 +1313,12 @@ fn run_refine(
     match engine.store.get_commit(&hash) {
         Ok(commit) => {
             if let Some(ri) = commit.refine_info {
-                if let Some(ref status) = ri.authority_status {
-                    println!("Refine authority: {}", status);
+                if ri.authority_status.is_some() {
+                    if hash.version == nlang_interpreter::CaidVersion::V1 {
+                        println!("Refine authority: unattested");
+                    } else if let Some(ref status) = ri.authority_status {
+                        println!("Refine authority: {}", status);
+                    }
                 }
                 if !ri.shadow_affected.is_empty() {
                     println!(
@@ -1508,8 +1518,9 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
 /// neighbours (layout 2, encoding max 4); they sit inside the ranges below.
 ///
 /// Split-axis, oldest opener (then through v0.43.0, intersected with encoding):
-///   layout 2: v0.22.0.  layout 3: v0.42.0.  layout 4: v0.43.0.
+///   layout 2: v0.22.0.  layout 3: v0.42.0.  layout 4: v0.43.0.  layout 5: v0.44.0.
 ///   encoding 1..=3: v0.22.0.  encoding 4: v0.26.0.  encoding 5: v0.36.0.
+/// Newest engine that opens any of those and does not open layout 6 is v0.58.0.
 /// Bare number (the pre-split `.oo/format`), oldest opener:
 ///   1: v0.2.55 (exact `"1"`).  2: v0.20.0 (writes 2, reads 1..=2).
 ///   3: v0.21.0 (writes 3, reads 1..=3).  4: v0.26.0.  5: v0.36.0.
@@ -1523,7 +1534,7 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
              locks out no engine."
         );
     };
-    let newest = "v0.43.0";
+    let newest = "v0.58.0";
     let who = if oldest == newest {
         format!("oo {oldest}")
     } else {
@@ -1543,13 +1554,14 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     };
     format!(
         "Migrating this store from {from} to layout={target} will make it unopenable \
-         by {who}. oo v0.44.0 and later still open layout={target}.{encoding_note}"
+         by {who}. That includes every engine that opens layout=5 \
+         (oo v0.44.0 through v0.58.0); none of them open layout={target}.{encoding_note}"
     )
 }
 
 /// Oldest tagged engine that opens this declaration. `None` when the
-/// declaration is already layout 5 (only an encoding advance remains, and
-/// every layout-5 engine already reads encoding 1 through 5).
+/// declaration is already layout 6 (only an encoding advance remains, and
+/// this engine already reads encoding 1 through 5).
 fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> {
     let layout = declaration
         .strip_prefix("layout=")
@@ -1559,6 +1571,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
             2 => "v0.22.0",
             3 => "v0.42.0",
             4 => "v0.43.0",
+            5 => "v0.44.0",
             _ => return None,
         };
         let by_encoding = match enc {
@@ -1578,7 +1591,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
     } else {
         return None;
     };
-    if engine_ord(floor) > engine_ord("v0.43.0") {
+    if engine_ord(floor) > engine_ord("v0.58.0") {
         None
     } else {
         Some(floor)
@@ -1861,9 +1874,9 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
             println!("{}", val.to_nlang(0));
             Ok(())
         }
-        Err(e_val) => match engine.store.get_commit(&hash) {
-            Ok(commit) => {
-                println!("CAID:   {}", caid_str);
+        Err(e_val) => match engine.store.open_commit(&hash) {
+            Ok((resolved, commit)) => {
+                println!("CAID:   {}", resolved);
                 println!("kind:   commit");
                 if let Some(p) = &commit.parent {
                     println!("parent: {}", p);

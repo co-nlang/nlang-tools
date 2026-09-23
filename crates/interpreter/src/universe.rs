@@ -912,7 +912,7 @@ impl Universe {
 
     pub fn save_staged(&mut self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
         let declaration = crate::storage::read_layout_declaration(base_dir)?;
-        let current = crate::storage::layout_declaration_is_current(&declaration);
+        let current = crate::storage::layout_has_layout5_frames(&declaration);
         if !self.session_pin_coords.is_empty()
             && !crate::storage::layout_writes_pin_frame(&declaration)
         {
@@ -1149,7 +1149,7 @@ impl Universe {
         // container version, not the bottom.
         if !reported.is_empty() {
             let declaration = crate::storage::read_layout_declaration(base_dir)?;
-            if !crate::storage::layout_declaration_is_current(&declaration) {
+            if !crate::storage::layout_has_layout5_frames(&declaration) {
                 return Err(anyhow::anyhow!(
                     "this store declares {declaration}; a commit that reports a bottom \
                      cannot land until the layout is current. Run `oo migrate --grant migrate`"
@@ -1340,7 +1340,7 @@ impl Universe {
         let mut curr = self.head.clone();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         while let Some(h) = curr {
-            if &h == base {
+            if h.digest == base.digest {
                 return Ok(n);
             }
             let d = hex::encode(&h.digest);
@@ -1348,7 +1348,7 @@ impl Universe {
                 break;
             }
             n += 1;
-            let commit = engine.store.get_commit(&h)?;
+            let (_resolved, commit) = engine.store.open_commit(&h)?;
             curr = crate::savepoint::previous_commit(base_dir, &commit, &d)?;
         }
         Err(anyhow::anyhow!("squash base is not an ancestor of HEAD"))
@@ -1584,7 +1584,7 @@ impl Universe {
                     break;
                 }
                 depth += 1;
-                let commit = match engine.store.get_commit(ch) {
+                let (_resolved, commit) = match engine.store.open_commit(ch) {
                     Ok(c) => c,
                     Err(e) => match e.downcast_ref::<crate::storage::StoreReadError>() {
                         Some(crate::storage::StoreReadError::NotFound { .. }) | None => break,
