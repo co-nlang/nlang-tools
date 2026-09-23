@@ -232,21 +232,28 @@ REACH 另加「必須讀回 `x: 1`」，使它**不能再騎在一個說謊的 `
 ## 10. 修補回合 R-1 回報（交付方填；本行以上一字不得動）
 
 ### 10.1 射程逐項對照
+S1 「沒有改變」要兩軸都已是 `migrate_layout` 會寫下的那一份：layout 已是 `layout=5`，且 encoding 已等於 `encoding_after_migration`（宣告 ≥ 4 則寫到 encoding=5，更舊的編碼原樣留下）。`layout=5`／`encoding=4` 不再早退；代價先印「`locks out no engine`」，然後編碼寫成 5。驗：r9。兩軸都已對上時仍不說 `Migrated`。驗：r5。
+S2 layout 仍會前進時，代價句與本弧相同（layout=2 仍點名 `v0.40.0 through v0.43.0`），且在寫入之前。驗：r6、r7、g3。
 
 ### 10.2 順手改動（逐項指名）
+無。`cargo fmt` 未跑。改動檔：`crates/oo/src/main.rs`、`crates/interpreter/src/storage.rs`（`encoding_after_migration`，`migrate_layout` 改呼叫它，寫入公式未改）。
 
 ### 10.3 工單哪裡是錯的
+無。
 
 ### 10.4 工單指名要你回答的問題
-（R-1 無新題；若 9.1 的不變式你有不同讀法，寫在這裡。）
+讀法與 9.1 相同，補一條邊界：`encoding_after_migration` 在宣告 < 4 時保留原編碼，所以 `layout=5`／`encoding=2` 已經是這次 `migrate` 會寫下的兩份，會說沒有改變。r9 的 `encoding=4` 不在這條上，會被推進到 5。「沒有引擎被鎖在門外」只用於編碼軸單獨前進：開得了 layout=5 的標籤（v0.44.0 起）本來就開 encoding 1 到 5。這次沒有重跑那些舊二進位，名單仍是各標籤的 `OBJECT_ENCODING_VERSION`。
 
 ### 10.5 探針
-本檔與 `nothing_here…` 皆由驗收方修補過（見 9.2／9.3）；**你不得動**。r9 應轉綠，其餘不得轉紅。
+未動本檔，未動 `nothing_here…`。r9 轉綠。本檔 16 支皆綠（含 r10）。無 `VOID READING`。
 
 ### 10.6 數字
-全樹 ×3（`--release --no-fail-fast`、逐 target 聚合、**失敗測試名**、`^error` 行數、exit code）／conformance／身分紅線。
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：240 行（237 個 `Running` ＋ 3 個 Doc-tests），2278 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1,2)` → `3` rc=0；`add (1,3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。未改 `bn_serial`。
 
 ### 10.7 你認為需要改規格之處
+無。
 
 ---
 

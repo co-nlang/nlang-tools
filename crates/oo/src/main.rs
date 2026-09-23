@@ -1471,16 +1471,30 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     }
     let declaration = nlang_interpreter::storage::read_layout_declaration(&cur)?;
     let target = nlang_interpreter::storage::STORE_LAYOUT_VERSION;
-    if nlang_interpreter::storage::layout_declaration_is_current(&declaration) {
-        println!("Store layout is already layout={target}. Nothing was changed.");
+    let from_enc = engine.store.encoding_version();
+    let to_enc = nlang_interpreter::storage::encoding_after_migration(from_enc);
+    let layout_done = nlang_interpreter::storage::layout_declaration_is_current(&declaration);
+    let encoding_done = from_enc == to_enc;
+    // Both axes, not the layout alone. A half-written pair (layout already
+    // 5, encoding still 4) is the state migrate exists to finish.
+    if layout_done && encoding_done {
+        println!(
+            "Store declarations are already layout={target} and encoding={from_enc}. Nothing was changed."
+        );
         return Ok(());
     }
     // REAL_02 §5.1.1: the cost is on the operator's screen before any
     // declaration byte is written. A later write failure still leaves it there.
-    println!("{}", migrate_cost(&declaration));
+    println!("{}", migrate_cost(&declaration, from_enc, to_enc));
     stdout().flush()?;
     engine.store.migrate_layout(&cur)?;
-    println!("Migrated store layout to layout={target}.");
+    if !layout_done && !encoding_done {
+        println!("Migrated store layout to layout={target} and object encoding to encoding={to_enc}.");
+    } else if !layout_done {
+        println!("Migrated store layout to layout={target}.");
+    } else {
+        println!("Migrated object encoding to encoding={to_enc}.");
+    }
     Ok(())
 }
 
@@ -1494,30 +1508,46 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
 ///   v0.44.0 writes layout 5 and opens 2..=5.
 /// A legacy bare number is still opened by v0.40.0 through v0.43.0, so
 /// moving it to layout 5 locks the same set as moving layout 2.
-fn migrate_cost(declaration: &str) -> String {
+fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     let target = nlang_interpreter::storage::STORE_LAYOUT_VERSION;
-    let (from, locked) = match declaration
-        .strip_prefix("layout=")
-        .and_then(|n| n.parse::<u32>().ok())
-    {
-        Some(2) => ("layout=2", "oo v0.40.0 through v0.43.0"),
-        Some(3) => ("layout=3", "oo v0.42.0 through v0.43.0"),
-        Some(4) => ("layout=4", "oo v0.43.0"),
-        Some(n) => {
-            return format!(
-                "Migrating this store from layout={n} to layout={target} will make it \
-                 unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout={target}."
-            );
+    let mut parts = Vec::new();
+    if !nlang_interpreter::storage::layout_declaration_is_current(declaration) {
+        let layout_sentence = match declaration
+            .strip_prefix("layout=")
+            .and_then(|n| n.parse::<u32>().ok())
+        {
+            Some(2) => Some(("layout=2", "oo v0.40.0 through v0.43.0")),
+            Some(3) => Some(("layout=3", "oo v0.42.0 through v0.43.0")),
+            Some(4) => Some(("layout=4", "oo v0.43.0")),
+            Some(n) => {
+                parts.push(format!(
+                    "Migrating this store from layout={n} to layout={target} will make it \
+                     unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout={target}."
+                ));
+                None
+            }
+            None => Some((
+                "a legacy layout declaration",
+                "oo v0.40.0 through v0.43.0",
+            )),
+        };
+        if let Some((from, locked)) = layout_sentence {
+            parts.push(format!(
+                "Migrating this store from {from} to layout={target} will make it unopenable \
+                 by {locked}. oo v0.44.0 and later still open layout={target}."
+            ));
         }
-        None => (
-            "a legacy layout declaration",
-            "oo v0.40.0 through v0.43.0",
-        ),
-    };
-    format!(
-        "Migrating this store from {from} to layout={target} will make it unopenable \
-         by {locked}. oo v0.44.0 and later still open layout={target}."
-    )
+    }
+    // Encoding 4 → 5 on a store that is already layout=5. Every tag that
+    // opens layout=5 (v0.44.0 onward) already opens encoding 1 through 5,
+    // so this axis locks out nobody who can open the store today.
+    if from_enc != to_enc {
+        parts.push(format!(
+            "Advancing object encoding from encoding={from_enc} to encoding={to_enc} \
+             locks out no engine."
+        ));
+    }
+    parts.join(" ")
 }
 
 fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {

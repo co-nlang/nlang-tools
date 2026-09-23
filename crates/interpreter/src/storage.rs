@@ -192,6 +192,18 @@ pub fn layout_declaration_is_current(declaration: &str) -> bool {
     declaration == format!("layout={STORE_LAYOUT_VERSION}")
 }
 
+/// Encoding `migrate_layout` writes for a store that currently declares
+/// `declared`. Encoding 4 and above is brought up to this engine's encoding;
+/// an older encoding is left as declared. One formula for the write and for
+/// "both declarations are already what this engine would write".
+pub fn encoding_after_migration(declared: u32) -> u32 {
+    if declared >= 4 {
+        OBJECT_ENCODING_VERSION
+    } else {
+        declared
+    }
+}
+
 /// Layouts that already declare the Q-016a injection frame (`id`,
 /// `pin_coords`, `absorbs`). Pin intent is expressible there; `effect_tags`
 /// is not. Not `layout_declaration_is_current`: after this engine writes
@@ -729,11 +741,7 @@ impl ObjectStore {
             &oo.join("format"),
             format!("layout={STORE_LAYOUT_VERSION}\n"),
         )?;
-        let encoding = if self.encoding >= 4 {
-            OBJECT_ENCODING_VERSION
-        } else {
-            self.encoding
-        };
+        let encoding = encoding_after_migration(self.encoding);
         atomic_write(
             &oo.join("objects.format"),
             format!("encoding={encoding}\n"),
