@@ -947,8 +947,7 @@ fn run_status() -> anyhow::Result<()> {
     let universe = match load_universe(&engine, &current_dir) {
         Ok(universe) => universe,
         Err(error) => {
-            println!("Universe unavailable: {error}");
-            return Ok(());
+            anyhow::bail!("Universe unavailable: {error}");
         }
     };
     if let Some(d) = &universe.workset_bottom {
@@ -1470,13 +1469,55 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
             "#privileged_required: migrate requires --grant migrate (privilege.migrate capability)"
         );
     }
+    let declaration = nlang_interpreter::storage::read_layout_declaration(&cur)?;
+    let target = nlang_interpreter::storage::STORE_LAYOUT_VERSION;
+    if nlang_interpreter::storage::layout_declaration_is_current(&declaration) {
+        println!("Store layout is already layout={target}. Nothing was changed.");
+        return Ok(());
+    }
+    // REAL_02 §5.1.1: the cost is on the operator's screen before any
+    // declaration byte is written. A later write failure still leaves it there.
+    println!("{}", migrate_cost(&declaration));
+    stdout().flush()?;
     engine.store.migrate_layout(&cur)?;
-    println!(
-        "Migrated store layout to layout={}. An engine that only reads layout=2 \
-         (oo v0.41.0) will no longer open this store.",
-        nlang_interpreter::storage::STORE_LAYOUT_VERSION
-    );
+    println!("Migrated store layout to layout={target}.");
     Ok(())
+}
+
+/// Engines that can open `declaration` today and cannot open layout 5.
+///
+/// The table is the tagged sources, not a live probe of other binaries:
+/// `STORE_LAYOUT_VERSION` / `STORE_LAYOUT_MIGRATABLE_FROM` at each tag.
+///   v0.40.0 and v0.41.0 write layout 2 and open only that split-axis form.
+///   v0.42.0 writes layout 3 and opens 2..=3.
+///   v0.43.0 writes layout 4 and opens 2..=4.
+///   v0.44.0 writes layout 5 and opens 2..=5.
+/// A legacy bare number is still opened by v0.40.0 through v0.43.0, so
+/// moving it to layout 5 locks the same set as moving layout 2.
+fn migrate_cost(declaration: &str) -> String {
+    let target = nlang_interpreter::storage::STORE_LAYOUT_VERSION;
+    let (from, locked) = match declaration
+        .strip_prefix("layout=")
+        .and_then(|n| n.parse::<u32>().ok())
+    {
+        Some(2) => ("layout=2", "oo v0.40.0 through v0.43.0"),
+        Some(3) => ("layout=3", "oo v0.42.0 through v0.43.0"),
+        Some(4) => ("layout=4", "oo v0.43.0"),
+        Some(n) => {
+            return format!(
+                "Migrating this store from layout={n} to layout={target} will make it \
+                 unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout={target}."
+            );
+        }
+        None => (
+            "a legacy layout declaration",
+            "oo v0.40.0 through v0.43.0",
+        ),
+    };
+    format!(
+        "Migrating this store from {from} to layout={target} will make it unopenable \
+         by {locked}. oo v0.44.0 and later still open layout={target}."
+    )
 }
 
 fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {
@@ -1592,7 +1633,7 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
 
 fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Result<()> {
     let cur = std::env::current_dir()?;
-    let mut engine = Ouroboros::init(&cur).unwrap_or_else(|_| Ouroboros::new_in_memory());
+    let mut engine = engine_or_ephemeral(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
 
     let mut universe = Universe::new_with_standard(
@@ -1683,9 +1724,23 @@ fn run_identity() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Absent store, and none could be made: a pure expression still runs.
+/// A store that exists and refuses to open is returned as that refusal.
+/// The two `init` failures are both `anyhow::Error`; the split is whether
+/// a durable store is already there, not the error's type.
+fn engine_or_ephemeral(cur: &Path) -> anyhow::Result<Ouroboros> {
+    match Ouroboros::init(cur) {
+        Ok(engine) => Ok(engine),
+        Err(_) if !nlang_interpreter::storage::durable_store_present(cur) => {
+            Ok(Ouroboros::new_in_memory())
+        }
+        Err(e) => Err(e),
+    }
+}
+
 fn run_inspect(caid_str: String) -> anyhow::Result<()> {
     let cur = std::env::current_dir()?;
-    let engine = Ouroboros::init(&cur).unwrap_or_else(|_| Ouroboros::new_in_memory());
+    let engine = engine_or_ephemeral(&cur)?;
 
     let hash = ContentHash::parse(&caid_str)
         .map_err(|_| anyhow::anyhow!("Invalid CAID format: {}", caid_str))?;

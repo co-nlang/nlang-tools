@@ -106,6 +106,12 @@ pub fn paths(base: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// A working-set member that is not the engine's document. The host
+/// parser's "line / column" sentence stays inside the library.
+fn working_set_unreadable(filename_id: &str) -> anyhow::Error {
+    anyhow::anyhow!("injection {filename_id}: working set cannot be read")
+}
+
 pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
     let mut out = Vec::new();
     for p in paths(base)? {
@@ -128,7 +134,8 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                     anyhow::anyhow!("injection {filename_id}: incomplete metadata frame")
                 })?;
                 let mut lines = meta.lines();
-                let id: String = serde_json::from_str(lines.next().unwrap_or_default())?;
+                let id: String = serde_json::from_str(lines.next().unwrap_or_default())
+                    .map_err(|_| working_set_unreadable(&filename_id))?;
                 let pin_coords: BTreeSet<String> = serde_json::from_str(
                     lines
                         .next()
@@ -136,7 +143,8 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                         .ok_or_else(|| {
                             anyhow::anyhow!("injection {filename_id}: pin_coords absent")
                         })?,
-                )?;
+                )
+                .map_err(|_| working_set_unreadable(&filename_id))?;
                 let absorbs: BTreeMap<String, BTreeSet<String>> = serde_json::from_str(
                     lines
                         .next()
@@ -144,7 +152,8 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                         .ok_or_else(|| {
                             anyhow::anyhow!("injection {filename_id}: absorbs absent")
                         })?,
-                )?;
+                )
+                .map_err(|_| working_set_unreadable(&filename_id))?;
                 // Layout 4 ends after absorbs. Layout 5 adds `effect_tags:`.
                 // Any other leftover line is still unknown metadata — that
                 // strictness is what makes "the declaration is still true"
@@ -196,7 +205,7 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
                 let combo = if crate::store_codec::is_framed(&text) {
                     decode_staged(&text)?
                 } else {
-                    serde_json::from_str(&text)?
+                    serde_json::from_str(&text).map_err(|_| working_set_unreadable(&filename_id))?
                 };
                 Injection {
                     id: format!(

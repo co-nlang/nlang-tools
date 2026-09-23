@@ -227,6 +227,51 @@ fn has_cas_objects(path: &Path) -> bool {
     })
 }
 
+/// A directory already holds a store. This is the complement of `new_store`
+/// in [`ObjectStore::init`]: a layout declaration, a `HEAD`, or any CAS
+/// object. An `.oo` that cannot be stated counts as present — a permission
+/// error is not the same fact as absence, and a caller must not replace it
+/// with an empty store.
+pub fn durable_store_present(base_dir: &Path) -> bool {
+    let oo = base_dir.join(".oo");
+    match oo.try_exists() {
+        Ok(false) => false,
+        Err(_) => true,
+        Ok(true) => match stated(&oo.join("format")) {
+            Presence::Yes | Presence::Unstatable => true,
+            Presence::No => match stated(&oo.join("HEAD")) {
+                Presence::Yes | Presence::Unstatable => true,
+                Presence::No => objects_hold_anything(&oo.join("objects")),
+            },
+        },
+    }
+}
+
+enum Presence {
+    Yes,
+    No,
+    Unstatable,
+}
+
+fn stated(path: &Path) -> Presence {
+    match path.try_exists() {
+        Ok(true) => Presence::Yes,
+        Ok(false) => Presence::No,
+        Err(_) => Presence::Unstatable,
+    }
+}
+
+fn objects_hold_anything(path: &Path) -> bool {
+    match fs::read_dir(path) {
+        Ok(entries) => entries.flatten().any(|entry| {
+            let path = entry.path();
+            path.is_file() || (path.is_dir() && objects_hold_anything(&path))
+        }),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
+}
+
 impl ObjectStore {
     pub fn encoding_version(&self) -> u32 {
         self.encoding
