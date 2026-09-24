@@ -168,53 +168,6 @@ pub fn commit_body_address(body: &str) -> Result<ContentHash> {
     Ok(value.content_hash())
 }
 
-/// `~%Discovery./identify` of a commit-shaped literal hashes thunks of the
-/// source, which is not the §6.2 value. When the literal is a commit
-/// (kind tag plus a `~%__nlang_hash` root), return the decoded value so the
-/// measurement and the stored address are the same function. Any other
-/// value is left alone.
-pub fn commit_shaped_literal(v: &Value) -> Option<Value> {
-    let Value::Combo(c) = v else {
-        return None;
-    };
-    if !c.meta.is_empty()
-        || !c.system.is_empty()
-        || !c.types.is_empty()
-        || !c.rules.is_empty()
-        || !c.local.is_empty()
-        || !c.legacy_fields.is_empty()
-    {
-        return None;
-    }
-    let kind_is_commit = match c.data.get("kind") {
-        Some(Value::Thunk { expr, .. }) => matches!(
-            &expr.kind,
-            ExprKind::Atom(AtomKind::Tag(t))
-                if matches!(t.as_str(), "Standard" | "Refine" | "Pin" | "Squash")
-        ),
-        _ => false,
-    };
-    if !kind_is_commit || !matches!(c.data.get("root"), Some(Value::Thunk { .. })) {
-        return None;
-    }
-    let mut data = IndexMap::new();
-    for (k, field) in &c.data {
-        let Value::Thunk { expr, .. } = field else {
-            return None;
-        };
-        data.insert(k.clone(), expr_to_value(expr).ok()?);
-    }
-    let Value::Combo(root) = data.get("root")? else {
-        return None;
-    };
-    if !root.system.contains_key(HASH) {
-        return None;
-    }
-    let mut combo = ComboVal::default();
-    combo.data = data;
-    Some(Value::Combo(combo))
-}
-
 /// Address of a framed commit file: the body after the first line, which is
 /// what `~%Discovery./identify` is applied to.
 pub fn commit_document_address(text: &str) -> Result<ContentHash> {

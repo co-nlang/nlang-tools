@@ -266,21 +266,28 @@ diff 純度：四個原始碼檔＋本檔報告；兩個探針檔自驗收方最
 ## 12. 修補回合 R-2 回報（交付方填；本行以上一字不得動）
 
 ### 12.1 射程逐項對照
+R-2：`~%Discovery./identify` 對任何值都只哈希它拿到的那個值。提交形狀的字面不再另算。驗：g5（提交本體 `9ceb1d51…`，對照 `{ a: 1 b: "x" }` `77644e58…`，皆為 v0.58.0 的讀數）。
 
 ### 12.2 順手改動（逐項指名）
+`cargo fmt` 未跑。`bn_serial` 未改。兩個探針檔未改。
+刪了 `commit_shaped_literal`。它只有 `identify` 那一處呼叫，是 R-1 為了讓量測對上存進去的位址而加的。
 
 ### 12.3 工單哪裡是錯的
+無。
 
 ### 12.4 工單指名要你回答的問題
-（無新題。）
+無。
 
 ### 12.5 探針
-兩個探針檔皆不得動。g5 應轉綠，其餘不得轉紅。
+兩個探針檔都沒改，也沒有 `rustfmt`。本弧 13 支皆綠（含 g5）。Q-055 檔 17 支皆綠。無 `VOID READING`。
 
 ### 12.6 數字
-全樹 ×3（`--release --no-fail-fast`、逐 target 聚合、**失敗測試名**、`^error` 行數、exit code）／conformance／身分紅線。
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：241 行，2292 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1, 2)` → `3` rc=0；`add (1, 3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
 
 ### 12.7 你認為需要改規格之處
+無。
 
 ---
 

@@ -378,12 +378,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
         "disc.identify".to_string(),
         Arc::new(|arg: Value, _oo: &Ouroboros, _ctx: &mut EvalContext| {
             // caid_of_the_argument: hash the applied value, not the pack.
-            // A commit-shaped literal is hashed as the decoded §6.2 value,
-            // the same function that addresses the object. Other values are
-            // unchanged.
             let v = whole_argument(arg);
-            let solid = crate::store_codec::commit_shaped_literal(&v);
-            let v = solid.unwrap_or(v);
             Value::Atom(
                 AtomKind::Str(v.content_hash().to_string()),
                 EffectTag::Pure,
