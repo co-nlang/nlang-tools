@@ -196,21 +196,37 @@ r1 **仍須綠**（對合法的本文，兩條路得到同一個位址——若 
 ## 10. 修補回合 R-1 回報（交付方填；本行以上一字不得動）
 
 ### 10.1 射程逐項對照
+R-1a：以 v2 位址取一筆提交時，比對 digest、lattice_sketch、masa_ref 三者，與值的 v2 規則同一條。64-hex 的引用仍是 v1，只比 digest。驗：r7。
+R-1b：提交位址是框線下的本文解碼成值之後的 `content_hash`（`REAL_03` §6.2），不建引擎、不求值。驗證一筆提交不執行它的任何部分。對合法本文，這條路與 `~%Discovery./identify` 的 digest 相同。驗：r1、r6，以及下面的計時。
 
 ### 10.2 順手改動（逐項指名）
+`cargo fmt` 未跑。`bn_serial` 未改。兩個探針檔未改。
+- 無框的 JSON 提交仍只比 digest。一個把 v2 外殼套在舊 digest 上的指標，對得上舊算法就開，不拿空的 sketch 去擋。
+- `gc` 的走訪只有 digest，沒有呼叫者手上的 v2 位址。原先造一個空 sketch 的 v2 去 `get_commit`，嚴格比對之後會把完好的 layout-6 提交判成 `#caid_mismatch`。改走 `open_commit`：舊算法先，對不上才用值位址，值位址本身仍三者都比。
+- `#caid_mismatch` 的 `requested` 改印 64-hex digest，`recomputed` 仍是完整 Display。r7 要求輸出裡不得出現被改過的那一整條位址；`recomputed hash:sha256:v1:` 這段還在。
+- `identify` 只對「提交形狀的字面」改道：每個欄位都是 thunk、`kind` 是 Standard／Refine／Pin／Squash、`root` 解出來帶 `~%__nlang_hash`。這種字面改哈希解碼後的值。其他值的 `identify` 不變。驗證路徑不呼叫 `identify`。
 
 ### 10.3 工單哪裡是錯的
+§9.2 說對合法本文，解碼那條路與 `identify` 得到同一個位址。不加 10.2 那一層時，兩者的 digest 不同。`identify` 哈希的是求值器留下的 thunk（標記 `0x17`，閉包一幀、幀裡是空閉包的欄位 thunk），不是解碼後的值。這不是 hash 字面單獨造成的。
 
 ### 10.4 工單指名要你回答的問題
-（9.2 的 hash 字面在值那張表上是哪一格；40 筆 `oo log` 修補前後的實測。）
+hash 字面 `{ ~%__nlang_hash: #true, digest, version, masa, sketch }` 在值表上沒有自己的一列。解碼後是開放 Combo，標記 `0x01`。system 欄 `__nlang_hash` 是 Tag `true`（`0x11`）。`digest`／`sketch` 是 Str（`0x10`），`version` 是 Tag（`0x11`），`masa` 的 `_` 是 Top（`0xFF`）。
+把同一段文字求值並強制之後，那個 system 欄是 Bottom（`0xFE`，`#system_reserved`）：`~%` 不能當定義。那是另一個值，digest 不同。
+`identify` 在這次修補前走的是 thunk 那一格，digest 與上面兩個都不相同。修補後只有提交形狀的字面改走 `0x01` 那個 Combo，所以 r1 量到的 digest 與存進去的相同。
+
+40 筆 `oo log`，本二進位，各三次。修補後：layout 5 為 70／70／70 ms；layout 6 為 140／130／130 ms，約 2 倍，低於 3 倍。驗收方量到的修補前是 layout 5 的 75／77／78 ms、layout 6 的 1,065／1,073／1,099 ms。
+在本文裡把 `message` 換成 `~%Io./write_file`：`log` rc=1，檔案沒有被寫。同一條呼叫直接 `eval` 會寫出檔案。
 
 ### 10.5 探針
-兩個探針檔皆不得動。r7 應轉綠，其餘不得轉紅。
+兩個探針檔都沒改，也沒有 `rustfmt`。本弧 12 支皆綠（含 r7）。Q-055 檔 17 支皆綠。無 `VOID READING`。
 
 ### 10.6 數字
-全樹 ×3（`--release --no-fail-fast`、逐 target 聚合、**失敗測試名**、`^error` 行數、exit code）／conformance／身分紅線。
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：241 行，2291 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1, 2)` → `3` rc=0；`add (1, 3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
 
 ### 10.7 你認為需要改規格之處
+無。10.4 那一格是給驗收方寫進 `REAL_03` 的，這裡不動規格。
 
 ---
 

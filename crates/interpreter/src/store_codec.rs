@@ -157,23 +157,62 @@ pub fn encode_commit(commit: &Commit) -> String {
 }
 
 /// The n/ body under the commit frame. The value address of a layout-6
-/// commit is `content_hash` of this text parsed as a value, not a second
-/// encoder.
+/// commit is `content_hash` of this text decoded as a value (§6.2), not a
+/// second encoder and not the evaluator.
 pub fn commit_body(commit: &Commit) -> String {
     write_commit(commit)
 }
 
 pub fn commit_body_address(body: &str) -> Result<ContentHash> {
-    // Same path as `~%Discovery./identify`: evaluate the body, then the
-    // value's address. `expr_to_value` is the store decoder and does not
-    // match that address (a hash literal stays a combo there, and eval
-    // rebuilds it as the value `identify` hashes).
-    let engine = crate::Ouroboros::new_in_memory();
-    let expr = nlang_parser::parse_expr_only(body.trim())
-        .map_err(|e| anyhow!("store n/ parse: {e}"))?;
-    let mut ctx = engine.eval_context();
-    let value = engine.eval(&expr, &mut ctx);
+    let value = expr_to_value(&parse_body(body.trim())?)?;
     Ok(value.content_hash())
+}
+
+/// `~%Discovery./identify` of a commit-shaped literal hashes thunks of the
+/// source, which is not the §6.2 value. When the literal is a commit
+/// (kind tag plus a `~%__nlang_hash` root), return the decoded value so the
+/// measurement and the stored address are the same function. Any other
+/// value is left alone.
+pub fn commit_shaped_literal(v: &Value) -> Option<Value> {
+    let Value::Combo(c) = v else {
+        return None;
+    };
+    if !c.meta.is_empty()
+        || !c.system.is_empty()
+        || !c.types.is_empty()
+        || !c.rules.is_empty()
+        || !c.local.is_empty()
+        || !c.legacy_fields.is_empty()
+    {
+        return None;
+    }
+    let kind_is_commit = match c.data.get("kind") {
+        Some(Value::Thunk { expr, .. }) => matches!(
+            &expr.kind,
+            ExprKind::Atom(AtomKind::Tag(t))
+                if matches!(t.as_str(), "Standard" | "Refine" | "Pin" | "Squash")
+        ),
+        _ => false,
+    };
+    if !kind_is_commit || !matches!(c.data.get("root"), Some(Value::Thunk { .. })) {
+        return None;
+    }
+    let mut data = IndexMap::new();
+    for (k, field) in &c.data {
+        let Value::Thunk { expr, .. } = field else {
+            return None;
+        };
+        data.insert(k.clone(), expr_to_value(expr).ok()?);
+    }
+    let Value::Combo(root) = data.get("root")? else {
+        return None;
+    };
+    if !root.system.contains_key(HASH) {
+        return None;
+    }
+    let mut combo = ComboVal::default();
+    combo.data = data;
+    Some(Value::Combo(combo))
 }
 
 /// Address of a framed commit file: the body after the first line, which is
@@ -1779,6 +1818,7 @@ mod tests {
             other => panic!("expected a bottom, got {other:?}"),
         }
     }
+
 
     #[test]
     fn thunk_wrapper_roundtrips_as_thunk() {

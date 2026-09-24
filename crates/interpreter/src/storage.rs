@@ -103,7 +103,8 @@ impl std::fmt::Display for StoreReadError {
             } => write!(
                 f,
                 "#caid_mismatch: object at digest path is corrupt (integrity failure); \
-                 requested {requested}, recomputed {recomputed}"
+                 requested {}, recomputed {recomputed}",
+                hex::encode(&requested.digest)
             ),
             StoreReadError::ObjectUndecodable { requested, detail } => write!(
                 f,
@@ -151,11 +152,10 @@ fn is_caid_mismatch(err: &anyhow::Error) -> bool {
 }
 
 fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> bool {
-    // The selector is the version on the address the caller already holds
-    // (HEAD, or a parent hash written inside another commit). The object
-    // does not name its own algorithm. Digest only: masa and sketch of a
-    // v2 commit address are properties of the value, and a v1 caller has none.
-    requested.digest == recomputed.digest
+    // Same rule as a value (REAL_03 §6.6). A v2 commit address is the value
+    // address: digest, lattice_sketch and masa_ref all have to match. A v1
+    // request, including a 64-hex note, compares the digest only.
+    value_address_matches(requested, recomputed)
 }
 
 /// The `.oo/` layout and the CAS encoding are independent declarations.
@@ -723,30 +723,29 @@ impl ObjectStore {
                 detail: e.to_string(),
             })?
         };
+        // JSON commits are the pre-frame era. They are never value-addressed,
+        // even if a pointer copied a v2 wrapper onto their digest. Digest
+        // only: a v1 algorithm has no sketch or masa to compare.
+        if !crate::store_codec::is_framed(&content) {
+            let legacy = commit.content_hash();
+            if legacy.digest != hash.digest {
+                return Err(StoreReadError::CaidMismatch {
+                    requested: hash.clone(),
+                    recomputed: legacy,
+                }
+                .into());
+            }
+            return Ok(commit);
+        }
         let recomputed = match hash.version {
             CaidVersion::V1 => commit.content_hash(),
             CaidVersion::V2 => {
-                // JSON commits are the pre-frame era. They are never
-                // value-addressed, even if a pointer copied a v2 wrapper
-                // onto their digest.
-                if !crate::store_codec::is_framed(&content) {
-                    let legacy = commit.content_hash();
-                    if !commit_address_matches(hash, &legacy) {
-                        return Err(StoreReadError::CaidMismatch {
-                            requested: hash.clone(),
-                            recomputed: legacy,
-                        }
-                        .into());
+                crate::store_codec::commit_document_address(&content).map_err(|e| {
+                    StoreReadError::ObjectUndecodable {
+                        requested: hash.clone(),
+                        detail: e.to_string(),
                     }
-                    legacy
-                } else {
-                    crate::store_codec::commit_document_address(&content).map_err(|e| {
-                        StoreReadError::ObjectUndecodable {
-                            requested: hash.clone(),
-                            detail: e.to_string(),
-                        }
-                    })?
-                }
+                })?
             }
         };
         if !commit_address_matches(hash, &recomputed) {
