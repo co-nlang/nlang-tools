@@ -37,9 +37,10 @@
 //
 // ── Probe integrity ──────────────────────────────────────────────────────
 //
-// `r1` defines "the address of its value" black-box: the engine's own
-// `~%Discovery./identify` applied to the commit's on-disk body, parsed as n/
-// source. `c1` shows that measurement reaches a commit body today. Every
+// `r1` defines "the address of its value" as the store's own value decoder
+// applied to the commit's on-disk body (AMENDED at R-1 acceptance; it used to
+// be `~%Discovery./identify`, which evaluates -- see `value_address_of_body`).
+// `c1` shows that measurement reaches a commit body. Every
 // tamper is checked to have changed the bytes it meant to change before the
 // red assertion; otherwise `VOID READING`.
 //
@@ -49,6 +50,8 @@
 // Baseline measured 2026-09-24 on dev fe7f578 / oo v0.58.0: see the order.
 // r7 added at acceptance (repair round R-1): VOID on v0.58.0 (no v2 HEAD),
 // red on the delivery 44cbe32; see the order §9.
+// AMENDED at R-1 acceptance: the r1 oracle is the store value decoder, not
+// `identify`; g5 added (green on v0.58.0, red on 8b9dda1); see §11.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -131,12 +134,29 @@ impl Ws {
             .to_string()
     }
 
-    /// The value address of a commit's on-disk body, computed by the engine.
+    /// The value address of a commit's on-disk body.
+    ///
+    /// AMENDED AT R-1 ACCEPTANCE (2026-09-24). This helper used to ask
+    /// `oo eval '~%Discovery./identify (<body>)'`. That was the acceptor's
+    /// error: evaluating the body yields a combo of THUNKS (D46), which is not
+    /// the value on disk, so `identify` of the text and the stored value have
+    /// different addresses. The measurement then became the mechanism twice —
+    /// the first delivery evaluated every commit to match it, and the R-1
+    /// delivery changed `identify` itself for commit-shaped input to match it.
+    ///
+    /// The oracle is now the store's own VALUE decoder: the body framed as a
+    /// value document, decoded by `store_codec::decode_value` (the function
+    /// that reads every value object from disk), then `content_hash`. That is
+    /// D74 read literally — "the address of the n/ value it is written as on
+    /// disk, through the same table as every other value" — and it involves
+    /// no commit-specific code and no evaluator.
     fn value_address_of_body(&self, caid: &str) -> String {
         let text = fs::read_to_string(self.object(caid)).unwrap();
         let body = text.splitn(2, '\n').nth(1).unwrap_or_else(|| panic!("no frame line: {text}"));
-        let o = self.ok(&["eval", &format!("~%Discovery./identify ({})", body.trim())]);
-        o.trim().trim_matches('"').to_string()
+        let doc = format!("{}\n{}", nlang_interpreter::store_codec::FRAME, body.trim());
+        let v = nlang_interpreter::store_codec::decode_value(&doc)
+            .unwrap_or_else(|e| panic!("the body does not decode as a value: {e}: {body}"));
+        v.content_hash().to_string()
     }
 
     /// Replace `from` with `to` in a commit object, exactly once.
@@ -176,9 +196,10 @@ const LEGACY_REFINE: &str =
 
 // ── Controls and guards (green at baseline, must stay green) ─────────────
 
-/// The measurement `r1` relies on reaches a commit body: the engine parses a
-/// commit object's body as n/ source and gives it a value address, and that
-/// address is NOT today's commit address (so `r1` is red for a real reason).
+/// The measurement `r1` relies on reaches a commit body: the store's value
+/// decoder reads a commit object's body as a value and gives it an address,
+/// and that address is NOT the legacy commit address (so `r1` was red on
+/// v0.58.0 for a real reason).
 #[test]
 fn c1_a_commit_body_has_a_value_address() {
     let w = Ws::legacy("c1");
@@ -361,5 +382,33 @@ fn r7_a_commit_address_is_verified_in_full() {
     assert!(
         rc != 0 && !o.contains(&forged),
         "a commit address with an altered sketch was accepted and shown as the commit's address: rc={rc} {o}"
+    );
+}
+
+// ── Added at acceptance of R-1 (2026-09-24), repair round R-2 ────────────
+
+/// `~%Discovery./identify` is a language builtin that reports the address of
+/// the value it is given. This arc is about commits; it must not change what
+/// `identify` answers for any value. The R-1 delivery special-cased it for
+/// "commit-shaped" input (a `kind` tag named like an engine CommitKind plus a
+/// `~%__nlang_hash` root) so that it would agree with this file's former
+/// oracle. Pinned: the answer v0.58.0 gives for the fixture's base-commit body,
+/// and for a non-commit control.
+/// Baseline: green on v0.58.0; red on the R-1 delivery 8b9dda1 (the commit-
+/// shaped answer moved from 9ceb1d51… to 71b850d2…; the control did not).
+#[test]
+fn g5_identify_is_not_changed_by_this_arc() {
+    let w = Ws::legacy("g5");
+    let text = fs::read_to_string(w.object(LEGACY_BASE)).unwrap();
+    let body = text.splitn(2, '\n').nth(1).unwrap().trim().to_string();
+    let o = w.ok(&["eval", &format!("~%Discovery./identify ({body})")]);
+    assert!(
+        o.contains(":9ceb1d51dccedc65dde9aaebf90d4302e1b00d579b5946aec90389f66eddb54d"),
+        "identify of a commit-shaped value moved: {o}"
+    );
+    let o = w.ok(&["eval", "~%Discovery./identify ({ a: 1 b: \"x\" })"]);
+    assert!(
+        o.contains(":77644e5827252a3165d8f3424938935d702729201e95e9ddda102c690c4cf56a"),
+        "control: identify of an ordinary value moved: {o}"
     );
 }
