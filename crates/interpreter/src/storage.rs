@@ -103,7 +103,8 @@ impl std::fmt::Display for StoreReadError {
             } => write!(
                 f,
                 "#caid_mismatch: object at digest path is corrupt (integrity failure); \
-                 requested {requested}, recomputed {recomputed}"
+                 requested {}, recomputed {recomputed}",
+                hex::encode(&requested.digest)
             ),
             StoreReadError::ObjectUndecodable { requested, detail } => write!(
                 f,
@@ -143,9 +144,18 @@ pub fn value_address_matches(requested: &ContentHash, recomputed: &ContentHash) 
     }
 }
 
+fn is_caid_mismatch(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<StoreReadError>(),
+        Some(StoreReadError::CaidMismatch { .. })
+    )
+}
+
 fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> bool {
-    // Commits are v1 by construction (`Commit::content_hash` → ContentHash::v1).
-    requested.digest == recomputed.digest
+    // Same rule as a value (REAL_03 §6.6). A v2 commit address is the value
+    // address: digest, lattice_sketch and masa_ref all have to match. A v1
+    // request, including a 64-hex note, compares the digest only.
+    value_address_matches(requested, recomputed)
 }
 
 /// The `.oo/` layout and the CAS encoding are independent declarations.
@@ -155,14 +165,16 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// `STORE_LAYOUT_MIGRATABLE_FROM` are the previous split-axis form this
 /// engine once wrote: still openable, and the source `oo migrate` advances.
 /// A `layout=N` in neither set is a declaration from an engine we are not
-/// — including every future N (`layout=6`, `layout=99`). The past is a
+/// — including every future N (`layout=7`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
-pub const STORE_LAYOUT_VERSION: u32 = 5;
+pub const STORE_LAYOUT_VERSION: u32 = 6;
 pub const OBJECT_ENCODING_VERSION: u32 = 5;
 /// Split-axis layouts this engine has written. Not a range: `layout=1`
-/// was never a form (that era was a bare number), and a future `layout=6`
-/// must not slip through while current is 5.
-const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3, 4];
+/// was never a form (that era was a bare number), and a future `layout=7`
+/// must not slip through while current is 6.
+/// `layout=5` still receives legacy commits. `layout=6` is the first
+/// layout whose new commits are addressed as the n/ value on disk (D74).
+const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3, 4, 5];
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 fn split_layout_number(declaration: &str) -> Option<u32> {
@@ -192,6 +204,18 @@ pub fn layout_declaration_is_current(declaration: &str) -> bool {
     declaration == format!("layout={STORE_LAYOUT_VERSION}")
 }
 
+/// Layouts that already carry the fields introduced at layout 5
+/// (`effect_tags`, `reported_bottoms`). Not "whatever this engine writes":
+/// a layout=5 store keeps those fields and keeps the legacy commit address.
+pub fn layout_has_layout5_frames(declaration: &str) -> bool {
+    split_layout_number(declaration).is_some_and(|n| n >= 5 && split_layout_is_known(n))
+}
+
+/// New commits in this store are addressed as the n/ value on disk.
+pub fn layout_addresses_commits_as_values(declaration: &str) -> bool {
+    split_layout_number(declaration).is_some_and(|n| n >= STORE_LAYOUT_VERSION && split_layout_is_known(n))
+}
+
 /// Encoding `migrate_layout` writes for a store that currently declares
 /// `declared`. Encoding 4 and above is brought up to this engine's encoding;
 /// an older encoding is left as declared. One formula for the write and for
@@ -218,6 +242,9 @@ pub fn layout_writes_pin_frame(declaration: &str) -> bool {
 pub struct ObjectStore {
     root: PathBuf,
     encoding: u32,
+    /// Layout 6 and later. Selects `put_commit`'s address, not `get_commit`'s:
+    /// a read uses the version on the address it was given.
+    value_commits: bool,
 }
 
 fn ensure_supported_encoding(v: u32) -> Result<()> {
@@ -398,11 +425,22 @@ impl ObjectStore {
         } else {
             Self::declared_encoding(base_dir)?
         };
+        let value_commits = if new_store {
+            true
+        } else {
+            read_layout_declaration(base_dir)
+                .map(|d| layout_addresses_commits_as_values(&d))
+                .unwrap_or(false)
+        };
         let root = oo.join("objects");
         if !root.exists() {
             fs::create_dir_all(&root).map_err(|e| cannot_write(root.display(), &e))?;
         }
-        Ok(Self { root, encoding })
+        Ok(Self {
+            root,
+            encoding,
+            value_commits,
+        })
     }
 
     /// Digest path for an object (sha256/ab/cdef…).
@@ -654,11 +692,19 @@ impl ObjectStore {
     }
 
     pub fn put_commit(&self, commit: &Commit) -> Result<ContentHash> {
-        let hash = commit.content_hash();
-        let content = if self.encoding >= 5 {
-            crate::store_codec::encode_commit(commit)
+        let content;
+        let hash;
+        if self.encoding >= 5 {
+            let body = crate::store_codec::commit_body(commit);
+            hash = if self.value_commits {
+                crate::store_codec::commit_body_address(&body)?
+            } else {
+                commit.content_hash()
+            };
+            content = format!("{} commit\n{body}", crate::store_codec::FRAME);
         } else {
-            canonical_cas_json(commit)?
+            hash = commit.content_hash();
+            content = canonical_cas_json(commit)?;
         };
         self.write_object(&hash, content)?;
         Ok(hash)
@@ -677,7 +723,31 @@ impl ObjectStore {
                 detail: e.to_string(),
             })?
         };
-        let recomputed = commit.content_hash();
+        // JSON commits are the pre-frame era. They are never value-addressed,
+        // even if a pointer copied a v2 wrapper onto their digest. Digest
+        // only: a v1 algorithm has no sketch or masa to compare.
+        if !crate::store_codec::is_framed(&content) {
+            let legacy = commit.content_hash();
+            if legacy.digest != hash.digest {
+                return Err(StoreReadError::CaidMismatch {
+                    requested: hash.clone(),
+                    recomputed: legacy,
+                }
+                .into());
+            }
+            return Ok(commit);
+        }
+        let recomputed = match hash.version {
+            CaidVersion::V1 => commit.content_hash(),
+            CaidVersion::V2 => {
+                crate::store_codec::commit_document_address(&content).map_err(|e| {
+                    StoreReadError::ObjectUndecodable {
+                        requested: hash.clone(),
+                        detail: e.to_string(),
+                    }
+                })?
+            }
+        };
         if !commit_address_matches(hash, &recomputed) {
             return Err(StoreReadError::CaidMismatch {
                 requested: hash.clone(),
@@ -686,6 +756,30 @@ impl ObjectStore {
             .into());
         }
         Ok(commit)
+    }
+
+    /// Open a commit named by `hash`. A bare v1 built from 64 hex (the ○
+    /// `ancestor:` / `commit:` notes) does not say which algorithm produced
+    /// the digest. The legacy algorithm is tried first: if it matches, the
+    /// commit is legacy and fields outside that address stay unattested.
+    /// Only when it does not match, and the value address of the stored
+    /// body has the same digest, is the commit the layout-6 value.
+    pub fn open_commit(&self, hash: &ContentHash) -> Result<(ContentHash, Commit)> {
+        match self.get_commit(hash) {
+            Ok(commit) => Ok((hash.clone(), commit)),
+            Err(err) if hash.version == CaidVersion::V1 && is_caid_mismatch(&err) => {
+                let content = self.read_object_raw(hash)?;
+                let Ok(addr) = crate::store_codec::commit_document_address(&content) else {
+                    return Err(err);
+                };
+                if addr.digest != hash.digest {
+                    return Err(err);
+                }
+                let commit = self.get_commit(&addr)?;
+                Ok((addr, commit))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn get_head(&self, base_dir: &Path) -> Result<Option<ContentHash>> {

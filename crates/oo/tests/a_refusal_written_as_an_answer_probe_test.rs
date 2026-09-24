@@ -63,6 +63,9 @@
 // delivery e2831a3. r10: red on v0.57.0, green on e2831a3 (pins an ordering
 // the delivery relies on). Both poles measured with real builds; see §9.
 // r11 added at acceptance of R-1 (repair round R-2): red on 7187b95; see §11.
+// AMENDED 2026-09-24 (Q-057, D74): the upper bound in r6/r7/r11 moves from
+// v0.43.0 to v0.58.0; those three are red on v0.58.0 by design and belong to
+// Q-057 (nlang-tools/docs/a_commit_that_is_a_value_handover.md).
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -221,7 +224,12 @@ fn speaks_host(out: &str) -> bool {
 /// v0.42.0 and v0.43.0 refuse to open; v0.44.0 opens. Either end of that
 /// boundary satisfies this — "up to v0.43.0" or "before v0.44.0".
 fn names_the_boundary(out: &str) -> bool {
-    out.contains("v0.43.0") || out.contains("v0.44.0")
+    // AMENDED 2026-09-24 for Q-057 (D74): migrate now targets the layout that
+    // addresses commits as values, so every engine that opens the layouts
+    // before it -- through v0.58.0 -- is locked out. The newest locked-out
+    // reference engine is v0.58.0. (Was: "v0.43.0" or "v0.44.0", which also
+    // accepted "v0.44.0 and later still open" -- see r11.)
+    out.contains("v0.58.0")
 }
 
 // ── Controls and guards (green at baseline, must stay green) ─────────────
@@ -279,7 +287,10 @@ fn g3_migrate_still_needs_its_grant_and_still_migrates() {
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     assert_eq!(rc, 0, "a granted migrate must succeed: {o}");
     let (layout, _) = w.declarations();
-    assert_eq!(String::from_utf8_lossy(&layout).trim(), "layout=5", "migrate must advance the layout");
+    // AMENDED 2026-09-24 for Q-057: the target layout is whatever this engine
+    // writes (5 before D74); the guard is that it advances, not to which number.
+    let l = String::from_utf8_lossy(&layout).trim().to_string();
+    assert!(l.starts_with("layout=") && l != "layout=2", "migrate must advance the layout: {l}");
 }
 
 /// Each red predicate is satisfiable by a real, already-correct output — so a
@@ -306,10 +317,9 @@ fn k1_every_red_predicate_is_met_by_a_real_refusal() {
     assert!(!reads_as_absence(&o, rc), "{o}");
 
     // r6/r7: the predicate is met by a sentence of the required kind.
-    assert!(names_the_boundary("engines before oo v0.44.0 will no longer open this store"));
-    assert!(names_the_boundary("oo v0.40.0 through v0.43.0 will no longer open this store"));
+    assert!(names_the_boundary("oo v0.22.0 through v0.58.0 will no longer open this store"));
     assert!(!names_the_boundary(
-        "An engine that only reads layout=2 (oo v0.41.0) will no longer open this store."
+        "unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout=5."
     ));
 }
 
@@ -523,8 +533,11 @@ fn r11_the_cost_names_the_oldest_engine_it_locks_out() {
             panic!("VOID READING: the write was supposed to fail ({enc}): rc={rc} {o}");
         }
         assert!(
-            o.contains(oldest) && o.contains("v0.43.0"),
-            "layout=2/{enc}: the cost must name {oldest} through v0.43.0: {o}"
+            // AMENDED 2026-09-24 for Q-057: the newest locked-out engine is now
+            // v0.58.0 (every engine up to it opens layout 2 and none opens the
+            // layout D74 introduces).
+            o.contains(oldest) && o.contains("v0.58.0"),
+            "layout=2/{enc}: the cost must name {oldest} through v0.58.0: {o}"
         );
     }
 }

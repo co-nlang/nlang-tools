@@ -311,7 +311,9 @@ pub fn commit_is_ancestor(
     head: &ContentHash,
     base: &ContentHash,
 ) -> Result<bool> {
-    if head == base {
+    // A 64-hex note re-enters as v1; the CLI's base is the v2 address.
+    // Same commit means the same digest.
+    if head.digest == base.digest {
         return Ok(false);
     }
     let mut seen: HashSet<String> = HashSet::new();
@@ -321,10 +323,10 @@ pub fn commit_is_ancestor(
         if !seen.insert(d.clone()) {
             continue;
         }
-        if &h == base {
+        if h.digest == base.digest {
             return Ok(true);
         }
-        let commit = store.get_commit(&h)?;
+        let (_resolved, commit) = store.open_commit(&h)?;
         if let Some(p) = previous_commit(base_dir, &commit, &d)? {
             stack.push(p);
         }

@@ -388,11 +388,13 @@ fn p2_format_moves_only_when_declared() {
     //   layout=5     Q-040 / D60             (discharge tags travel on the
     //                                        same immutable member as the
     //                                        value they describe)
+    //   layout=6     Q-057 / D74             (a new commit is the value on
+    //                                        disk; layout=5 stays legacy)
     let oo_dir = d.path().join(".oo");
     let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
         layout.trim(),
-        "layout=5",
+        "layout=6",
         ".oo/format moved without a ruling saying it should"
     );
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();

@@ -156,6 +156,25 @@ pub fn encode_commit(commit: &Commit) -> String {
     format!("{FRAME} commit\n{}", write_commit(commit))
 }
 
+/// The n/ body under the commit frame. The value address of a layout-6
+/// commit is `content_hash` of this text decoded as a value (§6.2), not a
+/// second encoder and not the evaluator.
+pub fn commit_body(commit: &Commit) -> String {
+    write_commit(commit)
+}
+
+pub fn commit_body_address(body: &str) -> Result<ContentHash> {
+    let value = expr_to_value(&parse_body(body.trim())?)?;
+    Ok(value.content_hash())
+}
+
+/// Address of a framed commit file: the body after the first line, which is
+/// what `~%Discovery./identify` is applied to.
+pub fn commit_document_address(text: &str) -> Result<ContentHash> {
+    let body = text.split_once('\n').map(|(_, b)| b).unwrap_or(text);
+    commit_body_address(body)
+}
+
 pub fn encode_staged(combo: &ComboVal) -> String {
     format!("{FRAME} staged\n{}", write_combo(combo, 0))
 }
@@ -1752,6 +1771,7 @@ mod tests {
             other => panic!("expected a bottom, got {other:?}"),
         }
     }
+
 
     #[test]
     fn thunk_wrapper_roundtrips_as_thunk() {

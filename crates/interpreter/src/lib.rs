@@ -4881,7 +4881,7 @@ impl Ouroboros {
                 if !seen.insert(d.clone()) {
                     break;
                 }
-                let commit = self.store.get_commit(&h)?;
+                let (h, commit) = self.store.open_commit(&h)?;
                 history.push((h.clone(), commit.meta.clone(), commit.kind));
                 curr = crate::savepoint::previous_commit(&current_dir, &commit, &d)?;
             }

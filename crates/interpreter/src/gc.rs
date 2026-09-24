@@ -139,7 +139,7 @@ fn verify_reachable_object(
         let Ok(bytes_digest) = hex::decode(digest_hex) else {
             return VerifiedObject::Undecodable;
         };
-        let h = ContentHash::v1(bytes_digest);
+        let h = ContentHash::v1(bytes_digest.clone());
         let is_mismatch = |e: &anyhow::Error| {
             matches!(
                 e.downcast_ref::<crate::storage::StoreReadError>(),
@@ -153,7 +153,16 @@ fn verify_reachable_object(
         }
         match store.get_commit(&h) {
             Ok(_) => return VerifiedObject::Ok(refs),
-            Err(e) if is_mismatch(&e) => return VerifiedObject::CaidMismatch,
+            Err(e) if is_mismatch(&e) => {
+                // A digest-only reference (the path, not a v2 address).
+                // `open_commit` tries the legacy algorithm, then the value
+                // address, and the value address is checked in full.
+                match store.open_commit(&h) {
+                    Ok(_) => return VerifiedObject::Ok(refs),
+                    Err(e2) if is_mismatch(&e2) => return VerifiedObject::CaidMismatch,
+                    Err(_) => return VerifiedObject::Undecodable,
+                }
+            }
             Err(_) => {}
         }
         return VerifiedObject::Undecodable;
@@ -262,8 +271,9 @@ fn push_commit_predecessor(
     if raw.len() != 32 {
         return;
     }
-    let Ok(commit) = store.get_commit(&ContentHash::v1(raw)) else {
-        return;
+    let commit = match store.open_commit(&ContentHash::v1(raw)) {
+        Ok((_, c)) => c,
+        Err(_) => return,
     };
     let Ok(Some(p)) = crate::savepoint::previous_commit(base_dir, &commit, digest) else {
         return;

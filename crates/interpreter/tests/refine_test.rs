@@ -611,11 +611,12 @@ fn shadow_scan_finds_field_in_committed_root() {
         refine_info: None,
         cache_id: default_cache_id(),
     };
-    let ch0_hash = commit0.content_hash();
+    // D74: the stored address is the value address of the body, not
+    // `Commit::content_hash` (the legacy algorithm).
     let ch0 = oo.store.put_commit(&commit0).unwrap();
-    assert_eq!(ch0, ch0_hash, "commit hash should match");
+    oo.store.get_commit(&ch0).expect("stored commit verifies");
     oo.store.set_head(&base_dir, &ch0).unwrap();
-    u.head = Some(ch0);
+    u.head = Some(ch0.clone());
 
     let meta = CommitMeta {
         author: None,
@@ -639,7 +640,7 @@ fn shadow_scan_finds_field_in_committed_root() {
     let commit = oo.store.get_commit(&ch_refine).unwrap();
     let ri = commit.refine_info.unwrap();
     assert!(
-        ri.shadow_affected.contains(&ch0_hash) || !ri.shadow_affected.is_empty(),
+        ri.shadow_affected.contains(&ch0) || !ri.shadow_affected.is_empty(),
         "shadow scan should find the historical commit with tracked_field == val_77"
     );
 }

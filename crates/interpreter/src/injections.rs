@@ -273,7 +273,7 @@ pub fn write(
     effect_tags: EffectTag,
 ) -> Result<String> {
     let declaration = crate::storage::read_layout_declaration(base)?;
-    let current = crate::storage::layout_declaration_is_current(&declaration);
+    let current = crate::storage::layout_has_layout5_frames(&declaration);
     let pin_frame = crate::storage::layout_writes_pin_frame(&declaration);
     // D60 / REAL_02 §5.1.1: a past layout must not receive a field it cannot
     // declare. Refuse before minting a member. Layout 4 already declares the
