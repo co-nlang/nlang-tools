@@ -1,4 +1,4 @@
-use crate::value::{AuthorityInfo, ContentHash, Identity};
+use crate::value::{AuthorityInfo, ContentHash, Identity, RefineInfo};
 use ring::signature::{self, UnparsedPublicKey};
 use std::collections::HashSet;
 
@@ -28,6 +28,20 @@ pub fn sign_refine(payload: &[u8], identity: &Identity) -> Result<AuthorityInfo,
         signature_hex: hex::encode(sig.as_ref()),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
     })
+}
+
+/// The public key whose stored signature matches the source/target payload.
+/// Registry membership is not consulted: that was a fact at write time, and
+/// a reader cannot re-establish it. `None` when there is no signature or the
+/// bytes do not verify.
+pub fn signature_signer(ri: &RefineInfo) -> Option<&str> {
+    let auth = ri.authority.as_ref()?;
+    let payload = compute_refine_payload(&ri.source_caids, &ri.target_caids);
+    let pk = hex::decode(&auth.signer_pubkey_hex).ok()?;
+    let sig = hex::decode(&auth.signature_hex).ok()?;
+    let vk = UnparsedPublicKey::new(&signature::ED25519, pk);
+    vk.verify(&payload, &sig).ok()?;
+    Some(auth.signer_pubkey_hex.as_str())
 }
 
 pub fn verify_refine_authority(
