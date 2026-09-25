@@ -1019,14 +1019,8 @@ fn run_log() -> anyhow::Result<()> {
         match engine.store.get_commit(&hash) {
             Ok(commit) => {
                 if let Some(ri) = commit.refine_info {
-                    if ri.authority_status.is_some() {
-                        // D74 ②: a v1 address does not cover this field.
-                        // Printing the stored word would present a forgery as fact.
-                        if hash.version == nlang_interpreter::CaidVersion::V1 {
-                            println!("    refine authority: unattested");
-                        } else if let Some(ref status) = ri.authority_status {
-                            println!("    refine authority: {}", status);
-                        }
+                    if let Some(line) = read_authority_line(&ri, hash.version) {
+                        println!("    {line}");
                     }
                 }
             }
@@ -1059,6 +1053,26 @@ fn run_log() -> anyhow::Result<()> {
         println!();
     }
     Ok(())
+}
+
+/// What `oo log` may say about a refine. A signature that verifies is the
+/// signer's public key. A signature that does not is not that key. A legacy
+/// commit with no signature keeps the D74 word `unattested`. The stored
+/// `authority_status` string is never printed here.
+fn read_authority_line(
+    ri: &nlang_interpreter::RefineInfo,
+    version: nlang_interpreter::CaidVersion,
+) -> Option<String> {
+    if let Some(pk) = nlang_interpreter::authority::signature_signer(ri) {
+        return Some(format!("refine authority: {pk}"));
+    }
+    if ri.authority.is_some() {
+        return Some("refine authority: signature did not verify".to_string());
+    }
+    if version == nlang_interpreter::CaidVersion::V1 && ri.authority_status.is_some() {
+        return Some("refine authority: unattested".to_string());
+    }
+    None
 }
 
 /// Commit meta timestamp is milliseconds since Unix epoch (see `run_commit`).
@@ -1313,12 +1327,17 @@ fn run_refine(
     match engine.store.get_commit(&hash) {
         Ok(commit) => {
             if let Some(ri) = commit.refine_info {
+                // Write-time word, from the check just performed. The read
+                // path (`oo log`) does not print this word.
                 if ri.authority_status.is_some() {
                     if hash.version == nlang_interpreter::CaidVersion::V1 {
                         println!("Refine authority: unattested");
                     } else if let Some(ref status) = ri.authority_status {
                         println!("Refine authority: {}", status);
                     }
+                }
+                if let Some(a) = &ri.authority {
+                    println!("Refine signer: {}", a.signer_pubkey_hex);
                 }
                 if !ri.shadow_affected.is_empty() {
                     println!(

@@ -67,27 +67,36 @@ v0.59.0（D74）之後這個字在新式提交的位址內，所以**事後改�
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
 ### 8.1 射程逐項對照
-S1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+S1 I1：`oo log` 不印存下的 `authority_status`。沒有簽章，或簽章驗不過，都不印 `refine authority: verified`。驗：r1、r3。
+S2 I2：簽章對來源／目標 payload 驗得過，那一行是簽署者公鑰。驗不過則印 `refine authority: signature did not verify`，與驗得過不同。驗：r2、r3、r4。
+S3 I3：舊式提交的簽章同樣在讀取時重驗，驗過就印公鑰（r4）。沒有簽章的舊式提交仍印 `unattested`，被改成 `verified` 的字不呈現（g1；Q-057 r5）。
+S4 I4：`oo refine --sign` 仍印寫入當下的 `verified`／`unverified`，並多一行 `Refine signer:` 點名公鑰（r2）。不在非空登記內的簽署者仍被拒（g2）。`identity_persistence` 的 R3／P2／P3 仍綠。
+S5 I5：重驗只解存下的公鑰、簽章與來源／目標，不算位址、不寫磁碟。
 
 ### 8.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+`cargo fmt` 未跑。`bn_serial` 未改。探針檔未改。
+`oo refine` 在原有的 `Refine authority:` 那一行之外，多印 `Refine signer: <公鑰>`。寫入當下的 `verified`／`unverified` 沒改。
 
 ### 8.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。
 
 ### 8.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+Q1. 重驗在 `authority::signature_signer`：用存下的來源、目標組 payload，只做 Ed25519，不查登記。讀取面裡印授權的只有 `oo log`，它呼叫這個函式。`oo inspect` 不印授權。`oo refine` 印的是剛寫入那一次的檢查結果（`verified`／`unverified`）加上簽署者，不是把一筆舊提交裡存下的字再讀出來當事實。
+
+Q2. 會。`oo log` 把那一行放在這一筆提交下面，讀者可以把它讀成「這筆提交是這把鑰匙簽的」。實際對上的只有來源與目標的集合。父、根、訊息都不在 payload 裡。把同一組簽章抄進另一筆來源／目標相同的提交，仍驗得過。本弧不修。
+
+Q3. 用不到。`authority.timestamp` 沒讀、沒寫。
 
 ### 8.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+沒有 `#[ignore]` 可拿。本弧探針沒改。8 支皆綠。無 `VOID READING`。
 
 ### 8.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：242 行，2300 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1, 2)` → `3` rc=0；`add (1, 3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
 
 ### 8.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無。Q2 那條是給下一張卡的，這裡不動規格。
 
 ---
 
