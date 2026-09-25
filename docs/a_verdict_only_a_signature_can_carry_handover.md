@@ -139,21 +139,27 @@ v0.59.0 分得出（印的是存下的字，D75 之前）。**這是驗收方的
 ## 10. 修補回合 R-1 回報（交付方填；本行以上一字不得動）
 
 ### 10.1 射程逐項對照
+R-1：新式提交的 `oo log` 仍印重驗過的簽署者公鑰；寫者存在位址裡的那個字並列，標成 `writer recorded:`。空白名單是 `unverified`，登記內的鑰匙是 `verified`，公鑰遮掉之後兩行不同。舊式提交不印那個字。驗：r5、r1、r4、g1。
 
 ### 10.2 順手改動（逐項指名）
+`cargo fmt` 未跑。`bn_serial` 未改。探針檔未改。無。
 
 ### 10.3 工單哪裡是錯的
+無。
 
 ### 10.4 工單指名要你回答的問題
-（無新題。）
+無。
 
 ### 10.5 探針
-探針檔不得動。r5 應轉綠，其餘不得轉紅。
+探針檔沒改，也沒有 `rustfmt`。本弧 9 支皆綠（含 r5）。無 `VOID READING`。
 
 ### 10.6 數字
-全樹 ×3（`--release --no-fail-fast`、逐 target 聚合、**失敗測試名**、`^error` 行數、exit code）／conformance／身分紅線。
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：242 行，2301 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1, 2)` → `3` rc=0；`add (1, 3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。
 
 ### 10.7 你認為需要改規格之處
+無。§9.3 簽的是提交本身、引擎只簽來源與目標，仍是下一張卡。
 
 ---
 

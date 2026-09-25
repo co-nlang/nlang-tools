@@ -1056,23 +1056,35 @@ fn run_log() -> anyhow::Result<()> {
 }
 
 /// What `oo log` may say about a refine. A signature that verifies is the
-/// signer's public key. A signature that does not is not that key. A legacy
-/// commit with no signature keeps the D74 word `unattested`. The stored
-/// `authority_status` string is never printed here.
+/// signer's public key. On a new-form commit the writer's stored word is
+/// inside the address, so it is printed beside that key and named as the
+/// writer's record. A legacy commit does not print the stored word: no
+/// signature stays `unattested`.
 fn read_authority_line(
     ri: &nlang_interpreter::RefineInfo,
     version: nlang_interpreter::CaidVersion,
 ) -> Option<String> {
-    if let Some(pk) = nlang_interpreter::authority::signature_signer(ri) {
-        return Some(format!("refine authority: {pk}"));
-    }
-    if ri.authority.is_some() {
-        return Some("refine authority: signature did not verify".to_string());
-    }
-    if version == nlang_interpreter::CaidVersion::V1 && ri.authority_status.is_some() {
+    let new_form = version != nlang_interpreter::CaidVersion::V1;
+    let recorded = if new_form {
+        ri.authority_status.as_deref()
+    } else {
+        None
+    };
+    let head = if let Some(pk) = nlang_interpreter::authority::signature_signer(ri) {
+        format!("refine authority: {pk}")
+    } else if ri.authority.is_some() {
+        "refine authority: signature did not verify".to_string()
+    } else if new_form && recorded.is_some() {
+        "refine authority:".to_string()
+    } else if ri.authority_status.is_some() {
         return Some("refine authority: unattested".to_string());
+    } else {
+        return None;
+    };
+    match recorded {
+        Some(word) => Some(format!("{head} (writer recorded: {word})")),
+        None => Some(head),
     }
-    None
 }
 
 /// Commit meta timestamp is milliseconds since Unix epoch (see `run_commit`).
