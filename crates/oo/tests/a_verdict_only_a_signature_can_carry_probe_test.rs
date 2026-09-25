@@ -31,6 +31,8 @@
 // report. `rustfmt` must not touch it.
 //
 // Baseline measured 2026-09-25 on dev 0d50fef / oo v0.59.0: see the order.
+// r5 added at acceptance (repair round R-1, D75 ②): green on v0.59.0, red on
+// the delivery 1f52139; see the order §9.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -260,4 +262,43 @@ fn r4_a_legacy_signature_is_reverified() {
     let w = Ws::legacy_signed("r4");
     let log = w.ok(&["log"]);
     assert!(authority_line(&log).contains(&LEGACY_SIGNER[..16]), "a legacy signature was not re-verified: {log}");
+}
+
+// ── Added at acceptance (2026-09-25), repair round R-1 (D75 ②) ───────────
+
+/// SPEC_10 §2.5 "未驗證必須留痕" (MUST, 2026-07-27): a refine signed while the
+/// whitelist is empty ("somebody signed") must be distinguishable by
+/// inspection from one verified against a non-empty whitelist ("an
+/// authorised key signed"). D75 as delivered prints only the signer for both.
+/// D75 ② (user, "甲"): on a new-form commit the writer's recorded word is in
+/// the address, so it is shown beside the re-verified signer, attributed to
+/// the writer — not as fact, but distinguishable.
+/// Baseline: green on v0.59.0 (the two lines differ); red on 1f52139.
+#[test]
+fn r5_signed_by_anyone_and_signed_by_an_architect_can_be_told_apart() {
+    let exempt = Ws::new("r5a");
+    exempt.refine(true);
+    let a = authority_line(&exempt.ok(&["log"]));
+
+    let listed = Ws::new("r5b");
+    fs::write(listed.ws.join("p.n"), "a: 1\n").unwrap();
+    listed.ok(&["evolve", "p.n"]);
+    listed.ok(&["commit", "-m", "base"]);
+    let key = listed.pubkey();
+    fs::write(listed.ws.join(".oo/architects.json"), format!("[\"{key}\"]")).unwrap();
+    let ins = listed.ok(&["inspect", &listed.head()]);
+    let root = ins.lines().find_map(|l| l.strip_prefix("root:")).unwrap().trim().to_string();
+    let out = listed.ok(&["refine", "--source", &root, "--target", &root, "-m", "r", "--sign"]);
+    if out.contains("unverified") {
+        panic!("VOID READING: the listed signer was not verified at write time: {out}");
+    }
+    let b = authority_line(&listed.ok(&["log"]));
+
+    let strip = |l: &str, k: &str| l.replace(k, "<key>");
+    let ka = exempt.pubkey();
+    assert_ne!(
+        strip(&a, &ka),
+        strip(&b, &key),
+        "`oo log` cannot tell 'somebody signed' from 'an architect signed': {a} / {b}"
+    );
 }
