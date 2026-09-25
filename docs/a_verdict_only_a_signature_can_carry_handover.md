@@ -164,3 +164,11 @@ conformance：162 vectors，162 pass，0 fail。
 ---
 
 ## 11. 驗收 R-1（驗收方填）
+
+**受理。** 一個修補回合，成因在驗收方（擬 D75 選項前沒讀 `SPEC_10` §2.5）。diff 純度：R-1 只動 `main.rs` 的 `read_authority_line` 與本檔報告；探針一字未動。
+
+*   探針 **9／9**（含 r5），無 `VOID READING`。全樹 ×3 三輪一致：**242 target**（239 Running＋3 Doc-tests）、**2301 passed／0 failed**、`^error` 0、cargo exit 0。
+*   conformance 162／162；值的位址未動。
+*   〔量，R-1 建置〕空白名單簽：`refine authority: <公鑰> (writer recorded: unverified)`；白名單內簽：`… (writer recorded: verified)`；
+    未簽：`refine authority: (writer recorded: unverified)`——三者可區分，且沒有一行把字樣當成授權本身。
+*   殘留：簽署對象只含來源與目標（`SPEC_10` §2.5 自陳缺口、Inbox 一列）。
