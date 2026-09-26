@@ -213,3 +213,11 @@ R-1 第二項：代價句裡的 `layout=5` 那句，只在被鎖住的最老引�
 全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：244 行，2318 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
 conformance：162 vectors，162 pass，0 fail。
 身分：`add (1, 2)` → `3` rc=0；`add (1, 3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。全樹裡 `v: 1 + 1` 與標準根的釘仍綠。
+
+## 12. 驗收 R-1（驗收方填）
+
+**受理。** 交付 `8444173`：全樹 ×3 **244 target／2318 passed／0 failed，`^error` 0 行，exit 0**，三輪相同，無失敗測試名。
+本弧探針 16／16、w1 1／1；Q-058 9／9、Q-057 13／13、Q-055 17／17；無 `VOID READING`。探針檔、夾具、分隔線以上皆未動。
+代價句逐個起始狀態重讀（`.oo` 唯讀）：`layout=2`…`5` 兩端皆對、`layout=5` 那句為真；`layout=6` 只點名 v0.59.0 … v0.60.0。
+跨版本：真 v0.60.0 對新倉 rc=1 具名拒絕；新引擎讀 v0.60.0 的倉 rc=0、宣告不動。身分：`31745ef0…`／`f4f32e7b…`（兩種拼法）／`7038e250…`；known-answer 3／4；conformance 162／162。
+兩支既有測試改走 `signer` 路：理由成立（原本送進 `layout=7` 的是舊式簽章，在 R-1 之下本該被拒）。
