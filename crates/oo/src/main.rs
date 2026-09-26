@@ -26,24 +26,45 @@ impl CommitLock {
     /// Waited-then-empty is "consumed", not "Nothing to commit" (S2/S3).
     fn acquire(base: &Path) -> anyhow::Result<(Self, bool)> {
         let oo = base.join(".oo");
-        fs::create_dir_all(&oo)?;
+        fs::create_dir_all(&oo).map_err(|e| {
+            anyhow::anyhow!("cannot write {}: {}", oo.display(), oo::operator_io_reason(&e))
+        })?;
         // Lock an already-declared file. A new `.oo/commit.lock` is a layout
         // change (p1 / p4). `format` exists for any store this path can open.
         // Open read+write so Windows LockFileEx can take an exclusive lock;
-        // do not truncate.
+        // do not truncate. The write bit is the lock, not a rewrite of the
+        // declaration — a readable `format` can still refuse this open.
+        let path = oo.join("format");
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(oo.join("format"))
-            .map_err(|_| anyhow::anyhow!("working set unreadable"))?;
+            .open(&path)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot lock {}: {}",
+                    path.display(),
+                    oo::operator_io_reason(&e)
+                )
+            })?;
         match file.try_lock() {
             Ok(()) => Ok((Self { file }, false)),
             Err(std::fs::TryLockError::WouldBlock) => {
-                file.lock()
-                    .map_err(|_| anyhow::anyhow!("working set unreadable"))?;
+                file.lock().map_err(|e| {
+                    anyhow::anyhow!(
+                        "cannot lock {}: {}",
+                        path.display(),
+                        oo::operator_io_reason(&e)
+                    )
+                })?;
                 Ok((Self { file }, true))
             }
-            Err(_) => anyhow::bail!("working set unreadable"),
+            Err(std::fs::TryLockError::Error(e)) => {
+                anyhow::bail!(
+                    "cannot lock {}: {}",
+                    path.display(),
+                    oo::operator_io_reason(&e)
+                )
+            }
         }
     }
 }
@@ -85,6 +106,7 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::MissingKey => "#missing_key",
         BottomCause::FuelExhausted => "#fuel_exhausted",
         BottomCause::Timeout => "#timeout",
+        BottomCause::PeerUnreachable => "#peer_unreachable",
         BottomCause::PeerTimeout => "#peer_timeout",
         BottomCause::Divergent => "#divergent",
         BottomCause::InvalidPath => "#invalid_path",
@@ -114,6 +136,15 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
         BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
     }
+}
+
+fn cwd() -> anyhow::Result<PathBuf> {
+    std::env::current_dir().map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read the working directory: {}",
+            oo::operator_io_reason(&e)
+        )
+    })
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -519,7 +550,7 @@ fn main_on_large_stack() -> anyhow::Result<()> {
 }
 
 fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     // Reuse the same grant parser as run/eval — never a second code path.
     apply_cli_privilege(&mut engine, false, &grants)?;
@@ -551,7 +582,7 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
             }
         }
     }
-    universe.save_staged(&engine, &std::env::current_dir()?)?;
+    universe.save_staged(&engine, &cwd()?)?;
     print_integrity_incidents(&engine);
     Ok(())
 }
@@ -612,9 +643,19 @@ fn read_capped_request_line<R: std::io::BufRead>(
 fn run_serve(port: u16) -> anyhow::Result<()> {
     use nlang_interpreter::oodp;
     use std::io::BufReader;
-    let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))?;
-    let bound_port = listener.local_addr()?.port();
-    let current_dir = std::env::current_dir()?;
+    let listener = std::net::TcpListener::bind(format!("0.0.0.0:{port}")).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot listen on port {port}: {}",
+            oo::operator_io_reason(&e)
+        )
+    })?;
+    let bound_port = listener.local_addr().map_err(|e| {
+        anyhow::anyhow!(
+            "cannot listen on port {port}: {}",
+            oo::operator_io_reason(&e)
+        )
+    })?.port();
+    let current_dir = cwd()?;
     let engine = Ouroboros::init(&current_dir)?;
     // %source = node id (CAID of the node public key), not the listen port.
     // Two ports on one workspace share one id; two workspaces do not.
@@ -673,7 +714,7 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
 
 fn run_node_id() -> anyhow::Result<()> {
     // Same shape as `oo identity`: id line, then path. Mint/load on demand.
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
     let id = engine.node_id()?;
     let path = nlang_interpreter::Identity::node_key_path(&cur)?;
@@ -691,7 +732,7 @@ fn run_node_affiliate(ttl_secs: Option<i64>) -> anyhow::Result<()> {
         affiliation_claim_path, mint_affiliation_claim, MAX_AFFILIATION_LIFETIME_SECS,
     };
 
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
     // Node id for *this* workspace (minting a node key is allowed here —
     // affiliation is an actual network-identity need).
@@ -718,9 +759,13 @@ fn run_node_affiliate(ttl_secs: Option<i64>) -> anyhow::Result<()> {
     let claim =
         mint_affiliation_claim(&operator, &node_id, expires).map_err(|e| anyhow::anyhow!("{e}"))?;
     let path = affiliation_claim_path(&node_key_path);
-    claim
-        .write_file(&path)
-        .map_err(|e| anyhow::anyhow!("write claim {}: {e}", path.display()))?;
+    claim.write_file(&path).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot write {}: {}",
+            path.display(),
+            oo::operator_io_reason(&e)
+        )
+    })?;
 
     // Probe R1 parses whitespace tokens: 128-hex signature and a plausible expiry.
     println!("node: {}", node_id);
@@ -733,7 +778,7 @@ fn run_node_affiliate(ttl_secs: Option<i64>) -> anyhow::Result<()> {
 
 fn run_node_trust_list() -> anyhow::Result<()> {
     use nlang_interpreter::discovery_config::DiscoveryConfig;
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     // Load via the same path as init; do not create the file.
     let cfg = DiscoveryConfig::load(&cur)?;
     for k in &cfg.affiliation_roots {
@@ -746,7 +791,7 @@ fn run_node_trust_add(operator_key: String) -> anyhow::Result<()> {
     use nlang_interpreter::discovery_config::{validate_operator_key, DiscoveryConfig};
     // Validate before any write so a bad key never manufactures the file.
     validate_operator_key(&operator_key)?;
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut cfg = DiscoveryConfig::load(&cur)?;
     let _ = cfg.add(&operator_key)?;
     cfg.write(&cur)?;
@@ -757,7 +802,7 @@ fn run_node_trust_add(operator_key: String) -> anyhow::Result<()> {
 fn run_node_trust_remove(operator_key: String) -> anyhow::Result<()> {
     use nlang_interpreter::discovery_config::{validate_operator_key, DiscoveryConfig};
     validate_operator_key(&operator_key)?;
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut cfg = DiscoveryConfig::load(&cur)?;
     let _ = cfg.remove(&operator_key)?;
     cfg.write(&cur)?;
@@ -767,7 +812,7 @@ fn run_node_trust_remove(operator_key: String) -> anyhow::Result<()> {
 
 /// List known peers and verified affiliation operator keys (derived, not stored).
 fn run_node_peers() -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
     // Refresh derived affiliation from verbatim ad (R9: re-verify on every view).
     nlang_interpreter::peers::refresh_affiliations(&engine);
@@ -794,7 +839,7 @@ fn run_node_advertise(to: String, services: Vec<String>, listen_port: u16) -> an
     use std::net::TcpStream;
     use std::time::Duration;
 
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
     let identity = engine.node_identity()?;
     let (_ad, _nid, req) =
@@ -804,11 +849,29 @@ fn run_node_advertise(to: String, services: Vec<String>, listen_port: u16) -> an
     let addr: std::net::SocketAddr = to
         .parse()
         .map_err(|_| anyhow::anyhow!("--to must be host:port, got {to}"))?;
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
-    stream.set_read_timeout(Some(oodp::OODP_READ_TIMEOUT))?;
-    stream.set_write_timeout(Some(oodp::OODP_READ_TIMEOUT))?;
-    stream.write_all(req.as_bytes())?;
-    stream.flush()?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut {
+            anyhow::anyhow!("#peer_timeout")
+        } else {
+            anyhow::anyhow!("#peer_unreachable")
+        }
+    })?;
+    stream
+        .set_read_timeout(Some(oodp::OODP_READ_TIMEOUT))
+        .map_err(|e| {
+            anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
+        })?;
+    stream
+        .set_write_timeout(Some(oodp::OODP_READ_TIMEOUT))
+        .map_err(|e| {
+            anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
+        })?;
+    stream.write_all(req.as_bytes()).map_err(|e| {
+        anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
+    })?;
+    stream.flush().map_err(|e| {
+        anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
+    })?;
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).ok();
     let text = String::from_utf8_lossy(&buf);
@@ -830,12 +893,41 @@ fn run_node_advertise(to: String, services: Vec<String>, listen_port: u16) -> an
 fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
     use nlang_interpreter::oodp;
 
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
     let result = oodp::remote_discover_oodp(&engine, &to, &target)
-        .map_err(|e| anyhow::anyhow!("discover transport: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("#{}", e.as_tag()))?;
 
-    // Operator log (§3.9).
+    // Record before any "accepted" sentence. A reply that did not land in
+    // the directory is not a successful discover (SPEC_10 §2.2.1).
+    let hops = result.envelope_hops;
+    for p in &result.accepted {
+        let addr = if p.observed_host.is_empty() {
+            String::new()
+        } else {
+            format!("{}:{}", p.observed_host, p.listen_port)
+        };
+        engine.record_peer_advert(nlang_interpreter::PeerAdvert {
+            node_id: p.node_id.clone(),
+            public_key_hex: p.public_key_hex.clone(),
+            services: Vec::new(),
+            addr,
+            observed_host: p.observed_host.clone(),
+            listen_port: p.listen_port,
+            capacity: 0,
+            ttl: 15,
+            ts: 0,
+            hops: hops as i64,
+            ad_source: p.ad_source.clone(),
+            received_at: std::time::SystemTime::now(),
+            verified_operator_key: p.verified_operator_key.clone(),
+            provenance: nlang_interpreter::ObservationProvenance::Relayed,
+            admission_seq: 0,
+            received_at_unparseable: false,
+            admission_seq_unparseable: false,
+        })?;
+    }
+
     let reasons: String = result
         .drop_reasons
         .iter()
@@ -861,42 +953,11 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
         return Ok(());
     }
     println!("#{}", result.status);
-    let hops = result.envelope_hops;
     for p in &result.accepted {
-        // Parenthesis is required output (R-a at the human surface).
         println!(
             "{} {}:{} (host unverified, hops={hops} claimed)",
             p.node_id, p.observed_host, p.listen_port
         );
-        // Affiliation path two of three: record the relayed peer (and claim
-        // verdict) into this workspace's directory so `oo node peers` sees it.
-        let addr = if p.observed_host.is_empty() {
-            String::new()
-        } else {
-            format!("{}:{}", p.observed_host, p.listen_port)
-        };
-        // Services unknown from a bare discover entry — leave empty; the
-        // durable record still carries the full ad_source for re-verify.
-        let _ = engine.record_peer_advert(nlang_interpreter::PeerAdvert {
-            node_id: p.node_id.clone(),
-            public_key_hex: p.public_key_hex.clone(),
-            services: Vec::new(),
-            addr,
-            observed_host: p.observed_host.clone(),
-            listen_port: p.listen_port,
-            capacity: 0,
-            ttl: 15,
-            ts: 0,
-            hops: hops as i64,
-            ad_source: p.ad_source.clone(),
-            received_at: std::time::SystemTime::now(),
-            verified_operator_key: p.verified_operator_key.clone(),
-            // Receiver-local: learned via #discover, even if envelope hops is 0.
-            provenance: nlang_interpreter::ObservationProvenance::Relayed,
-            admission_seq: 0, // assigned in record_peer_advert
-            received_at_unparseable: false,
-            admission_seq_unparseable: false,
-        });
     }
     Ok(())
 }
@@ -904,10 +965,10 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
 fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
     use nlang_interpreter::oodp;
 
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
     let result = oodp::remote_find_node_oodp(&engine, &to, &target)
-        .map_err(|e| anyhow::anyhow!("find-node transport: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("#{}", e.as_tag()))?;
 
     if result.status == "oversize" {
         println!("#oversize");
@@ -926,7 +987,7 @@ fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
 }
 
 fn run_status() -> anyhow::Result<()> {
-    let current_dir = std::env::current_dir()?;
+    let current_dir = cwd()?;
     let engine = Ouroboros::init(&current_dir)?;
     if let Some(head) = engine.store.get_head(&current_dir)? {
         let commit = engine.store.get_commit(&head)?;
@@ -971,11 +1032,11 @@ fn run_status() -> anyhow::Result<()> {
 }
 
 fn run_log() -> anyhow::Result<()> {
-    let engine = Ouroboros::init(&std::env::current_dir()?)?;
+    let engine = Ouroboros::init(&cwd()?)?;
     // A historical root that names an unavailable standard table is not an
     // empty universe. `log` is a read of that history, so surface the named
     // refusal instead of silently falling back to genesis.
-    let _universe = Universe::load(&engine, &std::env::current_dir()?)?;
+    let _universe = Universe::load(&engine, &cwd()?)?;
     // Surface CAS integrity failures distinctly (tampered commit chain).
     let history = engine
         .log()
@@ -1106,7 +1167,7 @@ fn format_commit_date_ms(ms: u64) -> String {
 }
 
 fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.rollback {
@@ -1123,7 +1184,7 @@ fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::
 }
 
 fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.squash {
@@ -1157,57 +1218,21 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
     Ok(())
 }
 
-fn refuse_raw_os(err: anyhow::Error) -> anyhow::Error {
-    let m = err.to_string();
-    if m.to_lowercase().contains("os error") || m.contains("No such file or directory") {
-        anyhow::anyhow!("{}", nlang_interpreter::injections::CONSUMED_MSG)
-    } else {
-        err
-    }
-}
-
 fn run_commit(
     message: Option<String>,
     grants: Vec<String>,
     privileged: bool,
 ) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     // Snapshot before the lock: a late waiter that listed members, then
     // found them gone, consumed them. G3 lists zero (the previous commit
     // already returned).
-    let listed_before = match nlang_interpreter::injections::paths(&cur) {
-        Ok(v) => v.len(),
-        Err(e) => {
-            let m = e.to_string();
-            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
-                anyhow::bail!("{m}");
-            }
-            return Err(refuse_raw_os(e));
-        }
-    };
+    let listed_before = nlang_interpreter::injections::paths(&cur)?.len();
     let (_commit_lock, contended) = CommitLock::acquire(&cur)?;
-    let listed_count = match nlang_interpreter::injections::paths(&cur) {
-        Ok(v) => v.len(),
-        Err(e) => {
-            let m = e.to_string();
-            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
-                anyhow::bail!("{m}");
-            }
-            return Err(refuse_raw_os(e));
-        }
-    };
-    let mut universe = match load_universe(&engine, &cur) {
-        Ok(u) => u,
-        Err(e) => {
-            let m = e.to_string();
-            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
-                anyhow::bail!("{m}");
-            }
-            return Err(refuse_raw_os(e));
-        }
-    };
+    let listed_count = nlang_interpreter::injections::paths(&cur)?.len();
+    let mut universe = load_universe(&engine, &cur)?;
     if let Some(d) = &universe.workset_bottom {
         anyhow::bail!("Evolution Conflict: {}", format_conflict_where(d, None));
     }
@@ -1219,8 +1244,12 @@ fn run_commit(
     {
         // O37: a Config-only stage is honestly empty of committable
         // content. `listed_count > 0` is those knob members, not a race.
+        // A member that is still here and folds to nothing committable
+        // (a literal `_`) was not taken by another commit. Consumed is only
+        // a wait, or a member that disappeared between the two listings.
         let config_only = universe.staged.get_field("~%Config").is_some();
-        if !config_only && (listed_count > 0 || listed_before > 0 || contended) {
+        let lost_a_member = listed_count < listed_before;
+        if !config_only && (contended || lost_a_member) {
             anyhow::bail!("{}", nlang_interpreter::injections::CONSUMED_MSG);
         }
         anyhow::bail!("Nothing to commit");
@@ -1275,7 +1304,7 @@ fn run_commit(
         reported_bottoms: None,  // set by Universe::commit from the projected root
     };
     let (hash, config_not_committed, reported) =
-        universe.commit(&engine, &std::env::current_dir()?, meta)?;
+        universe.commit(&engine, &cwd()?, meta)?;
     // S2: name every leaf, then the success line. rc stays 0 (G2).
     // Same shape as format_conflict_where; never print `message`.
     for (coord, cause) in &reported {
@@ -1301,7 +1330,7 @@ fn run_refine(
     sign: bool,
     message: Option<String>,
 ) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
     let mut universe = load_universe(&engine, &cur)?;
 
@@ -1409,8 +1438,8 @@ fn run_refine(
 }
 
 fn run_repl() -> anyhow::Result<()> {
-    let engine = Ouroboros::init(&std::env::current_dir()?)?;
-    let mut universe = load_universe(&engine, &std::env::current_dir()?)?;
+    let engine = Ouroboros::init(&cwd()?)?;
+    let mut universe = load_universe(&engine, &cwd()?)?;
     println!("n/ Ouroboros REPL (Genesis)");
     println!("Type 'exit' to quit.");
 
@@ -1537,7 +1566,7 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
 }
 
 fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.migrate {
@@ -1690,7 +1719,7 @@ fn engine_ord(v: &str) -> u32 {
 }
 
 fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.gc {
@@ -1740,7 +1769,7 @@ fn run_one_shot(
     privileged: bool,
     grants: Vec<String>,
 ) -> anyhow::Result<()> {
-    let mut engine = Ouroboros::init(&std::env::current_dir()?)?;
+    let mut engine = Ouroboros::init(&cwd()?)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     // One-shot: pure universe, no local staged load, no durable store writes.
     // SPEC_03 simultaneity: all files/fields are one snapshot — evolve
@@ -1801,7 +1830,7 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
 }
 
 fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let mut engine = engine_or_ephemeral(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
 
@@ -1908,7 +1937,7 @@ fn engine_or_ephemeral(cur: &Path) -> anyhow::Result<Ouroboros> {
 }
 
 fn run_inspect(caid_str: String) -> anyhow::Result<()> {
-    let cur = std::env::current_dir()?;
+    let cur = cwd()?;
     let engine = engine_or_ephemeral(&cur)?;
 
     let hash = ContentHash::parse(&caid_str)
@@ -1956,10 +1985,12 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
             Ok((resolved, commit)) => {
                 println!("CAID:   {}", resolved);
                 println!("kind:   commit");
-                if let Some(p) = &commit.parent {
-                    println!("parent: {}", p);
-                } else {
-                    println!("parent: (none)");
+                // Commit.parent is unset on purpose (D18/D52). The predecessor
+                // is the ○ ancestor note. Absence of that note is not "no parent".
+                let own = hex_digest(&hash.digest);
+                if let Some(p) = nlang_interpreter::savepoint::previous_commit(&cur, &commit, &own)?
+                {
+                    println!("parent: {p}");
                 }
                 println!("root:   {}", commit.root);
                 Ok(())
@@ -1974,17 +2005,8 @@ fn run_inspect(caid_str: String) -> anyhow::Result<()> {
 
 fn load_universe(engine: &Ouroboros, path: &Path) -> anyhow::Result<Universe> {
     let mut u = Universe::load(engine, path)?;
-    match u.load_staged(engine, path) {
-        Ok(()) => Ok(u),
-        Err(e) => {
-            let m = e.to_string();
-            if m.contains(nlang_interpreter::injections::CONSUMED_MSG) {
-                Err(e)
-            } else {
-                Err(refuse_raw_os(e))
-            }
-        }
-    }
+    u.load_staged(engine, path)?;
+    Ok(u)
 }
 
 fn parse_path_only(s: &str) -> anyhow::Result<nlang_parser::ast::Path> {
@@ -2006,7 +2028,7 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
         }
     }
 
-    let engine = Ouroboros::init(&std::env::current_dir()?)?;
+    let engine = Ouroboros::init(&cwd()?)?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;

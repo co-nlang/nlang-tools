@@ -934,15 +934,16 @@ impl Universe {
         // bodies are unreachable after the next commit of a different root
         // and are local-GC fodder — same class as auto-cleared adverts.
         Value::Combo(self.staged.clone()).persist_blur_partials(&engine.store)?;
+        let mut written_id: Option<String> = None;
         if self.session_has_delta {
             Value::Combo(self.session_delta.clone()).persist_blur_partials(&engine.store)?;
-            crate::injections::write(
+            written_id = Some(crate::injections::write(
                 base_dir,
                 &self.session_delta,
                 &self.session_pin_coords,
                 &self.session_absorbs,
                 self.session_effect_tags,
-            )?;
+            )?);
             self.session_delta = ComboVal::default();
             self.session_has_delta = false;
             self.session_pin_coords.clear();
@@ -953,7 +954,16 @@ impl Universe {
         // ○ lives beside the working set, not in CAS. Unchanged this arc
         // (D48 split: Q-014b owns identity and order). Identical bodies do
         // not mint a new ○ (D47).
-        crate::savepoint::record(base_dir, &self.staged)?;
+        // The member is already on disk. If the circle cannot be written,
+        // remove that member: a staged injection with no ○ is the split
+        // SPEC_10 §3.1 forbids, and the operator must not be told the
+        // evolve landed.
+        if let Err(e) = crate::savepoint::record(base_dir, &self.staged) {
+            if let Some(id) = written_id.as_deref() {
+                let _ = std::fs::remove_file(crate::injections::dir(base_dir).join(id));
+            }
+            return Err(e);
+        }
         // Layout 4 pin intent already travelled with session_delta in the
         // immutable injection. Preserve a layout <= 3 sidecar only while its
         // legacy injection remains pending; never create or rewrite the shared

@@ -77,14 +77,69 @@ Q-042、Q-044、Q-055 各修了一族「回報面說的不是真的、或不是�
 
 ### 8.1 射程逐項對照
 
+I1. 操作者看得到的宿主句子改走 `operator_io_reason`：身分檔與節點金鑰的讀寫、`discovery.n`、`atomic_write`（不再把函式名放進句子）、聽埠、`advertise` 的讀寫、工作目錄。驗：r1–r5、r12。
+I2. `.oo/format` 鎖不起來時說 `cannot lock …`，不再說工作集讀不到。`evolve v: _` 留下的成員折疊後沒有可提交內容，而且清單沒有少成員、也沒有等待，`commit` 與從未 evolve 的工作區同一句 `Nothing to commit`。真正少了成員或等待過，仍說被並行提交吃掉。驗：r9、r10、g1；Q-016 的 r3 仍在全樹裡。
+I3. `save_staged` 在 ○ 寫不進去時刪掉剛寫下的注入。`discover` 先把同儕寫進目錄，寫不進去就 rc≠0，並且不先印 `accepted=`。驗：r11、r13。
+I4. `inspect` 印 ○ 上的祖先；沒有那條註記就不印 `parent:`。驗：r14。
+I5. 撥號失敗是 `#peer_unreachable`，期限內沒有回答是 `#peer_timeout`。`advertise`／`discover`／`find-node`／`#fetch` 都走這兩個。完整性紀錄仍只在位址不符或解不出的承載上記。驗：r6–r8。
+I6. 分類在 §8.4 Q1，先於改動。
+I7. `refuse_raw_os` 已刪。它把任何帶 `os error` 的句子改寫成「被並行提交吃掉」。
+
 ### 8.2 順手改動（逐項指名）
+
+無。`cargo fmt` 未跑。探針檔未改。`spec/`、`meta/`、`conformance/` 未改。
+
+改動檔：`crates/interpreter/src/operator_io.rs`、`value.rs`、`store_codec.rs`、`storage.rs`、`discovery_config.rs`、`injections.rs`、`universe.rs`、`oodp.rs`、`peers.rs`、`lib.rs`、`builtins/disc.rs`、`crates/oo/src/main.rs`、本工單 §8。
 
 ### 8.3 工單哪裡是錯的
 
+無。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 是一族，不是 13 個點。修前工單點名的 `map_err(|_|` 是 35 處。修後生產碼裡還在的 `map_err(|_|`（測試與註解不算）逐類：
+
+- 理由還在，句子為真：`--to` 不是 `host:port`、CAID 格式、`inspect` 把原錯誤傳回去、PKCS#8 不是那把鑰匙、Ed25519 驗失敗、注入沒有熵、注入 serde 讀不成（Q-055 那句 `working set cannot be read`）、`effect_tags` 讀不成、廣告體 `malformed`、解析器執行緒的 `#host_resource_denied`／內部失敗、熵源 `fill` 只在函式內部變成 `()`。
+- 理由換成一個仍然為真的標籤：三處 `addr.parse` 失敗改成 `#peer_unreachable`（這次撥號沒有開始）。操作者金鑰／節點金鑰的 `from_pkcs8` 失敗改成固定的「不是合法 PKCS#8」，不再插 `Debug`。
+- 修前是「句子可能為假」、修後不再是 `map_err(|_|`：`CommitLock` 三處「working set unreadable」；`oodp` 把撥號、讀寫、空回應映成 `Conflict` 的那十餘處；`discover`／`find-node` 的 `{e:?}`。
+- 留下、句子仍可能為假：`follow_refine` 的鎖中毒與壞的 refine 目標仍是 `#conflict`（`lib.rs`）。沒有操作者路徑在這次的注入矩陣裡走到。沒有改。
+
+`{:?}` 交到操作者面前的，修前是 `discover transport`、`find-node transport`、節點金鑰與操作者金鑰的 `from_pkcs8`。修後這四個都不印 `Debug`。
+
+不經 `operator_io` 的 IO，修前是身分檔、節點金鑰、`discovery.n`、聽埠、`advertise` 的 socket、`atomic_write` 的句子、同儕目錄的失敗被吞掉。這些都改了。`std::env::current_dir` 在 `oo` 裡收成 `cwd()`，失敗是 `cannot read the working directory` 加上同一個理由函數。
+
+Q2. `commit` 要寫入權是因為鎖取在已存在的 `.oo/format` 上，而且是讀寫打開：Windows 的排他鎖要求寫入把手。這次打開不改宣告的位元組。r9（檔案 `0400`）現在答 `cannot lock <路徑>: permission denied`。`status` 仍讀得到工作集。
+
+Q3. 選不留痕跡。注入先落地、○ 寫失敗時，把那個注入檔刪掉，然後把 ○ 的錯誤交回去。r11：rc≠0，`status` 看不到 `d: 4`，句子裡沒有 `atomic_write`。
+
+同一函數裡還有的窗口：模糊片段在注入之前寫進 CAS，注入失敗時那些片段還在，但不是工作集。`effect_pending` 只在 layout≤4 於 ○ 之後寫；layout=7 不走那一步。這次沒有別的「注入在、○ 不在」的路徑。
+
+Q4. `evolve v: _` 在 `.oo/injections` 寫下一個成員。折疊時 `v` 的值是 Top，meet 不把 Top 留在組合裡，所以工作集沒有可提交內容，檔案卻還在。舊的條件把「清單上還有成員」當成被吃掉。修後只有等待過，或兩次清單之間少了成員，才說並行。
+
+Q5. 拿掉。那張網自己把讀不到、鎖不到說成被並行提交吃掉，正是 I2。I1 改由 `operator_io_reason` 的全分支成立之後，不需要再靠 `contains("os error")`。
+
+Q6. `advertise` 對關著的埠答 `#peer_unreachable`（期限是 `#peer_timeout`）。`discover`／`find-node` 答同一個標籤，不再印 `Conflict`。`#fetch`（具名對等點與掃描）把撥不上交成 `#peer_unreachable`，不再掉進「缺席」。空回應（連上了、沒有正文）是 `#peer_timeout`。
+
+撥號與讀寫失敗都不呼叫 `record_integrity`。完整性紀錄仍只在承載解不出或位址不符時寫。連上之後、又不是期限的 IO（例如連線被重置）也答 `#peer_unreachable`：沒有完成一次 OODP 會話，也不是完整性裁決。這比 `#conflict` 接近 D77，但比「根本沒建立」寬一點。沒有第三個標籤可用。
+
+`#fetch` 若在 TCP 已連上之後讀不到自己的節點金鑰，同一函數也回 `#peer_unreachable`。那不是網路。這次的注入矩陣沒有走到。
 
 ### 8.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。17 支皆綠（c1 c2 g1 r1–r14）。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：
+
+- 第 1 輪：`test result:` 245 行，2335 passed，0 failed，`^error` 0，exit 0。
+- 第 2 輪：245 行，2334 passed，1 failed，`^error` 2，exit 101。失敗是 `advert_persistence_probe_test::r5_the_rebuilt_index_matches_an_insertion_replay`，panic 原文 `no bucket overflowed with 60 peers, so this probe cannot tell a table rebuilt with the right self id from one rebuilt with zeros`。前一句 `the file lost records` 沒有失敗，60 筆都在檔裡。這是探針自己的武裝條件（隨機節點沒有塞滿桶）。孤立重跑該支：passed。
+- 第 3 輪：245 行，2335 passed，0 failed，`^error` 0，exit 0。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。新倉 `layout=7`／`encoding=5`。
+
 ### 8.7 你認為需要改規格之處
+
+`TAG_REGISTRY` 與 `REAL_02` §3.2.2 加上 `#peer_unreachable`。工單已把這件留給驗收方。引擎這次把新原因加在 `BottomCause` 的尾端。連上之後又不是期限的傳輸失敗，目前也用這個標籤；若要和「根本沒建立」分開，需要另一個原因，這次沒有裁。

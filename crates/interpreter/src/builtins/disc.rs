@@ -304,7 +304,8 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                         e @ (BottomCause::PeerNotImplemented
                                         | BottomCause::PeerUnknownStatus
                                         | BottomCause::PeerRefused
-                                        | BottomCause::PeerTimeout),
+                                        | BottomCause::PeerTimeout
+                                        | BottomCause::PeerUnreachable),
                                     ) => {
                                         peer_protocol = Some(e);
                                     }
@@ -331,7 +332,8 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 e @ (BottomCause::PeerNotImplemented
                                 | BottomCause::PeerUnknownStatus
                                 | BottomCause::PeerRefused
-                                | BottomCause::PeerTimeout),
+                                | BottomCause::PeerTimeout
+                                | BottomCause::PeerUnreachable),
                             ) => {
                                 peer_protocol = Some(e);
                             }

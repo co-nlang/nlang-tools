@@ -44,17 +44,17 @@ pub fn atomic_write(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
     let mut tmp = tempfile::Builder::new()
         .prefix(".partial-")
         .tempfile_in(parent)
-        .map_err(|e| anyhow::anyhow!("atomic_write temp create {}: {}", parent.display(), crate::operator_io_reason(&e)))?;
+        .map_err(|e| cannot_write(parent.display(), &e))?;
     tmp.write_all(contents)
-        .map_err(|e| anyhow::anyhow!("atomic_write write {}: {}", path.display(), crate::operator_io_reason(&e)))?;
+        .map_err(|e| cannot_write(path.display(), &e))?;
     tmp.as_file()
         .sync_all()
-        .map_err(|e| anyhow::anyhow!("atomic_write fsync {}: {}", path.display(), crate::operator_io_reason(&e)))?;
+        .map_err(|e| cannot_write(path.display(), &e))?;
 
     // persist = rename over the target; on failure the TempPath still deletes
     // the temp when dropped, so nothing is left for a directory walk to find.
     tmp.persist(path)
-        .map_err(|e| anyhow::anyhow!("atomic_write install {}: {}", path.display(), crate::operator_io_reason(&e.error)))?;
+        .map_err(|e| cannot_write(path.display(), &e.error))?;
     Ok(())
 }
 

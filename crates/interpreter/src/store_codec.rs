@@ -1610,6 +1610,7 @@ fn cause_from_value(v: &Value) -> Result<BottomCause> {
         "missing_key" => BottomCause::MissingKey,
         "fuel_exhausted" => BottomCause::FuelExhausted,
         "timeout" => BottomCause::Timeout,
+        "peer_unreachable" => BottomCause::PeerUnreachable,
         "peer_timeout" => BottomCause::PeerTimeout,
         "divergent" => BottomCause::Divergent,
         "invalid_path" => BottomCause::InvalidPath,

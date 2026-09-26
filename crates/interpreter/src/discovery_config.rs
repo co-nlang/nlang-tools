@@ -33,14 +33,20 @@ impl DiscoveryConfig {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => {
                 return Err(anyhow::anyhow!(
-                    "discovery.n: cannot inspect {}: {e}",
-                    path.display()
+                    "discovery.n: cannot read {}: {}",
+                    path.display(),
+                    crate::operator_io_reason(&e)
                 ));
             }
         };
         let meta = if entry_meta.file_type().is_symlink() {
-            fs::metadata(&path)
-                .map_err(|e| anyhow::anyhow!("discovery.n: cannot read {}: {e}", path.display()))?
+            fs::metadata(&path).map_err(|e| {
+                anyhow::anyhow!(
+                    "discovery.n: cannot read {}: {}",
+                    path.display(),
+                    crate::operator_io_reason(&e)
+                )
+            })?
         } else {
             entry_meta
         };
@@ -50,8 +56,13 @@ impl DiscoveryConfig {
                 path.display()
             );
         }
-        let text = fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("discovery.n: cannot read {}: {e}", path.display()))?;
+        let text = fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "discovery.n: cannot read {}: {}",
+                path.display(),
+                crate::operator_io_reason(&e)
+            )
+        })?;
         parse_config_text(&text, &path)
     }
 
@@ -61,7 +72,7 @@ impl DiscoveryConfig {
         let path = Self::path(base_dir);
         let body = self.to_nlang();
         crate::storage::atomic_write(&path, body)
-            .map_err(|e| anyhow::anyhow!("discovery.n: cannot write {}: {e}", path.display()))
+            .map_err(|e| anyhow::anyhow!("discovery.n: {e}"))
     }
 
     pub fn to_nlang(&self) -> String {

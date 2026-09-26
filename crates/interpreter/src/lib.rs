@@ -1133,7 +1133,7 @@ impl Ouroboros {
     /// does not replace the live record and is not durable-appended. A
     /// **different** signed advertisement for the same `node_id` replaces
     /// under the existing last-wins policy and keeps its own provenance.
-    pub fn record_peer_advert(&self, mut advert: PeerAdvert) -> Vec<String> {
+    pub fn record_peer_advert(&self, mut advert: PeerAdvert) -> Result<Vec<String>> {
         let node_id = advert.node_id.clone();
         let pk_hex = advert.public_key_hex.clone();
 
@@ -1149,7 +1149,7 @@ impl Ouroboros {
             true
         };
         if !accept {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         // Total arrival order for seat rebuild (additive durable field).
@@ -1159,37 +1159,80 @@ impl Ouroboros {
             }
         }
 
-        if let Ok(mut dir) = self.peer_adverts.write() {
-            dir.insert(node_id.clone(), advert.clone());
-        }
-        // Ensure routing self_id matches this node before insert.
+        let replaced = match self.peer_adverts.write() {
+            Ok(mut dir) => dir.insert(node_id.clone(), advert.clone()),
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "cannot record peer: the peer directory lock was poisoned"
+                ));
+            }
+        };
         let mut logs = Vec::new();
-        if let Ok(self_caid) = self.node_id() {
+        if let Some(ref base) = self.base_dir {
+            let self_caid = match self.node_id() {
+                Ok(id) => id,
+                Err(e) => {
+                    self.restore_recorded_peer(replaced, node_id);
+                    return Err(e);
+                }
+            };
             let sid = crate::routing::routing_id_from_caid(&self_caid);
             if let Ok(mut rt) = self.routing.write() {
                 if rt.self_id_hex.is_empty() || rt.self_id_hex == hex::encode([0u8; 20]) {
                     *rt = crate::routing::RoutingIndex::new(sid);
-                } else if rt.self_id() != sid {
-                    // Should not happen mid-process; keep existing.
                 }
                 if let Some(rid) = crate::routing::routing_id_from_pubkey_hex(&pk_hex) {
                     logs = rt.insert(&node_id, rid);
                 }
             }
-            // Durable append (only for workspace engines).
-            if let Some(ref base) = self.base_dir {
-                let owner = self_caid.to_string();
-                if let (Ok(live), Ok(mut st)) =
-                    (self.peer_adverts.read(), self.peer_dir_state.write())
-                {
-                    let peer_logs = crate::peers::append(base, &owner, &advert, &live, &mut st);
-                    logs.extend(peer_logs);
+            // Clone under the read lock, then drop it before taking the
+            // directory-state write lock or appending. Holding the read
+            // guard across either of those waits forever on this thread.
+            let live = match self.peer_adverts.read() {
+                Ok(dir) => dir.clone(),
+                Err(_) => {
+                    self.restore_recorded_peer(replaced, node_id);
+                    return Err(anyhow::anyhow!(
+                        "cannot record peer: the peer directory lock was poisoned"
+                    ));
+                }
+            };
+            let appended = match self.peer_dir_state.write() {
+                Ok(mut st) => crate::peers::append(
+                    base,
+                    &self_caid.to_string(),
+                    &advert,
+                    &live,
+                    &mut st,
+                ),
+                Err(_) => Err(anyhow::anyhow!(
+                    "cannot record peer: the peer directory lock was poisoned"
+                )),
+            };
+            match appended {
+                Ok(peer_logs) => logs.extend(peer_logs),
+                Err(e) => {
+                    self.restore_recorded_peer(replaced, node_id);
+                    return Err(e);
                 }
             }
         }
         // Admission is process-local and never dials (lazy until fetch).
         self.consider_automatic_admission(&advert);
-        logs
+        Ok(logs)
+    }
+
+    fn restore_recorded_peer(&self, replaced: Option<PeerAdvert>, node_id: String) {
+        if let Ok(mut dir) = self.peer_adverts.write() {
+            match replaced {
+                Some(old) => {
+                    dir.insert(node_id, old);
+                }
+                None => {
+                    dir.remove(&node_id);
+                }
+            }
+        }
     }
 
     /// Whether this exact advertisement is eligible for automatic remote
@@ -4861,8 +4904,8 @@ impl Ouroboros {
     /// - `Ok(val)` — `#success` and address matches the requested CAID
     /// - `Err(MissingKey)` — peer `#not_found` (absence, not conflict)
     /// - `Err(CaidMismatch)` — peer `#conflict`, bad envelope, or address fail
-    /// - `Err(Timeout)` — read/connect deadline (distinct from all three)
-    /// - `Err(Conflict)` — connection refused / empty body / other transport
+    /// - `Err(PeerTimeout)` — the peer accepted and then missed the deadline
+    /// - `Err(PeerUnreachable)` — the connection was never established (D77)
     pub fn remote_fetch(&self, addr: &str, hash: &ContentHash) -> Result<Value, BottomCause> {
         crate::oodp::remote_fetch_oodp(self, addr, hash)
     }

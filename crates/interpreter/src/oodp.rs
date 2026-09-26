@@ -716,7 +716,6 @@ pub fn mint_affiliation_claim(
     node_id: &str,
     expires: i64,
 ) -> Result<AffiliationClaim, String> {
-    use ring::signature::KeyPair;
     if expires <= now_secs() {
         return Err("expires must be in the future".into());
     }
@@ -727,7 +726,7 @@ pub fn mint_affiliation_claim(
     }
     let payload = affiliation_payload(node_id, expires);
     let key_pair = signature::Ed25519KeyPair::from_pkcs8(&operator.private_key)
-        .map_err(|e| format!("operator key: {e:?}"))?;
+        .map_err(|_| "operator key is not a valid PKCS#8 Ed25519 key".to_string())?;
     let sig = hex::encode(key_pair.sign(payload.as_bytes()).as_ref());
     Ok(AffiliationClaim {
         operator_key: operator.public_key_hex(),
@@ -944,7 +943,7 @@ fn serve_advertise(
     // Direct advertise → arrival hops = 0 (REAL_02 §3.2).
     let addr = format!("{peer_host}:{listen_port}");
     let n_services = services.len();
-    let routing_logs = engine.record_peer_advert(PeerAdvert {
+    let routing_logs = match engine.record_peer_advert(PeerAdvert {
         node_id: node_id.clone(),
         public_key_hex,
         services,
@@ -962,7 +961,12 @@ fn serve_advertise(
         admission_seq: 0, // assigned in record_peer_advert
         received_at_unparseable: false,
         admission_seq_unparseable: false,
-    });
+    }) {
+        Ok(logs) => logs,
+        Err(e) => {
+            return rejected(source_id, "cannot_record", from, &e.to_string());
+        }
+    };
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);
     let mut log = format!("OODP Advert: {node_id} addr={addr} services={n_services} ttl={ttl}");
@@ -1396,40 +1400,43 @@ fn verify_relayed_entry(
     })
 }
 
+/// A dial that never completes is `#peer_unreachable` (D77). A deadline on
+/// a dial that did start waiting is `#peer_timeout`. Neither is `#conflict`.
+fn dial_cause(err: &std::io::Error) -> BottomCause {
+    match err.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => BottomCause::PeerTimeout,
+        _ => BottomCause::PeerUnreachable,
+    }
+}
+
 /// Client: send `#find_node` and process the reply (same peer ladder as discover).
 pub fn remote_find_node_oodp(
     oo: &Ouroboros,
     addr: &str,
     target_hex: &str,
 ) -> Result<DiscoverProcessResult, BottomCause> {
-    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
+    let sock_addr = addr.parse().map_err(|_| BottomCause::PeerUnreachable)?;
     let mut stream =
-        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            }
-        })?;
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| dial_cause(&e))?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
     stream
         .set_write_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
 
     let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
     let req = format!("{{{{ %op: #find_node, %from: \"{from}\", %target: \"{target_hex}\" }}}}\n");
     stream
         .write_all(req.as_bytes())
-        .map_err(|_| BottomCause::Conflict)?;
-    stream.flush().map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
+    stream.flush().map_err(|e| dial_cause(&e))?;
 
     // 64 KiB client bound with #oversize naming (same as discover).
     let mut buffer = Vec::new();
     let mut limited = (&mut stream).take(MAX_DISCOVER_RESPONSE_BYTES as u64 + 1);
     match limited.read_to_end(&mut buffer) {
-        Ok(0) => return Err(BottomCause::Conflict),
+        Ok(0) => return Err(BottomCause::PeerTimeout),
         Ok(n) if n > MAX_DISCOVER_RESPONSE_BYTES => {
             let mut r = DiscoverProcessResult {
                 status: "oversize".into(),
@@ -1445,7 +1452,7 @@ pub fn remote_find_node_oodp(
             return Err(if timed {
                 BottomCause::PeerTimeout
             } else {
-                BottomCause::Conflict
+                BottomCause::PeerUnreachable
             });
         }
     }
@@ -1460,28 +1467,22 @@ pub fn remote_discover_oodp(
     addr: &str,
     target: &str,
 ) -> Result<DiscoverProcessResult, BottomCause> {
-    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
+    let sock_addr = addr.parse().map_err(|_| BottomCause::PeerUnreachable)?;
     let mut stream =
-        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            }
-        })?;
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| dial_cause(&e))?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
     stream
         .set_write_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
 
     let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
     let req = format!("{{{{ %op: #discover, %from: \"{from}\", %target: \"{target}\" }}}}\n");
     stream
         .write_all(req.as_bytes())
-        .map_err(|_| BottomCause::Conflict)?;
-    stream.flush().map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
+    stream.flush().map_err(|e| dial_cause(&e))?;
 
     // ACCEPTOR REPAIR (discover_index). §3.6's budget was delivered on the
     // responder — correctly, 8 peers and 64 KiB — but a budget only the honest
@@ -1503,7 +1504,7 @@ pub fn remote_discover_oodp(
         .take(MAX_DISCOVER_RESPONSE_BYTES as u64 + 1)
         .read_to_end(&mut buffer)
     {
-        Ok(0) => return Err(BottomCause::Conflict),
+        Ok(0) => return Err(BottomCause::PeerTimeout),
         Ok(n) if n > MAX_DISCOVER_RESPONSE_BYTES => {
             let mut r = DiscoverProcessResult {
                 status: "oversize".into(),
@@ -1521,7 +1522,7 @@ pub fn remote_discover_oodp(
             return Err(if timed {
                 BottomCause::PeerTimeout
             } else {
-                BottomCause::Conflict
+                BottomCause::PeerUnreachable
             });
         }
     }
@@ -1591,7 +1592,7 @@ pub fn signed_advert_nlang(
     let body_caid = identify_caid_src(engine, &body_src)?;
     let payload = format!("{ADVERT_DOMAIN}{body_caid}");
     let key_pair = signature::Ed25519KeyPair::from_pkcs8(&identity.private_key)
-        .map_err(|e| format!("node key: {e:?}"))?;
+        .map_err(|_| "node key is not a valid PKCS#8 Ed25519 key".to_string())?;
     let sig = hex::encode(key_pair.sign(payload.as_bytes()).as_ref());
     let ad = format!(
         "{{{{ node_id: \"{node_id}\", public_key: \"{pk}\", services: [{services_n}], \
@@ -1608,35 +1609,30 @@ pub fn signed_advert_nlang(
 /// - `Ok(val)` — `#success` and address matches
 /// - `Err(MissingKey)` — peer `#not_found` (absence, not conflict)
 /// - `Err(CaidMismatch)` — peer `#conflict`, bad envelope, or address fail
-/// - `Err(Timeout)` — read/connect deadline (distinct from all three)
-/// - `Err(Conflict)` — connection refused / other transport failure
+/// - `Err(PeerTimeout)` — the peer accepted and then missed the deadline,
+///   or closed without a body
+/// - `Err(PeerUnreachable)` — the connection was never established (D77)
 pub fn remote_fetch_oodp(
     oo: &Ouroboros,
     addr: &str,
     hash: &ContentHash,
 ) -> Result<Value, BottomCause> {
-    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
+    let sock_addr = addr.parse().map_err(|_| BottomCause::PeerUnreachable)?;
     let mut stream =
-        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            }
-        })?;
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| dial_cause(&e))?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
     stream
         .set_write_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
 
     // Mint/load node identity on first network use (Q2). `%from` is always
     // present rather than sometimes empty. It is a claim on the wire — peers
     // must not trust it (and we never trust theirs).
     let from = match oo.node_id() {
         Ok(nid) => nid.to_string(),
-        Err(_) => return Err(BottomCause::Conflict),
+        Err(_) => return Err(BottomCause::PeerUnreachable),
     };
     let req = format!(
         "{{{{ %op: #fetch, %hash: \"{}\", %from: \"{}\" }}}}\n",
@@ -1644,14 +1640,15 @@ pub fn remote_fetch_oodp(
     );
     stream
         .write_all(req.as_bytes())
-        .map_err(|_| BottomCause::Conflict)?;
-    stream.flush().map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| dial_cause(&e))?;
+    stream.flush().map_err(|e| dial_cause(&e))?;
 
     let mut buffer = Vec::new();
     match stream.read_to_end(&mut buffer) {
         Ok(0) => {
-            // Clean close with no body — treat as transport absence, not timeout.
-            return Err(BottomCause::Conflict);
+            // The peer accepted and sent nothing. That is silence, not an
+            // integrity verdict and not a connection that failed to open.
+            return Err(BottomCause::PeerTimeout);
         }
         Ok(_) => {}
         Err(e) => {
@@ -1660,7 +1657,7 @@ pub fn remote_fetch_oodp(
             return Err(if timed {
                 BottomCause::PeerTimeout
             } else {
-                BottomCause::Conflict
+                BottomCause::PeerUnreachable
             });
         }
     }
