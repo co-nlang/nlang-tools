@@ -460,3 +460,137 @@ fn r14_inspect_does_not_say_a_commit_has_no_parent_when_it_has_one() {
     let o = w.ok(&["inspect", &w.head()]);
     assert!(!o.contains("parent: (none)"), "a commit with an ancestor is shown as having none: {o}");
 }
+
+// ── Added at acceptance (2026-09-27), repair round R-1 ────────────────────
+
+/// Accepts every connection and closes it at once, without a byte.
+struct HangUp {
+    port: u16,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    th: Option<std::thread::JoinHandle<()>>,
+}
+
+impl HangUp {
+    fn start() -> Self {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.set_nonblocking(true).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let s2 = stop.clone();
+        let th = std::thread::spawn(move || {
+            while !s2.load(std::sync::atomic::Ordering::Relaxed) {
+                match l.accept() {
+                    Ok((c, _)) => drop(c),
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        });
+        HangUp { port, stop, th: Some(th) }
+    }
+
+    fn addr(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+}
+
+impl Drop for HangUp {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.th.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+fn object_count(w: &Ws) -> usize {
+    fn walk(p: &Path) -> usize {
+        fs::read_dir(p).map(|d| d.flatten().map(|e| if e.path().is_dir() { walk(&e.path()) } else { 1 }).sum()).unwrap_or(0)
+    }
+    walk(&w.ws.join(".oo/objects"))
+}
+
+/// gc with a root source it cannot read. Found at acceptance by adding a
+/// before/after state check to the recon matrix (the recon classified text
+/// and exit codes only, and missed it): with `.oo/HEAD` unreadable, gc says
+/// "0 reachable", rc=0, and deletes every object; after the permission is
+/// restored `log` answers `CAID not found`. v0.55.0 and v0.61.0 alike.
+/// REAL_03 §6.6: a store that cannot be opened must not be treated as empty.
+/// Baseline: red on v0.61.0 and on the delivery 694a264.
+#[test]
+fn r15_gc_does_not_collect_what_it_could_not_read_head() {
+    let w = Ws::new("r15");
+    w.committed("a.n", "a: 1\n");
+    w.committed("b.n", "b: 2\n");
+    let before = object_count(&w);
+    let head = w.ws.join(".oo/HEAD");
+    require_not_root(&head);
+    chmod(&head, 0o000);
+    let (o, _) = w.oo(&["gc", "--grant", "gc"]);
+    chmod(&head, 0o600);
+    assert_eq!(object_count(&w), before, "gc deleted objects while HEAD was unreadable: {o}");
+    let (l, rc) = w.oo(&["log"]);
+    assert_eq!(rc, 0, "history is gone after gc: {l}");
+}
+
+/// The same with `.oo/savepoints` unreadable (3 of 6 objects deleted in the
+/// recon, `log` broken after). Baseline: red on v0.61.0 and 694a264.
+#[test]
+fn r16_gc_does_not_collect_what_it_could_not_read_savepoints() {
+    let w = Ws::new("r16");
+    w.committed("a.n", "a: 1\n");
+    w.committed("b.n", "b: 2\n");
+    let before = object_count(&w);
+    let sp = w.ws.join(".oo/savepoints");
+    require_not_root(&sp);
+    chmod(&sp, 0o000);
+    let (o, _) = w.oo(&["gc", "--grant", "gc"]);
+    chmod(&sp, 0o700);
+    assert_eq!(object_count(&w), before, "gc deleted objects while savepoints were unreadable: {o}");
+    let (l, rc) = w.oo(&["log"]);
+    assert_eq!(rc, 0, "history is gone after gc: {l}");
+}
+
+/// D78: connected, then the peer hung up before answering ⟹ `#peer_closed`.
+/// On 694a264 the same event is `#peer_unreachable` (discover, find-node),
+/// `#peer_timeout` (fetch), and rc=0 with an empty line (advertise).
+#[test]
+fn r17_discover_from_a_peer_that_hangs_up_is_peer_closed() {
+    let h = HangUp::start();
+    let w = Ws::new("r17");
+    let svc = service_caid(&w);
+    let (o, rc) = w.oo(&["node", "discover", "--to", &h.addr(), "--target", &svc]);
+    assert!(rc != 0 && o.contains("#peer_closed"), "rc={rc}: {o}");
+}
+
+#[test]
+fn r18_find_node_from_a_peer_that_hangs_up_is_peer_closed() {
+    let h = HangUp::start();
+    let w = Ws::new("r18");
+    let (o, rc) = w.oo(&["node", "find-node", "--to", &h.addr(), "--target", TARGET40]);
+    assert!(rc != 0 && o.contains("#peer_closed"), "rc={rc}: {o}");
+}
+
+#[test]
+fn r19_fetch_from_a_peer_that_hangs_up_is_peer_closed() {
+    let h = HangUp::start();
+    let w = Ws::new("r19");
+    let caid = service_caid(&w);
+    w.write(
+        "p.n",
+        &format!(
+            "conn: ~%Discovery./connect {{{{ 0: \"A\", 1: \"tcp://{}\" }}}}\ngot: ~%Discovery./fetch {{{{ 0: \"A\", 1: \"{caid}\" }}}}\n",
+            h.addr()
+        ),
+    );
+    let (o, _) = w.oo(&["run", "p.n", "--observe", "got", "--grant", "connect"]);
+    assert!(o.contains("#peer_closed"), "{o}");
+}
+
+#[test]
+fn r20_advertise_to_a_peer_that_hangs_up_is_peer_closed() {
+    let h = HangUp::start();
+    let w = Ws::new("r20");
+    let svc = service_caid(&w);
+    let (o, rc) = w.oo(&["node", "advertise", "--to", &h.addr(), "--service", &svc]);
+    assert!(rc != 0 && o.contains("#peer_closed"), "advertise to a peer that hung up: rc={rc} [{o}]");
+}
