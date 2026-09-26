@@ -1450,7 +1450,6 @@ fn decode_refine(r: &ComboVal) -> Result<RefineInfo> {
                     Some(crate::value::AuthorityInfo {
                         signer_pubkey_hex,
                         signature_hex,
-                        timestamp: None,
                     })
                 }
                 _ => None,

@@ -97,15 +97,51 @@ sig     = Ed25519(操作者私鑰, payload)
 ## 9. 交付回報（交付方填；本行以上一字不得動）
 
 ### 9.1 射程逐項對照
+S1 I1：`layout=7` 的 `refine --sign` 在 `authority_status`、根、meta、shadow 都定案之後，對「拿掉 `authority` 的那份提交值」的 CAID 簽 `refine-commit:v1:`。不在非空登記內者仍拒。驗：r1、Q-058 g2。
+S2 I2：讀取只呈現驗得過的簽章。整筆是 `refine authority: <公鑰> (commit)`；舊式是 `refine authority: <公鑰> (sources and targets)`；都不過是 `refine authority: signature did not verify`。新式提交後面仍接 `(writer recorded: <字>)`。公鑰與寫者的字抹掉之後，整筆與舊式仍不同。驗：r2–r7、g1–g3、r5。
+S3 I3：新倉宣告 `layout=7`。`layout=6` 的 `refine --sign` 仍寫舊式簽章、不改宣告，輸出點名 `oo migrate`。明示遷移把 `layout=6` 推進到 `layout=7`、不動 `HEAD`，舊簽章仍讀得到，之後的簽章簽整筆。驗：r8、r9、r10。
+S4 I4：代價句的最新一端改為 `v0.60.0`。`layout=6` 的最老是 `v0.59.0`。`layout=2`…`5` 的最老沒改，最新都到 `v0.60.0`。句中仍有 `layout=5` 與 `v0.44.0 through v0.60.0`。驗：r8、Q-055 r6／r7／r11、Q-057 r6。
+S5 I5：`AuthorityInfo` 不再有 `timestamp`。構造與解碼都拿掉。磁碟上本來就沒有這個欄位。
+S6 I6：值位址與既有提交位址沒有因本弧改寫。讀取只驗簽，不寫。
 
 ### 9.2 順手改動（逐項指名）
+`cargo fmt` 未跑。`bn_serial` 未改。本弧探針沒改。
+`a_type_you_could_not_carry` g3 的新鮮倉釘從 `layout=6` 改成 `layout=7`（驗收方修訂的 8 支沒有這檔；斷言仍是「新鮮倉宣告本引擎所寫的佈局」）。
+`refine` 多一個 `signer` 參數。既有測試呼叫補 `None`。那兩支原本自己簽舊式 payload 再送進去的測試仍這樣做：它們測的是成員資格，不是簽署對象。
 
 ### 9.3 工單哪裡是錯的
+無。
 
 ### 9.4 工單指名要你回答的問題
+Q1. V 在 `Universe::refine` 裡組：幾何檢查、shadow、循環、根、meta、來源、目標，以及依登記先定下來的 `authority_status`，這時 `authority` 還是空的。`sign_commit` 對這份本文的 `commit_body_address` 簽名，簽完才把 `authority` 放進去，然後 `put_commit`。之後沒有程式再改這些欄位。
+
+Q2. 印授權的讀取面只有 `oo log`。`oo inspect` 不印。`oo refine` 印的是寫入當下的字，不是重驗：
+- 整筆、驗過：`    refine authority: <公鑰> (commit) (writer recorded: <字>)`（舊式提交沒有括號裡那個字）
+- 舊式、驗過：`    refine authority: <公鑰> (sources and targets)`，新式提交再接 ` (writer recorded: <字>)`
+- 有簽章、兩種都不過：`    refine authority: signature did not verify`，新式提交再接 ` (writer recorded: <字>)`
+- 沒有簽章的新式提交：`    refine authority: (writer recorded: <字>)`
+- 沒有簽章的舊式提交：`    refine authority: unattested`
+寫入面 `oo refine` 仍印 `Refine authority: verified` 或 `unverified`（v1 位址則 `unattested`），以及 `Refine signer: <公鑰>`。宣告未到 `layout=7` 時另印 `note: this store signs sources and targets only; oo migrate --grant migrate signs the commit`。
+
+Q3. 本弧建的新倉是 `layout=7`。真 `v0.60.0`（`/home/gali/nlang-baselines/v0.60.0-verify/target/release/oo`）的 `status` 與 `log` 都是 rc=1，stdout 空，stderr 逐字 `Error: store layout declaration "layout=7" is not supported; refusing to open`。
+
+Q4. `layout=7` 寫入時，非空登記驗的是簽署者公鑰在不在登記裡，不是一段 payload。通過之後簽的是 `refine-commit:v1:` 加上 V 的 CAID。宣告較舊的倉仍驗舊 payload：`refine:` 加上排序後的來源與目標。
+
+Q5. `compute_refine_payload` 的呼叫：
+- `crates/oo/src/main.rs`：宣告較舊的倉，`refine --sign` 用它簽舊式。
+- `crates/interpreter/src/universe.rs`：宣告較舊的倉，寫入時用它驗舊式。
+- `crates/interpreter/src/authority.rs`：`signature_coverage` 在整筆 payload 驗不過之後用它認舊式。函式定義本身也在這裡。
+- `crates/interpreter/tests/authority_test.rs`：測舊式 payload 的確定性與簽驗。舊式仍是讀取要認得的形。
+- `crates/interpreter/tests/refine_test.rs` 的 `exempt_with_valid_signature_when_architect_registered`：造一個舊式簽章送進 `refine`。記憶體倉現在是 `layout=7`，這支沒有把私鑰交進去，所以存下的仍是它帶來的舊式位元組；它斷言的是成員資格通過。
+網路面與 conformance 沒有呼叫它。
 
 ### 9.5 探針
+沒有 `#[ignore]` 可拿。本弧探針沒改。15 支皆綠。無 `VOID READING`。
 
 ### 9.6 數字
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：243 行，2316 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1, 2)` → `3` rc=0；`add (1, 3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。
 
 ### 9.7 你認為需要改規格之處
+無。

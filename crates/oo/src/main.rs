@@ -1018,8 +1018,8 @@ fn run_log() -> anyhow::Result<()> {
         // reintroducing it.
         match engine.store.get_commit(&hash) {
             Ok(commit) => {
-                if let Some(ri) = commit.refine_info {
-                    if let Some(line) = read_authority_line(&ri, hash.version) {
+                if commit.refine_info.is_some() {
+                    if let Some(line) = read_authority_line(&commit, hash.version) {
                         println!("    {line}");
                     }
                 }
@@ -1061,17 +1061,25 @@ fn run_log() -> anyhow::Result<()> {
 /// writer's record. A legacy commit does not print the stored word: no
 /// signature stays `unattested`.
 fn read_authority_line(
-    ri: &nlang_interpreter::RefineInfo,
+    commit: &nlang_interpreter::Commit,
     version: nlang_interpreter::CaidVersion,
 ) -> Option<String> {
+    let ri = commit.refine_info.as_ref()?;
     let new_form = version != nlang_interpreter::CaidVersion::V1;
     let recorded = if new_form {
         ri.authority_status.as_deref()
     } else {
         None
     };
-    let head = if let Some(pk) = nlang_interpreter::authority::signature_signer(ri) {
-        format!("refine authority: {pk}")
+    let head = if let Some((pk, coverage)) = nlang_interpreter::authority::signature_coverage(commit)
+    {
+        let what = match coverage {
+            nlang_interpreter::authority::SignatureCoverage::Commit => "commit",
+            nlang_interpreter::authority::SignatureCoverage::SourcesAndTargets => {
+                "sources and targets"
+            }
+        };
+        format!("refine authority: {pk} ({what})")
     } else if ri.authority.is_some() {
         "refine authority: signature did not verify".to_string()
     } else if new_form && recorded.is_some() {
@@ -1307,16 +1315,35 @@ fn run_refine(
         .map(|s| ContentHash::parse(s).map_err(|e| anyhow::anyhow!("Invalid CAID '{}': {}", s, e)))
         .collect::<anyhow::Result<_>>()?;
 
-    let authority = if sign {
+    let identity = if sign {
+        Some(
+            engine
+                .identity()
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?,
+        )
+    } else {
+        None
+    };
+    // Layout 7 signs the commit after every field of V, including
+    // authority_status, is fixed. Older declarations keep the source/target
+    // signature and say so.
+    let authority = if sign && !engine.store.signs_the_commit() {
         let payload =
             nlang_interpreter::authority::compute_refine_payload(&source_caids, &target_caids);
-        // Sole engine consumer of the private key (identity_persistence).
-        let identity = engine
-            .identity()
-            .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
-        let auth = nlang_interpreter::authority::sign_refine(&payload, &identity)
-            .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
+        let auth = nlang_interpreter::authority::sign_refine(
+            &payload,
+            identity.as_ref().expect("sign loaded the identity"),
+        )
+        .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
+        println!(
+            "note: this store signs sources and targets only; oo migrate --grant migrate signs the commit"
+        );
         Some(auth)
+    } else {
+        None
+    };
+    let signer = if sign && engine.store.signs_the_commit() {
+        identity.as_ref()
     } else {
         None
     };
@@ -1332,7 +1359,15 @@ fn run_refine(
         reported_bottoms: None,
     };
 
-    let hash = universe.refine(&engine, &cur, source_caids, target_caids, authority, meta)?;
+    let hash = universe.refine(
+        &engine,
+        &cur,
+        source_caids,
+        target_caids,
+        authority,
+        meta,
+        signer,
+    )?;
     println!("Refine commit: {}", hash);
 
     // Report shadow-affected commits (D5: do not swallow a failed read-back).
@@ -1551,7 +1586,8 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
 /// Split-axis, oldest opener (then through v0.43.0, intersected with encoding):
 ///   layout 2: v0.22.0.  layout 3: v0.42.0.  layout 4: v0.43.0.  layout 5: v0.44.0.
 ///   encoding 1..=3: v0.22.0.  encoding 4: v0.26.0.  encoding 5: v0.36.0.
-/// Newest engine that opens any of those and does not open layout 6 is v0.58.0.
+/// Newest engine that opens any of those and does not open layout 7 is v0.60.0.
+/// layout 6 opens from v0.59.0.
 /// Bare number (the pre-split `.oo/format`), oldest opener:
 ///   1: v0.2.55 (exact `"1"`).  2: v0.20.0 (writes 2, reads 1..=2).
 ///   3: v0.21.0 (writes 3, reads 1..=3).  4: v0.26.0.  5: v0.36.0.
@@ -1565,7 +1601,7 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
              locks out no engine."
         );
     };
-    let newest = "v0.58.0";
+    let newest = "v0.60.0";
     let who = if oldest == newest {
         format!("oo {oldest}")
     } else {
@@ -1586,7 +1622,7 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     format!(
         "Migrating this store from {from} to layout={target} will make it unopenable \
          by {who}. That includes every engine that opens layout=5 \
-         (oo v0.44.0 through v0.58.0); none of them open layout={target}.{encoding_note}"
+         (oo v0.44.0 through v0.60.0); none of them open layout={target}.{encoding_note}"
     )
 }
 
@@ -1603,6 +1639,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
             3 => "v0.42.0",
             4 => "v0.43.0",
             5 => "v0.44.0",
+            6 => "v0.59.0",
             _ => return None,
         };
         let by_encoding = match enc {
@@ -1622,7 +1659,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
     } else {
         return None;
     };
-    if engine_ord(floor) > engine_ord("v0.58.0") {
+    if engine_ord(floor) > engine_ord("v0.60.0") {
         None
     } else {
         Some(floor)

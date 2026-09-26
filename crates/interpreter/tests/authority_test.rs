@@ -124,7 +124,7 @@ fn test_universe_refine_with_authority() {
         reported_bottoms: None,
     };
 
-    let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta);
+    let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta, None);
     assert!(result.is_ok(), "refine with valid authority should succeed");
 }
 
