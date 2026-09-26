@@ -390,11 +390,13 @@ fn p2_format_moves_only_when_declared() {
     //                                        value they describe)
     //   layout=6     Q-057 / D74             (a new commit is the value on
     //                                        disk; layout=5 stays legacy)
+    //   layout=7     Q-059 / D76             (a refine signature signs the
+    //                                        commit; layout=6 keeps the old form)
     let oo_dir = d.path().join(".oo");
     let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
         layout.trim(),
-        "layout=6",
+        "layout=7",
         ".oo/format moved without a ruling saying it should"
     );
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();

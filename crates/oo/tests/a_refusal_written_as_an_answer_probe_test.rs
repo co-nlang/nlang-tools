@@ -66,6 +66,9 @@
 // AMENDED 2026-09-24 (Q-057, D74): the upper bound in r6/r7/r11 moves from
 // v0.43.0 to v0.58.0; those three are red on v0.58.0 by design and belong to
 // Q-057 (nlang-tools/docs/a_commit_that_is_a_value_handover.md).
+// AMENDED 2026-09-26 (Q-059, D76 ③): the upper bound moves again, from v0.58.0
+// to v0.60.0 (layout=7); r6/r7/r11 are red on v0.60.0 by design and belong to
+// Q-059 (nlang-tools/docs/a_signature_that_signs_the_commit_handover.md).
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -229,7 +232,10 @@ fn names_the_boundary(out: &str) -> bool {
     // before it -- through v0.58.0 -- is locked out. The newest locked-out
     // reference engine is v0.58.0. (Was: "v0.43.0" or "v0.44.0", which also
     // accepted "v0.44.0 and later still open" -- see r11.)
-    out.contains("v0.58.0")
+    // AMENDED 2026-09-26 for Q-059 (D76 ③): migrate now targets layout=7,
+    // which v0.59.0 and v0.60.0 do not open either; the newest locked-out
+    // reference engine is v0.60.0.
+    out.contains("v0.60.0")
 }
 
 // ── Controls and guards (green at baseline, must stay green) ─────────────
@@ -317,7 +323,7 @@ fn k1_every_red_predicate_is_met_by_a_real_refusal() {
     assert!(!reads_as_absence(&o, rc), "{o}");
 
     // r6/r7: the predicate is met by a sentence of the required kind.
-    assert!(names_the_boundary("oo v0.22.0 through v0.58.0 will no longer open this store"));
+    assert!(names_the_boundary("oo v0.22.0 through v0.60.0 will no longer open this store"));
     assert!(!names_the_boundary(
         "unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout=5."
     ));
@@ -536,8 +542,9 @@ fn r11_the_cost_names_the_oldest_engine_it_locks_out() {
             // AMENDED 2026-09-24 for Q-057: the newest locked-out engine is now
             // v0.58.0 (every engine up to it opens layout 2 and none opens the
             // layout D74 introduces).
-            o.contains(oldest) && o.contains("v0.58.0"),
-            "layout=2/{enc}: the cost must name {oldest} through v0.58.0: {o}"
+            // AMENDED 2026-09-26 for Q-059 (D76 ③): v0.60.0 (layout=7).
+            o.contains(oldest) && o.contains("v0.60.0"),
+            "layout=2/{enc}: the cost must name {oldest} through v0.60.0: {o}"
         );
     }
 }
