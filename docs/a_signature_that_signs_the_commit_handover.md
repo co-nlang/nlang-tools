@@ -145,3 +145,61 @@ conformance：162 vectors，162 pass，0 fail。
 
 ### 9.7 你認為需要改規格之處
 無。
+
+---
+
+## 10. 驗收（驗收方填）
+
+### 10.1 已獨立複驗的（交付建置 `6da0e09`）
+
+*   全樹 ×3（`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`）：**243 target／2316 passed／0 failed，`^error` 0 行，exit 0**，三輪相同，無失敗測試名。
+
+*   Diff 純度：本弧探針、兩個夾具、驗收方修訂的 5 個檔、Q-058 探針**一字未動**；本工單分隔線以上未動。
+*   跨版本〔量〕：真 `v0.60.0` 開本弧新倉 ⟹ `status`／`log` rc=1、stdout 0 位元組、逐字 `store layout declaration "layout=7" is not supported; refusing to open`；
+    本弧引擎讀 v0.60.0 建的倉 rc=0，宣告仍為 `layout=6`。
+*   身分：`x: 0` 根 `31745ef0…`；`v: 1 + 1` 與 `v: 1+1` 根同為 `f4f32e7b…`；標準根 `7038e250…` 可用；`add (1,2)`→`3`、`(1,3)`→`4`。conformance 162／162。
+*   代價句逐個起始狀態讀過（`layout=2`…`6`，`.oo` 唯讀，只量句子）：`layout=2`…`5` 兩端都對。
+
+### 10.2 R-1 第一項：`layout=7` 寫入時，帶進來的簽章沒有被驗就記成 `verified`（交付的鍋）
+
+〔量，兩極〕在 `layout=7` 的記憶體倉、登記內的公鑰，經函式庫 API `Universe::refine` 帶進一個 `authority`：
+64 個零位元組、以及連十六進位都不是的 `"zz"`，**兩者都回 Ok 並記下 `authority_status: "verified"`**。
+同一呼叫在基線 `a39b879`（v0.60.0 程式碼）**兩者都被拒**（`Ed25519 signature verification failed`／`bad signature hex`）。
+成因：`universe.rs` 的 `signs_the_commit()` 分支只查成員資格。I1 寫的是「寫入當下對登記的判定照舊（**成員資格＋密碼學**）」。
+CLI 在 `layout=7` 從不帶 `authority`，所以只有函式庫 API 走得到；但記下的那個字，正是 D75 ② 印在簽署者旁邊的那個字。
+另：`refine_test::exempt_with_valid_signature_when_architect_registered` 現在把一個舊式簽章送進 `layout=7` 的倉並斷言 `verified`——
+在本項之下它對亂碼也會過，所以它斷言不到它的名字說的事。
+
+**不變式**：一次精煉寫入，**不得**為一個它當下沒有以密碼學驗過的簽章記下 `verified`。
+在 `layout=7` 的倉**拒絕**帶進來的 `authority`、或**驗過它**，兩者都滿足；**選哪個你決定並說明**。
+**探針** `crates/interpreter/tests/a_signature_that_signs_the_commit_write_probe_test.rs` w1。
+
+### 10.3 R-1 第二項：`layout=6` 起始的代價句點名了它沒有鎖在門外的引擎（驗收方的探針窄了）
+
+〔量〕`layout=6` → `layout=7` 的代價句逐字：「unopenable by oo v0.59.0 through v0.60.0. **That includes every engine that opens layout=5
+(oo v0.44.0 through v0.60.0)**; none of them open layout=7.」v0.44.0…v0.58.0 **本來就打不開** `layout=6`，這次遷移沒有鎖住它們，後半句說有。
+工單 I4 點名了這一句是寫死的；交付把 `v0.58.0` 換成 `v0.60.0`，**句子沒有隨起始狀態變**。
+而 r8 只要求 v0.59.0 與 v0.60.0 出現，**放過了它——判準是我寫窄的**。`layout=2`…`5` 起始時該句為真。
+**不變式**（同 I4）：代價句裡的**每一個**引擎，都必須是遷移前打得開、遷移後打不開的。**探針** r11（本弧探針檔末）。
+
+### 10.4 探針校準
+
+*   r11：基線 `a39b879` ×3 綠（「already current」，不點名任何引擎）；交付 `6da0e09` ×3 紅，紅在預定斷言上。
+*   w1：交付 ×3 紅（`00…00` 被記成 `verified`）；基線極以改寫版量（本弧改了 `refine` 的參數與 `AuthorityInfo`）：兩個輸入都被拒 ⟹ 綠。
+*   本弧其餘 15 支在交付上 ×3 綠，無 `VOID READING`。
+
+---
+
+## 11. 修補回合 R-1 回報（交付方填；本行以上一字不得動）
+
+### 11.1 射程逐項對照
+
+### 11.2 順手改動（逐項指名）
+
+### 11.3 工單哪裡是錯的
+
+### 11.4 工單指名要你回答的問題
+
+### 11.5 探針
+
+### 11.6 數字

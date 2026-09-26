@@ -479,3 +479,31 @@ fn r10_an_unmigrated_store_keeps_the_old_form_and_says_so() {
     assert!(verifies(&pk, &sig, &old_payload(&root, &root)), "a layout=6 store received a form it cannot declare: {body}");
     assert!(o.contains("migrate"), "`refine --sign` in a layout=6 store does not name the migrate: {o}");
 }
+
+// ── Added at acceptance (2026-09-26), repair round R-1 ────────────────────
+
+/// I4 for the one start state D76 adds: migrating a `layout=6` store locks out
+/// only engines that opened it before, v0.59.0 and v0.60.0. The delivered
+/// sentence goes on: "That includes every engine that opens layout=5 (oo
+/// v0.44.0 through v0.60.0)" — v0.44.0…v0.58.0 never opened layout=6, so this
+/// migrate does not lock them out, and the sentence says it does. r8 asked
+/// only that v0.59.0 and v0.60.0 appear, so it passed. Predicate: every
+/// release the sentence names is v0.59.0 or newer.
+/// Baseline: green on v0.60.0 ("already current", names none); red on 6da0e09.
+#[test]
+fn r11_a_layout6_migrate_names_no_engine_it_does_not_lock_out() {
+    let w = Ws::fixture("r11", "layout6_signed_repo");
+    let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
+    assert_eq!(rc, 0, "migrate: {o}");
+    let mut named = Vec::new();
+    for (i, _) in o.match_indices("v0.") {
+        let minor: String = o[i + 3..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(n) = minor.parse::<u32>() {
+            named.push(n);
+        }
+    }
+    assert!(
+        named.iter().all(|&n| n >= 59),
+        "the cost names engines that never opened layout=6: {o}"
+    );
+}
