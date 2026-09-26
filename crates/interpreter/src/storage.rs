@@ -165,16 +165,19 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// `STORE_LAYOUT_MIGRATABLE_FROM` are the previous split-axis form this
 /// engine once wrote: still openable, and the source `oo migrate` advances.
 /// A `layout=N` in neither set is a declaration from an engine we are not
-/// — including every future N (`layout=7`, `layout=99`). The past is a
+/// — including every future N (`layout=8`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
-pub const STORE_LAYOUT_VERSION: u32 = 6;
+pub const STORE_LAYOUT_VERSION: u32 = 7;
 pub const OBJECT_ENCODING_VERSION: u32 = 5;
+/// First layout whose new commits are addressed as the n/ value (D74).
+const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// Split-axis layouts this engine has written. Not a range: `layout=1`
-/// was never a form (that era was a bare number), and a future `layout=7`
-/// must not slip through while current is 6.
-/// `layout=5` still receives legacy commits. `layout=6` is the first
-/// layout whose new commits are addressed as the n/ value on disk (D74).
-const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3, 4, 5];
+/// was never a form (that era was a bare number), and a future `layout=8`
+/// must not slip through while current is 7.
+/// `layout=5` still receives legacy commits. `layout=6` addresses commits
+/// as values and still receives the old source/target signature (D76).
+/// `layout=7` is the first whose `refine --sign` signs the whole commit.
+const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3, 4, 5, 6];
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 fn split_layout_number(declaration: &str) -> Option<u32> {
@@ -213,7 +216,15 @@ pub fn layout_has_layout5_frames(declaration: &str) -> bool {
 
 /// New commits in this store are addressed as the n/ value on disk.
 pub fn layout_addresses_commits_as_values(declaration: &str) -> bool {
-    split_layout_number(declaration).is_some_and(|n| n >= STORE_LAYOUT_VERSION && split_layout_is_known(n))
+    split_layout_number(declaration)
+        .is_some_and(|n| n >= VALUE_COMMIT_LAYOUT && split_layout_is_known(n))
+}
+
+/// `refine --sign` in this store signs the whole commit (D76). Older
+/// declarations keep the source/target signature until an explicit migrate.
+pub fn layout_signs_the_commit(declaration: &str) -> bool {
+    split_layout_number(declaration)
+        .is_some_and(|n| n >= STORE_LAYOUT_VERSION && split_layout_is_known(n))
 }
 
 /// Encoding `migrate_layout` writes for a store that currently declares
@@ -245,6 +256,9 @@ pub struct ObjectStore {
     /// Layout 6 and later. Selects `put_commit`'s address, not `get_commit`'s:
     /// a read uses the version on the address it was given.
     value_commits: bool,
+    /// Layout 7 and later. `refine --sign` signs the commit, not only its
+    /// sources and targets.
+    sign_commits: bool,
 }
 
 fn ensure_supported_encoding(v: u32) -> Result<()> {
@@ -425,12 +439,14 @@ impl ObjectStore {
         } else {
             Self::declared_encoding(base_dir)?
         };
-        let value_commits = if new_store {
-            true
+        let (value_commits, sign_commits) = if new_store {
+            (true, true)
         } else {
-            read_layout_declaration(base_dir)
-                .map(|d| layout_addresses_commits_as_values(&d))
-                .unwrap_or(false)
+            let d = read_layout_declaration(base_dir).unwrap_or_default();
+            (
+                layout_addresses_commits_as_values(&d),
+                layout_signs_the_commit(&d),
+            )
         };
         let root = oo.join("objects");
         if !root.exists() {
@@ -440,7 +456,12 @@ impl ObjectStore {
             root,
             encoding,
             value_commits,
+            sign_commits,
         })
+    }
+
+    pub fn signs_the_commit(&self) -> bool {
+        self.sign_commits
     }
 
     /// Digest path for an object (sha256/ab/cdef…).

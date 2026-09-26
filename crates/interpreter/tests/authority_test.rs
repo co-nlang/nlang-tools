@@ -113,8 +113,6 @@ fn test_universe_refine_with_authority() {
     let src = oo.store.put_value(&src_val).unwrap();
     let tgt = oo.store.put_value(&tgt_val).unwrap();
 
-    let payload = compute_refine_payload(&[src.clone()], &[tgt.clone()]);
-    let authority = sign_refine(&payload, &oo.identity().unwrap()).unwrap();
     let meta = CommitMeta {
         author: None,
         timestamp: 0,
@@ -124,7 +122,8 @@ fn test_universe_refine_with_authority() {
         reported_bottoms: None,
     };
 
-    let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], Some(authority), meta);
+    let id = oo.identity().unwrap();
+    let result = u.refine(&oo, &base_dir, vec![src], vec![tgt], None, meta, Some(&id));
     assert!(result.is_ok(), "refine with valid authority should succeed");
 }
 

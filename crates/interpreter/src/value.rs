@@ -2452,7 +2452,6 @@ impl Default for CommitKind {
 pub struct AuthorityInfo {
     pub signer_pubkey_hex: String,
     pub signature_hex: String,
-    pub timestamp: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

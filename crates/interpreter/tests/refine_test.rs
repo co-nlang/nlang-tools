@@ -50,6 +50,7 @@ fn refine_simple_source_to_target() {
         vec![caid_b.clone()],
         None,
         meta,
+        None,
     );
     assert!(result.is_ok(), "refine should succeed when new ⊑ old");
 
@@ -88,7 +89,7 @@ fn refine_fails_monotonicity() {
         privileged_effect: None,
         reported_bottoms: None,
     };
-    let result = u.refine(&oo, &base_dir, vec![caid_a], vec![caid_b], None, meta);
+    let result = u.refine(&oo, &base_dir, vec![caid_a], vec![caid_b], None, meta, None);
     assert!(result.is_err(), "refine should fail when new & old ≠ new");
 }
 
@@ -124,6 +125,7 @@ fn refine_cycle_detection() {
         vec![caid2.clone()],
         None,
         meta1,
+        None,
     )
     .unwrap();
 
@@ -218,6 +220,7 @@ fn refine_no_redirect_in_history_commits() {
         vec![caid_b.clone()],
         None,
         meta,
+        None,
     )
     .unwrap();
 
@@ -261,7 +264,8 @@ fn refine_info_stored_in_commit() {
             vec![caid_tgt.clone()],
             None,
             meta,
-        )
+            None,
+    )
         .unwrap();
 
     // Load the commit and verify refine_info
@@ -311,6 +315,7 @@ fn get_live_value_follows_refine() {
         vec![caid2.clone()],
         None,
         meta,
+        None,
     )
     .unwrap();
 
@@ -354,6 +359,7 @@ fn bootstrap_exempt_when_no_architects() {
         vec![cb.clone()],
         None,
         meta1,
+        None,
     )
     .unwrap();
     assert!(u.head.is_some());
@@ -372,7 +378,7 @@ fn bootstrap_exempt_when_no_architects() {
         reported_bottoms: None,
     };
     // Top & 99 = 99 → monotonicity holds
-    let result = u.refine(&oo, &base_dir, vec![ca2_hash], vec![cb2], None, meta2);
+    let result = u.refine(&oo, &base_dir, vec![ca2_hash], vec![cb2], None, meta2, None);
     assert!(
         result.is_ok(),
         "should be exempt when architect_reg empty: {:?}",
@@ -407,7 +413,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
         privileged_effect: None,
         reported_bottoms: None,
     };
-    u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1)
+    u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1, None)
         .unwrap();
     assert!(u.head.is_some(), "head should be set after first refine");
 
@@ -425,7 +431,7 @@ fn not_exempt_when_architect_registered_and_has_head() {
         privileged_effect: None,
         reported_bottoms: None,
     };
-    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2);
+    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2, None);
     assert!(
         result.is_err(),
         "refine without signature should fail when architect is registered and head is set"
@@ -459,7 +465,7 @@ fn exempt_with_valid_signature_when_architect_registered() {
         privileged_effect: None,
         reported_bottoms: None,
     };
-    u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1)
+    u.refine(&oo, &base_dir, vec![ca], vec![cb], None, meta1, None)
         .unwrap();
 
     // Second refine: with valid signature → should succeed
@@ -467,11 +473,6 @@ fn exempt_with_valid_signature_when_architect_registered() {
     let val_d = Value::Atom(AtomKind::Int(999.into()), EffectTag::Pure, None);
     let cc = oo.store.put_value(&val_c).unwrap();
     let cd = oo.store.put_value(&val_d).unwrap();
-
-    let payload =
-        nlang_interpreter::authority::compute_refine_payload(&[cc.clone()], &[cd.clone()]);
-    let auth =
-        nlang_interpreter::authority::sign_refine(&payload, &oo.identity().unwrap()).unwrap();
 
     let meta2 = CommitMeta {
         author: None,
@@ -481,7 +482,8 @@ fn exempt_with_valid_signature_when_architect_registered() {
         privileged_effect: None,
         reported_bottoms: None,
     };
-    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], Some(auth), meta2);
+    let id = oo.identity().unwrap();
+    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2, Some(&id));
     assert!(
         result.is_ok(),
         "refine with valid signature should succeed: {:?}",
@@ -511,7 +513,7 @@ fn shadow_affected_empty_on_fresh_universe() {
         reported_bottoms: None,
     };
     let ch = u
-        .refine(&oo, &base_dir, vec![ca], vec![cb], None, meta)
+        .refine(&oo, &base_dir, vec![ca], vec![cb], None, meta, None)
         .unwrap();
 
     let commit = oo.store.get_commit(&ch).unwrap();
@@ -552,6 +554,7 @@ fn shadow_affected_detects_historical_usage() {
         vec![cb.clone()],
         None,
         meta1,
+        None,
     )
     .unwrap();
 
@@ -568,7 +571,7 @@ fn shadow_affected_detects_historical_usage() {
         reported_bottoms: None,
     };
     let ch2 = u
-        .refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2)
+        .refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2, None)
         .unwrap();
 
     let commit2 = oo.store.get_commit(&ch2).unwrap();
@@ -634,7 +637,8 @@ fn shadow_scan_finds_field_in_committed_root() {
             vec![caid_77],
             None,
             meta,
-        )
+            None,
+    )
         .unwrap();
 
     let commit = oo.store.get_commit(&ch_refine).unwrap();
@@ -684,6 +688,7 @@ fn refine_cycle_ab_ba_rejected() {
         vec![cb.clone()],
         None,
         meta,
+        None,
     );
     assert!(
         result.is_err(),

@@ -1483,6 +1483,7 @@ impl Universe {
         target_caids: Vec<ContentHash>,
         authority: Option<AuthorityInfo>,
         meta: crate::value::CommitMeta,
+        signer: Option<&crate::value::Identity>,
     ) -> Result<ContentHash> {
         engine.clear_force_memo();
         // Step 1: verify geometric monotonicity (new & old = new)
@@ -1537,25 +1538,52 @@ impl Universe {
             }
         }
 
-        // Step 1b: authority verification
-        let payload = crate::authority::compute_refine_payload(&source_caids, &target_caids);
+        // Step 1b: authority. Membership is decided here, before a
+        // whole-commit signature exists, because the recorded word is part
+        // of the value that signature covers.
         let architect_reg = engine
             .architect_registry
             .read()
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
         // Epoch judgment: exempt only in genesis state (no HEAD) or before any architect registered
         let bootstrap_exempt = self.head.is_none() || architect_reg.is_empty();
-        let authority_status = match crate::authority::verify_refine_authority(
-            authority.as_ref(),
-            &payload,
-            &architect_reg,
-            bootstrap_exempt,
-        ) {
-            crate::authority::AuthVerifyResult::Valid => Some("verified".to_string()),
-            crate::authority::AuthVerifyResult::Exempt => Some("unverified".to_string()),
-            crate::authority::AuthVerifyResult::Invalid(reason) => {
-                return Err(anyhow::anyhow!("authority verification failed: {}", reason));
+        let (authority, authority_status) = if engine.store.signs_the_commit() {
+            let pk = if let Some(id) = signer {
+                Some(hex::encode(&id.public_key))
+            } else {
+                authority.as_ref().map(|a| a.signer_pubkey_hex.clone())
+            };
+            if let Some(pk) = pk {
+                let skip = bootstrap_exempt && architect_reg.is_empty();
+                if !skip && !architect_reg.contains(&pk) {
+                    return Err(anyhow::anyhow!(
+                        "authority verification failed: signer {pk} not in architect_registry"
+                    ));
+                }
+                let word = if skip { "unverified" } else { "verified" };
+                (authority, Some(word.to_string()))
+            } else if bootstrap_exempt {
+                (None, Some("unverified".to_string()))
+            } else {
+                return Err(anyhow::anyhow!(
+                    "authority verification failed: missing %authority on non-bootstrap refine"
+                ));
             }
+        } else {
+            let payload = crate::authority::compute_refine_payload(&source_caids, &target_caids);
+            let word = match crate::authority::verify_refine_authority(
+                authority.as_ref(),
+                &payload,
+                &architect_reg,
+                bootstrap_exempt,
+            ) {
+                crate::authority::AuthVerifyResult::Valid => "verified",
+                crate::authority::AuthVerifyResult::Exempt => "unverified",
+                crate::authority::AuthVerifyResult::Invalid(reason) => {
+                    return Err(anyhow::anyhow!("authority verification failed: {}", reason));
+                }
+            };
+            (authority, Some(word.to_string()))
         };
 
         // Step 1c: Shadow scan — identify historical commits that directly reference source CAIDs
@@ -1727,7 +1755,7 @@ impl Universe {
             Some(h) => engine.store.get_commit(h)?.root.clone(),
             None => engine.store.put_value(&Value::Combo(self.root.clone()))?,
         };
-        let commit = Commit {
+        let mut commit = Commit {
             parent: None,
             root: current_root_hash,
             meta,
@@ -1741,6 +1769,32 @@ impl Universe {
             }),
             cache_id: crate::value::default_cache_id(),
         };
+        if engine.store.signs_the_commit() {
+            let supplied = commit
+                .refine_info
+                .as_ref()
+                .and_then(|info| info.authority.clone());
+            if signer.is_some() || supplied.is_some() {
+                let mut unsigned = commit.clone();
+                if let Some(info) = unsigned.refine_info.as_mut() {
+                    info.authority = None;
+                }
+                let body = crate::store_codec::commit_body(&unsigned);
+                let caid = crate::store_codec::commit_body_address(&body)?;
+                let payload = format!("refine-commit:v1:{caid}");
+                if let Some(id) = signer {
+                    let signed = crate::authority::sign_commit(&caid.to_string(), id)
+                        .map_err(|e| anyhow::anyhow!("Signing failed: {e}"))?;
+                    if let Some(info) = commit.refine_info.as_mut() {
+                        info.authority = Some(signed);
+                    }
+                } else if let Some(auth) = supplied {
+                    crate::authority::check_commit_signature(&auth, payload.as_bytes()).map_err(
+                        |e| anyhow::anyhow!("authority verification failed: {e}"),
+                    )?;
+                }
+            }
+        }
         let commit_hash = engine.store.put_commit(&commit)?;
         engine.store.set_head(base_dir, &commit_hash)?;
         let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));

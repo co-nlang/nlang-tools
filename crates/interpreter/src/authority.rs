@@ -1,4 +1,4 @@
-use crate::value::{AuthorityInfo, ContentHash, Identity, RefineInfo};
+use crate::value::{AuthorityInfo, ContentHash, Identity};
 use ring::signature::{self, UnparsedPublicKey};
 use std::collections::HashSet;
 
@@ -26,22 +26,63 @@ pub fn sign_refine(payload: &[u8], identity: &Identity) -> Result<AuthorityInfo,
     Ok(AuthorityInfo {
         signer_pubkey_hex: hex::encode(&identity.public_key),
         signature_hex: hex::encode(sig.as_ref()),
-        timestamp: Some(chrono::Utc::now().to_rfc3339()),
     })
 }
 
-/// The public key whose stored signature matches the source/target payload.
-/// Registry membership is not consulted: that was a fact at write time, and
-/// a reader cannot re-establish it. `None` when there is no signature or the
-/// bytes do not verify.
-pub fn signature_signer(ri: &RefineInfo) -> Option<&str> {
+/// Ed25519 over `refine-commit:v1:` plus the CAID of the commit value with
+/// `refine.authority` absent. The CAID is the string `content_hash` prints.
+pub fn sign_commit(caid: &str, identity: &Identity) -> Result<AuthorityInfo, String> {
+    let payload = format!("refine-commit:v1:{caid}");
+    sign_refine(payload.as_bytes(), identity)
+}
+
+/// What a stored signature actually covers. Membership is not consulted.
+pub enum SignatureCoverage {
+    /// `refine-commit:v1:` plus the CAID of the commit without `authority`.
+    Commit,
+    /// `refine:` plus the sorted source and target CAIDs.
+    SourcesAndTargets,
+}
+
+fn signature_bytes_hold(auth: &AuthorityInfo, payload: &[u8]) -> bool {
+    check_commit_signature(auth, payload).is_ok()
+}
+
+/// Cryptographic check only. The error strings match `verify_refine_authority`.
+pub fn check_commit_signature(auth: &AuthorityInfo, payload: &[u8]) -> Result<(), String> {
+    let pk = hex::decode(&auth.signer_pubkey_hex)
+        .map_err(|e| format!("bad pubkey hex: {}", e))?;
+    let sig = hex::decode(&auth.signature_hex)
+        .map_err(|e| format!("bad signature hex: {}", e))?;
+    UnparsedPublicKey::new(&signature::ED25519, pk)
+        .verify(payload, &sig)
+        .map_err(|_| "Ed25519 signature verification failed".to_string())
+}
+
+/// The public key, and which payload it signed. `None` when there is no
+/// signature or neither payload verifies.
+pub fn signature_coverage(commit: &crate::value::Commit) -> Option<(&str, SignatureCoverage)> {
+    let ri = commit.refine_info.as_ref()?;
     let auth = ri.authority.as_ref()?;
-    let payload = compute_refine_payload(&ri.source_caids, &ri.target_caids);
-    let pk = hex::decode(&auth.signer_pubkey_hex).ok()?;
-    let sig = hex::decode(&auth.signature_hex).ok()?;
-    let vk = UnparsedPublicKey::new(&signature::ED25519, pk);
-    vk.verify(&payload, &sig).ok()?;
-    Some(auth.signer_pubkey_hex.as_str())
+    let mut unsigned = commit.clone();
+    if let Some(info) = unsigned.refine_info.as_mut() {
+        info.authority = None;
+    }
+    let body = crate::store_codec::commit_body(&unsigned);
+    if let Ok(caid) = crate::store_codec::commit_body_address(&body) {
+        let payload = format!("refine-commit:v1:{caid}");
+        if signature_bytes_hold(auth, payload.as_bytes()) {
+            return Some((auth.signer_pubkey_hex.as_str(), SignatureCoverage::Commit));
+        }
+    }
+    let old = compute_refine_payload(&ri.source_caids, &ri.target_caids);
+    if signature_bytes_hold(auth, &old) {
+        return Some((
+            auth.signer_pubkey_hex.as_str(),
+            SignatureCoverage::SourcesAndTargets,
+        ));
+    }
+    None
 }
 
 pub fn verify_refine_authority(

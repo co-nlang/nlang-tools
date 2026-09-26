@@ -118,7 +118,7 @@ fn g1_a_fresh_workspace_lands_both_declarations() {
     assert_eq!(rc, 0, "REACH: status on a fresh workspace: {out}");
     assert_eq!(
         read(d, ".oo/format").as_deref(),
-        Some("layout=6\n"),
+        Some("layout=7\n"), // AMENDED 2026-09-26 for Q-059 (D76 ③)
         "the layout declaration"
     );
     assert_eq!(

@@ -183,7 +183,7 @@ fn g3_no_address_moves() {
     assert_eq!(objects, 3, "object count moved");
     assert_eq!(
         fs::read_to_string(d.join(".oo/format")).unwrap_or_default(),
-        "layout=6\n"
+        "layout=7\n"
     );
     assert_eq!(
         fs::read_to_string(d.join(".oo/objects.format")).unwrap_or_default(),
