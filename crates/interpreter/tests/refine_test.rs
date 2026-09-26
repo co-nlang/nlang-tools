@@ -474,11 +474,6 @@ fn exempt_with_valid_signature_when_architect_registered() {
     let cc = oo.store.put_value(&val_c).unwrap();
     let cd = oo.store.put_value(&val_d).unwrap();
 
-    let payload =
-        nlang_interpreter::authority::compute_refine_payload(&[cc.clone()], &[cd.clone()]);
-    let auth =
-        nlang_interpreter::authority::sign_refine(&payload, &oo.identity().unwrap()).unwrap();
-
     let meta2 = CommitMeta {
         author: None,
         timestamp: 1,
@@ -487,7 +482,8 @@ fn exempt_with_valid_signature_when_architect_registered() {
         privileged_effect: None,
         reported_bottoms: None,
     };
-    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], Some(auth), meta2, None);
+    let id = oo.identity().unwrap();
+    let result = u.refine(&oo, &base_dir, vec![cc], vec![cd], None, meta2, Some(&id));
     assert!(
         result.is_ok(),
         "refine with valid signature should succeed: {:?}",

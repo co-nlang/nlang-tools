@@ -45,15 +45,18 @@ pub enum SignatureCoverage {
 }
 
 fn signature_bytes_hold(auth: &AuthorityInfo, payload: &[u8]) -> bool {
-    let Ok(pk) = hex::decode(&auth.signer_pubkey_hex) else {
-        return false;
-    };
-    let Ok(sig) = hex::decode(&auth.signature_hex) else {
-        return false;
-    };
+    check_commit_signature(auth, payload).is_ok()
+}
+
+/// Cryptographic check only. The error strings match `verify_refine_authority`.
+pub fn check_commit_signature(auth: &AuthorityInfo, payload: &[u8]) -> Result<(), String> {
+    let pk = hex::decode(&auth.signer_pubkey_hex)
+        .map_err(|e| format!("bad pubkey hex: {}", e))?;
+    let sig = hex::decode(&auth.signature_hex)
+        .map_err(|e| format!("bad signature hex: {}", e))?;
     UnparsedPublicKey::new(&signature::ED25519, pk)
         .verify(payload, &sig)
-        .is_ok()
+        .map_err(|_| "Ed25519 signature verification failed".to_string())
 }
 
 /// The public key, and which payload it signed. `None` when there is no

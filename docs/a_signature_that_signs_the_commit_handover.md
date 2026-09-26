@@ -193,13 +193,23 @@ CLI 在 `layout=7` 從不帶 `authority`，所以只有函式庫 API 走得到�
 ## 11. 修補回合 R-1 回報（交付方填；本行以上一字不得動）
 
 ### 11.1 射程逐項對照
+R-1 第一項：選**驗**，不選拒。`layout=7` 帶進來的 `authority`，在成員資格決定 `authority_status` 之後，用那個字已經寫進 V 的 `refine-commit:v1:` CAID 做 Ed25519。驗不過就整筆拒絕，不會記下 `verified`。用私鑰現簽的路不變：簽的是同一份 V。驗：w1。
+R-1 第二項：代價句裡的 `layout=5` 那句，只在被鎖住的最老引擎是 `v0.58.0` 或更早時才出現。`layout=6` 起始只點名 `v0.59.0` 到 `v0.60.0`。驗：r11。`layout=5` 起始仍有 `layout=5` 與 `v0.44.0`、`v0.60.0`。驗：Q-055 r6、Q-057 r6。
 
 ### 11.2 順手改動（逐項指名）
+`cargo fmt` 未跑。`bn_serial` 未改。兩個探針檔沒改。
+`refine_test::exempt_with_valid_signature_when_architect_registered` 與 `authority_test::test_universe_refine_with_authority` 改為把身分交進去現簽。它們原先送進 `layout=7` 的是舊式 payload 的簽章，在本項之下會被拒，而那個拒收測不到「有效簽章可以通過」。
 
 ### 11.3 工單哪裡是錯的
+無。
 
 ### 11.4 工單指名要你回答的問題
+無。選項寫在 11.1。
 
 ### 11.5 探針
+兩個探針檔都沒改，也沒有 `rustfmt`。w1 綠。r11 綠。本弧其餘 15 支在全樹裡綠。無 `VOID READING`。
 
 ### 11.6 數字
+全跑三輪相同：`cargo test --workspace --release --no-fail-fast --jobs 1 -- --test-threads=1`。逐 `test result:` 聚合：244 行，2318 passed，0 failed。`^error` 0 行。cargo exit 0。沒有失敗測試名。
+conformance：162 vectors，162 pass，0 fail。
+身分：`add (1, 2)` → `3` rc=0；`add (1, 3)` → `4` rc=0。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。全樹裡 `v: 1 + 1` 與標準根的釘仍綠。

@@ -1619,10 +1619,20 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     } else {
         String::new()
     };
+    // v0.44.0 through v0.58.0 open layout 5 and do not open layout 6.
+    // Naming them on a layout=6 start would claim this migrate locks out
+    // engines that could not open the store before it.
+    let layout5_clause = if engine_ord(oldest) <= engine_ord("v0.58.0") {
+        format!(
+            " That includes every engine that opens layout=5 \
+             (oo v0.44.0 through {newest}); none of them open layout={target}."
+        )
+    } else {
+        String::new()
+    };
     format!(
         "Migrating this store from {from} to layout={target} will make it unopenable \
-         by {who}. That includes every engine that opens layout=5 \
-         (oo v0.44.0 through v0.60.0); none of them open layout={target}.{encoding_note}"
+         by {who}.{layout5_clause}{encoding_note}"
     )
 }
 

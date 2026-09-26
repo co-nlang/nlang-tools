@@ -1770,17 +1770,28 @@ impl Universe {
             cache_id: crate::value::default_cache_id(),
         };
         if engine.store.signs_the_commit() {
-            if let Some(id) = signer {
+            let supplied = commit
+                .refine_info
+                .as_ref()
+                .and_then(|info| info.authority.clone());
+            if signer.is_some() || supplied.is_some() {
                 let mut unsigned = commit.clone();
                 if let Some(info) = unsigned.refine_info.as_mut() {
                     info.authority = None;
                 }
                 let body = crate::store_codec::commit_body(&unsigned);
                 let caid = crate::store_codec::commit_body_address(&body)?;
-                let signed = crate::authority::sign_commit(&caid.to_string(), id)
-                    .map_err(|e| anyhow::anyhow!("Signing failed: {e}"))?;
-                if let Some(info) = commit.refine_info.as_mut() {
-                    info.authority = Some(signed);
+                let payload = format!("refine-commit:v1:{caid}");
+                if let Some(id) = signer {
+                    let signed = crate::authority::sign_commit(&caid.to_string(), id)
+                        .map_err(|e| anyhow::anyhow!("Signing failed: {e}"))?;
+                    if let Some(info) = commit.refine_info.as_mut() {
+                        info.authority = Some(signed);
+                    }
+                } else if let Some(auth) = supplied {
+                    crate::authority::check_commit_signature(&auth, payload.as_bytes()).map_err(
+                        |e| anyhow::anyhow!("authority verification failed: {e}"),
+                    )?;
                 }
             }
         }
