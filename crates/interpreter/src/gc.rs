@@ -207,15 +207,26 @@ fn verify_reachable_object(
 
 /// Mark phase: reachable digests from HEAD. Reports integrity findings;
 /// incomplete walks still list what was seen, but must not drive a sweep.
+/// HEAD and the ○ directory are roots. Absence is an empty walk. A root
+/// that exists and cannot be read is not an empty walk (REAL_03 §6.6).
+fn roots_readable(store: &ObjectStore, base_dir: &Path) -> Result<(), String> {
+    store
+        .get_head(base_dir)
+        .map_err(|e| e.to_string())?;
+    crate::savepoint::load_circles(base_dir).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn mark(
     store: &ObjectStore,
     base_dir: &Path,
     follow_abandoned: bool,
-) -> (BTreeSet<String>, Vec<String> /* integrity */) {
+) -> Result<(BTreeSet<String>, Vec<String> /* integrity */), String> {
+    roots_readable(store, base_dir)?;
     let mut integrity = Vec::new();
     let mut seen = BTreeSet::new();
-    let Ok(Some(head)) = store.get_head(base_dir) else {
-        return (seen, integrity);
+    let Some(head) = store.get_head(base_dir).map_err(|e| e.to_string())? else {
+        return Ok((seen, integrity));
     };
     let mut stack = VecDeque::new();
     stack.push_back(hex::encode(&head.digest));
@@ -240,7 +251,7 @@ pub fn mark(
                 // no longer name the predecessor. Dual-walk via
                 // `previous_commit` (parent if set, else `ancestor:` as a
                 // commit digest — a pre-arc HEAD has no circle).
-                push_commit_predecessor(store, base_dir, &d, &seen, &mut stack);
+                push_commit_predecessor(store, base_dir, &d, &seen, &mut stack)?;
             }
             VerifiedObject::CaidMismatch => {
                 integrity.push(format!(
@@ -255,7 +266,7 @@ pub fn mark(
             }
         }
     }
-    (seen, integrity)
+    Ok((seen, integrity))
 }
 
 fn push_commit_predecessor(
@@ -264,23 +275,27 @@ fn push_commit_predecessor(
     digest: &str,
     seen: &BTreeSet<String>,
     stack: &mut VecDeque<String>,
-) {
+) -> Result<(), String> {
     let Ok(raw) = hex::decode(digest) else {
-        return;
+        return Ok(());
     };
     if raw.len() != 32 {
-        return;
+        return Ok(());
     }
     let commit = match store.open_commit(&ContentHash::v1(raw)) {
         Ok((_, c)) => c,
-        Err(_) => return,
+        Err(_) => return Ok(()),
     };
-    let Ok(Some(p)) = crate::savepoint::previous_commit(base_dir, &commit, digest) else {
-        return;
-    };
-    let pd = hex::encode(&p.digest);
-    if !seen.contains(&pd) {
-        stack.push_back(pd);
+    match crate::savepoint::previous_commit(base_dir, &commit, digest) {
+        Ok(Some(p)) => {
+            let pd = hex::encode(&p.digest);
+            if !seen.contains(&pd) {
+                stack.push_back(pd);
+            }
+            Ok(())
+        }
+        Ok(None) => Ok(()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -290,8 +305,8 @@ pub fn plan_gc(store: &ObjectStore, base_dir: &Path) -> Result<GcReport, String>
         .list_digests()
         .map_err(|e| format!("list objects: {e}"))?;
     let total_objects = all.len();
-    let (live, integrity) = mark(store, base_dir, false);
-    let (live_abs, _) = mark(store, base_dir, true);
+    let (live, integrity) = mark(store, base_dir, false)?;
+    let (live_abs, _) = mark(store, base_dir, true)?;
 
     let mut collectable = 0usize;
     let mut collectable_bytes = 0u64;
@@ -344,7 +359,7 @@ pub fn run_gc(store: &ObjectStore, base_dir: &Path, dry_run: bool) -> Result<GcR
     let all = store
         .list_digests()
         .map_err(|e| format!("list objects: {e}"))?;
-    let (live, integrity) = mark(store, base_dir, false);
+    let (live, integrity) = mark(store, base_dir, false)?;
     // Re-check after a second walk (store could change under us).
     if !integrity.is_empty() {
         report.integrity = integrity;

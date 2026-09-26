@@ -1347,6 +1347,7 @@ impl BottomDetail {
             BottomCause::FuelExhausted => "#fuel_exhausted",
             BottomCause::Timeout => "#timeout",
             BottomCause::PeerUnreachable => "#peer_unreachable",
+            BottomCause::PeerClosed => "#peer_closed",
             BottomCause::PeerTimeout => "#peer_timeout",
             BottomCause::Divergent => "#divergent",
             BottomCause::InvalidPath => "#invalid_path",
@@ -1619,6 +1620,10 @@ pub enum BottomCause {
     /// tail. Distinct from [`Self::PeerTimeout`] (the peer accepted, then
     /// went silent) and from [`Self::Conflict`] (an integrity verdict).
     PeerUnreachable,
+    /// The peer accepted the connection and closed it before answering
+    /// (REAL_02 §3.2.2, D78). Append-only tail. Not a deadline and not a
+    /// connection that never opened.
+    PeerClosed,
 }
 
 impl BottomCause {
@@ -1629,6 +1634,7 @@ impl BottomCause {
             BottomCause::FuelExhausted => "fuel_exhausted",
             BottomCause::Timeout => "timeout",
             BottomCause::PeerUnreachable => "peer_unreachable",
+            BottomCause::PeerClosed => "peer_closed",
             BottomCause::PeerTimeout => "peer_timeout",
             BottomCause::Divergent => "divergent",
             BottomCause::InvalidPath => "invalid_path",
@@ -1688,6 +1694,7 @@ impl BottomCause {
             BottomCause::FuelExhausted
             | BottomCause::Timeout
             | BottomCause::PeerUnreachable
+            | BottomCause::PeerClosed
             | BottomCause::PeerTimeout
             | BottomCause::PeerNotImplemented
             | BottomCause::PeerUnknownStatus
@@ -3307,6 +3314,15 @@ impl Value {
             // Bare atom (SYNTAX_02). The fibre rides the annotation layer,
             // same spelling as `%effect` (D65 / O85).
             Value::Bottom(d) => {
+                // A fetch that could not read this node's own key is a local
+                // fact. There is no peer tag for it (D77/D78 are about the
+                // other end). The sentence is the message.
+                if d.path.as_deref() == Some("node identity") {
+                    return format!(
+                        "_|_  ;; {}",
+                        d.message.as_deref().unwrap_or("cannot read node identity")
+                    );
+                }
                 let mut s = format!(
                     "_|_{}",
                     Self::nlang_annotation("cause", &format!("#{}", d.cause.as_tag()))

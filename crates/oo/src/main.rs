@@ -107,6 +107,7 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::FuelExhausted => "#fuel_exhausted",
         BottomCause::Timeout => "#timeout",
         BottomCause::PeerUnreachable => "#peer_unreachable",
+        BottomCause::PeerClosed => "#peer_closed",
         BottomCause::PeerTimeout => "#peer_timeout",
         BottomCause::Divergent => "#divergent",
         BottomCause::InvalidPath => "#invalid_path",
@@ -856,25 +857,25 @@ fn run_node_advertise(to: String, services: Vec<String>, listen_port: u16) -> an
             anyhow::anyhow!("#peer_unreachable")
         }
     })?;
+    let peer_end = |e: std::io::Error| anyhow::anyhow!("#{}", oodp::session_cause(&e).as_tag());
     stream
         .set_read_timeout(Some(oodp::OODP_READ_TIMEOUT))
-        .map_err(|e| {
-            anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
-        })?;
+        .map_err(peer_end)?;
     stream
         .set_write_timeout(Some(oodp::OODP_READ_TIMEOUT))
-        .map_err(|e| {
-            anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
-        })?;
-    stream.write_all(req.as_bytes()).map_err(|e| {
-        anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
-    })?;
-    stream.flush().map_err(|e| {
-        anyhow::anyhow!("cannot talk to peer: {}", oo::operator_io_reason(&e))
-    })?;
+        .map_err(peer_end)?;
+    stream.write_all(req.as_bytes()).map_err(peer_end)?;
+    stream.flush().map_err(peer_end)?;
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).ok();
+    match stream.read_to_end(&mut buf) {
+        Ok(0) => anyhow::bail!("#peer_closed"),
+        Ok(_) => {}
+        Err(e) => return Err(peer_end(e)),
+    }
     let text = String::from_utf8_lossy(&buf);
+    if text.trim().is_empty() {
+        anyhow::bail!("#peer_closed");
+    }
     // Print status (+ reason when rejected) for the operator.
     if let Ok(j) = serde_json::from_str::<serde_json::Value>(text.trim()) {
         if let Some(s) = j.get("%status").and_then(|v| v.as_str()) {

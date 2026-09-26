@@ -190,15 +190,44 @@ r15–r20：交付 `694a264` ×3 紅，各紅在預定斷言上；v0.61.0 亦紅
 
 ### 10.1 射程逐項對照
 
+9.2. `gc` 在標記之前先讀 `HEAD` 與 ○。缺席仍是空的可達集。讀不到（權限、不是找不到）把那句 `cannot read .oo/HEAD` 或 `cannot read .oo/savepoints` 交回去，`run_gc` 在刪除之前返回。走圖時 `previous_commit` 的錯誤同樣中止，不再當成沒有祖先。驗：r15、r16。
+9.3. 連線還沒建立：逾時 `#peer_timeout`，其餘 `#peer_unreachable`。連線已經建立：逾時仍是 `#peer_timeout`；對端在回答前結束（乾淨關閉讀到 0 位元組、重置、寫入被切斷）一律 `#peer_closed`。`advertise` 沒有正文時 rc≠0 且印 `#peer_closed`，不再把空讀當成成功。`discover`／`find-node`／`#fetch` 同一規則。驗：r17–r20；r6–r8 仍是 `#peer_unreachable`。
+9.4. `remote_fetch_oodp` 在撥號前讀自己的節點金鑰。失敗是 `FetchFail::Local`，句子是 `node_id()` 的 `cannot read …: permission denied`。操作者看到的是這句，不是 `#peer_unreachable`。沒有新的本地標籤（這次沒有裁），所以這個底的 `%cause` 不印出來。
+
 ### 10.2 順手改動（逐項指名）
+
+無。`cargo fmt` 未跑。探針檔未改。`spec/`、`meta/`、`conformance/` 未改。
+
+改動檔：`crates/interpreter/src/gc.rs`、`oodp.rs`、`value.rs`、`store_codec.rs`、`lib.rs`、`builtins/disc.rs`、`crates/oo/src/main.rs`、本工單 §10。
 
 ### 10.3 工單哪裡是錯的
 
+無。
+
 ### 10.4 工單指名要你回答的問題
 
-*   **R1-Q1** 除了 `gc`，還有哪些會刪除或改寫的動作（`squash`、`rollback`、`migrate`……）依賴可達性來源？各自讀不到時答什麼？
-*   **R1-Q2** `#peer_closed` 與 `#peer_timeout` 的分界你放在哪裡（讀到 0 位元組、連線重置、部分回應）？
+R1-Q1. 會刪或改、並且要用可達性來源的：
+- `gc`：根是 `HEAD` 與 ○。讀不到就拒絕，不刪。見 10.1。
+- `squash`：先用 ○ 走祖先（`commit_is_ancestor`）。○ 讀不到時錯誤是 `cannot read .oo/savepoints: …`，發生在 `put_commit` 之前，HEAD 不動。`HEAD` 讀不到則 `init`／`Universe::load` 已經拒絕，進不了 squash。
+- `rollback`：不讀 ○ 來決定新的 HEAD，也不刪物件。目標 commit 讀不到時 `get_commit` 的錯誤在 `set_head` 之前。`HEAD` 讀不到同樣在 `init` 就停。
+- `migrate`：改的是宣告，不是物件可達性。`.oo/format` 讀不到時是 `cannot read`，在任何宣告寫入之前。
+- `commit`：會寫新物件並移動 HEAD，然後才記 ○。注入讀不到時在寫入之前拒絕。它不把讀不到的 ○ 當成空歷史去刪物件。
+
+R1-Q2. 分界是「這次讀寫有沒有碰到期限」，不是 FIN 還是 RST。
+- 讀到 0 位元組：`#peer_closed`。
+- 連線重置、`Broken pipe`、寫入時對端已掛：`#peer_closed`。
+- `TimedOut`／`WouldBlock`：`#peer_timeout`。
+- 從未連上（拒絕、地址解析失敗）：`#peer_unreachable`。
+- 有正文：照正文。能解出 `%status` 就印那個狀態（那是對端的回答）。解不出的非空正文仍走原來的承載校驗，不改叫 `#peer_closed`。
 
 ### 10.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。23 支皆綠（原 17 支加上 r15–r20）。
+
 ### 10.6 數字
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 245 行，2341 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。

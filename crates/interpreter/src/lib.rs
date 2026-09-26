@@ -4904,9 +4904,15 @@ impl Ouroboros {
     /// - `Ok(val)` — `#success` and address matches the requested CAID
     /// - `Err(MissingKey)` — peer `#not_found` (absence, not conflict)
     /// - `Err(CaidMismatch)` — peer `#conflict`, bad envelope, or address fail
-    /// - `Err(PeerTimeout)` — the peer accepted and then missed the deadline
-    /// - `Err(PeerUnreachable)` — the connection was never established (D77)
-    pub fn remote_fetch(&self, addr: &str, hash: &ContentHash) -> Result<Value, BottomCause> {
+    /// - `Err(Peer(PeerTimeout))` — the deadline fired
+    /// - `Err(Peer(PeerClosed))` — accepted, then closed before an answer (D78)
+    /// - `Err(Peer(PeerUnreachable))` — the connection was never established (D77)
+    /// - `Err(Local(_))` — this node's key could not be read
+    pub fn remote_fetch(
+        &self,
+        addr: &str,
+        hash: &ContentHash,
+    ) -> Result<Value, crate::oodp::FetchFail> {
         crate::oodp::remote_fetch_oodp(self, addr, hash)
     }
 
