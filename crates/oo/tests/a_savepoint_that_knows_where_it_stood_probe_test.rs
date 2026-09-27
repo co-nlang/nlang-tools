@@ -312,3 +312,34 @@ fn r8_the_same_in_layout7() {
     let minted = w.evolve_new("a.n");
     assert!(minted.is_empty(), "layout=7: the position did not move and a ○ was minted: {minted:?}");
 }
+
+// ── Added at acceptance of R-1 (2026-09-27), repair round R-2 ─────────────
+
+/// D80 ② (user, 2026-09-27, 甲): "before" is the position just before this
+/// injection — the current HEAD's root ⊓ the working set before it — not the
+/// position the previous ○ recorded. A rollback moves the context without
+/// minting a ○ (D55), so the two part there. C1 = { a }, C2 = { a, b };
+/// rollback to C1; evolve b: the position moves { a } → { a, b }, which
+/// happens to equal what C2's commit ○ recorded. On 5f69f3c no ○ is minted
+/// and the newest ○ still says "stood at C2" while the workspace stands at C1
+/// with b staged. The R-1 order defined "before" as T's recorded context —
+/// the acceptor's wording again (and D80's option text before it).
+/// Baseline: red on 5f69f3c (no ○); red on v0.63.0 (a ○, but no point).
+#[test]
+fn r9_after_a_rollback_the_first_real_move_is_recorded_where_it_stands() {
+    let w = Ws::new("r9");
+    w.write("a.n", "a: 1\n");
+    w.write("b.n", "b: 2\n");
+    w.ok(&["evolve", "a.n"]);
+    w.ok(&["commit", "-m", "c1"]);
+    let c1 = w.head_digest();
+    let c1_full = fs::read_to_string(w.ws.join(".oo/HEAD")).unwrap().trim().to_string();
+    w.ok(&["evolve", "b.n"]);
+    w.ok(&["commit", "-m", "c2"]);
+    let c2 = w.head_digest();
+    w.ok(&["rollback", &c1_full, "--grant", "rollback"]);
+    let minted = w.evolve_new("b.n");
+    assert_eq!(minted.len(), 1, "after a rollback the position moved {{a}} → {{a, b}} and no ○ was minted: {minted:?}");
+    let text = &minted[0];
+    assert!(text.contains(&c1) && !text.contains(&c2), "the ○ does not record the point it stands on (c1 {c1}, c2 {c2}): {text}");
+}
