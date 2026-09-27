@@ -262,3 +262,53 @@ fn r6_a_migrated_layout7_store_records_points() {
     let text = one(w.evolve_new("c.n"), "c.n after migrate");
     assert!(text.contains(&point), "a migrated store's ○ does not record its point: {text}");
 }
+
+// ── Added at acceptance (2026-09-27), repair round R-1 ────────────────────
+
+/// Real movement after a commit still mints, each time: the R-1 fix must not
+/// become "never mint after a commit".
+#[test]
+fn g5_after_a_commit_new_definitions_still_mint() {
+    let w = Ws::new("g5");
+    w.write("a.n", "a: 1\n");
+    w.ok(&["evolve", "a.n"]);
+    w.ok(&["commit", "-m", "c"]);
+    w.write("b.n", "b: 2\n");
+    w.write("c.n", "c: 3\n");
+    assert_eq!(w.evolve_new("b.n").len(), 1, "b after a commit did not mint");
+    assert_eq!(w.evolve_new("c.n").len(), 1, "c after a commit did not mint");
+}
+
+/// D80 Q4 says "the injection changed the position": the comparison is the
+/// position BEFORE this injection against the position AFTER it. The
+/// delivery (09bd609) compares against the point's root alone, which agrees
+/// with that only when the working set is empty (r1). Here it is not:
+/// committed { a }, then evolve b (position { a, b }), then re-inject the
+/// committed a — the position is still { a, b }, and (c) cannot stop it
+/// because the proposal bodies differ ({ b } vs { a, b }).
+/// Baseline: one ○ on v0.63.0 and on 09bd609. The work order's I2 said
+/// "judge by root ⊓ proposals" without saying against what — the acceptor's
+/// wording let this through, and r1 measured only the empty-working-set path.
+#[test]
+fn r7_reinjecting_a_committed_value_over_other_proposals_mints_nothing() {
+    let w = Ws::new("r7");
+    w.write("a.n", "a: 1\n");
+    w.ok(&["evolve", "a.n"]);
+    w.ok(&["commit", "-m", "c"]);
+    w.write("b.n", "b: 2\n");
+    assert_eq!(w.evolve_new("b.n").len(), 1, "VOID READING: b did not mint");
+    let minted = w.evolve_new("a.n");
+    assert!(minted.is_empty(), "the position did not move ({{a, b}} before and after) and a ○ was minted: {minted:?}");
+}
+
+/// The same in an unmigrated layout=7 store (no recorded point to lean on).
+/// Baseline: one ○ on v0.63.0 and on 09bd609.
+#[test]
+fn r8_the_same_in_layout7() {
+    let w = Ws::layout7("r8");
+    w.write("b.n", "b: 2\n");
+    assert_eq!(w.evolve_new("b.n").len(), 1, "VOID READING: b did not mint");
+    w.write("a.n", "a: 1\n");
+    let minted = w.evolve_new("a.n");
+    assert!(minted.is_empty(), "layout=7: the position did not move and a ○ was minted: {minted:?}");
+}
