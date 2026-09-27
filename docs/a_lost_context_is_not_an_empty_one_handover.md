@@ -70,14 +70,67 @@
 
 ### 8.1 射程逐項對照
 
+I1. `HEAD` 缺席、而某個 ○ 帶著 `commit:` 註記時，`status`、`log`、`evolve`、`commit`、`gc` 在寫或刪之前拒絕。句子是 `lost context: HEAD is absent and a savepoint records a commit; restore it with rollback <commit> --grant rollback`。`status` 不再印 `no committed root yet`。`gc` 不進入刪除。`commit` 不建立新的 `HEAD`。`evolve` 不寫注入。
+I2. 同一句話點出 `rollback`。`rollback <commit> --grant rollback` 在 `HEAD` 缺席時照常把那個提交裝回（g3）。
+I3. 從未提交的工作區沒有 `commit:` 註記，`status`／`evolve`／`commit` 照舊（g1）。
+I4. 放棄邊仍不是根：rollback 之後 `gc` 仍回收被放棄的內容（g2）。健康的 `gc` 不刪可達物（g4）。
+I5. `inspect`、`identity`、`fetch`／`serve` 不讀這個判斷。
+I6. 值位址、提交位址、宣告都沒有動。這個判斷只讀 `HEAD` 與 ○。
+
+同一個判斷也用在會裝上一個「現在」的指令上，理由在 8.4 Q3：`refine`、`squash`（○ 有提交註記時）、`repl`。
+
 ### 8.2 順手改動（逐項指名）
+
+無。`cargo fmt` 未跑。探針檔未改。`spec/`、`meta/`、`conformance/` 未改。
+
+改動檔：`crates/interpreter/src/savepoint.rs`、`gc.rs`、`universe.rs`、`lib.rs`、`crates/oo/src/main.rs`、本工單 §8。
 
 ### 8.3 工單哪裡是錯的
 
+無。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 讀的是 ○ 檔框上的 `commit:` 行（D52），經 `load_circles` 的 `commit_digest`。那是儲存自己宣告「這個圈變成了哪一筆提交」。不是「物件庫裡剛好有 commit 物件」。只 evolve、還沒提交的圈有 `parents:` 和 combo，沒有 `commit:` 行，判準是假。g1 就是這個工作區。
+
+Q2. 沒有任何 `commit:` 註記時，判準答「儲存沒有宣告過提交」。`HEAD` 缺席就照空的 context 答（`status` 仍說 `no committed root yet`，`gc` 的可達集是空的，`commit` 可以開始第一筆）。○ 層出現之前的舊儲存沒有這種註記，落在這一邊。這是盲區。沒有另外找證據。
+
+Q3. 相對於 context（要一個「現在」才答得出；丟了就拒絕，不寫不刪）：
+- `status`：現在這個點的標準根，以及對著這個點的暫存。
+- `log`：從 `HEAD` 沿祖先往回。
+- `evolve`：在這個點上提出。
+- `commit`：把下一筆裝到這個點上。
+- `gc`：從這個點起算可達。
+- `refine`：這個引擎的 `oo refine` 會寫一筆提交並 `set_head`。點丟了會開出和 `commit` 一樣的新鏈，所以在寫入之前拒絕。
+- `squash`：本來就拒絕。○ 有提交註記時改說上面那句（點出 rollback）；沒有註記時仍是 `no HEAD to squash`。
+- `repl`：載入這個點再觀測。丟了就拒絕，不當成創世來答。它不寫儲存。
+
+回頭路，不拒絕：`rollback`。它就是在選點。`HEAD` 缺席時照常做（g3）。
+
+與 context 無關（不套這個拒絕）：
+- `run`、`eval`、`test`：各自拿你給的程式做一個新的記憶體宇宙，不讀 `HEAD`。
+- `inspect <CAID>`：讀那一個位址。祖先行來自那筆提交自己的圈，不來自 `HEAD`。
+- `identity`：操作者金鑰。
+- `migrate`：改的是版面宣告，不是站的位置。
+- `fmt`、`lint`：檔案本文。
+- `node serve`、`id`、`advertise`、`discover`、`find-node`、`affiliate`、`peers`、`trust`：節點金鑰、同儕目錄，或線上的交換。`fetch`／`serve` 是工單點名的；其餘是同一類。
+
+Q4. 兩筆提交之後把 `HEAD` 移開，再 `rollback <該提交> --grant rollback`（實測）：
+- `.oo/abandoned` 前後都不存在。只有載入到的點存在、而且和目標不同時才記放棄。沒有前一個 `HEAD`，這一行不寫。
+- 不新造圈，也不改 `ancestor:`。四個 ○ 檔在 rollback 之後逐字相同；第二筆的註記仍是 `ancestor: <第一筆摘要>`。做的只有 `set_head`。`log` 沿著那條已有的邊印出兩筆。
 
 ### 8.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。10 支皆綠（g1–g4、r1–r6）。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 246 行，2351 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=7`／`encoding=5`。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_08` 需要寫明：回答要靠「現在這個點」的指令，在 `HEAD` 缺席而 ○ 有 `commit:` 註記時具名拒絕；`rollback <commit> --grant rollback` 仍可用來選點。§6.2.1 第 2 條（`parent` → 祖先邊）維持驗收方收尾。

@@ -910,7 +910,22 @@ impl Universe {
         }
     }
 
+    fn refuse_lost_context(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+        // The file is the point. `self.head` is still the previous point
+        // while `commit` restages `~%Config`, and by then this commit's own
+        // `commit:` note is already on disk.
+        if engine.store.get_head(base_dir)?.is_none()
+            && crate::savepoint::records_a_commit(base_dir)?
+        {
+            anyhow::bail!("{}", crate::savepoint::LOST_CONTEXT);
+        }
+        Ok(())
+    }
+
     pub fn save_staged(&mut self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+        // Before blur partials or the injection. A lost point is not a
+        // place to stage.
+        Self::refuse_lost_context(engine, base_dir)?;
         let declaration = crate::storage::read_layout_declaration(base_dir)?;
         let current = crate::storage::layout_has_layout5_frames(&declaration);
         if !self.session_pin_coords.is_empty()
@@ -1085,6 +1100,8 @@ impl Universe {
         base_dir: &std::path::Path,
         meta: crate::value::CommitMeta,
     ) -> Result<(ContentHash, bool, Vec<(String, String)>)> {
+        // Before any object or HEAD write. No note means an honest first commit.
+        Self::refuse_lost_context(engine, base_dir)?;
         engine.clear_force_memo();
         if let Some(d) = &self.workset_bottom {
             let coord = d.path.as_deref().filter(|s| !s.is_empty()).unwrap_or("");
@@ -1371,6 +1388,8 @@ impl Universe {
         base: &ContentHash,
         meta: crate::value::CommitMeta,
     ) -> Result<ContentHash> {
+        // A missing HEAD with a commit note is not "no history to squash".
+        Self::refuse_lost_context(engine, base_dir)?;
         if self.is_dirty {
             return Err(anyhow::anyhow!(
                 "dirty worktree: commit or discard staged changes before squash"
@@ -1495,6 +1514,9 @@ impl Universe {
         meta: crate::value::CommitMeta,
         signer: Option<&crate::value::Identity>,
     ) -> Result<ContentHash> {
+        // Local refine installs a commit and moves HEAD. A lost point would
+        // start a new chain. No commit note keeps the genesis refine path.
+        Self::refuse_lost_context(engine, base_dir)?;
         engine.clear_force_memo();
         // Step 1: verify geometric monotonicity (new & old = new)
         //

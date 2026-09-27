@@ -140,6 +140,19 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
     Ok(nodes)
 }
 
+/// A circle's `commit:` note (D52). That note is the store declaring a
+/// commit. An evolve-only circle, and every circle from before this arc,
+/// has none. Presence of a commit object in CAS is not this declaration.
+pub fn records_a_commit(base: &Path) -> Result<bool> {
+    Ok(load_circles(base)?
+        .values()
+        .any(|n| n.commit_digest.is_some()))
+}
+
+/// HEAD is the point. Absent while a `commit:` note exists is a lost
+/// context, not an empty one (D79). The way back is an explicit rollback.
+pub const LOST_CONTEXT: &str = "lost context: HEAD is absent and a savepoint records a commit; restore it with rollback <commit> --grant rollback";
+
 fn tips_of(nodes: &BTreeMap<String, Circle>) -> Vec<String> {
     let mentioned: BTreeSet<&str> = nodes
         .values()
