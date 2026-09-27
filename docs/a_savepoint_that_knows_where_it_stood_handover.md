@@ -149,15 +149,33 @@ r7／r8：基線 `127fc9d`（v0.63.0 程式碼）×3 紅、交付 `09bd609` ×3 
 
 ### 10.1 射程逐項對照
 
+唯一前驅 T 時，判準 (a) 比兩個 CAID：之前是 T 的點的根 ⊓ T 所記的提議，之後是現在 `HEAD` 的根 ⊓ 這次的提議。相同就不鑄。已提交 `{ a }`、再注入 `b`、再注入已提交的 `a`，前後都是 `{ a, b }`，不鑄（r7）。`layout=7` 同一條路不鑄（r8）。提交之後新的 `b`、再新的 `c` 仍各鑄一顆（g5）。兩個以上的 tip 仍鑄。r1–r6、g1–g4 維持。
+
 ### 10.2 順手改動（逐項指名）
+
+無。`cargo fmt` 未跑。探針檔與夾具未改。
+
+改動檔：`crates/interpreter/src/savepoint.rs`、`universe.rs`、本工單 §10。
 
 ### 10.3 工單哪裡是錯的
 
+無。§9.2 說的漏在上一輪工單的比較式，這一輪把兩邊寫出來了。
+
 ### 10.4 工單指名要你回答的問題
 
-*   **R1-Q1** 「之前的位置」你從哪裡讀？T 有記點時用它的點，沒有記點時（`layout=7`、首次提交前）用什麼？若 T 之後發生過 rollback（`HEAD` 已不是 T 的點），你比的是 T 當時的 context 還是現在的點？說明理由。
-*   **R1-Q2** 修完之後，(c) 那一款是否變成 (a) 的特例？若是，照說，不要拿掉它的探針。
+R1-Q1. 之前的位置從唯一前驅 T 讀。T 有 `point:` 時，點的根是那一筆提交的 `root`，提議是 T 框線下的 combo。T 沒有 `point:`（`layout=7`，或首次提交前）時，不從 ○ 圖補點；改用現在的 `HEAD` 的根，沒有 `HEAD` 就用空 combo。那是儲存還指得出的唯一一個點。
+之後的位置一律是現在的 `HEAD`（或空 combo）⊓ 這次的提議。所以 T 記過點、而 rollback 已經把 `HEAD` 移走時，之前仍是 T 當時的 context，之後是現在站的點。T 沒記點時，兩邊都用現在的 `HEAD`，因為 T 的點沒有被寫下來。
+
+R1-Q2. 是。兩邊用同一個點時，提議相同則位置的 CAID 相同，(c) 是 (a) 的特例。g2 留著，沒有拿掉。(c) 的本文比較仍先做：唯一前驅、提議本文相同就不鑄，不必先打開根。
 
 ### 10.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。13 支皆綠（g1–g5、r1–r8）。
+
 ### 10.6 數字
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 247 行，2364 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。

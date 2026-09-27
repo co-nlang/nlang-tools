@@ -910,6 +910,62 @@ impl Universe {
         }
     }
 
+    /// CAID of (point root ⊓ proposal). The point root is the commit named
+    /// by `point`, or the HEAD that exists now when the circle recorded none.
+    fn position_caid(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        point: Option<&str>,
+        proposal: &ComboVal,
+    ) -> Result<ContentHash> {
+        let root = match point {
+            Some(digest) => Self::root_of_digest(engine, digest)?,
+            None => Self::root_now(engine, base_dir)?,
+        };
+        Ok(engine
+            .unify(Value::Combo(root), Value::Combo(proposal.clone()))
+            .content_hash())
+    }
+
+    /// HEAD's commit root. No HEAD is the empty combo (there is no point).
+    fn root_now(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<ComboVal> {
+        match engine.store.get_head(base_dir)? {
+            Some(head) => {
+                let (_addr, commit) = engine.store.open_commit(&head)?;
+                engine.store.get_root(&commit.root, &engine.standard_roots)
+            }
+            None => Ok(ComboVal::default()),
+        }
+    }
+
+    fn root_of_digest(engine: &Ouroboros, digest_hex: &str) -> Result<ComboVal> {
+        let raw = hex::decode(digest_hex)
+            .map_err(|_| anyhow::anyhow!("point is not a commit digest"))?;
+        if raw.len() != 32 {
+            anyhow::bail!("point is not a commit digest");
+        }
+        let (_addr, commit) = engine.store.open_commit(&ContentHash::v1(raw))?;
+        engine.store.get_root(&commit.root, &engine.standard_roots)
+    }
+
+    /// Before: the sole tip's point ⊓ its proposal. A tip with no `point:`
+    /// line uses the HEAD that exists now (the point was not recorded).
+    /// After: that same current HEAD ⊓ this proposal. A recorded point on
+    /// the tip stays that commit even when HEAD has since moved.
+    fn injection_positions_equal(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        proposal: &ComboVal,
+    ) -> Result<bool> {
+        let Some((combo, point)) = crate::savepoint::sole_tip(base_dir)? else {
+            return Ok(false);
+        };
+        let previous = crate::savepoint::decode_proposal(&combo)?;
+        let before = Self::position_caid(engine, base_dir, point.as_deref(), &previous)?;
+        let after = Self::position_caid(engine, base_dir, None, proposal)?;
+        Ok(before == after)
+    }
+
     fn refuse_lost_context(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
         // The file is the point. `self.head` is still the previous point
         // while `commit` restages `~%Config`, and by then this commit's own
@@ -973,12 +1029,9 @@ impl Universe {
         // remove that member: a staged injection with no ○ is the split
         // SPEC_10 §3.1 forbids, and the operator must not be told the
         // evolve landed.
-        // (a): the point's root ⊓ the folded proposal. Same CAID as the root
-        // means the proposal added nothing the point did not already hold.
-        let root_v = Value::Combo(self.root.clone());
-        let met = engine.unify(root_v.clone(), Value::Combo(self.staged.clone()));
-        let position_moved = met.content_hash() != root_v.content_hash();
-        if let Err(e) = crate::savepoint::record(base_dir, &self.staged, position_moved) {
+        // (a): position before this injection against the position after it.
+        let positions_equal = Self::injection_positions_equal(engine, base_dir, &self.staged)?;
+        if let Err(e) = crate::savepoint::record(base_dir, &self.staged, positions_equal) {
             if let Some(id) = written_id.as_deref() {
                 let _ = std::fs::remove_file(crate::injections::dir(base_dir).join(id));
             }

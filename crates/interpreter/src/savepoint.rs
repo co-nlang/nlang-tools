@@ -189,14 +189,34 @@ fn write_circle(base: &Path, body: &str) -> Result<String> {
     anyhow::bail!("savepoint id: exhausted unique names")
 }
 
+/// The unique tip's recorded proposal text and its `point:` digest, if
+/// this injection would cover exactly one circle. `None` when there is
+/// no tip or more than one (a confluence still mints).
+pub fn sole_tip(base: &Path) -> Result<Option<(String, Option<String>)>> {
+    let nodes = load_circles(base)?;
+    let tips = tips_of(&nodes);
+    if !nodes.is_empty() && tips.is_empty() {
+        anyhow::bail!("savepoint cycle: ids nonempty and tips empty");
+    }
+    if tips.len() != 1 {
+        return Ok(None);
+    }
+    let t = nodes.get(&tips[0]).expect("tip id is a loaded circle");
+    Ok(Some((t.combo.clone(), t.point.clone())))
+}
+
+/// Proposal combo under a savepoint's frame lines.
+pub fn decode_proposal(combo_text: &str) -> Result<ComboVal> {
+    decode_staged(&format!("#nlang/store savepoint\n{combo_text}"))
+}
+
 /// Append a savepoint of `combo` unless it adds nothing.
 ///
-/// (c) / D51: one tip T whose recorded proposal equals this one — a
-/// sequential repeat. Two or more tips still mint (a confluence is an
-/// event). (a) / D80: one tip, and `position_moved` is false — the point's
-/// root ⊓ this proposal has the root's CAID, so the lattice did not move
-/// even when T's bytes are the empty commit circle.
-pub fn record(base: &Path, combo: &ComboVal, position_moved: bool) -> Result<Option<String>> {
+/// (c) / D51: one tip T whose recorded proposal text equals this one.
+/// Two or more tips still mint. (a) / D80: `positions_equal` — the
+/// position before this injection (T's context) and the position after
+/// it have the same CAID.
+pub fn record(base: &Path, combo: &ComboVal, positions_equal: bool) -> Result<Option<String>> {
     let nodes = load_circles(base)?;
     let mut tips = tips_of(&nodes);
     if !nodes.is_empty() && tips.is_empty() {
@@ -211,7 +231,7 @@ pub fn record(base: &Path, combo: &ComboVal, position_moved: bool) -> Result<Opt
                 return Ok(None);
             }
         }
-        if !position_moved {
+        if positions_equal {
             return Ok(None);
         }
     }
