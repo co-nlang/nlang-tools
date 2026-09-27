@@ -550,11 +550,22 @@ fn main_on_large_stack() -> anyhow::Result<()> {
     }
 }
 
+fn refuse_lost_context(
+    store: &nlang_interpreter::storage::ObjectStore,
+    base: &Path,
+) -> anyhow::Result<()> {
+    if store.get_head(base)?.is_none() && nlang_interpreter::savepoint::records_a_commit(base)? {
+        anyhow::bail!("{}", nlang_interpreter::savepoint::LOST_CONTEXT);
+    }
+    Ok(())
+}
+
 fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Result<()> {
     let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     // Reuse the same grant parser as run/eval — never a second code path.
     apply_cli_privilege(&mut engine, false, &grants)?;
+    refuse_lost_context(&engine.store, &cur)?;
     // Two-step gate (SPEC_08 §6.2 / P1): `--pin` is the request; `--grant pin`
     // is the capability. Request without capability is a loud refuse — never
     // silently downgraded to ordinary (conflicting) evolve.
@@ -990,6 +1001,7 @@ fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
 fn run_status() -> anyhow::Result<()> {
     let current_dir = cwd()?;
     let engine = Ouroboros::init(&current_dir)?;
+    refuse_lost_context(&engine.store, &current_dir)?;
     if let Some(head) = engine.store.get_head(&current_dir)? {
         let commit = engine.store.get_commit(&head)?;
         match engine.store.root_standard_digest(&commit.root)? {
@@ -1033,11 +1045,13 @@ fn run_status() -> anyhow::Result<()> {
 }
 
 fn run_log() -> anyhow::Result<()> {
-    let engine = Ouroboros::init(&cwd()?)?;
+    let cur = cwd()?;
+    let engine = Ouroboros::init(&cur)?;
+    refuse_lost_context(&engine.store, &cur)?;
     // A historical root that names an unavailable standard table is not an
     // empty universe. `log` is a read of that history, so surface the named
     // refusal instead of silently falling back to genesis.
-    let _universe = Universe::load(&engine, &cwd()?)?;
+    let _universe = Universe::load(&engine, &cur)?;
     // Surface CAS integrity failures distinctly (tampered commit chain).
     let history = engine
         .log()
@@ -1227,6 +1241,7 @@ fn run_commit(
     let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
+    refuse_lost_context(&engine.store, &cur)?;
     // Snapshot before the lock: a late waiter that listed members, then
     // found them gone, consumed them. G3 lists zero (the previous commit
     // already returned).
@@ -1333,6 +1348,7 @@ fn run_refine(
 ) -> anyhow::Result<()> {
     let cur = cwd()?;
     let engine = Ouroboros::init(&cur)?;
+    refuse_lost_context(&engine.store, &cur)?;
     let mut universe = load_universe(&engine, &cur)?;
 
     let source_caids: Vec<ContentHash> = sources
@@ -1439,8 +1455,10 @@ fn run_refine(
 }
 
 fn run_repl() -> anyhow::Result<()> {
-    let engine = Ouroboros::init(&cwd()?)?;
-    let mut universe = load_universe(&engine, &cwd()?)?;
+    let cur = cwd()?;
+    let engine = Ouroboros::init(&cur)?;
+    refuse_lost_context(&engine.store, &cur)?;
+    let mut universe = load_universe(&engine, &cur)?;
     println!("n/ Ouroboros REPL (Genesis)");
     println!("Type 'exit' to quit.");
 

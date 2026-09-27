@@ -4936,6 +4936,9 @@ impl Ouroboros {
             }
             return Ok(history);
         }
+        if crate::savepoint::records_a_commit(&current_dir)? {
+            anyhow::bail!("{}", crate::savepoint::LOST_CONTEXT);
+        }
         Ok(Vec::new())
     }
     pub fn tropical_weight(&self, val: &Value) -> u64 {
