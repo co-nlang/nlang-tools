@@ -1346,6 +1346,8 @@ impl BottomDetail {
             BottomCause::MissingKey => "#missing_key",
             BottomCause::FuelExhausted => "#fuel_exhausted",
             BottomCause::Timeout => "#timeout",
+            BottomCause::PeerUnreachable => "#peer_unreachable",
+            BottomCause::PeerClosed => "#peer_closed",
             BottomCause::PeerTimeout => "#peer_timeout",
             BottomCause::Divergent => "#divergent",
             BottomCause::InvalidPath => "#invalid_path",
@@ -1614,6 +1616,14 @@ pub enum BottomCause {
     /// registry cannot provide it (O68 Q3.B / Q-035 S3, the six dead names).
     /// Append-only tail.
     UnprovidedBuiltin,
+    /// A connection was never established (REAL_02 §3.2.2, D77). Append-only
+    /// tail. Distinct from [`Self::PeerTimeout`] (the peer accepted, then
+    /// went silent) and from [`Self::Conflict`] (an integrity verdict).
+    PeerUnreachable,
+    /// The peer accepted the connection and closed it before answering
+    /// (REAL_02 §3.2.2, D78). Append-only tail. Not a deadline and not a
+    /// connection that never opened.
+    PeerClosed,
 }
 
 impl BottomCause {
@@ -1623,6 +1633,8 @@ impl BottomCause {
             BottomCause::MissingKey => "missing_key",
             BottomCause::FuelExhausted => "fuel_exhausted",
             BottomCause::Timeout => "timeout",
+            BottomCause::PeerUnreachable => "peer_unreachable",
+            BottomCause::PeerClosed => "peer_closed",
             BottomCause::PeerTimeout => "peer_timeout",
             BottomCause::Divergent => "divergent",
             BottomCause::InvalidPath => "invalid_path",
@@ -1681,6 +1693,8 @@ impl BottomCause {
             | BottomCause::NoContext => 2,
             BottomCause::FuelExhausted
             | BottomCause::Timeout
+            | BottomCause::PeerUnreachable
+            | BottomCause::PeerClosed
             | BottomCause::PeerTimeout
             | BottomCause::PeerNotImplemented
             | BottomCause::PeerUnknownStatus
@@ -2558,10 +2572,29 @@ impl Identity {
         Ok(std::path::PathBuf::from(home).join(".oo").join("identity"))
     }
 
+    /// `Ok(true)` when the file is there. Absence is `Ok(false)`.
+    /// Permission and every other host error stay errors: they are not absence.
+    fn file_is_present(path: &std::path::Path) -> anyhow::Result<bool> {
+        match std::fs::metadata(path) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(anyhow::anyhow!(
+                "cannot read {}: {}",
+                path.display(),
+                crate::operator_io_reason(&e)
+            )),
+        }
+    }
+
     /// Load PKCS#8 from `path`. On parse failure the file is left untouched.
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| anyhow::anyhow!("identity file {}: read failed: {}", path.display(), e))?;
+        let bytes = std::fs::read(path).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot read {}: {}",
+                path.display(),
+                crate::operator_io_reason(&e)
+            )
+        })?;
         Self::from_pkcs8(&bytes).map_err(|_| {
             anyhow::anyhow!(
                 "identity file {}: not a valid PKCS#8 Ed25519 key; file left unchanged",
@@ -2647,7 +2680,7 @@ impl Identity {
     /// stays invalid is still refused (D2: never overwritten, never replaced
     /// with a freshly minted key).
     pub fn load_or_mint(path: &std::path::Path) -> anyhow::Result<Self> {
-        if path.exists() {
+        if Self::file_is_present(path)? {
             return Self::load_after_race(path);
         }
         let id = Self::new_random();
@@ -2655,9 +2688,9 @@ impl Identity {
             Ok(()) => Ok(id),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Self::load_after_race(path),
             Err(e) => Err(anyhow::anyhow!(
-                "identity file {}: could not be created: {}",
+                "cannot write {}: {}",
                 path.display(),
-                e
+                crate::operator_io_reason(&e)
             )),
         }
     }
@@ -2668,7 +2701,7 @@ impl Identity {
     /// [`Self::load_or_mint`]. Still unreadable after that wait → `Err`
     /// (not `None`): a file that exists is not "no key".
     pub fn load_if_present(path: &std::path::Path) -> anyhow::Result<Option<Self>> {
-        if !path.exists() {
+        if !Self::file_is_present(path)? {
             return Ok(None);
         }
         Self::load_after_race(path).map(Some)
@@ -3281,6 +3314,15 @@ impl Value {
             // Bare atom (SYNTAX_02). The fibre rides the annotation layer,
             // same spelling as `%effect` (D65 / O85).
             Value::Bottom(d) => {
+                // A fetch that could not read this node's own key is a local
+                // fact. There is no peer tag for it (D77/D78 are about the
+                // other end). The sentence is the message.
+                if d.path.as_deref() == Some("node identity") {
+                    return format!(
+                        "_|_  ;; {}",
+                        d.message.as_deref().unwrap_or("cannot read node identity")
+                    );
+                }
                 let mut s = format!(
                     "_|_{}",
                     Self::nlang_annotation("cause", &format!("#{}", d.cause.as_tag()))

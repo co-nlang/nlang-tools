@@ -15,6 +15,13 @@ pub fn operator_io_reason(err: &io::Error) -> &'static str {
         IsADirectory => "is a directory",
         InvalidData | InvalidInput => "not valid text",
         AlreadyExists => "already exists",
+        AddrInUse => "address already in use",
+        AddrNotAvailable => "address not available",
+        ConnectionRefused | NotConnected => "connection refused",
+        ConnectionReset | ConnectionAborted => "connection reset",
+        BrokenPipe => "broken pipe",
+        TimedOut => "timed out",
+        UnexpectedEof => "ended early",
         _ => "unreadable",
     }
 }
@@ -34,6 +41,9 @@ mod tests {
             ErrorKind::InvalidInput,
             ErrorKind::AlreadyExists,
             ErrorKind::BrokenPipe,
+            ErrorKind::AddrInUse,
+            ErrorKind::ConnectionRefused,
+            ErrorKind::TimedOut,
             ErrorKind::Other,
         ];
         for kind in kinds {

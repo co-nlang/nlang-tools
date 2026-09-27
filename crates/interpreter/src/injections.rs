@@ -34,10 +34,13 @@ fn consumed_at(at: &str) -> anyhow::Error {
 fn refuse_io(err: std::io::Error, at: &str) -> anyhow::Error {
     if err.kind() == ErrorKind::NotFound {
         consumed_at(at)
-    } else if at.is_empty() {
-        anyhow::anyhow!("working set unreadable")
     } else {
-        anyhow::anyhow!("injection {at}: unreadable")
+        let why = crate::operator_io_reason(&err);
+        if at.is_empty() {
+            anyhow::anyhow!("cannot read working set: {why}")
+        } else {
+            anyhow::anyhow!("cannot read injection {at}: {why}")
+        }
     }
 }
 
@@ -285,7 +288,13 @@ pub fn write(
         );
     }
     let d = dir(base);
-    fs::create_dir_all(&d)?;
+    fs::create_dir_all(&d).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot write {}: {}",
+            d.display(),
+            crate::operator_io_reason(&e)
+        )
+    })?;
     for _ in 0..8 {
         let id = mint_id()?;
         let dest = d.join(&id);

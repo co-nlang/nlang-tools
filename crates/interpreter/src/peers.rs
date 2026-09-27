@@ -15,6 +15,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use anyhow::Result;
 
 pub const PEERS_DIR: &str = "peers";
 pub const PEERS_FILE: &str = "directory";
@@ -391,13 +392,15 @@ pub fn load(
 }
 
 /// Append one accepted advert. May compact. Returns log lines for the serve console.
+/// A failed open or a failed line is an error: the caller must not claim the
+/// advert was recorded.
 pub fn append(
     base_dir: &Path,
     owner_node_id: &str,
     advert: &PeerAdvert,
     live: &HashMap<String, PeerAdvert>,
     state: &mut PeerDirectoryState,
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let path = directory_path(base_dir);
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -415,19 +418,26 @@ pub fn append(
                 // Header failure must not be followed by a successful data line
                 // (a file with records but no owner header).
                 if writeln!(f, "{h}").is_err() {
-                    return logs;
+                    anyhow::bail!("cannot write {}: unreadable", path.display());
                 }
             }
-            if writeln!(f, "{line}").is_ok() {
-                let _ = f.flush();
-                state.file_lines += 1;
-                let live_n = live.len();
-                logs.push(format!(
-                    "OODP Peers: append {line_bytes} bytes ({live_n} live)"
-                ));
+            if writeln!(f, "{line}").is_err() {
+                anyhow::bail!("cannot write {}: unreadable", path.display());
             }
+            let _ = f.flush();
+            state.file_lines += 1;
+            let live_n = live.len();
+            logs.push(format!(
+                "OODP Peers: append {line_bytes} bytes ({live_n} live)"
+            ));
         }
-        Err(_) => return logs,
+        Err(e) => {
+            anyhow::bail!(
+                "cannot write {}: {}",
+                path.display(),
+                crate::operator_io_reason(&e)
+            );
+        }
     }
 
     // Compaction gate: data lines > 2 × live unique records.
@@ -439,7 +449,7 @@ pub fn append(
             None => logs.push("OODP Peers: compact failed".into()),
         }
     }
-    logs
+    Ok(logs)
 }
 
 /// Rewrite the file with only the live set (total admission order).

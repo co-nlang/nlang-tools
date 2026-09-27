@@ -716,7 +716,6 @@ pub fn mint_affiliation_claim(
     node_id: &str,
     expires: i64,
 ) -> Result<AffiliationClaim, String> {
-    use ring::signature::KeyPair;
     if expires <= now_secs() {
         return Err("expires must be in the future".into());
     }
@@ -727,7 +726,7 @@ pub fn mint_affiliation_claim(
     }
     let payload = affiliation_payload(node_id, expires);
     let key_pair = signature::Ed25519KeyPair::from_pkcs8(&operator.private_key)
-        .map_err(|e| format!("operator key: {e:?}"))?;
+        .map_err(|_| "operator key is not a valid PKCS#8 Ed25519 key".to_string())?;
     let sig = hex::encode(key_pair.sign(payload.as_bytes()).as_ref());
     Ok(AffiliationClaim {
         operator_key: operator.public_key_hex(),
@@ -944,7 +943,7 @@ fn serve_advertise(
     // Direct advertise → arrival hops = 0 (REAL_02 §3.2).
     let addr = format!("{peer_host}:{listen_port}");
     let n_services = services.len();
-    let routing_logs = engine.record_peer_advert(PeerAdvert {
+    let routing_logs = match engine.record_peer_advert(PeerAdvert {
         node_id: node_id.clone(),
         public_key_hex,
         services,
@@ -962,7 +961,12 @@ fn serve_advertise(
         admission_seq: 0, // assigned in record_peer_advert
         received_at_unparseable: false,
         admission_seq_unparseable: false,
-    });
+    }) {
+        Ok(logs) => logs,
+        Err(e) => {
+            return rejected(source_id, "cannot_record", from, &e.to_string());
+        }
+    };
 
     let body = encode_response(OodpStatus::Success, None, source_id, 0);
     let mut log = format!("OODP Advert: {node_id} addr={addr} services={n_services} ttl={ttl}");
@@ -1396,40 +1400,53 @@ fn verify_relayed_entry(
     })
 }
 
+/// A dial that never completes is `#peer_unreachable` (D77). A deadline on
+/// a dial that did start waiting is `#peer_timeout`. Neither is `#conflict`.
+fn dial_cause(err: &std::io::Error) -> BottomCause {
+    match err.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => BottomCause::PeerTimeout,
+        _ => BottomCause::PeerUnreachable,
+    }
+}
+
+/// The TCP session exists. A deadline is `#peer_timeout`. The peer ending
+/// the session before an answer is `#peer_closed` (D78), whether the read
+/// is a reset or a clean close. That is not "never connected".
+pub fn session_cause(err: &std::io::Error) -> BottomCause {
+    match err.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => BottomCause::PeerTimeout,
+        _ => BottomCause::PeerClosed,
+    }
+}
+
 /// Client: send `#find_node` and process the reply (same peer ladder as discover).
 pub fn remote_find_node_oodp(
     oo: &Ouroboros,
     addr: &str,
     target_hex: &str,
 ) -> Result<DiscoverProcessResult, BottomCause> {
-    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
+    let sock_addr = addr.parse().map_err(|_| BottomCause::PeerUnreachable)?;
     let mut stream =
-        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            }
-        })?;
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| dial_cause(&e))?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| session_cause(&e))?;
     stream
         .set_write_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| session_cause(&e))?;
 
     let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
     let req = format!("{{{{ %op: #find_node, %from: \"{from}\", %target: \"{target_hex}\" }}}}\n");
     stream
         .write_all(req.as_bytes())
-        .map_err(|_| BottomCause::Conflict)?;
-    stream.flush().map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| session_cause(&e))?;
+    stream.flush().map_err(|e| session_cause(&e))?;
 
     // 64 KiB client bound with #oversize naming (same as discover).
     let mut buffer = Vec::new();
     let mut limited = (&mut stream).take(MAX_DISCOVER_RESPONSE_BYTES as u64 + 1);
     match limited.read_to_end(&mut buffer) {
-        Ok(0) => return Err(BottomCause::Conflict),
+        Ok(0) => return Err(BottomCause::PeerClosed),
         Ok(n) if n > MAX_DISCOVER_RESPONSE_BYTES => {
             let mut r = DiscoverProcessResult {
                 status: "oversize".into(),
@@ -1439,15 +1456,7 @@ pub fn remote_find_node_oodp(
             return Ok(r);
         }
         Ok(_) => {}
-        Err(e) => {
-            let timed = e.kind() == std::io::ErrorKind::TimedOut
-                || e.kind() == std::io::ErrorKind::WouldBlock;
-            return Err(if timed {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            });
-        }
+        Err(e) => return Err(session_cause(&e)),
     }
     let text = String::from_utf8_lossy(&buffer);
     // Old peers answer unknown ops with #conflict — surface as status, not crash.
@@ -1460,28 +1469,22 @@ pub fn remote_discover_oodp(
     addr: &str,
     target: &str,
 ) -> Result<DiscoverProcessResult, BottomCause> {
-    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
+    let sock_addr = addr.parse().map_err(|_| BottomCause::PeerUnreachable)?;
     let mut stream =
-        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            }
-        })?;
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| dial_cause(&e))?;
     stream
         .set_read_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| session_cause(&e))?;
     stream
         .set_write_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| session_cause(&e))?;
 
     let from = oo.node_id().map(|n| n.to_string()).unwrap_or_default();
     let req = format!("{{{{ %op: #discover, %from: \"{from}\", %target: \"{target}\" }}}}\n");
     stream
         .write_all(req.as_bytes())
-        .map_err(|_| BottomCause::Conflict)?;
-    stream.flush().map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| session_cause(&e))?;
+    stream.flush().map_err(|e| session_cause(&e))?;
 
     // ACCEPTOR REPAIR (discover_index). §3.6's budget was delivered on the
     // responder — correctly, 8 peers and 64 KiB — but a budget only the honest
@@ -1503,7 +1506,7 @@ pub fn remote_discover_oodp(
         .take(MAX_DISCOVER_RESPONSE_BYTES as u64 + 1)
         .read_to_end(&mut buffer)
     {
-        Ok(0) => return Err(BottomCause::Conflict),
+        Ok(0) => return Err(BottomCause::PeerClosed),
         Ok(n) if n > MAX_DISCOVER_RESPONSE_BYTES => {
             let mut r = DiscoverProcessResult {
                 status: "oversize".into(),
@@ -1515,15 +1518,7 @@ pub fn remote_discover_oodp(
             return Ok(r);
         }
         Ok(_) => {}
-        Err(e) => {
-            let timed = e.kind() == std::io::ErrorKind::TimedOut
-                || e.kind() == std::io::ErrorKind::WouldBlock;
-            return Err(if timed {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            });
-        }
+        Err(e) => return Err(session_cause(&e)),
     }
     let text = String::from_utf8_lossy(&buffer);
     Ok(process_discover_reply(oo, &text))
@@ -1591,7 +1586,7 @@ pub fn signed_advert_nlang(
     let body_caid = identify_caid_src(engine, &body_src)?;
     let payload = format!("{ADVERT_DOMAIN}{body_caid}");
     let key_pair = signature::Ed25519KeyPair::from_pkcs8(&identity.private_key)
-        .map_err(|e| format!("node key: {e:?}"))?;
+        .map_err(|_| "node key is not a valid PKCS#8 Ed25519 key".to_string())?;
     let sig = hex::encode(key_pair.sign(payload.as_bytes()).as_ref());
     let ad = format!(
         "{{{{ node_id: \"{node_id}\", public_key: \"{pk}\", services: [{services_n}], \
@@ -1608,61 +1603,57 @@ pub fn signed_advert_nlang(
 /// - `Ok(val)` — `#success` and address matches
 /// - `Err(MissingKey)` — peer `#not_found` (absence, not conflict)
 /// - `Err(CaidMismatch)` — peer `#conflict`, bad envelope, or address fail
-/// - `Err(Timeout)` — read/connect deadline (distinct from all three)
-/// - `Err(Conflict)` — connection refused / other transport failure
+/// - `Err(Peer(PeerTimeout))` — the deadline fired
+/// - `Err(Peer(PeerClosed))` — the peer accepted and closed before answering (D78)
+/// - `Err(Peer(PeerUnreachable))` — the connection was never established (D77)
+/// - `Err(Local(_))` — this node's own key could not be read; not a peer
+pub enum FetchFail {
+    Peer(BottomCause),
+    Local(String),
+}
+
+impl From<BottomCause> for FetchFail {
+    fn from(cause: BottomCause) -> Self {
+        FetchFail::Peer(cause)
+    }
+}
+
 pub fn remote_fetch_oodp(
     oo: &Ouroboros,
     addr: &str,
     hash: &ContentHash,
-) -> Result<Value, BottomCause> {
-    let sock_addr = addr.parse().map_err(|_| BottomCause::Conflict)?;
-    let mut stream =
-        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            }
-        })?;
-    stream
-        .set_read_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
-    stream
-        .set_write_timeout(Some(OODP_READ_TIMEOUT))
-        .map_err(|_| BottomCause::Conflict)?;
-
-    // Mint/load node identity on first network use (Q2). `%from` is always
-    // present rather than sometimes empty. It is a claim on the wire — peers
-    // must not trust it (and we never trust theirs).
+) -> Result<Value, FetchFail> {
+    // Own key first. A failure here never opens a socket and is not a peer.
     let from = match oo.node_id() {
         Ok(nid) => nid.to_string(),
-        Err(_) => return Err(BottomCause::Conflict),
+        Err(e) => return Err(FetchFail::Local(e.to_string())),
     };
+    let sock_addr = addr.parse().map_err(|_| BottomCause::PeerUnreachable)?;
+    let mut stream =
+        TcpStream::connect_timeout(&sock_addr, Duration::from_secs(5)).map_err(|e| dial_cause(&e))?;
+    stream
+        .set_read_timeout(Some(OODP_READ_TIMEOUT))
+        .map_err(|e| session_cause(&e))?;
+    stream
+        .set_write_timeout(Some(OODP_READ_TIMEOUT))
+        .map_err(|e| session_cause(&e))?;
     let req = format!(
         "{{{{ %op: #fetch, %hash: \"{}\", %from: \"{}\" }}}}\n",
         hash, from
     );
     stream
         .write_all(req.as_bytes())
-        .map_err(|_| BottomCause::Conflict)?;
-    stream.flush().map_err(|_| BottomCause::Conflict)?;
+        .map_err(|e| session_cause(&e))?;
+    stream.flush().map_err(|e| session_cause(&e))?;
 
     let mut buffer = Vec::new();
     match stream.read_to_end(&mut buffer) {
         Ok(0) => {
-            // Clean close with no body — treat as transport absence, not timeout.
-            return Err(BottomCause::Conflict);
+            // Accepted, then a clean close with no bytes. No deadline fired.
+            return Err(FetchFail::Peer(BottomCause::PeerClosed));
         }
         Ok(_) => {}
-        Err(e) => {
-            let timed = e.kind() == std::io::ErrorKind::TimedOut
-                || e.kind() == std::io::ErrorKind::WouldBlock;
-            return Err(if timed {
-                BottomCause::PeerTimeout
-            } else {
-                BottomCause::Conflict
-            });
-        }
+        Err(e) => return Err(FetchFail::Peer(session_cause(&e))),
     }
 
     let source = format!("tcp://{addr}");
@@ -1672,13 +1663,13 @@ pub fn remote_fetch_oodp(
         Ok(v) => v,
         Err(_) => {
             // Legacy bare-value reply or garbage — try as Value and verify.
-            return legacy_or_fail(oo, hash, &buffer, &source);
+            return legacy_or_fail(oo, hash, &buffer, &source).map_err(FetchFail::Peer);
         }
     };
 
     let obj = match envelope.as_object() {
         Some(o) if o.contains_key("%status") || o.contains_key("status") => o,
-        _ => return legacy_or_fail(oo, hash, &buffer, &source),
+        _ => return legacy_or_fail(oo, hash, &buffer, &source).map_err(FetchFail::Peer),
     };
 
     let Some(status) = obj
@@ -1686,7 +1677,7 @@ pub fn remote_fetch_oodp(
         .or_else(|| obj.get("status"))
         .and_then(|v| v.as_str())
     else {
-        return Err(BottomCause::PeerUnknownStatus);
+        return Err(FetchFail::Peer(BottomCause::PeerUnknownStatus));
     };
     let status_tag = status.trim().trim_start_matches('#');
     let reason_tag = obj
@@ -1698,19 +1689,19 @@ pub fn remote_fetch_oodp(
     // wire_says_why §3.2 — integrity incidents only for substantiated
     // #caid_mismatch. Protocol-level answers are peer causes, not corruption.
     match status_tag {
-        "not_found" => return Err(BottomCause::MissingKey),
-        "not_implemented" => return Err(BottomCause::PeerNotImplemented),
+        "not_found" => return Err(FetchFail::Peer(BottomCause::MissingKey)),
+        "not_implemented" => return Err(FetchFail::Peer(BottomCause::PeerNotImplemented)),
         "conflict" => {
             if reason_tag.as_deref() == Some("caid_mismatch") {
                 oo.record_integrity(hash, &source, IntegrityKind::Mismatch);
-                return Err(BottomCause::CaidMismatch);
+                return Err(FetchFail::Peer(BottomCause::CaidMismatch));
             }
             // Other reasons, or no reason (older peer): refusal, not accusation.
-            return Err(BottomCause::PeerRefused);
+            return Err(FetchFail::Peer(BottomCause::PeerRefused));
         }
-        "rejected" => return Err(BottomCause::PeerRefused),
+        "rejected" => return Err(FetchFail::Peer(BottomCause::PeerRefused)),
         "success" => {}
-        _ => return Err(BottomCause::PeerUnknownStatus),
+        _ => return Err(FetchFail::Peer(BottomCause::PeerUnknownStatus)),
     }
 
     let result_j = obj
@@ -1718,12 +1709,12 @@ pub fn remote_fetch_oodp(
         .or_else(|| obj.get("result"))
         .ok_or_else(|| {
             oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
-            BottomCause::CaidMismatch
+            FetchFail::Peer(BottomCause::CaidMismatch)
         })?;
     // `#success` with no result / null
     if result_j.is_null() {
         oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
-        return Err(BottomCause::CaidMismatch);
+        return Err(FetchFail::Peer(BottomCause::CaidMismatch));
     }
 
     let val: Value = if let Some(s) = result_j.as_str() {
@@ -1731,7 +1722,7 @@ pub fn remote_fetch_oodp(
             Ok(v) => v,
             Err(_) => {
                 oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
-                return Err(BottomCause::CaidMismatch);
+                return Err(FetchFail::Peer(BottomCause::CaidMismatch));
             }
         }
     } else {
@@ -1739,7 +1730,7 @@ pub fn remote_fetch_oodp(
             Ok(v) => v,
             Err(_) => {
                 oo.record_integrity(hash, &source, IntegrityKind::Undecodable);
-                return Err(BottomCause::CaidMismatch);
+                return Err(FetchFail::Peer(BottomCause::CaidMismatch));
             }
         }
     };
@@ -1747,7 +1738,7 @@ pub fn remote_fetch_oodp(
     let recomputed = val.content_hash();
     if !value_address_matches(hash, &recomputed) {
         oo.record_integrity(hash, &source, IntegrityKind::Mismatch);
-        return Err(BottomCause::CaidMismatch);
+        return Err(FetchFail::Peer(BottomCause::CaidMismatch));
     }
     Ok(val)
 }

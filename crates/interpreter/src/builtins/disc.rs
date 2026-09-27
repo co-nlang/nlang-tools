@@ -12,6 +12,23 @@ fn base64_decode_sketch(s: &str) -> Vec<u8> {
     STANDARD_NO_PAD.decode(s).unwrap_or_default()
 }
 
+/// `Ok` is the fetched value, or a bottom whose text is a local failure
+/// (this node's key). `Err` is a peer cause.
+fn open_fetch(oo: &Ouroboros, addr: &str, hash: &ContentHash) -> Result<Value, BottomCause> {
+    match oo.remote_fetch(addr, hash) {
+        Ok(v) => Ok(v),
+        Err(crate::oodp::FetchFail::Peer(c)) => Err(c),
+        Err(crate::oodp::FetchFail::Local(msg)) => Ok(Value::Bottom(Box::new(BottomDetail {
+            // Not a peer cause. `to_nlang` prints `message` and not this tag
+            // when `path` is `node identity` — there is no ruled local tag.
+            cause: BottomCause::NoContext,
+            path: Some("node identity".to_string()),
+            message: Some(msg),
+            ..Default::default()
+        }))),
+    }
+}
+
 fn bottom_not_found() -> Value {
     Value::Bottom(Box::new(BottomDetail {
         cause: BottomCause::MissingKey,
@@ -241,7 +258,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 // four-way discriminator (success / not_found /
                                 // conflict / timeout) rather than collapsing to
                                 // #conflict (REAL_02 §3.2 / REAL_03 §6.6 條款三).
-                                match oo.remote_fetch(&addr, &hash) {
+                                match open_fetch(oo, &addr, &hash) {
                                     Ok(val) => return observe(val),
                                     Err(e) => return e.into(),
                                 }
@@ -290,7 +307,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 }
                             }
                             Peer::Remote(addr) => {
-                                match oo.remote_fetch(&addr, &hash) {
+                                match open_fetch(oo, &addr, &hash) {
                                     Ok(val) => {
                                         // First verified remote answer is definitive
                                         // (unordered peer set; degree-0 identity is unique).
@@ -304,7 +321,9 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                         e @ (BottomCause::PeerNotImplemented
                                         | BottomCause::PeerUnknownStatus
                                         | BottomCause::PeerRefused
-                                        | BottomCause::PeerTimeout),
+                                        | BottomCause::PeerTimeout
+                                        | BottomCause::PeerUnreachable
+                                        | BottomCause::PeerClosed),
                                     ) => {
                                         peer_protocol = Some(e);
                                     }
@@ -323,7 +342,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             vec![]
                         };
                     for (node_id, addr) in auto_copy {
-                        match oo.remote_fetch(&addr, &hash) {
+                        match open_fetch(oo, &addr, &hash) {
                             Ok(val) => return observe(val),
                             Err(BottomCause::CaidMismatch) => saw_mismatch = true,
                             Err(BottomCause::MissingKey) => saw_peer_not_found = true,
@@ -331,7 +350,9 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 e @ (BottomCause::PeerNotImplemented
                                 | BottomCause::PeerUnknownStatus
                                 | BottomCause::PeerRefused
-                                | BottomCause::PeerTimeout),
+                                | BottomCause::PeerTimeout
+                                | BottomCause::PeerUnreachable
+                                | BottomCause::PeerClosed),
                             ) => {
                                 peer_protocol = Some(e);
                             }
@@ -610,7 +631,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                     }
                                 }
                             },
-                            crate::Peer::Remote(addr) => match oo.remote_fetch(&addr, &hash) {
+                            crate::Peer::Remote(addr) => match open_fetch(oo, &addr, &hash) {
                                 Ok(val) => return val.solidify_effects(),
                                 Err(BottomCause::CaidMismatch) => saw_mismatch = true,
                                 Err(_) => {}
@@ -623,7 +644,7 @@ pub fn register_disc_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         .map(|a| a.values().map(|ar| ar.addr.clone()).collect())
                         .unwrap_or_default();
                     for addr in auto_copy {
-                        match oo.remote_fetch(&addr, &hash) {
+                        match open_fetch(oo, &addr, &hash) {
                             Ok(val) => return val.solidify_effects(),
                             Err(BottomCause::CaidMismatch) => saw_mismatch = true,
                             Err(_) => {}
