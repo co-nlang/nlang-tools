@@ -134,3 +134,13 @@ conformance：162 vectors，162 pass，0 fail。
 ### 8.7 你認為需要改規格之處
 
 `SPEC_08` 需要寫明：回答要靠「現在這個點」的指令，在 `HEAD` 缺席而 ○ 有 `commit:` 註記時具名拒絕；`rollback <commit> --grant rollback` 仍可用來選點。§6.2.1 第 2 條（`parent` → 祖先邊）維持驗收方收尾。
+
+---
+
+## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `9bcd541`：全樹 ×3 **246 target／2351 passed／0 failed，`^error` 0，exit 0**，三輪相同，無失敗測試名；本弧探針 10／10，無 `VOID READING`。探針檔、分隔線以上未動。
+**context 遺失 × 18 指令**（兩筆提交後移走 `HEAD`，逐格前後比對 `.oo/` 全部檔案的雜湊）：`status`／`log`／`evolve`／`commit`／`gc`／`refine`／`squash` 具名拒絕、**儲存逐位元組不變**、不長出 `HEAD`；
+`run`／`eval`／`test`／`inspect`／`identity`／`migrate`／`fmt`／`lint`／`node id`／`node peers` 照答；`rollback` 裝回 `HEAD` 且只寫 `HEAD`——與交付 Q3 的分類逐格一致。
+Q-060 帶狀態比對的注入矩陣 340 格：零外洩、零遺失，離開碼與 Q-060 R-1 **逐格相同**（無回退）。身分：`31745ef0…`／`f4f32e7b…`；known-answer 3／4；conformance 162／162。
+交付把射程延伸到 `refine`／`squash`／`repl` 的理由成立（`refine` 會寫一筆提交並設 `HEAD`，點丟了就開出新鏈）。Q2 自陳的盲區已入 Inbox 並寫進 `SPEC_08` §6.2.1。
