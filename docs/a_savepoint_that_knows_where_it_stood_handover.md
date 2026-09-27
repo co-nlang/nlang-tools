@@ -204,15 +204,32 @@ r9：交付 `5f69f3c` ×3 紅（不鑄）；基線 `127fc9d`（v0.63.0）×3 紅
 
 ### 12.1 射程逐項對照
 
+判準 (a) 的「之前」是這次注入讀到的工作集：現在的 `HEAD` 的根 ⊓ 注入前的 staged。之後是同一個根 ⊓ 注入後的 staged。T 的 `point:` 不參加這個比較。C1＝`{a}`、C2＝`{a,b}`、rollback 回 C1、再 `evolve b`：位置從 `{a}` 到 `{a,b}`，鑄一顆，`point:` 是 C1 不是 C2（r9）。r1–r8、g1–g5 維持。兩個以上的 tip 仍鑄。
+
 ### 12.2 順手改動（逐項指名）
+
+無。`cargo fmt` 未跑。探針檔與夾具未改。
+
+改動檔：`crates/interpreter/src/universe.rs`、`savepoint.rs`、`crates/oo/src/main.rs`、本工單 §12。
 
 ### 12.3 工單哪裡是錯的
 
+無。
+
 ### 12.4 工單指名要你回答的問題
 
-*   **R2-Q1** 改成「注入前的實際位置」之後，(c) 還需要獨立存在嗎（它比的是 T 的提議本文）？照說，不要拿掉 g2。
-*   **R2-Q2** 並行注入時，「注入前的工作集」是這次注入讀到的那一份，還是別的？說明它與 D51（兩個以上的 tip 仍鑄）怎麼並存。
+R2-Q1. (c) 仍獨立存在。它比的是唯一前驅 T 記下的提議本文，不是這次讀到的工作集。rollback 之後 T 可以是提交 ○，本文是 `{}`，和工作集不是同一件事。工作集沒變的循序重複，(a) 也會不鑄；g2 留著，沒有拿掉。本文相同的那一條仍先做，不必先打開根。
+
+R2-Q2. 「注入前的工作集」是這次 `evolve` 在套用自己的欄位之前載入的那一份 staged。別的行程同時寫下的注入不在這一份裡。兩邊都鑄出來之後，下一筆看到兩個 tip；D51 在 tip 不是恰好一個時仍鑄，(a) 的「位置相同就不鑄」只在恰好一個 tip 時用。
 
 ### 12.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。14 支皆綠（g1–g5、r1–r9）。
+
 ### 12.6 數字
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 247 行，2365 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。

@@ -576,6 +576,8 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
     }
     let mut universe = load_universe(&engine, &cur)?;
     universe.pin_mode = pin;
+    // The working set this command read, before its own fields land.
+    let before = universe.staged.clone();
 
     for file in files {
         let input = oo::read_source_file(&file).map_err(|m| anyhow::anyhow!("{m}"))?;
@@ -594,7 +596,7 @@ fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Re
             }
         }
     }
-    universe.save_staged(&engine, &cwd()?)?;
+    universe.save_staged(&engine, &cur, &before)?;
     print_integrity_incidents(&engine);
     Ok(())
 }

@@ -205,17 +205,13 @@ pub fn sole_tip(base: &Path) -> Result<Option<(String, Option<String>)>> {
     Ok(Some((t.combo.clone(), t.point.clone())))
 }
 
-/// Proposal combo under a savepoint's frame lines.
-pub fn decode_proposal(combo_text: &str) -> Result<ComboVal> {
-    decode_staged(&format!("#nlang/store savepoint\n{combo_text}"))
-}
-
 /// Append a savepoint of `combo` unless it adds nothing.
 ///
 /// (c) / D51: one tip T whose recorded proposal text equals this one.
-/// Two or more tips still mint. (a) / D80: `positions_equal` — the
-/// position before this injection (T's context) and the position after
-/// it have the same CAID.
+/// Two or more tips still mint. (a) / D80 ②: `positions_equal` — the
+/// current HEAD's root ⊓ the working set before this injection, and the
+/// same root ⊓ the working set after it, have the same CAID. T's `point:`
+/// is not that comparison.
 pub fn record(base: &Path, combo: &ComboVal, positions_equal: bool) -> Result<Option<String>> {
     let nodes = load_circles(base)?;
     let mut tips = tips_of(&nodes);

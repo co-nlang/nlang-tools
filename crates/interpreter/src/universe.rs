@@ -910,23 +910,6 @@ impl Universe {
         }
     }
 
-    /// CAID of (point root ⊓ proposal). The point root is the commit named
-    /// by `point`, or the HEAD that exists now when the circle recorded none.
-    fn position_caid(
-        engine: &Ouroboros,
-        base_dir: &std::path::Path,
-        point: Option<&str>,
-        proposal: &ComboVal,
-    ) -> Result<ContentHash> {
-        let root = match point {
-            Some(digest) => Self::root_of_digest(engine, digest)?,
-            None => Self::root_now(engine, base_dir)?,
-        };
-        Ok(engine
-            .unify(Value::Combo(root), Value::Combo(proposal.clone()))
-            .content_hash())
-    }
-
     /// HEAD's commit root. No HEAD is the empty combo (there is no point).
     fn root_now(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<ComboVal> {
         match engine.store.get_head(base_dir)? {
@@ -938,32 +921,27 @@ impl Universe {
         }
     }
 
-    fn root_of_digest(engine: &Ouroboros, digest_hex: &str) -> Result<ComboVal> {
-        let raw = hex::decode(digest_hex)
-            .map_err(|_| anyhow::anyhow!("point is not a commit digest"))?;
-        if raw.len() != 32 {
-            anyhow::bail!("point is not a commit digest");
-        }
-        let (_addr, commit) = engine.store.open_commit(&ContentHash::v1(raw))?;
-        engine.store.get_root(&commit.root, &engine.standard_roots)
-    }
-
-    /// Before: the sole tip's point ⊓ its proposal. A tip with no `point:`
-    /// line uses the HEAD that exists now (the point was not recorded).
-    /// After: that same current HEAD ⊓ this proposal. A recorded point on
-    /// the tip stays that commit even when HEAD has since moved.
+    /// D80 ②: both sides use the HEAD that exists now. `before` is the
+    /// working set this injection read; `after` is the working set it
+    /// leaves. T's recorded point is not an input. Two or more tips, or
+    /// none, are not this comparison — the caller mints.
     fn injection_positions_equal(
         engine: &Ouroboros,
         base_dir: &std::path::Path,
-        proposal: &ComboVal,
+        before: &ComboVal,
+        after: &ComboVal,
     ) -> Result<bool> {
-        let Some((combo, point)) = crate::savepoint::sole_tip(base_dir)? else {
+        if crate::savepoint::sole_tip(base_dir)?.is_none() {
             return Ok(false);
-        };
-        let previous = crate::savepoint::decode_proposal(&combo)?;
-        let before = Self::position_caid(engine, base_dir, point.as_deref(), &previous)?;
-        let after = Self::position_caid(engine, base_dir, None, proposal)?;
-        Ok(before == after)
+        }
+        let root = Self::root_now(engine, base_dir)?;
+        let before_at = engine
+            .unify(Value::Combo(root.clone()), Value::Combo(before.clone()))
+            .content_hash();
+        let after_at = engine
+            .unify(Value::Combo(root), Value::Combo(after.clone()))
+            .content_hash();
+        Ok(before_at == after_at)
     }
 
     fn refuse_lost_context(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
@@ -978,7 +956,12 @@ impl Universe {
         Ok(())
     }
 
-    pub fn save_staged(&mut self, engine: &Ouroboros, base_dir: &std::path::Path) -> Result<()> {
+    pub fn save_staged(
+        &mut self,
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        before: &ComboVal,
+    ) -> Result<()> {
         // Before blur partials or the injection. A lost point is not a
         // place to stage.
         Self::refuse_lost_context(engine, base_dir)?;
@@ -1029,8 +1012,10 @@ impl Universe {
         // remove that member: a staged injection with no ○ is the split
         // SPEC_10 §3.1 forbids, and the operator must not be told the
         // evolve landed.
-        // (a): position before this injection against the position after it.
-        let positions_equal = Self::injection_positions_equal(engine, base_dir, &self.staged)?;
+        // (a): HEAD's root ⊓ the working set this injection read, against
+        // HEAD's root ⊓ the working set it leaves.
+        let positions_equal =
+            Self::injection_positions_equal(engine, base_dir, before, &self.staged)?;
         if let Err(e) = crate::savepoint::record(base_dir, &self.staged, positions_equal) {
             if let Some(id) = written_id.as_deref() {
                 let _ = std::fs::remove_file(crate::injections::dir(base_dir).join(id));
@@ -1302,7 +1287,8 @@ impl Universe {
             self.is_dirty = true;
             self.session_delta = restaged;
             self.session_has_delta = true;
-            self.save_staged(engine, base_dir)?;
+            // Injections were just cleared. The config write reads an empty set.
+            self.save_staged(engine, base_dir, &ComboVal::default())?;
         } else {
             self.staged = ComboVal::default();
             self.is_dirty = false;
