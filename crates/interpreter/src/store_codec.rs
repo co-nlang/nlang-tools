@@ -207,6 +207,7 @@ pub fn encode_savepoint(
     parents: &[String],
     commit: Option<&str>,
     ancestor: Option<&str>,
+    point: Option<&str>,
 ) -> String {
     let mut frame = encode_savepoint_parents_line(parents);
     if let Some(d) = commit {
@@ -218,6 +219,13 @@ pub fn encode_savepoint(
         frame.push('\n');
         frame.push_str("ancestor: ");
         frame.push_str(id);
+    }
+    // D80. Absent line means there was no point. Not a guess, and not
+    // written on a declaration older than layout=8.
+    if let Some(p) = point {
+        frame.push('\n');
+        frame.push_str("point: ");
+        frame.push_str(p);
     }
     format!("{FRAME} savepoint\n{frame}\n{}", write_combo(combo, 0))
 }
@@ -292,6 +300,31 @@ pub fn parse_savepoint_ancestor(bytes: &str) -> Option<String> {
     None
 }
 
+/// 64-hex digest on the `point:` frame line (D80). `None` if the line is
+/// absent: a layout≤7 circle, or a layout=8 circle written before any commit.
+/// Absence is not a point to invent.
+pub fn parse_savepoint_point(bytes: &str) -> Option<String> {
+    let rest = bytes.trim_start();
+    let after = rest
+        .strip_prefix(FRAME)
+        .and_then(|s| s.strip_prefix(" savepoint"))
+        .unwrap_or(rest);
+    for line in after.lines() {
+        let l = line.trim_start();
+        if l.starts_with('{') {
+            return None;
+        }
+        if let Some(rest) = l.strip_prefix("point:") {
+            let s = rest.trim();
+            if s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+                return Some(s.to_string());
+            }
+            return None;
+        }
+    }
+    None
+}
+
 /// Combo text of a savepoint (after the frame, `parents:`, optional
 /// `commit:`, and optional `ancestor:`).
 pub fn savepoint_combo_text(bytes: &str) -> &str {
@@ -316,6 +349,7 @@ fn skip_savepoint_frame_lines(body: &str) -> &str {
         if line.starts_with("parents:")
             || line.starts_with("commit:")
             || line.starts_with("ancestor:")
+            || line.starts_with("point:")
         {
             body = body[nl + 1..].trim_start_matches(['\r', '\n', ' ', '\t']);
             continue;

@@ -973,7 +973,12 @@ impl Universe {
         // remove that member: a staged injection with no ○ is the split
         // SPEC_10 §3.1 forbids, and the operator must not be told the
         // evolve landed.
-        if let Err(e) = crate::savepoint::record(base_dir, &self.staged) {
+        // (a): the point's root ⊓ the folded proposal. Same CAID as the root
+        // means the proposal added nothing the point did not already hold.
+        let root_v = Value::Combo(self.root.clone());
+        let met = engine.unify(root_v.clone(), Value::Combo(self.staged.clone()));
+        let position_moved = met.content_hash() != root_v.content_hash();
+        if let Err(e) = crate::savepoint::record(base_dir, &self.staged, position_moved) {
             if let Some(id) = written_id.as_deref() {
                 let _ = std::fs::remove_file(crate::injections::dir(base_dir).join(id));
             }

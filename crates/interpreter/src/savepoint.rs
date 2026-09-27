@@ -11,7 +11,7 @@
 
 use crate::store_codec::{
     decode_staged, encode_savepoint, parse_savepoint_ancestor, parse_savepoint_commit,
-    parse_savepoint_parents, savepoint_combo_text,
+    parse_savepoint_parents, parse_savepoint_point, savepoint_combo_text,
 };
 use crate::value::{ComboVal, ContentHash};
 use anyhow::Result;
@@ -72,6 +72,9 @@ pub struct Circle {
     /// Predecessor commit: 64-hex digest (A3), or a Repair-2 circle
     /// local id. Annotation, not a covering edge.
     pub ancestor: Option<String>,
+    /// Commit this circle stood on (D80). `None` means the line is absent:
+    /// there was no point, or the declaration did not record one.
+    pub point: Option<String>,
 }
 
 fn is_legacy_counter_id(id: &str) -> bool {
@@ -85,7 +88,7 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
     let files = paths(base)?;
     let mut parsed: BTreeMap<
         String,
-        (Option<Vec<String>>, String, Option<String>, Option<String>),
+        (Option<Vec<String>>, String, Option<String>, Option<String>, Option<String>),
     > = BTreeMap::new();
     for p in &files {
         let id = p
@@ -104,17 +107,18 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
         let combo = savepoint_combo_text(&text).to_string();
         let commit = parse_savepoint_commit(&text);
         let ancestor = parse_savepoint_ancestor(&text);
-        parsed.insert(id, (parents, combo, commit, ancestor));
+        let point = parse_savepoint_point(&text);
+        parsed.insert(id, (parents, combo, commit, ancestor, point));
     }
 
     let legacy: Vec<String> = parsed
         .iter()
-        .filter(|(id, (p, _, _, _))| p.is_none() && is_legacy_counter_id(id))
+        .filter(|(id, (p, _, _, _, _))| p.is_none() && is_legacy_counter_id(id))
         .map(|(id, _)| id.clone())
         .collect();
 
     let mut nodes = BTreeMap::new();
-    for (id, (parents, combo, commit_digest, ancestor)) in parsed {
+    for (id, (parents, combo, commit_digest, ancestor, point)) in parsed {
         let parents = match parents {
             Some(p) => p,
             None if is_legacy_counter_id(&id) => {
@@ -134,6 +138,7 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
                 combo,
                 commit_digest,
                 ancestor,
+                point,
             },
         );
     }
@@ -184,17 +189,21 @@ fn write_circle(base: &Path, body: &str) -> Result<String> {
     anyhow::bail!("savepoint id: exhausted unique names")
 }
 
-/// Append a savepoint of `combo` unless D51 says the covering relation
-/// did not change: skip iff `parents` is exactly one tip T and the
-/// candidate combo equals T's combo.
-pub fn record(base: &Path, combo: &ComboVal) -> Result<Option<String>> {
+/// Append a savepoint of `combo` unless it adds nothing.
+///
+/// (c) / D51: one tip T whose recorded proposal equals this one — a
+/// sequential repeat. Two or more tips still mint (a confluence is an
+/// event). (a) / D80: one tip, and `position_moved` is false — the point's
+/// root ⊓ this proposal has the root's CAID, so the lattice did not move
+/// even when T's bytes are the empty commit circle.
+pub fn record(base: &Path, combo: &ComboVal, position_moved: bool) -> Result<Option<String>> {
     let nodes = load_circles(base)?;
     let mut tips = tips_of(&nodes);
     if !nodes.is_empty() && tips.is_empty() {
         anyhow::bail!("savepoint cycle: ids nonempty and tips empty");
     }
     tips.sort();
-    let candidate_combo = encode_savepoint(combo, &[] as &[String], None, None);
+    let candidate_combo = encode_savepoint(combo, &[] as &[String], None, None, None);
     let candidate_combo = savepoint_combo_text(&candidate_combo).to_string();
     if tips.len() == 1 {
         if let Some(t) = nodes.get(&tips[0]) {
@@ -202,9 +211,49 @@ pub fn record(base: &Path, combo: &ComboVal) -> Result<Option<String>> {
                 return Ok(None);
             }
         }
+        if !position_moved {
+            return Ok(None);
+        }
     }
-    let body = encode_savepoint(combo, &tips, None, None);
+    let point = point_to_write(base)?;
+    let body = encode_savepoint(combo, &tips, None, None, point.as_deref());
     Ok(Some(write_circle(base, &body)?))
+}
+
+/// `point:` is the HEAD digest, read now (D55: not derived from the ○ graph).
+/// Older declarations omit the line. No HEAD omits it too: that is no point.
+fn point_to_write(base: &Path) -> Result<Option<String>> {
+    // A scratch with no declaration is not a layout=8 store. Unit-test
+    // refine writes its commit circle there. An absent file is the old
+    // form; an unreadable one still refuses.
+    let format = base.join(".oo").join("format");
+    match format.try_exists() {
+        Ok(false) => return Ok(None),
+        Ok(true) => {}
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "cannot read `.oo/format`: {}",
+                crate::operator_io_reason(&e)
+            ));
+        }
+    }
+    let declaration = crate::storage::read_layout_declaration(base)?;
+    if !crate::storage::layout_records_the_point(&declaration) {
+        return Ok(None);
+    }
+    let head_path = base.join(".oo").join("HEAD");
+    let s = match fs::read_to_string(&head_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "cannot read .oo/HEAD: {}",
+                crate::operator_io_reason(&e)
+            ));
+        }
+    };
+    let hash = ContentHash::parse(s.trim()).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    Ok(Some(hex::encode(hash.digest)))
 }
 
 /// Mint the commit event's own circle (D51/D52/D55). Always mints. Combo
@@ -242,7 +291,16 @@ pub fn record_commit(
         }
     };
     let digest = hex::encode(&commit.digest);
-    let body = encode_savepoint(&ComboVal::default(), &parents, Some(&digest), ancestor);
+    // After set_head, HEAD is this commit. The point is that fact.
+    // `commit:` names the event; `point:` names where the context stands.
+    let point = point_to_write(base)?;
+    let body = encode_savepoint(
+        &ComboVal::default(),
+        &parents,
+        Some(&digest),
+        ancestor,
+        point.as_deref(),
+    );
     Ok(Some(write_circle(base, &body)?))
 }
 

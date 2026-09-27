@@ -72,14 +72,49 @@
 
 ### 8.1 射程逐項對照
 
+I1. `layout=8` 的注入 ○ 與提交 ○ 多一行 `point:`，值是寫下那一刻從 `HEAD` 讀到的 64 位十六進位摘要。沒有 `HEAD` 就不寫這一行。rollback 之後的注入記的是裝回去的那一筆，不是較新的那一筆（r4）。不從 ○ 圖、時間或到達順序推。
+I2. 判準 (a)：點的根 ⊓ 折好的提議，兩邊 CAID 相同就不鑄。已提交且相同的再注入不鑄（r1）。`layout=7` 的倉用同一個判準，而且不寫 `point:`（r2）。
+I3. 位置真的動仍鑄（g1）。唯一前驅、提議本文相同的循序重複不鑄（g2）。兩個以上的 tip 仍鑄（D51）。提交 ○ 仍有 `commit:` 指它所提交的那一筆（g3）。
+I4. 新倉 `layout=8`（r5）。`layout=7` 的倉宣告不動、○ 維持舊形（g4）。`oo migrate --grant migrate` 推進到 `layout=8`，之後的注入記點（r6）。
+I5. 代價句的最新一端是 `v0.63.0`。`layout=7` 起始是 `oo v0.61.0 through v0.63.0`（r6）。`layout=6` 起始是 `v0.59.0` 到 `v0.63.0`，不帶 layout=5 那句。`layout=5` 與更舊的起始仍帶 `layout=5` 那句，範圍到 `v0.63.0`。
+I6. 沒有 `point:` 的舊 ○ 照讀。缺這一行就是沒有點，不補。
+I7. 值位址、提交位址、`encoding=5` 沒動。`gc` 的根仍是 `HEAD` 與祖先邊，○ 不是根。
+
+`layout=7` 仍簽整筆提交。簽提交的門檻沒有跟著 `STORE_LAYOUT_VERSION` 一起變成 8。
+
 ### 8.2 順手改動（逐項指名）
+
+無。`cargo fmt` 未跑。探針檔與 `layout7_repo` 未改。`spec/`、`meta/`、`conformance/` 未改。
+
+改動檔：`crates/interpreter/src/storage.rs`、`store_codec.rs`、`savepoint.rs`、`universe.rs`、`crates/oo/src/main.rs`、本工單 §8。
 
 ### 8.3 工單哪裡是錯的
 
+無。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 點是框線 `point: ` 後面的 64 位十六進位摘要，跟 `parents:`、`commit:`、`ancestor:` 同一段，在 combo 之前。沒有點就不寫這一行。沒有這一行的 ○（`layout≤7` 寫的，或還沒有提交時寫的）讀成沒有點。
+
+Q2. 位置是 `unify(點的根, 提議)` 的 CAID。點的根是 `HEAD` 那筆提交的 `root`；沒有 `HEAD` 時根是空的 combo。提議是工作集折好的 combo，不是來源檔的位元組。和點的根 CAID 相同，就是位置沒動。
+(c) 比的是另一件事：唯一前驅 T 所記的提議本文（框線以下的 combo）與這次的提議本文相同。提交之前再注入一次相同的 `a`，對空根的 meet 仍然不是空根，所以 (a) 會說動了；(c) 才讓它不鑄。提交之後 tip 的本文是 `{}`，(c) 對不上；(a) 看到 meet 等於已提交的根，才不鑄。兩個以上的 tip 仍鑄，不走這兩個跳過。
+
+Q3. 提交 ○ 的點是它提交出來的那一筆。`record_commit` 在 `set_head` 之後讀 `HEAD`，所以 `point:` 與 `commit:` 是同一個摘要。`commit:` 是這顆圈變成的那筆提交（D52）；`point:` 是 context 現在站的地方。提議已經搬進那個點，快照站在新的點上。第一次提交之前沒有 `HEAD`，注入 ○ 不寫 `point:`。
+
+Q4. `layout=7` 的寫入不看 `layout_records_the_point`，所以沒有 `point:` 行，也沒有別的新框線。判準 (a) 只讀 `HEAD` 的根來比 CAID，不寫宣告、不寫點。g4：宣告仍是 `layout=7`，新 ○ 不含那筆 `HEAD` 的摘要。
 
 ### 8.5 探針
 
+本弧探針檔未改、未 rustfmt。夾具未重建。無 `VOID READING`。10 支皆綠（g1–g4、r1–r6）。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 247 行，2361 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_10` §3.1 (a) 需要寫明位置是點的根與提議的 meet，以 CAID 判同；○ 把點和提議分開記，沒有點就不寫那一行。標題與 GLOSSARY 的改寫維持驗收方收尾。

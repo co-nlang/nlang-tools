@@ -1634,8 +1634,8 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
 /// Split-axis, oldest opener (then through v0.43.0, intersected with encoding):
 ///   layout 2: v0.22.0.  layout 3: v0.42.0.  layout 4: v0.43.0.  layout 5: v0.44.0.
 ///   encoding 1..=3: v0.22.0.  encoding 4: v0.26.0.  encoding 5: v0.36.0.
-/// Newest engine that opens any of those and does not open layout 7 is v0.60.0.
-/// layout 6 opens from v0.59.0.
+/// Newest engine that opens any of those and does not open layout 8 is v0.63.0.
+/// layout 6 opens from v0.59.0. layout 7 opens from v0.61.0.
 /// Bare number (the pre-split `.oo/format`), oldest opener:
 ///   1: v0.2.55 (exact `"1"`).  2: v0.20.0 (writes 2, reads 1..=2).
 ///   3: v0.21.0 (writes 3, reads 1..=3).  4: v0.26.0.  5: v0.36.0.
@@ -1649,7 +1649,7 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
              locks out no engine."
         );
     };
-    let newest = "v0.60.0";
+    let newest = "v0.63.0";
     let who = if oldest == newest {
         format!("oo {oldest}")
     } else {
@@ -1685,7 +1685,7 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
 }
 
 /// Oldest tagged engine that opens this declaration. `None` when the
-/// declaration is already layout 6 (only an encoding advance remains, and
+/// declaration is already layout 8 (only an encoding advance remains, and
 /// this engine already reads encoding 1 through 5).
 fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> {
     let layout = declaration
@@ -1698,6 +1698,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
             4 => "v0.43.0",
             5 => "v0.44.0",
             6 => "v0.59.0",
+            7 => "v0.61.0",
             _ => return None,
         };
         let by_encoding = match enc {
@@ -1717,7 +1718,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
     } else {
         return None;
     };
-    if engine_ord(floor) > engine_ord("v0.60.0") {
+    if engine_ord(floor) > engine_ord("v0.63.0") {
         None
     } else {
         Some(floor)
