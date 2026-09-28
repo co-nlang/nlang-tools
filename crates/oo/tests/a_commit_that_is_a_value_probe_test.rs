@@ -350,7 +350,8 @@ fn r6_a_migrated_store_writes_commits_that_are_values() {
     assert_ne!(w.layout(), "layout=5", "migrate did not advance the declaration: {o}");
     // AMENDED 2026-09-26 for Q-059 (D76 ③): migrate targets layout=7, which
     // v0.59.0 and v0.60.0 (both open layout 5) do not open either.
-    assert!(o.contains("v0.44.0") && o.contains("v0.60.0"), "the cost must name v0.44.0 through v0.60.0: {o}");
+    // AMENDED 2026-09-27 for Q-062 (D80): layout=8; v0.61.0-v0.63.0 open layout 5 too.
+    assert!(o.contains("v0.44.0") && o.contains("v0.63.0"), "the cost must name v0.44.0 through v0.63.0: {o}");
     assert_eq!(w.head(), head, "migrate moved HEAD");
     let l = w.ok(&["log"]);
     assert!(l.contains(LEGACY_BASE) && l.contains(LEGACY_REFINE), "legacy history after migrate: {l}");

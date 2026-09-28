@@ -165,19 +165,25 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// `STORE_LAYOUT_MIGRATABLE_FROM` are the previous split-axis form this
 /// engine once wrote: still openable, and the source `oo migrate` advances.
 /// A `layout=N` in neither set is a declaration from an engine we are not
-/// — including every future N (`layout=8`, `layout=99`). The past is a
+/// — including every future N (`layout=9`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
-pub const STORE_LAYOUT_VERSION: u32 = 7;
+pub const STORE_LAYOUT_VERSION: u32 = 8;
 pub const OBJECT_ENCODING_VERSION: u32 = 5;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
+/// First layout whose `refine --sign` signs the whole commit (D76).
+/// Not `STORE_LAYOUT_VERSION`: layout=7 still signs after layout=8 exists.
+const SIGN_COMMIT_LAYOUT: u32 = 7;
+/// First layout whose savepoints record the point they stood on (D80).
+const POINT_LAYOUT: u32 = 8;
 /// Split-axis layouts this engine has written. Not a range: `layout=1`
-/// was never a form (that era was a bare number), and a future `layout=8`
-/// must not slip through while current is 7.
+/// was never a form (that era was a bare number), and a future `layout=9`
+/// must not slip through while current is 8.
 /// `layout=5` still receives legacy commits. `layout=6` addresses commits
 /// as values and still receives the old source/target signature (D76).
-/// `layout=7` is the first whose `refine --sign` signs the whole commit.
-const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3, 4, 5, 6];
+/// `layout=7` signs the whole commit and still writes a savepoint with no
+/// point (D80). `layout=8` records that point.
+const STORE_LAYOUT_MIGRATABLE_FROM: &[u32] = &[2, 3, 4, 5, 6, 7];
 const MIN_READABLE_STORE_FORMAT_VERSION: u32 = 1;
 
 fn split_layout_number(declaration: &str) -> Option<u32> {
@@ -224,7 +230,14 @@ pub fn layout_addresses_commits_as_values(declaration: &str) -> bool {
 /// declarations keep the source/target signature until an explicit migrate.
 pub fn layout_signs_the_commit(declaration: &str) -> bool {
     split_layout_number(declaration)
-        .is_some_and(|n| n >= STORE_LAYOUT_VERSION && split_layout_is_known(n))
+        .is_some_and(|n| n >= SIGN_COMMIT_LAYOUT && split_layout_is_known(n))
+}
+
+/// Savepoints in this store record the commit they stood on (D80). Older
+/// declarations keep the old form until an explicit migrate.
+pub fn layout_records_the_point(declaration: &str) -> bool {
+    split_layout_number(declaration)
+        .is_some_and(|n| n >= POINT_LAYOUT && split_layout_is_known(n))
 }
 
 /// Encoding `migrate_layout` writes for a store that currently declares

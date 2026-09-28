@@ -392,11 +392,13 @@ fn p2_format_moves_only_when_declared() {
     //                                        disk; layout=5 stays legacy)
     //   layout=7     Q-059 / D76             (a refine signature signs the
     //                                        commit; layout=6 keeps the old form)
+    //   layout=8     Q-062 / D80             (a savepoint records the point it
+    //                                        stood on; layout=7 keeps the old form)
     let oo_dir = d.path().join(".oo");
     let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
         layout.trim(),
-        "layout=7",
+        "layout=8",
         ".oo/format moved without a ruling saying it should"
     );
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();
