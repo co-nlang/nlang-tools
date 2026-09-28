@@ -233,3 +233,9 @@ R2-Q2. 「注入前的工作集」是這次 `evolve` 在套用自己的欄位之
 conformance：162 vectors，162 pass，0 fail。
 
 `~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
+
+## 13. 驗收 R-2（驗收方填）
+
+**受理。** 交付 `5be6390`：全樹 ×3 **247 target／2365 passed／0 failed，`^error` 0，exit 0**，三輪相同，無失敗測試名；本弧探針 14／14，無 `VOID READING`。探針檔、夾具、分隔線以上未動。
+獨立複驗：`x: 0` 根 `31745ef0…`、新倉 `layout=8`；真 v0.63.0 對 `layout=8` 具名拒絕；rollback 回 C1 後 `evolve b` 鑄一顆 ○、記的點是 C1；conformance 162／162。
+R2-Q1 受理：(c) 比 T 的提議本文、(a) 比注入前後的實際位置，兩者不同一件事；(c) 的捷徑在 rollback 之後仍安全（rollback 要求工作樹乾淨，T 若是本文不空的注入 ○，其後不可能有 rollback）。R2-Q2 受理。
