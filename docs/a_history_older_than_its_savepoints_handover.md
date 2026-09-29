@@ -2,7 +2,7 @@
 
 > 佇列 `nlang-spec/meta/WORK_QUEUE.md` Q-063／裁定 `meta/oo/STATUS.md` **D81**（甲）；前一弧 D79（Q-061）／設計筆記 `meta/oo/commit.md` §1.12（候選）
 > 探針（已預先提交並校準）`crates/oo/tests/a_history_older_than_its_savepoints_probe_test.rs`；新夾具 `crates/oo/tests/fixtures/layout2_framed_repo/`（真 v0.40.0），沿用 `encoding4_repo/`（真 v0.35.0）
-> 基線：dev `8bf0e5c`／`oo v0.64.0` ⟹ **6 綠 7 紅**；r3 矩陣 **14／14 格紅**，理由逐格皆為缺陷本身、零空洞讀數。
+> 基線：dev `8bf0e5c`（探針提交於 `b0bed79`）／`oo v0.64.0` ⟹ **6 綠 7 紅**；r3 矩陣 **14／14 格紅**，理由逐格皆為缺陷本身、零空洞讀數。
 
 ## 1. 缺陷
 
