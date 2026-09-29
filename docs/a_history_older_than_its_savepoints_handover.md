@@ -129,3 +129,8 @@ conformance：162 vectors，162 pass，0 fail。
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `06d18aa`：全樹 ×3 **248 target／2378 passed／0 failed，`^error` 0，exit 0**，三輪相同，無失敗測試名；本弧探針 13／13，無 `VOID READING`；Q-061 10、Q-062 14、Q-060 23、Q-059 16 全綠。探針檔、夾具、分隔線以上未動；改動只在 `savepoint.rs` 與 `gc.rs`（註解）。
+**狀態矩陣**（6 種儲存 × 17 指令，逐格比對 `.oo/` 全檔雜湊，並與 v0.64.0 逐格 diff）：兩種舊倉與「○ 被移走的現行倉」上，`status`／`log`／`evolve`／`commit`／`gc`／`squash`／`repl` 具名拒絕、儲存不變；`rollback` 裝回 `HEAD`；`run`／`eval`／`test`／`fmt`／`lint`／`inspect`／`identity`／`migrate`／`node id` 照答。誠實空倉（含內容像提交的值）逐格與 v0.64.0 相同。
+**Q3 的新行為成立且已入規格**：`HEAD` 缺席的誠實空倉裡有讀不到的物件 ⟹ 相對於 context 的指令拒絕（`REAL_03` §6.6）。〔strace〕`HEAD` 在時不開物件目錄（Q2）。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4；conformance 162／162；新倉 `layout=8`／`encoding=5`。
