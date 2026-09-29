@@ -78,19 +78,53 @@ D79 讓「丟了的 context」具名拒絕，**而它認的證據只有一種**�
 
 ### 8.1 射程逐項對照
 
+I1. `HEAD` 缺席，而 ○ 有 `commit:` 註記，或物件被本引擎讀成 Commit（有框的 `#nlang/store commit`，以及 JSON 的 `Commit` 解碼），`status`、`log`、`evolve`、`commit`、`gc`、`refine`、`squash`、`repl` 具名拒絕。儲存位元組不變，不長出 `HEAD`。r1–r5、r7。註記不在（○ 目錄被移走）仍認得出提交物件（r5）。
+
+I2. 類別是框或 JSON 解碼器，不是內文。g4 的值物件含 `"#nlang/store commit"`，仍是誠實空 context。CLI 與函式庫（`Universe`、`Ouroboros::log`、`gc`）走同一個 `records_a_commit`。
+
+I3. 拒絕句不宣稱這些倉沒有的 ○ 註記（r6），並點名 `rollback`（r3）。
+
+I4. `HEAD` 在的舊倉照常讀歷史（g2）。兩種舊倉的 `rollback` 仍是回頭路（g3）。誠實空 context 照常作答、照常開始歷史（g4）。與 context 無關的指令照常（g5）。D79 的註記路徑不變（g6，Q-061 10 支）。
+
+I5. 值位址、提交位址、佈局宣告未動。沒有新的耐久檔。掃描只讀目錄與物件，不建目錄、不寫檔。`migrate` 不補註記。
+
 ### 8.2 順手改動（逐項指名）
+
+`gc.rs` 的註解原寫「沒有 `commit:` 註記就是空走訪」。那句是 D81 推翻的規則，改成與判準同一句話。沒有碰 `follow_refine`。`cargo fmt` 未跑。探針檔與夾具未改。
+
+改動檔：`crates/interpreter/src/savepoint.rs`、`crates/interpreter/src/gc.rs`、本工單 §8。
 
 ### 8.3 工單哪裡是錯的
 
+無。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 有框的年代看 `#nlang/store` 後面那一段：是 ` commit` 才交給 `decode_commit`（與 `decode_document` 同一條前綴）。JSON 年代用 `serde_json` 解成 `Commit`，與 `get_commit` 對無框位元組用的是同一個解碼器。值物件的框是 `#nlang/store` 換行，內文裡的那串字不會變成這個前綴，所以 g4 不觸發。
+
+Q2. 判準在既有的「丟了 context」檢查裡，而且那些檢查都是 `get_head` 為 `None` 才呼叫。〔量〕已有 `HEAD` 的 `oo status`：沒有開啟 `.oo/savepoints`，也沒有把 `.oo/objects/sha256` 當目錄掃。誠實空倉的 `oo status`：兩次目錄開啟，都是 ENOENT（`.oo/savepoints`、`.oo/objects/sha256`），物件檔 0。有註記時先返回，不再讀物件。
+
+Q3. 權限與其他讀取錯誤（`NotFound` 除外）答 `cannot read store objects: ` 接 `operator_io_reason`。這不是空 context，也不是丟了 context 那句。依據 `REAL_03` §6.6：打不開的儲存不得換成空的。讀得到、框是 `#nlang/store commit`、但 `decode_commit` 失敗：答 `cannot read store object: commit frame does not decode`（宣告了而打不開，不是缺席）。截斷或壞框若不是這個提交框，以及 JSON 解不成 `Commit`，都不是提交宣告，掃描繼續。物件目錄 `NotFound` 是沒有物件。
+
+Q4. 拒絕句是 `lost context: HEAD is absent and the store records a commit; restore it with rollback <commit> --grant rollback`。只有 ○ 註記：這句是真的（儲存記過提交）。只有 Commit 物件：這句是真的，而且不含 `savepoint records a commit`（r6）。兩者都有：這句是真的。
+
+Q5. 沒有第三種。本引擎的雜湊演算法只有 Sha256。提交只寫成有框的 `#nlang/store commit`（encoding ≥ 5）或 serde JSON 的 `Commit`（encoding ≤ 4）。`ancestor:` 不是「發生過一次提交」的宣告。沒有自行擴大。
 
 ### 8.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。13 支皆綠（g1–g6、r1–r7）。Q-061 10 支皆綠。
+
 ### 8.6 數字
 
-三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：逐行 `test result:` 彙總、失敗測試名、exit。conformance。known answer、三個身分紅線、新倉宣告。
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 248 行，2378 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。各行的耗時不同，通過與失敗的數目相同。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
 
 ### 8.7 你認為需要改規格之處
+
+`SPEC_08` §6.2.1 的證據仍只寫 ○ 註記。D81 加上 Commit 物件。工單 §6 把該段留給驗收方，此處未改。
 
 ---
 

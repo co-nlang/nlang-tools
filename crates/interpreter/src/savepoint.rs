@@ -145,18 +145,98 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
     Ok(nodes)
 }
 
-/// A circle's `commit:` note (D52). That note is the store declaring a
-/// commit. An evolve-only circle, and every circle from before this arc,
-/// has none. Presence of a commit object in CAS is not this declaration.
+/// The store has declared a commit (D81). Either witness is enough: a
+/// circle's `commit:` note (D52), or an object this engine can read as a
+/// Commit. The kind is the frame the engine wrote (`#nlang/store commit`)
+/// or, for the JSON era, `Commit`'s own decoder — never the object's text.
+/// Callers ask only when HEAD is absent, so a present point pays nothing
+/// here. Reading this does not create directories or files.
 pub fn records_a_commit(base: &Path) -> Result<bool> {
-    Ok(load_circles(base)?
+    if load_circles(base)?
         .values()
-        .any(|n| n.commit_digest.is_some()))
+        .any(|n| n.commit_digest.is_some())
+    {
+        return Ok(true);
+    }
+    cas_declares_a_commit(base)
 }
 
-/// HEAD is the point. Absent while a `commit:` note exists is a lost
-/// context, not an empty one (D79). The way back is an explicit rollback.
-pub const LOST_CONTEXT: &str = "lost context: HEAD is absent and a savepoint records a commit; restore it with rollback <commit> --grant rollback";
+fn cannot_read_objects(err: &io::Error) -> anyhow::Error {
+    anyhow::anyhow!(
+        "cannot read store objects: {}",
+        crate::operator_io_reason(err)
+    )
+}
+
+/// Walk `.oo/objects/sha256/` without creating it. `NotFound` is no
+/// objects. Any other IO error is an unopenable store, not an empty one
+/// (REAL_03 §6.6).
+fn cas_declares_a_commit(base: &Path) -> Result<bool> {
+    let sha = base.join(".oo").join("objects").join("sha256");
+    let rd = match fs::read_dir(&sha) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(cannot_read_objects(&e)),
+    };
+    for bucket in rd {
+        let bucket = bucket.map_err(|e| cannot_read_objects(&e))?;
+        let kind = bucket.file_type().map_err(|e| cannot_read_objects(&e))?;
+        if !kind.is_dir() {
+            continue;
+        }
+        let files = fs::read_dir(bucket.path()).map_err(|e| cannot_read_objects(&e))?;
+        for file in files {
+            let file = file.map_err(|e| cannot_read_objects(&e))?;
+            let kind = file.file_type().map_err(|e| cannot_read_objects(&e))?;
+            if !kind.is_file() {
+                continue;
+            }
+            let bytes = match fs::read(file.path()) {
+                Ok(b) => b,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(cannot_read_objects(&e)),
+            };
+            if object_declares_commit(&bytes)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Framed era: the kind is the bytes after `#nlang/store`. Only ` commit`
+/// is a commit; a value whose text contains that phrase is still a value.
+/// A commit frame that does not decode is unopenable, not absent.
+/// JSON era: `Commit`'s decoder. A failure there is not a commit.
+fn object_declares_commit(bytes: &[u8]) -> Result<bool> {
+    let text = match std::str::from_utf8(bytes) {
+        Ok(t) => t,
+        Err(_) => {
+            if bytes.starts_with(FRAME_COMMIT) {
+                anyhow::bail!("cannot read store object: commit frame does not decode");
+            }
+            return Ok(false);
+        }
+    };
+    let rest = text.trim_start();
+    if let Some(after) = rest.strip_prefix(crate::store_codec::FRAME) {
+        if after.starts_with(" commit") {
+            if crate::store_codec::decode_commit(text).is_err() {
+                anyhow::bail!("cannot read store object: commit frame does not decode");
+            }
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    Ok(serde_json::from_str::<crate::value::Commit>(text).is_ok())
+}
+
+const FRAME_COMMIT: &[u8] = b"#nlang/store commit";
+
+/// HEAD is the point. Absent while the store has declared a commit is a
+/// lost context, not an empty one (D79, D81). The way back is rollback.
+/// The sentence does not name a witness the store may not have.
+pub const LOST_CONTEXT: &str = "lost context: HEAD is absent and the store records a commit; restore it with rollback <commit> --grant rollback";
 
 fn tips_of(nodes: &BTreeMap<String, Circle>) -> Vec<String> {
     let mentioned: BTreeSet<&str> = nodes
