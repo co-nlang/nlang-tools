@@ -208,8 +208,9 @@ fn verify_reachable_object(
 /// Mark phase: reachable digests from HEAD. Reports integrity findings;
 /// incomplete walks still list what was seen, but must not drive a sweep.
 /// HEAD and the ○ directory are roots. A missing HEAD is an empty walk
-/// only when no circle carries a `commit:` note. A note and no HEAD is a
-/// lost context (D79): refuse, do not collect. A root that exists and
+/// only when the store has not declared a commit (D81: a `commit:` note,
+/// or an object this engine reads as a Commit). A declaration and no HEAD
+/// is a lost context: refuse, do not collect. A root that exists and
 /// cannot be read is not an empty walk (REAL_03 §6.6).
 fn roots_readable(store: &ObjectStore, base_dir: &Path) -> Result<(), String> {
     store
