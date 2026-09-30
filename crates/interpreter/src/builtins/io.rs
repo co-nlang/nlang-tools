@@ -1,5 +1,5 @@
 use crate::builtins::fs_guard::{crosses_store_boundary, store_boundary_refusal};
-use crate::value::{EffectTag, Value};
+use crate::value::{BottomCause, EffectTag, Value};
 use crate::{BuiltinFn, EvalContext, Ouroboros};
 use nlang_parser::ast::AtomKind;
 use std::collections::HashMap;
@@ -90,12 +90,15 @@ pub fn register_io_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         if crosses_store_boundary(path.as_str()) {
                             return store_boundary_refusal(path.as_str());
                         }
-                        let tag = if std::fs::write(path.as_str(), content.as_bytes()).is_ok() {
-                            "true"
-                        } else {
-                            "none"
+                        return match std::fs::write(path.as_str(), content.as_bytes()) {
+                            Ok(()) => {
+                                Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
+                            }
+                            // D83: a refused write is not "nothing". `fs::write`
+                            // is not atomic; the ⊥ does not claim the path is
+                            // untouched.
+                            Err(_) => BottomCause::Unwritable.into(),
                         };
-                        return Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::IO, None);
                     }
                 }
             }
@@ -151,8 +154,12 @@ pub fn register_io_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             .create(true)
                             .open(path.as_str())
                             .and_then(|mut f| f.write_all(content.as_bytes()));
-                        let tag = if result.is_ok() { "true" } else { "none" };
-                        return Value::Atom(AtomKind::Tag(tag.to_string()), EffectTag::IO, None);
+                        return match result {
+                            Ok(()) => {
+                                Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::IO, None)
+                            }
+                            Err(_) => BottomCause::Unwritable.into(),
+                        };
                     }
                 }
             }

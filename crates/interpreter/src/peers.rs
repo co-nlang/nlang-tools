@@ -403,28 +403,65 @@ pub fn append(
 ) -> Result<Vec<String>> {
     let path = directory_path(base_dir);
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot write {}: {}",
+                parent.display(),
+                crate::operator_io_reason(&e)
+            )
+        })?;
     }
 
     let mut logs = Vec::new();
     let line = encode_record_line(advert);
     let line_bytes = line.len() as u64 + 1; // + newline
 
-    let need_header = !path.exists() || fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
+    let need_header = match fs::metadata(&path) {
+        Ok(m) => m.len() == 0,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(e) => {
+            anyhow::bail!(
+                "cannot read {}: {}",
+                path.display(),
+                crate::operator_io_reason(&e)
+            )
+        }
+    };
     match OpenOptions::new().create(true).append(true).open(&path) {
         Ok(mut f) => {
             if need_header {
                 let h = header_line(owner_node_id);
                 // Header failure must not be followed by a successful data line
                 // (a file with records but no owner header).
-                if writeln!(f, "{h}").is_err() {
-                    anyhow::bail!("cannot write {}: unreadable", path.display());
+                if let Err(e) = writeln!(f, "{h}") {
+                    anyhow::bail!(
+                        "cannot write {}: {}",
+                        path.display(),
+                        crate::operator_io_reason(&e)
+                    );
                 }
             }
-            if writeln!(f, "{line}").is_err() {
-                anyhow::bail!("cannot write {}: unreadable", path.display());
+            if let Err(e) = writeln!(f, "{line}") {
+                anyhow::bail!(
+                    "cannot write {}: {}",
+                    path.display(),
+                    crate::operator_io_reason(&e)
+                );
             }
-            let _ = f.flush();
+            f.flush().map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot write {}: {}",
+                    path.display(),
+                    crate::operator_io_reason(&e)
+                )
+            })?;
+            f.sync_all().map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot write {}: {}",
+                    path.display(),
+                    crate::operator_io_reason(&e)
+                )
+            })?;
             state.file_lines += 1;
             let live_n = live.len();
             logs.push(format!(

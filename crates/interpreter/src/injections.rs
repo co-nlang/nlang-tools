@@ -81,11 +81,11 @@ pub fn mint_id() -> Result<String> {
 
 pub fn paths(base: &Path) -> Result<Vec<PathBuf>> {
     let d = dir(base);
-    if !d.exists() {
-        return Ok(Vec::new());
-    }
+    // `exists` reports EACCES as absence. A directory this process cannot
+    // list is not an empty working set.
     let rd = match fs::read_dir(&d) {
         Ok(rd) => rd,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(refuse_io(e, DIR)),
     };
     let mut out = Vec::new();
@@ -339,12 +339,61 @@ pub fn write(
     anyhow::bail!("injection id: exhausted unique names")
 }
 
+/// The directory must accept a new file, or this commit must not land.
+/// The probe name starts with `.` so `paths` does not fold it. It is
+/// removed before this returns. A chmod in the gap before `clear` can
+/// still refuse the later unlink; `commit` restores HEAD if that happens.
+pub fn ensure_directory_writable(dir: &Path) -> Result<()> {
+    match fs::metadata(dir) {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(refuse_io(e, DIR)),
+    }
+    let probe = dir.join(format!(".partial-writable-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(f) => {
+            drop(f);
+            match fs::remove_file(&probe) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(anyhow::anyhow!(
+                    "cannot write {}: {}",
+                    probe.display(),
+                    crate::operator_io_reason(&e)
+                )),
+            }
+        }
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(anyhow::anyhow!(
+            "cannot write {}: {}",
+            dir.display(),
+            crate::operator_io_reason(&e)
+        )),
+    }
+}
+
 /// Unlink only the members this commit folded. Does not list the directory
 /// at call time, and does not `remove_dir`: a member minted after the fold
 /// stays reachable, and `remove_dir` is the `read_dir` ENOENT path (S1/S2).
+/// `NotFound` means the member is already gone. Any other host error is
+/// the unlink not landing.
 pub fn clear(folded: &[PathBuf]) -> Result<()> {
     for p in folded {
-        let _ = fs::remove_file(p);
+        match fs::remove_file(p) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "cannot write {}: {}",
+                    p.display(),
+                    crate::operator_io_reason(&e)
+                ))
+            }
+        }
     }
     Ok(())
 }

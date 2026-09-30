@@ -68,19 +68,129 @@
 
 ### 8.1 射程逐項對照
 
+I1. `.oo/abandoned` 讀不到時，`rollback`、`commit`、`squash` 在寫入之前拒絕，句子是 `cannot read <路徑>: permission denied`。檔位元組不變。`rollback` 的倉快照不變（r1）。`commit` 不移動 HEAD、不刪檔（r2）。缺檔是空記錄。同形的 `pin_pending`、`effect_pending`、legacy `staged`、注入成員、○，讀取的 IO 錯誤同樣具名拒絕。
+
+I2. 有折進去的注入時，落地前先確認 `injections/` 能建立新檔。確認失敗則 HEAD 不動、rc≠0（r3）。一般提交仍清掉注入，第二次提交是 `Nothing to commit`（g3）。
+
+I3. `~%Engine./save`、`~%Io./write_file`、`~%Io./append_file` 在宿主拒絕寫入時答 `_|_  ;; %cause: #unwritable`，不回位址（r4、r5）。允許的寫入仍是 `#true` 與位址（g2）。沒有宇宙的 `save` 仍是 `#no_universe`。
+
+I4. 同儕目錄 append 在 `flush` 之後 `sync_all`，兩者的錯誤都返回。失敗句子是 `cannot write …: <reason>`。權限的 reason 是 `permission denied`。
+
+I5. 提交後清除 `pin_pending`、`effect_pending`、`abandoned`、`staged` 與注入檔時，刪除錯誤會返回。`NotFound` 是已經不在。
+
+I6. 讀得到的放棄記錄仍進提交並被清掉（g1）。Q-064、Q-063、Q-062、Q-061、Q-060 都在全樹裡。
+
+I7. `x: 0` 根、新鮮 `v: 1 + 1` 根、標準根、`layout=8`／`encoding=5` 都沒動。沒有新的耐久檔名。
+
 ### 8.2 順手改動（逐項指名）
+
+`BottomCause::Unwritable` 加在列舉尾巴，`NoUniverse` 之後。`primary_rank` 是 1。
+
+`engine.save`：`put_value` 回 `cannot write` 時答 `#unwritable`。其他 `Err` 仍是 `#conflict`。`holds_universe` 為假時仍是 `#no_universe`，在 `put_value` 之前。
+
+`io.write_file`、`io.append_file`：寫入的任何 `Err` 答 `#unwritable`。儲存邊界檢查仍在寫入之前，仍是 `#store_boundary`。`read_file`、`exists` 沒改。這兩個寫入的機制沒改，`append_file` 仍不 `sync_all`（I4 點名的是同儕目錄）。
+
+`injections::paths` 改為 `read_dir`：`NotFound` 是空工作集，其他錯誤是 `cannot read injection …`。新增 `ensure_directory_writable`。`clear` 回傳第一個真正的刪除錯誤。
+
+`peers::append` 加上 `sync_all`。`create_dir_all`、`writeln`、`flush` 的錯誤都返回。既有檔的 `metadata` 不是 `NotFound` 時先 `cannot read`，再開檔。`load` 的冷啟動沒改。對外仍是 `#rejected #cannot_record`。
+
+`load_staged`：`pin_pending`、`effect_pending`、legacy `staged` 的 IO 錯誤具名拒絕。讀得到但解析不了的內容維持原讀法（空座標、忽略 sidecar、解析錯誤照舊上傳）。
+
+`squash` 在 `put_commit` 之前先讀 `abandoned`。讀不到就不寫。
+
+探針、規格、`TAG_REGISTRY`、版本都沒改。沒跑 rustfmt。沒動 `storage.rs` 的位元組。
+
+改動檔：`crates/interpreter/src/value.rs`、`store_codec.rs`、`builtins/engine.rs`、`builtins/io.rs`、`injections.rs`、`peers.rs`、`universe.rs`、`crates/oo/src/main.rs`、本工單 §8。
 
 ### 8.3 工單哪裡是錯的
 
+工單沒有寫錯。探針的宣稱沒改。沒有既有測試與 D83 衝突，舊測試沒有預先改。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 讀了再改寫或消耗的記錄，與讀不到時的回答：
+
+1. `.oo/abandoned`。讀取是 `Universe::load_abandoned_file`（`read_to_string`）。呼叫者：`commit`（在 `put_root` 之前）、`rollback` 的 `append_abandoned_file`（在 `atomic_write` 之前）、`squash`（在 `put_commit` 之前）。`NotFound` 是空記錄。其他 IO 是 `cannot read <路徑>: <operator_io_reason>`，三個指令都不寫、不刪。消耗發生在讀成功之後，`remove_durable`：`NotFound` 視為已清，其他錯誤把 HEAD 寫回並返回該錯誤。
+
+2. `.oo/injections/<id>`。讀取是 `injections::load_all`。目錄 `NotFound` 是空工作集。列目錄失敗是 `cannot read injection injections: <reason>`。單檔讀取失敗是 `cannot read injection <檔名>: <reason>`。列出之後才 `NotFound` 是 `working set consumed by a concurrent commit`。消耗是 `injections::clear`，只刪這次折進去的路徑。
+
+3. `.oo/staged`（legacy，沒有注入成員時才讀）。`load_staged` 的 `read_to_string`。`NotFound` 是沒有這份暫存。其他 IO 是 `cannot read`。解析錯誤照舊上傳。消耗是 `remove_durable`，`commit` 與 `save_staged` 都會呼叫。`save_staged` 若刪不掉，連同剛寫下的注入一起撤回再返回錯誤。
+
+4. `.oo/pin_pending`。`load_staged`。`NotFound` 是沒有 pin。讀得到但不是座標清單：pinned、座標未知、空集合。其他 IO 是 `cannot read`。消耗：`commit` 結尾 `remove_durable`；新的 evolve 在不是 legacy 殘留時也刪。
+
+5. `.oo/effect_pending`。`load_staged`。`NotFound` 是沒有 sidecar。讀得到但解析不了：略過，閘門維持原讀法。其他 IO 是 `cannot read`。消耗：`commit` 結尾 `remove_durable`。layout 尚未目前時，`save_staged` 會整檔重寫或刪除。
+
+6. `.oo/savepoints/<id>`。`savepoint::load_circles`。目錄 `NotFound` 是沒有 ○。單檔 `NotFound` 略過。其他 IO 是 `cannot read .oo/savepoints: <reason>`。寫的是新圓，不是把讀不到的正文覆寫掉。`commit`／`evolve` 在這個錯誤上不繼續寫。
+
+7. `.oo/HEAD`。`get_head`。`NotFound` 是沒有 HEAD。其他 IO 是 `cannot read .oo/HEAD`。`commit`、`rollback`、`squash` 都先走這條，讀不到就不 `set_head`。
+
+8. `.oo/peers/directory`。`append` 先 `metadata`：`NotFound` 才建檔並寫標頭；其他 IO 是 `cannot read`，不開檔。寫入、`flush`、`sync_all` 失敗是 `cannot write`。`peers::load` 仍把讀不到的快取當成冷啟動，這是既有探針釘住的觀測；它不覆寫那些位元組。隨後的 `append` 在檔案不可讀時停在 `metadata`。
+
+物件目錄的讀取錯誤仍是 `cannot read store objects`（Q-063）。`gc` 的刪除走既有路徑，這次沒改。
+
+Q2. 語言層向宿主寫入的內建只有三個：
+
+1. `~%Io./write_file`。成功 `#true`。宿主 `Err` 是 ⊥ `#unwritable`。路徑越過儲存邊界是 `#store_boundary`，在寫入之前。引數不對是 ⊤。
+
+2. `~%Io./append_file`。與 `write_file` 同一組回答。
+
+3. `~%Engine./save`。別名 `~%Discovery./identify_and_store` 是同一個內建。沒有宇宙是 `#no_universe`。宇宙裡 `put_value` 成功回位址。錯誤字串以 `cannot write` 開頭是 `#unwritable`。其他 `Err` 是 `#conflict`。
+
+`~%Io./read_file`、`~%Io./exists` 是觀測：缺檔是 `#none`／`#false`，權限是 ⊤ 纖維 `unreadable`。其餘內建模組（math、string、list、bytes、path、json、toml、csv、time、effect、stat、url、disc）不寫宿主。csv 只讀檔。
+
+Q3. 選先確認再落地。
+
+有折進去的注入時，`commit` 在 `put_root` 之前呼叫 `ensure_directory_writable`：對目錄 `metadata`，`NotFound` 視為尚無目錄；否則 `create_new` 一個 `.partial-writable-<pid>`，再刪掉。點開頭的名字 `paths` 不折。開檔失敗是 `cannot write <目錄>: <reason>`，HEAD 不動。
+
+確認與 `clear` 之間若權限又變了：`set_head` 與 `record_commit` 已經做完，`clear`（以及其後的 `staged`／`pin_pending`／`effect_pending`／`abandoned` 刪除）返回錯誤。此時把 HEAD 寫回這次 `set_head` 之前的摘要；原本沒有 HEAD 就刪掉 HEAD 檔。函式返回刪除錯誤，CLI 不印 `Commit successful`。那一枚 ○ 已經在盤上，指向沒有留在 HEAD 的提交。HEAD 自己也寫不回去時，句子是 `<刪除錯誤>; HEAD stayed at <新摘要>: <還原錯誤>`。
+
+`record_commit` 自己失敗時，HEAD 留在新提交，注入還沒刪，錯誤原樣返回。這段這次沒改。`~%Config` 的回寫若在注入已刪之後失敗，HEAD 也留在新提交。這是既有的 O37 路徑。
+
+Q4. M6 各處：
+
+1. `injections::clear` 的 `let _ = remove_file` 改成：`NotFound` 略過，其他錯誤 `cannot write <路徑>: <reason>`，並中止。
+
+2. `commit` 的 `pin_pending`、`effect_pending`、`abandoned` 三處 `let _ =` 改成 `remove_durable`。失敗則還原 HEAD 並返回。
+
+3. `unlink_legacy_staged`（`.oo/staged`）改成 `remove_durable`。`commit` 裡失敗同樣還原 HEAD。
+
+4. `save_staged` 在 ○ 寫失敗時刪剛寫下的注入：刪除再失敗時，返回的錯誤同時帶著 ○ 的錯誤與 `the injection remains`。
+
+5. `save_staged` 刪 legacy `pin_pending`、非目前 layout 的 `effect_pending`：改成 `remove_durable`，錯誤向上返回。若此時注入已寫下而 `staged` 刪不掉，先刪掉該注入再返回。
+
+留下的 `let _ =`：
+
+- `savepoint.rs` 鑄新圓之前刪外來名字 `LOG`。那不是這次讀過的記錄。`paths` 跳過這個名字。刪不掉時下一枚圓仍用隨機 id。這次沒改。
+
+- `storage.rs` `remove_digest` 在清空分片目錄時 `remove_dir`。目錄不空或已經不在時失敗，下一趟走訪看得到物件。這不是 M6 的提交清除。檔沒改。
+
+- `scratch.rs` 清的是行程暫存目錄。
+
+- `peers::compact` 的 `create_dir_all`。接下來的 `atomic_write` 失敗會讓 compact 回 `None`，append 記 `compact failed`。這不是 M6。
+
+Q5. `primary_rank` 是 1，與 `StoreBoundary` 同一群。宿主拒絕寫入是儲存邊界上的失敗。rank 2 是 `#conflict` 那一群。同一個 union 裡較低的 rank 先報，所以這條不會被收成 `#conflict`。
+
+離開碼類別：載體是 ⊥ 這個值。`TAG_REGISTRY` §0.2 載體為值本身時離開碼是 0。〔量〕`eval` 對不可寫目錄呼叫 `write_file`：rc=0，stdout `_|_  ;; %cause: #unwritable`。
+
+`write_file` 失敗時，答覆的文字就是這一行。它沒有再寫半截檔留下或沒留下。`std::fs::write` 本身不是原子的。這次量到的情況是目錄不可寫，路徑上沒有留下檔案。
 
 ### 8.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。8 支皆綠（g1–g3、r1–r5）。
+
 ### 8.6 數字
 
-三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：逐行 `test result:` 彙總、失敗測試名、exit。conformance。known answer、三個身分紅線、新倉宣告。
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 250 行，2399 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。各行的耗時不同；把 `finished in` 換成同一記號之後，三輪的 `test result:` 行相同。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根物件 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
 
 ### 8.7 你認為需要改規格之處
+
+`#unwritable` 還沒有寫進 `TAG_REGISTRY`。`REAL_01` §4.1.1、`SPEC_08` §6.2 的文字仍是驗收方收尾，此處未改。
+
+EINTR 與暫時／永久之分、`run` 的說明句，工單列為 Inbox，此處未裁。
 
 ---
 

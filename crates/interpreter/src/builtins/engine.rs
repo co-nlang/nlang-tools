@@ -141,15 +141,21 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let v = crate::value::whole_argument(arg);
             let fv = oo.force_recursive(v, ctx);
             // D82 ③: an address would claim the value was kept. A workspace
-            // with no universe has nowhere to keep it. `put_value` failing
-            // inside a universe is still `#conflict`.
+            // with no universe has nowhere to keep it. A host refusal inside
+            // a universe is `#unwritable` (D83). Any other `put_value`
+            // failure is still `#conflict`.
             if !oo.holds_universe {
                 return BottomCause::NoUniverse.into();
             }
-            if let Ok(hash) = oo.store.put_value(&fv) {
-                return Value::Atom(AtomKind::Str(hash.to_string()), EffectTag::IO, None);
+            match oo.store.put_value(&fv) {
+                Ok(hash) => {
+                    Value::Atom(AtomKind::Str(hash.to_string()), EffectTag::IO, None)
+                }
+                Err(e) if e.to_string().starts_with("cannot write") => {
+                    BottomCause::Unwritable.into()
+                }
+                Err(_) => BottomCause::Conflict.into(),
             }
-            BottomCause::Conflict.into()
         }) as Arc<BuiltinFn>,
     );
 
