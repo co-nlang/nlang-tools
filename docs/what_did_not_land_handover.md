@@ -259,3 +259,12 @@ conformance：162 vectors，162 pass，0 fail。
 ### 10.7 你認為需要改規格之處
 
 沒有。`#unwritable` 的 `TAG_REGISTRY`、EINTR、`run` 的說明句仍是上一節所列，此處未動。
+
+### R-1 驗收（2026-09-30）：**受理。**
+
+交付 `d188df9`：全樹 ×3 **250 target／2403 passed／0 failed，`^error` 0，exit 0**，三輪相同，無失敗測試名；本弧探針 12／12，無 `VOID READING`；Q-064 13、Q-063 13、Q-061 10、Q-060 23 全綠。探針檔、兩條分隔線以上皆未動；改動只在 `universe.rs`。
+**注入矩陣重跑**（9 種記錄 × 4 指令）：savepoints 讀不到時 `evolve` 由 CHG 變 same（注入撤回）；`commit` rc=1 而 **`HEAD` 不動**，變化只有兩個無主物件（本次的根與提交物件），`gc` 之後上一筆提交仍在 `log`、`x` 仍在工作集——savepoints 不可寫時亦同。
+**`refine`**（上一輪只讀碼）〔量〕savepoints 不可寫：v0.66.0 rc=1 而 `HEAD` 移動；d188df9 rc=1、`HEAD` 不動；對照組兩版皆產生精煉提交。
+**I4**〔strace，含對照組〕同儕目錄 append 後 `fsync(6)`：d188df9 一次、v0.66.0 零次。
+**已知殘留（交付自陳，記帳）**：確認可清除之後、實際清除之前若權限又變，`HEAD` 會寫回，但那一枚提交 ○ 已經寫下、指向一筆 `HEAD` 不在的提交——只在時間窗內，未量。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4；conformance 162／162；新倉 `layout=8`／`encoding=5`。
