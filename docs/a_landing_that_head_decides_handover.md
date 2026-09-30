@@ -157,3 +157,9 @@ conformance：162 vectors、162 pass、0 fail。
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `62993b7`：全樹 ×3 **251 target／2413 passed／0 failed，`^error` 0，exit 0**，三輪相同，無失敗測試名；本弧探針 10／10，無 `VOID READING`；Q-065 12、Q-064 13、`pin_probe_test` 15（含預先修訂的那支）全綠。探針、修訂檔、分隔線以上皆未動；改動只在 `savepoint.rs`、`universe.rs`。
+**I1（探針造不出崩潰）**〔strace，rename 順序〕`commit`、`squash`、`refine` 皆為 **savepoints → HEAD**；對照組 v0.67.0 的 `commit` 為 HEAD → savepoints。
+**Q3 的代價**〔驗收方另量〕300 筆提交的倉：一般提交 52 ms、rollback 之後的提交 505 ms（約每筆歷史 1.5 ms，線性），與交付的 1000 筆 +1706 ms 一致。只在放棄紀錄存在時付——**記入 Inbox（效能）**。
+**交付自陳的兩處（記帳）**：`~%Config` 在「刪除折入的成員」與「寫回」之間崩潰會遺失會期設定（原本就有的窗，I2／I3 不涵蓋）；舊順序留下的 S2 殘留照舊使 `gc` 刪掉上一筆（D84 射程外，Inbox 已有）。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4；conformance 162／162；新倉 `layout=8`／`encoding=5`。
