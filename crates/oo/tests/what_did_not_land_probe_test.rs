@@ -339,3 +339,101 @@ fn r5_a_write_the_host_refused_is_not_nothing() {
     relax(&ro, 0o755);
     assert!(bad.is_empty(), "a refused write was not ⊥ #unwritable:\n{}", bad.join("\n"));
 }
+
+// ── Added at acceptance, repair round R-1 (2026-09-30) ───────────────────
+//
+// I1 and I2 cover every record a commit reads or writes, and the order's
+// probe measured only two of them. Measured on the delivery f4c876f and on
+// v0.66.0 alike: with `.oo/savepoints` unreadable OR not writable, `commit`
+// answers rc=1 "cannot read/write .oo/savepoints" — and HEAD has already
+// moved to the new commit, which has no circle. `log` loses the ancestry,
+// and the next `gc` deletes the previous commit (5 → 3 objects). A commit
+// that reports failure has landed, and history pays for it. The delivery
+// disclosed it (§8.4 Q3: "record_commit 自己失敗時，HEAD 留在新提交"); the
+// order's I2 forbids it. `squash` and `refine` write their circle after
+// HEAD moves too. And `evolve` with `.oo/savepoints` unreadable answers
+// rc=1 while the injection it just wrote stays in the working set.
+
+/// Two commits' worth of history whose first commit must survive anything
+/// a failed operation does.
+fn two_commits(tag: &str) -> (Ws, String) {
+    let w = Ws::new(tag);
+    w.committed("a.n", "a: 1\n");
+    let first = w.head();
+    fs::write(w.ws.join("x.n"), "x: 9\n").unwrap();
+    w.ok(&["evolve", "x.n"]);
+    (w, first)
+}
+
+fn history_survives(w: &Ws, first: &str, what: &str) {
+    let log = w.ok(&["log"]);
+    assert!(log.contains(first), "{what}: `log` lost the earlier commit:\n{log}");
+    let _ = w.oo(&["gc", "--grant", "gc"]);
+    let log = w.ok(&["log"]);
+    assert!(log.contains(first), "{what}: after gc the earlier commit is gone:\n{log}");
+}
+
+/// Baseline (v0.66.0 and f4c876f): rc=1, HEAD moved, gc deletes history.
+#[test]
+fn r6_a_commit_that_cannot_read_its_circles_does_not_land() {
+    let (w, first) = two_commits("r6");
+    let head_before = w.head();
+    let sp = w.dot_oo().join("savepoints");
+    unreadable(&sp);
+    let (o, rc) = w.oo(&["commit", "-m", "z"]);
+    relax(&sp, 0o755);
+    let moved = w.head() != head_before;
+    assert!(!(rc != 0 && moved), "commit reported failure (rc={rc}) and HEAD moved anyway: {o}");
+    history_survives(&w, &first, "r6");
+}
+
+/// Baseline: the same, with `.oo/savepoints` readable and not writable.
+#[test]
+fn r7_a_commit_that_cannot_write_its_circle_does_not_land() {
+    let (w, first) = two_commits("r7");
+    let head_before = w.head();
+    let sp = w.dot_oo().join("savepoints");
+    unwritable_dir(&sp);
+    let (o, rc) = w.oo(&["commit", "-m", "z"]);
+    relax(&sp, 0o755);
+    let moved = w.head() != head_before;
+    assert!(!(rc != 0 && moved), "commit reported failure (rc={rc}) and HEAD moved anyway: {o}");
+    history_survives(&w, &first, "r7");
+}
+
+/// Baseline: rc=1, the injection stays.
+#[test]
+fn r8_evolve_that_cannot_read_its_circles_leaves_no_proposal() {
+    let w = Ws::new("r8");
+    w.committed("a.n", "a: 1\n");
+    fs::write(w.ws.join("y.n"), "y: 8\n").unwrap();
+    let inj = w.dot_oo().join("injections");
+    let count = |w: &Ws| fs::read_dir(w.dot_oo().join("injections")).map(|d| d.count()).unwrap_or(0);
+    let before = count(&w);
+    let sp = w.dot_oo().join("savepoints");
+    unreadable(&sp);
+    let (o, rc) = w.oo(&["evolve", "y.n"]);
+    relax(&sp, 0o755);
+    let _ = inj;
+    if rc != 0 {
+        assert_eq!(count(&w), before, "evolve refused (rc={rc}: {o}) and left a proposal behind");
+    }
+}
+
+/// Baseline: `squash` writes its circle after HEAD moves too.
+#[test]
+fn r9_a_squash_that_cannot_write_its_circle_does_not_land() {
+    let w = Ws::new("r9");
+    w.committed("a.n", "a: 1\n");
+    let base = w.head();
+    w.committed("b.n", "b: 2\n");
+    w.committed("c.n", "c: 3\n");
+    let head_before = w.head();
+    let sp = w.dot_oo().join("savepoints");
+    unwritable_dir(&sp);
+    let (o, rc) = w.oo(&["squash", &base, "--grant", "squash"]);
+    relax(&sp, 0o755);
+    let moved = w.head() != head_before;
+    assert!(!(rc != 0 && moved), "squash reported failure (rc={rc}) and HEAD moved anyway: {o}");
+    history_survives(&w, &base, "r9");
+}
