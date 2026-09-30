@@ -1046,8 +1046,25 @@ impl Universe {
         // the circle is absent and the member is still there.
         // (a): HEAD's root ⊓ the working set this injection read, against
         // HEAD's root ⊓ the working set it leaves.
-        let positions_equal =
-            Self::injection_positions_equal(engine, base_dir, before, &self.staged)?;
+        // A failed comparison has not recorded this evolve. The member
+        // already on disk would otherwise stay as a proposal (R-1).
+        let positions_equal = match Self::injection_positions_equal(
+            engine,
+            base_dir,
+            before,
+            &self.staged,
+        ) {
+            Ok(eq) => eq,
+            Err(e) => {
+                if let Some(id) = written_id.as_deref() {
+                    let member = crate::injections::dir(base_dir).join(id);
+                    if let Err(rm) = Self::remove_durable(&member) {
+                        return Err(anyhow::anyhow!("{e}; the injection remains: {rm}"));
+                    }
+                }
+                return Err(e);
+            }
+        };
         if let Err(e) = crate::savepoint::record(base_dir, &self.staged, positions_equal) {
             if let Some(id) = written_id.as_deref() {
                 let member = crate::injections::dir(base_dir).join(id);
@@ -1341,7 +1358,20 @@ impl Universe {
         // HEAD's commit digest (`self.head` is still that HEAD) — a
         // pre-arc HEAD has no circle, so naming a circle id would dangle.
         let ancestor = previous_head.as_ref().map(|h| hex::encode(&h.digest));
-        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
+        if let Err(e) = crate::savepoint::record_commit(
+            base_dir,
+            &commit_hash,
+            None,
+            ancestor.as_deref(),
+        ) {
+            return Self::undo_landed_head(
+                engine,
+                base_dir,
+                previous_head.as_ref(),
+                &commit_hash,
+                e,
+            );
+        }
         let folded = crate::injections::clear(&self.injection_sources)
             .and_then(|_| Self::unlink_legacy_staged(base_dir));
         if let Err(e) = folded {
@@ -1368,7 +1398,15 @@ impl Universe {
             self.session_delta = restaged;
             self.session_has_delta = true;
             // Injections were just cleared. The config write reads an empty set.
-            self.save_staged(engine, base_dir, &ComboVal::default())?;
+            if let Err(e) = self.save_staged(engine, base_dir, &ComboVal::default()) {
+                return Self::undo_landed_head(
+                    engine,
+                    base_dir,
+                    previous_head.as_ref(),
+                    &commit_hash,
+                    e,
+                );
+            }
         } else {
             self.staged = ComboVal::default();
             self.is_dirty = false;
@@ -1389,10 +1427,23 @@ impl Universe {
         Ok((commit_hash, config_not_committed, reported))
     }
 
-    /// The commit object was written and HEAD moved, then a consume failed.
-    /// Put HEAD back so the sentence is a refusal and the folded members are
-    /// not the tip's unconsumed proposals. If that restore fails, the error
-    /// names the digest HEAD stayed on.
+    /// `set_head` already ran. Put it back. If that write also fails, the
+    /// error names the digest HEAD stayed on.
+    fn put_head_back(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        previous: Option<&ContentHash>,
+        landed: &ContentHash,
+        cause: anyhow::Error,
+    ) -> anyhow::Error {
+        match Self::restore_head(engine, base_dir, previous) {
+            Ok(()) => cause,
+            Err(restore) => anyhow::anyhow!("{cause}; HEAD stayed at {landed}: {restore}"),
+        }
+    }
+
+    /// The commit object was written and HEAD moved, then a later durable
+    /// step failed. Put HEAD back so the refusal is the whole story.
     fn undo_landed_head(
         engine: &Ouroboros,
         base_dir: &std::path::Path,
@@ -1400,12 +1451,9 @@ impl Universe {
         landed: &ContentHash,
         consume: anyhow::Error,
     ) -> Result<(ContentHash, bool, Vec<(String, String)>)> {
-        match Self::restore_head(engine, base_dir, previous) {
-            Ok(()) => Err(consume),
-            Err(restore) => Err(anyhow::anyhow!(
-                "{consume}; HEAD stayed at {landed}: {restore}"
-            )),
-        }
+        Err(Self::put_head_back(
+            engine, base_dir, previous, landed, consume,
+        ))
     }
 
     fn abandoned_path(base_dir: &std::path::Path) -> std::path::PathBuf {
@@ -1570,7 +1618,17 @@ impl Universe {
         // opening a hole. Name the commit, not a circle — the base may
         // predate this arc.
         let ancestor = hex::encode(&base.digest);
-        crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))?;
+        if let Err(e) =
+            crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))
+        {
+            return Err(Self::put_head_back(
+                engine,
+                base_dir,
+                previous_head.as_ref(),
+                &commit_hash,
+                e,
+            ));
+        }
         // Root value is the same as before; reload for consistency.
         self.root = engine
             .store
@@ -1984,9 +2042,23 @@ impl Universe {
             }
         }
         let commit_hash = engine.store.put_commit(&commit)?;
+        let previous_head = self.head.clone();
         engine.store.set_head(base_dir, &commit_hash)?;
-        let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));
-        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
+        let ancestor = previous_head.as_ref().map(|h| hex::encode(&h.digest));
+        if let Err(e) = crate::savepoint::record_commit(
+            base_dir,
+            &commit_hash,
+            None,
+            ancestor.as_deref(),
+        ) {
+            return Err(Self::put_head_back(
+                engine,
+                base_dir,
+                previous_head.as_ref(),
+                &commit_hash,
+                e,
+            ));
+        }
         self.head = Some(commit_hash.clone());
 
         // Step 3: update RefineMap

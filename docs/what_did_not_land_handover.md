@@ -209,3 +209,53 @@ EINTR 與暫時／永久之分、`run` 的說明句，工單列為 Inbox，此�
 **不變式（補寫，I2 的另一半）**：**一次回報失敗的操作沒有移動 `HEAD`**；凡在 `set_head` 之後才做的耐久寫入（提交 ○、清除），失敗時 `HEAD` 回到之前——`commit`、`squash`、`refine` 三處。**一次回報失敗的 `evolve` 沒有留下提議**。
 **新探針 r6–r9**（驗收方加）：`commit` × savepoints 讀不到／寫不進、`evolve` × savepoints 讀不到、`squash` × savepoints 寫不進；皆要求「rc≠0 ⟹ `HEAD` 未動」並在之後跑 `gc` 確認上一筆提交仍在。
 〔兩極校準〕f4c876f 上 **r6–r9 四紅、r1–r5 仍綠**；一個最小修正（三處 `record_commit` 失敗即還原 `HEAD`、位置比對失敗即撤回注入）⟹ **12／12**；同一修正跑全樹 **250 target／2403 passed／0 failed，exit 0** ⟹ 修補不牽動既有測試。交付的全樹 ×3（f4c876f）：**250／2399／0／exit 0**，三輪相同。
+
+---
+
+## 10. 修補回合 R-1 回報（交付方填；本行以上一字不得動）
+
+### 10.1 射程逐項對照
+
+`commit`、`squash`、`refine` 在 `record_commit` 失敗時把 `HEAD` 寫回 `set_head` 之前的摘要。rc≠0，`HEAD` 不變（r6、r7、r9）。之後 `gc`，較早的那筆提交仍在 `log` 裡。
+
+`evolve` 的位置比對失敗時，刪掉剛寫下的注入。拒絕之後工作集的檔數與注入前相同（r8）。`record` 失敗時的撤回維持原樣。
+
+r1–r5 仍綠。讀得到的放棄記錄、允許的寫入、一般提交的消耗都維持。
+
+### 10.2 順手改動（逐項指名）
+
+`commit` 在注入已清之後回寫 `~%Config` 若失敗，同樣把 `HEAD` 寫回。那一步也在 `set_head` 之後。
+
+`HEAD` 還原自己失敗時，句子帶 `HEAD stayed at <新摘要>`。注入撤回再失敗時，句子帶 `the injection remains`。
+
+探針、規格、版本都沒改。沒跑 rustfmt。
+
+改動檔：`crates/interpreter/src/universe.rs`、本工單 §10。
+
+### 10.3 工單哪裡是錯的
+
+工單沒有寫錯。§8.4 Q1 第 6 項與 Q3 寫過的那一格，這次補上。
+
+### 10.4 工單指名要你回答的問題
+
+這一回合沒有另列問答。
+
+三處 `record_commit`：失敗就 `set_head` 回先前的摘要；原本沒有 `HEAD` 就刪掉 `HEAD` 檔，然後返回 ○ 的錯誤。`commit` 在那之後的清除與 `~%Config` 回寫，失敗走同一條。
+
+`evolve`：位置比對的錯誤發生在注入已寫下之後。先刪該注入，再返回那個錯誤。
+
+### 10.5 探針
+
+探針檔未改、未 rustfmt。無 `VOID READING`。12 支皆綠（g1–g3、r1–r9）。
+
+### 10.6 數字
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 250 行，2403 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。各行的耗時不同；把 `finished in` 換成同一記號之後，三輪的 `test result:` 行相同。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根物件 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
+
+### 10.7 你認為需要改規格之處
+
+沒有。`#unwritable` 的 `TAG_REGISTRY`、EINTR、`run` 的說明句仍是上一節所列，此處未動。
