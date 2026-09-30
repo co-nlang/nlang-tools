@@ -1674,6 +1674,7 @@ fn cause_from_value(v: &Value) -> Result<BottomCause> {
         "no_standard_root" => BottomCause::NoStandardRoot,
         "unprojected_builtin" => BottomCause::UnprojectedBuiltin,
         "unprovided_builtin" => BottomCause::UnprovidedBuiltin,
+        "no_universe" => BottomCause::NoUniverse,
         _ => BottomCause::Conflict,
     })
 }

@@ -285,57 +285,71 @@ fn ensure_supported_encoding(v: u32) -> Result<()> {
     }
 }
 
-fn has_cas_objects(path: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(path) else { return false };
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        path.is_file() || (path.is_dir() && has_cas_objects(&path))
-    })
+/// A directory already holds a universe (D82). An unreadable `.oo` counts
+/// as present: a permission error is not absence, and a caller must not
+/// replace it with an empty store.
+pub fn durable_store_present(base_dir: &Path) -> bool {
+    match universe_content(base_dir) {
+        Ok(present) => present,
+        Err(_) => true,
+    }
 }
 
-/// A directory already holds a store. This is the complement of `new_store`
-/// in [`ObjectStore::init`]: a layout declaration, a `HEAD`, or any CAS
-/// object. An `.oo` that cannot be stated counts as present — a permission
-/// error is not the same fact as absence, and a caller must not replace it
-/// with an empty store.
-pub fn durable_store_present(base_dir: &Path) -> bool {
+/// Universe content under `.oo/`, not node settings. Witnesses: the layout
+/// declaration (`format`), `HEAD`, `staged`, `effect_pending`,
+/// `pin_pending`, `abandoned`, or any file under `objects/`, `injections/`,
+/// or `savepoints/`. `objects.format` is written before `format` and is not
+/// a witness: a concurrent creator must still be creating, and a reader
+/// who requires `format` never sees the layout line without its pair.
+/// `discovery.n`, `peers/`, and `architects.json` are node settings and are
+/// not witnesses. An empty `.oo/` is not a universe. `NotFound` is absence.
+/// Any other IO error is unreadable, not absence.
+pub fn universe_content(base_dir: &Path) -> Result<bool> {
     let oo = base_dir.join(".oo");
     match oo.try_exists() {
-        Ok(false) => false,
-        Err(_) => true,
-        Ok(true) => match stated(&oo.join("format")) {
-            Presence::Yes | Presence::Unstatable => true,
-            Presence::No => match stated(&oo.join("HEAD")) {
-                Presence::Yes | Presence::Unstatable => true,
-                Presence::No => objects_hold_anything(&oo.join("objects")),
-            },
-        },
+        Ok(false) => return Ok(false),
+        Err(e) => return Err(cannot_read(".oo", &e)),
+        Ok(true) => {}
     }
+    for name in [
+        "format",
+        "HEAD",
+        "staged",
+        "effect_pending",
+        "pin_pending",
+        "abandoned",
+    ] {
+        match oo.join(name).try_exists() {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(e) => return Err(cannot_read(format!(".oo/{name}"), &e)),
+        }
+    }
+    for name in ["objects", "injections", "savepoints"] {
+        if directory_holds_a_file(&oo.join(name))? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
-enum Presence {
-    Yes,
-    No,
-    Unstatable,
-}
-
-fn stated(path: &Path) -> Presence {
-    match path.try_exists() {
-        Ok(true) => Presence::Yes,
-        Ok(false) => Presence::No,
-        Err(_) => Presence::Unstatable,
+fn directory_holds_a_file(path: &Path) -> Result<bool> {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(cannot_read(path.display(), &e)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|e| cannot_read(path.display(), &e))?;
+        let kind = entry.file_type().map_err(|e| cannot_read(path.display(), &e))?;
+        if kind.is_file() {
+            return Ok(true);
+        }
+        if kind.is_dir() && directory_holds_a_file(&entry.path())? {
+            return Ok(true);
+        }
     }
-}
-
-fn objects_hold_anything(path: &Path) -> bool {
-    match fs::read_dir(path) {
-        Ok(entries) => entries.flatten().any(|entry| {
-            let path = entry.path();
-            path.is_file() || (path.is_dir() && objects_hold_anything(&path))
-        }),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
-        Err(_) => true,
-    }
+    Ok(false)
 }
 
 impl ObjectStore {
@@ -409,31 +423,19 @@ impl ObjectStore {
 
     pub fn init(base_dir: &Path) -> Result<Self> {
         let oo = base_dir.join(".oo");
-        // An empty `.oo/` is often a home for pre-store configuration such as
-        // discovery.n. It contains no durable object whose shape could be
-        // misread, so it is safe to initialise. HEAD or a CAS file makes it a
-        // store someone may already have written and therefore needs a proven
-        // declaration before we open it.
-        // A prior engine may have staged injections without ever committing a
-        // HEAD or CAS object. Its declaration still makes this an existing
-        // store; treating it as new would silently advance the layout merely
-        // by opening it and bypass the explicit migration gate. The predicate
-        // is therefore still `format` (G3 / v0.43.0), not `objects.format`
-        // (that would mint a layout onto a legacy bare-number store — G2).
+        // Creating a universe is this function. Callers that only read must
+        // not reach the `new_store` arm. Node settings are not witnesses.
+        // Proposals, objects, or `format` without a readable pair are an
+        // existing universe: `ensure_format` refuses a missing `format` and
+        // writes nothing (D82, REAL_02 §5.1.1). `objects.format` alone is
+        // not that witness; it is written first.
         //
-        // I1: "not yet" is another process's intent, not a filesystem
-        // answer. Land `objects.format` first so any observer that sees
-        // `format` already sees a complete split-axis pair. Do not retry.
-        let format_here = match oo.join("format").try_exists() {
-            Ok(b) => b,
-            Err(e) => return Err(cannot_read("`.oo/format`", &e)),
+        // Land `objects.format` first so any observer that sees `format`
+        // already sees a complete split-axis pair. Do not retry.
+        let new_store = match universe_content(base_dir)? {
+            true => false,
+            false => true,
         };
-        let head_here = match oo.join("HEAD").try_exists() {
-            Ok(b) => b,
-            Err(e) => return Err(cannot_read(".oo/HEAD", &e)),
-        };
-        let new_store =
-            !format_here && !head_here && !has_cas_objects(&oo.join("objects"));
         if new_store {
             fs::create_dir_all(&oo).map_err(|e| cannot_write(oo.display(), &e))?;
             atomic_write(

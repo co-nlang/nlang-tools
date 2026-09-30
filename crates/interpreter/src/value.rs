@@ -1376,6 +1376,7 @@ impl BottomDetail {
             BottomCause::NoStandardRoot => "#no_standard_root",
             BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
             BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
+            BottomCause::NoUniverse => "#no_universe",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1624,6 +1625,9 @@ pub enum BottomCause {
     /// (REAL_02 §3.2.2, D78). Append-only tail. Not a deadline and not a
     /// connection that never opened.
     PeerClosed,
+    /// `~%Engine./save` was asked to keep a value where no universe exists
+    /// (D82 ③). An address would claim the value was stored. Append-only tail.
+    NoUniverse,
 }
 
 impl BottomCause {
@@ -1663,6 +1667,7 @@ impl BottomCause {
             BottomCause::NoStandardRoot => "no_standard_root",
             BottomCause::UnprojectedBuiltin => "unprojected_builtin",
             BottomCause::UnprovidedBuiltin => "unprovided_builtin",
+            BottomCause::NoUniverse => "no_universe",
         }
     }
 
@@ -1690,7 +1695,8 @@ impl BottomCause {
             | BottomCause::SemanticEclipse
             | BottomCause::NumericalError
             | BottomCause::ArithmeticOnAnchor
-            | BottomCause::NoContext => 2,
+            | BottomCause::NoContext
+            | BottomCause::NoUniverse => 2,
             BottomCause::FuelExhausted
             | BottomCause::Timeout
             | BottomCause::PeerUnreachable

@@ -83,19 +83,85 @@
 
 ### 8.1 射程逐項對照
 
+I1. 沒有宇宙時，只有 `evolve` 建倉。其他指令不寫宣告、物件、`HEAD`、提議、○。`node` 最多留下節點設定（r1）。
+
+I2. `status`、`log`、`commit`、`gc`、`migrate`、`squash`、`refine`、`rollback`、`repl`、`inspect` 拒絕，rc=1，句子是 `no universe here: start one with evolve`。不寫（r2、r3）。
+
+I3. `eval`、`run`（含 `--format`、`--observe`）、`test`（含 `--static`）、`fmt`、`lint`、`identity`、全部 `node *` 照答，不建宇宙。沒有宇宙時仍從工作區讀 `discovery.n`、`peers/`、`architects.json`，值在暫時倉（g2、r1）。
+
+I4. 沒有宇宙時不印那四句。`~%Engine./save` 與 `~%Discovery./identify_and_store` 印 `_|_  ;; %cause: #no_universe`，沒有位址，工作區沒有 `.oo/`（r3、r6）。
+
+I5. 已有宇宙內容而缺 `format`：拒絕開啟、不寫，`evolve` 也一樣（r4）。只有 `discovery.n` 或只有 `peers/directory`：`status` 拒絕，位元組不變（r5）。空的 `.oo/` 同樣拒絕、不寫。
+
+I6. `evolve` 之後的誠實空宇宙照常作答、照常提交（g1）。有提交而缺宣告仍拒絕（g3）。既有倉的節點設定仍在（g4、g6）。layout 7 的宣告不變（g5）。宇宙裡的 `save` 仍存下並回位址（g7）。Q-063、Q-062、Q-061 與 26 個修訂檔都在全樹裡。
+
+I7. `x: 0` 根、新鮮 `v: 1 + 1` 根、標準根、`layout=8`／`encoding=5` 都沒動。沒有新的耐久檔。
+
 ### 8.2 順手改動（逐項指名）
+
+`engine_or_ephemeral` 刪了。它在可寫的空目錄上會先把倉建出來，這就是本弧的缺陷。
+
+`durable_store_present` 改成跟著 `universe_content`；讀不到算「在」，呼叫者不得換成空倉。CLI 已經不再呼叫它。
+
+拿掉只服務舊述詞的 `has_cas_objects`、`Presence`、`stated`、`objects_hold_anything`。
+
+`BottomCause::NoUniverse` 加在列舉尾巴。`primary_rank` 與 `NoContext` 同為 2。`new_in_memory` 的 `holds_universe` 仍是 true，記憶體裡的 `save` 照舊存進暫時倉。
+
+`run` 的說明句、探針、26 個修訂檔、規格、版本都沒改。沒跑 rustfmt。沒動 `savepoint.rs`、`gc.rs`。宇宙裡 `put_value` 失敗仍答 `#conflict`。
+
+改動檔：`crates/interpreter/src/storage.rs`、`lib.rs`、`builtins/engine.rs`、`value.rs`、`store_codec.rs`、`crates/oo/src/main.rs`、本工單 §8。
 
 ### 8.3 工單哪裡是錯的
 
+工單沒有寫錯。26 個修訂檔沒再改。
+
+實作時一度把 `objects.format` 算進「有宇宙」。它寫在 `format` 之前。`nothing_here` r1（驗收方已改成並行 `evolve`）於是在 `format` 尚未落地時拒絕，374／1080，句子是 `cannot determine this store's layout: `.oo/format` is absent`。那個檔因此不進述詞。修正後該檔 7／7，本弧探針 13／13。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 宇宙內容是這些見證之一：`format`、`HEAD`、`staged`、`effect_pending`、`pin_pending`、`abandoned`，以及 `objects/`、`injections/`、`savepoints/` 底下的任何檔案。`format` 是佈局宣告，後三者是物件與提議，中間三個檔是還沒進 ○ 的提議狀態。
+
+節點設定是 `discovery.n`、`peers/`、`architects.json`。缺檔時讀成空，不創建。〔量〕只有 `architects.json` 的 `.oo/`：`status` rc=1，檔不變。
+
+空的 `.oo/` 沒有宇宙。`.oo` 讀不到時也不是缺席：`universe_content` 回錯誤，`durable_store_present` 把錯誤看成「在」。
+
+`objects.format` 單獨存在時述詞是沒有宇宙。它先寫、`format` 後寫；把它算進去會讓並行的 `evolve` 看見半份宣告（§8.3）。之後的 `evolve` 仍會把這一對寫完。`status` 在這個目錄不寫。空的 `objects/` 目錄（底下沒有檔）也不是見證。
+
+Q2. 與 §3 相同，沒有改歸類。
+
+建立者：`evolve`。它是唯一被允許在沒有宇宙時寫宣告的指令。
+
+需要宇宙：`status`、`log`、`commit`、`gc`（含 `--dry-run`）、`migrate`、`squash`、`refine`、`rollback`、`repl`、`inspect`。它們答的是這個宇宙的工作集、歷史、物件或一次寫入；沒有宇宙就沒有可答的對象。
+
+不需要宇宙：`eval`；`run`（含 `--format`、`--observe`）；`test`（含 `--static`）；`fmt`（`--write` 改的是指名的原始檔）；`lint`；`identity`（`OO_IDENTITY` 或 `~/.oo/identity`，在工作區之外）；`node serve`、`node id`、`node advertise`、`node discover`、`node find-node`、`node affiliate`、`node peers`、`node trust list`、`node trust add`、`node trust remove`。節點指令讀寫的是節點設定與節點家目錄，值在暫時倉。
+
+Q3. 〔量，本交付的 `oo`〕空目錄 `node trust add`：rc=0，`.oo/` 裡只有 `discovery.n`。接著 `status`：rc=1，`Error: no universe here: start one with evolve`，`discovery.n` 位元組不變。接著 `evolve`：rc=0，寫上 `layout=8`、`encoding=5`，`discovery.n` 仍是原來那一份。
+
+Q4. 那句說明現在仍不真。文字沒改，仍是 “does not write this workspace”。〔量〕沒有宇宙時，`run` 一個呼叫 `~%Engine./save` 的程式：rc=0，印 `_|_  ;; %cause: #no_universe`，不建 `.oo/`。已有宇宙時，同一個 `run`：rc=0，印 `1` 的位址 `17564af7…`，物件寫進這個工作區。後者是 I6／g7 要留的行為。
+
+Q5. `#no_universe` 是原因，載體是 ⊥。`TAG_REGISTRY` §0.2：消費者看到的是值本身，離開碼必須為 0。〔量〕`eval` 與 `run` 都是 rc=0，stdout `_|_  ;; %cause: #no_universe`。`status` 那類拒絕是邊界診斷，rc=1，句子裡沒有這個標籤。
+
+`engine.save` 在已有宇宙且 `put_value` 回 `Err` 時，仍是 `BottomCause::Conflict`。這條沒改。
+
+Q6. `Ouroboros::init` 在 `universe_content` 為假時仍會建倉。走得到它、而且真的會建的呼叫者：CLI 的 `evolve`；程式庫與測試裡直接呼叫 `Ouroboros::init` 的那些（interpreter 的探針測試，以及 `oo` 的 `held_but_unopenable`、`what_the_shelf_does_not_hold`、`a_name_the_printer_could_not_write`）。需要宇宙的 CLI 指令先 `require_universe`，那次 `init` 面對的已經是宇宙，不會建。`engine_keeping_settings` 只在已經有宇宙內容時呼叫 `init`。`without_universe` 與 `new_in_memory` 的 `ObjectStore::init` 開在暫時目錄，不寫工作區。
 
 ### 8.5 探針
 
+本弧探針檔未改、未 rustfmt。無 `VOID READING`。13 支皆綠（g1–g7、r1–r6）。26 個修訂檔未改。
+
 ### 8.6 數字
 
-三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：逐行 `test result:` 彙總、失敗測試名、exit。conformance。known answer、三個身分紅線、新倉宣告。
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，三輪相同：`test result:` 249 行，2391 passed，0 failed，`^error` 0，exit 0。沒有失敗測試名。各行的耗時不同；把 `finished in` 換成同一記號之後，三輪的 `test result:` 行相同。
+
+conformance：162 vectors，162 pass，0 fail。
+
+`~%Math./add (1, 2)` → `3`，`(1, 3)` → `4`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根物件 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
 
 ### 8.7 你認為需要改規格之處
+
+`#no_universe` 還沒有寫進 `TAG_REGISTRY`。`REAL_02` §5.1.1、`REAL_03` §6.6、`SPEC_08` §6.2.1 的文字仍是驗收方收尾，此處未改。
+
+`run` 的說明句在宇宙裡呼叫 `save` 時與事實不符。工單只要這句的事實、要留下那個寫入，所以說明文字沒動。
 
 ---
 
