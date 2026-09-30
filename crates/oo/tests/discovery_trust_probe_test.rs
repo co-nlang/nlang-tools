@@ -120,6 +120,8 @@ fn oo(dir: &Path, args: &[&str]) -> String {
 }
 
 fn init(dir: &Path) {
+    std::fs::write(dir.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    let _ = oo_raw(dir, &["evolve", "seed.n"]);
     let out = oo_raw(dir, &["status"]);
     assert!(out.ok, "control: `oo status` failed: {}", out.text);
     assert!(
@@ -551,6 +553,8 @@ fn red_roots_are_workspace_local_even_under_one_home() {
     // Presence controls under the SAME HOME: both workspaces initialize and the
     // existing node surface answers before the new surface is tested.
     for d in [&a, &b] {
+        std::fs::write(d.join("seed.n"), "seed: 0\n").unwrap(); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+        let _ = oo_raw_with_home(d, &shared_home, &["evolve", "seed.n"]);
         let status = oo_raw_with_home(d, &shared_home, &["status"]);
         assert!(
             status.ok,

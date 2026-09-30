@@ -142,6 +142,10 @@ fn object_path(dir: &Path, caid: &str) -> PathBuf {
 
 /// Stores `expr` in `dir` and returns its CAID.
 fn store(dir: &Path, expr: &str) -> String {
+    if !dir.join(".oo").exists() { // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+        std::fs::write(dir.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n");
+        let _ = oo(dir, &["evolve", "seed.n"]);
+    }
     write(
         dir,
         "i.n",

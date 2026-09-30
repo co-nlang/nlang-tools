@@ -108,6 +108,7 @@ fn init(dir: &Path) {
     oo(dir, &["run", "--help"]);
     fs::write(dir.join("seed.n"), "seed: { ok: #true }\n").unwrap();
     oo(dir, &["run", "seed.n"]);
+    oo(dir, &["evolve", "seed.n"]); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
 }
 
 fn now_secs() -> i64 {

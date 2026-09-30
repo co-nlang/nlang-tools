@@ -498,6 +498,8 @@ fn r9_a_half_migrated_store_can_still_be_completed() {
 #[test]
 fn r10_an_unreadable_node_key_refuses_even_before_there_is_a_store() {
     let w = Ws::new("r10");
+    w.write("seed.n", "seed: 0\n"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    let _ = w.oo(&["evolve", "seed.n"]);
     w.break_node_key();
     fs::remove_dir_all(w.oo_dir()).unwrap();
     let (o, rc) = w.oo(&["eval", "~%Math./add (1,2)"]);

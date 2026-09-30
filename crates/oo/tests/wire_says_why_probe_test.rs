@@ -76,6 +76,7 @@ fn init(dir: &Path) {
     oo(dir, &["run", "--help"]);
     write(dir, "seed.n", "seed: { ok: #true }\n");
     oo(dir, &["run", "seed.n"]);
+    oo(dir, &["evolve", "seed.n"]); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
 }
 
 /// Store a value and return its CAID. `--observe` prints an effect annotation

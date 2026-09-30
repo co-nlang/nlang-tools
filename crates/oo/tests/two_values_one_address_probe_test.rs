@@ -87,6 +87,10 @@ fn scratch(tag: &str) -> nlang_interpreter::ScratchDir {
 
 /// The CAID `~%Discovery./identify_and_store` mints for `expr`.
 fn stored(dir: &Path, expr: &str) -> String {
+    if !dir.join(".oo").exists() { // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+        std::fs::write(dir.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n");
+        run(dir, &["evolve", "seed.n"]);
+    }
     fs::write(
         dir.join("s.n"),
         format!("id: ~%Discovery./identify_and_store {expr}\n"),
@@ -289,6 +293,8 @@ fn r3_the_address_hands_back_its_own_bytes() {
          second: ~%Discovery./identify_and_store \" a \"\n",
     )
     .expect("write s.n");
+    fs::write(d.join("seed.n"), "seed: 0\n").expect("seed"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    let _ = run(d, &["evolve", "seed.n"]);
 
     let (out, rc) = run(d, &["run", "s.n", "--observe", "first"]);
     assert_eq!(rc, 0, "REACH: the store call ran: {out}");

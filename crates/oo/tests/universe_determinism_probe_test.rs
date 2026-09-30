@@ -257,6 +257,10 @@ fn root_leaves(dir: &Path) -> BTreeMap<String, String> {
 
 /// A source CAID the shadow scan / refine can name, plus a target.
 fn stored(dir: &Path, expr: &str) -> String {
+    if !dir.join(".oo").exists() { // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+        std::fs::write(dir.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n");
+        let _ = oo(dir, &["evolve", "seed.n"]);
+    }
     fs::write(
         dir.join("i.n"),
         format!("id: ~%Discovery./identify_and_store {expr}\n"),

@@ -232,6 +232,8 @@ fn r2_no_rust_internals_reach_the_operator() {
 #[test]
 fn r3_the_repl_names_the_coordinate_too() {
     let d = fresh_dir("r3");
+    write(&d, "seed: 0\n"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    oo(&d, &["evolve", "u.n"]);
     let out = oo_repl(&d, &format!("{DEEP_A}{DEEP_B}exit\n"));
     assert!(
         out.contains("Evolution Conflict"),

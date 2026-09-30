@@ -114,8 +114,8 @@ fn g1_a_fresh_workspace_lands_both_declarations() {
     let s = scratch("g1");
     let d = s.path();
     fs::write(d.join("a.n"), "x: 1\n").expect("source");
-    let (out, rc) = oo(d, &["status"]);
-    assert_eq!(rc, 0, "REACH: status on a fresh workspace: {out}");
+    let (out, rc) = oo(d, &["evolve", "a.n"]); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    assert_eq!(rc, 0, "REACH: evolve on a fresh workspace: {out}");
     assert_eq!(
         read(d, ".oo/format").as_deref(),
         Some("layout=8\n"), // AMENDED 2026-09-27 for Q-062 (D80)
@@ -275,11 +275,12 @@ fn race_group(root: &Path, rounds: usize, procs: usize, where_: &str) -> Vec<Str
         let d = root.join(format!("round-{r}"));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).expect("round dir");
+        fs::write(d.join("seed.n"), "seed: 0\n").expect("seed"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
 
         let kids: Vec<_> = (0..procs)
             .map(|_| {
                 cmd(&d)
-                    .arg("status")
+                    .args(["evolve", "seed.n"])
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()
@@ -388,6 +389,10 @@ fn architect_repo(tag: &str) -> nlang_interpreter::ScratchDir {
 
 /// A CAID for `expr`, the way universe_determinism's `stored()` does it.
 fn stored(d: &Path, expr: &str) -> String {
+    if !d.join(".oo").exists() { // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+        std::fs::write(d.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n");
+        oo(d, &["evolve", "seed.n"]);
+    }
     fs::write(
         d.join("i.n"),
         format!("id: ~%Discovery./identify_and_store {expr}\n"),

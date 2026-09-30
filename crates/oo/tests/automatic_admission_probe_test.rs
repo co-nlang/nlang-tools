@@ -62,6 +62,8 @@ fn oo(dir: &Path, args: &[&str]) -> String {
 }
 
 fn init(dir: &Path) {
+    std::fs::write(dir.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    let _ = oo_raw(dir, &["evolve", "seed.n"]);
     let (ok, text) = oo_raw(dir, &["status"]);
     assert!(ok, "opening control could not initialize {dir:?}: {text}");
 }
