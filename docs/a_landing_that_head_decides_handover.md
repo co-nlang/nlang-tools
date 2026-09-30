@@ -74,19 +74,85 @@
 
 ### 8.1 射程逐項對照
 
+I1. `commit`、`squash`、`refine` 都在 `set_head` 之前把提交 ○ 寫到最終位置。`record_commit` 失敗時 HEAD 尚未移動，錯誤原樣返回。`set_head` 失敗時 HEAD 檔仍指移動前的那一筆，○ 已在盤上，這是狀態 P。
+
+I2. 載入工作集時逐個注入判斷。HEAD 的根與該注入的合，等於 HEAD 的根與空工作集的合，這份注入就不是提議：不折、不帶 pin、不帶 discharge。`status` 不列它，提交不折它。
+
+I3. `commit` 在 `put_root` 之前讀放棄檔。空檔不走歷史。一條筆記的摘要落在 HEAD 到起點的路徑上，或它的全文／摘要已經記在路徑上某筆的 `abandoned`，就不再記入。`squash` 呼叫同一個函式，結果不寫進 squash 提交。
+
+I4. 會移動位置的 pin 仍要 `--grant pin`，歷史仍標 `pin`。一次 rollback 之後的提交記一次放棄。新的提議仍是提議。`~%Config` 會改變合的位置，留在工作集。本探針 10／10，Q-065 12／12，pin 15／15，全樹 2413 passed。
+
+I5. 沒有新的耐久檔。新倉仍是 `layout=8`、`encoding=5`。提交 ○ 的 `point:` 仍是這一筆的 64-hex。三個根位址沒動。
+
 ### 8.2 順手改動（逐項指名）
+
+`record_commit` 在這個佈局要寫 `point:` 時，寫的是這筆提交自己的摘要。圈改在 `set_head` 之前落盤，讀當時的 HEAD 會記成上一筆。沒有 `.oo/format`、或佈局不記 point 的倉，這一行仍省略。evolve 的圈仍讀當下的 HEAD。
+
+`previous_commit_in`：一次歷史走訪把圈目錄讀一次。`previous_commit` 的答案與原先相同。
+
+`Universe` 增加程序內的 `held_sources`，只記「已在 HEAD 位置」的注入路徑。落地成功之後，`set_head` 之後刪掉。它不是磁碟上的清單。
+
+改動檔：`crates/interpreter/src/universe.rs`、`crates/interpreter/src/savepoint.rs`、本工單 §8。
+
+探針、驗收方預先改過的 `pin_intent_file_is_not_authority`、版本、規格、`TAG_REGISTRY` 都維持原檔。沒有跑 rustfmt。沒有改 `storage.rs`。
 
 ### 8.3 工單哪裡是錯的
 
+工單的判準與探針一致。走訪用 `open_commit`。預先改成 `z: 1` 的 pin 測試是 15／15，沒有再改。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 會移動 HEAD 的操作，改後的耐久順序：
+
+1. `commit`。移動之前：讀並過濾放棄檔（空檔不走）、有折進去或已持有的注入時先確認目錄可寫、`put_root`、`put_commit`、`record_commit`。然後 `set_head`。移動之後：刪已持有的注入、刪折進去的注入、刪 legacy `staged`；若有 `~%Config`，再寫回一筆只含它的注入；然後刪 `pin_pending`、`effect_pending`、`abandoned`。這三步的失敗會把 HEAD 寫回移動之前。
+    注入檔留在移動之後：I2，內容已在新 HEAD 的位置，下一輪不把它當提議。放棄檔留在移動之後：I3，那條筆記已經在這一筆（現在的 HEAD）裡。`~%Config` 若在「刪除折進去的成員」與「寫回」之間停住，那筆會期注入已經刪掉、尚未寫回；I2／I3 不覆蓋這個縫，這是原先先清再寫回的窗口。沒有注入成員時，留著的 legacy `staged` 下一次載入仍會讀；工單把這條放在 Inbox。
+
+2. `squash`。移動之前：用同一個過濾函式讀放棄檔並丟掉結果、`put_commit`、`record_commit`。然後 `set_head`。移動之後：刪放棄檔。檔留著時，下一筆 `commit` 靠 I3 不再記已經記過的、以及指向 HEAD 或祖先的筆記。squash 提交本身仍不記入這些筆記。
+
+3. `refine`。移動之前：`put_commit`、`record_commit`。然後 `set_head`。移動之後沒有耐久的回收步驟（refine map 在記憶體）。停在 `set_head` 之後就是這次 refine 已經發生。
+
+4. `rollback` 見 Q4。它的放棄記錄寫在 `set_head` 之前。
+
+Q2. 判準在 `load_staged`（`proposals_at`），在 pin、discharge、fold 之前，每個注入各算一次。所有經 `load_universe` 讀工作集的入口走這裡。
+
+`evolve` 剛寫下一個與 HEAD 位置相同的注入時，命令成功返回，檔留在 `injections/`。下一次載入不把它當提議。
+
+載入不刪這些檔。`Nothing to commit` 不刪。一次真正落地的 `commit` 在 `set_head` 之後刪掉 `held_sources` 上的路徑。
+
+Q3. 走訪從 `get_head` 起，`open_commit` 讀每一筆；前一筆是 `parent`（有的話），否則是圈上的 `ancestor`。走到沒有前一筆為止，用摘要集合切環。圈目錄在這一次走訪裡讀一次。放棄檔不存在或是空的：不讀圈、不走。
+
+量到的數字：先建成 1000 筆互不衝突的欄位提交。計時時鏈上是 1002 筆。沒有放棄檔的一筆提交 95 ms。退回上一步再提交 1.80 s。多 1706 ms。
+
+Q4. `rollback` 的順序沒改：先 `append_abandoned`，再 `set_head`。S6（放棄記錄已寫、HEAD 未移）靠 I3（iii）：那條筆記點名的是仍在 HEAD 的這一筆，下一筆提交不記入。
+
+Q5. 舊順序留下的 S2：HEAD 指向一筆提交物件，那筆的提交 ○ 不在，當時還沒清掉的注入還在。本引擎遇到這個殘留時：
+
+- `status` rc=0，印 `Universe is static`。那份注入的內容已在 HEAD 的根上，不列為提議。
+- `log` rc=0，只剩 HEAD 這一筆。祖先那一筆不在這條邊上。
+- `gc --grant gc`：5 個物件、3 個可達、刪掉 2 個。上一筆不在了。`log` 仍是一筆。
+- 其後的新提交成功。`log` 是新的一筆，然後這筆沒有 ○ 的尖端。缺掉的 ○ 沒有補上。被 gc 收掉的上一筆不會回來。
 
 ### 8.5 探針
 
+`a_landing_that_head_decides_probe_test`：10 passed、0 failed，1.63 s，無空洞讀數。
+
+`what_did_not_land_probe_test`：12 passed、0 failed。
+
+`pin_probe_test`：15 passed、0 failed，含 `pin_intent_file_is_not_authority`。
+
 ### 8.6 數字
 
-三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：逐行 `test result:` 彙總、失敗測試名、exit。conformance。known answer、三個身分紅線、新倉宣告。
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 251 行 `test result:`、2413 passed、0 failed、`^error` 0 行、exit 0。去掉 `finished in` 之後三輪逐行相同。沒有失敗測試名。
+
+conformance：162 vectors、162 pass、0 fail。
+
+`~%Math./add (1, 2)` → `3`，rc=0。`(1, 3)` → `4`，rc=0。這兩次 eval 的目錄沒有 `.oo/`。
+
+`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。新鮮倉 `v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`，`objects.format` 為 `encoding=5`。
 
 ### 8.7 你認為需要改規格之處
+
+這份交付不改規格條文。磁碟格式與佈局宣告沒動。`REAL_01` §4.6 的文字重寫留在驗收收尾。
 
 ---
 

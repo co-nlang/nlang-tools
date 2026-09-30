@@ -349,6 +349,10 @@ pub struct Universe {
     /// Paths of the members this process folded. Commit unlinks exactly these
     /// (S1). Process-local: not a shared on-disk list (Q4 / D48).
     injection_sources: Vec<std::path::PathBuf>,
+    /// Injections whose content is already at HEAD's position (D84 (i)).
+    /// Not proposals: not folded, not a pin, not a discharge. A commit that
+    /// lands unlinks them; a commit that does not run leaves the files.
+    held_sources: Vec<std::path::PathBuf>,
     /// Pin metadata for the one injection this evolve process will mint.
     session_pin_coords: std::collections::BTreeSet<String>,
     session_absorbs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -387,6 +391,7 @@ impl Universe {
             session_has_delta: false,
             injection_ids: std::collections::BTreeSet::new(),
             injection_sources: Vec::new(),
+            held_sources: Vec::new(),
             session_pin_coords: std::collections::BTreeSet::new(),
             session_absorbs: std::collections::BTreeMap::new(),
             session_effect_tags: crate::value::EffectTag::Pure,
@@ -933,6 +938,44 @@ impl Universe {
         }
     }
 
+    /// Members whose meet with HEAD's root moves the position. The others
+    /// are already held: recorded on `held_sources`, omitted from the fold.
+    /// Same comparison as D80 ②, per member, with an empty working set on
+    /// one side. No sole-tip shortcut: a reader decides by HEAD.
+    fn proposals_at(
+        &mut self,
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        injections: Vec<crate::injections::Injection>,
+    ) -> Result<Vec<crate::injections::Injection>> {
+        self.held_sources.clear();
+        if injections.is_empty() {
+            return Ok(injections);
+        }
+        let root = Self::root_now(engine, base_dir)?;
+        let at_head = engine
+            .unify(
+                Value::Combo(root.clone()),
+                Value::Combo(ComboVal::default()),
+            )
+            .content_hash();
+        let mut kept = Vec::with_capacity(injections.len());
+        for injection in injections {
+            let at = engine
+                .unify(
+                    Value::Combo(root.clone()),
+                    Value::Combo(injection.combo.clone()),
+                )
+                .content_hash();
+            if at == at_head {
+                self.held_sources.push(injection.source);
+            } else {
+                kept.push(injection);
+            }
+        }
+        Ok(kept)
+    }
+
     /// HEAD's commit root. No HEAD is the empty combo (there is no point).
     fn root_now(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<ComboVal> {
         match engine.store.get_head(base_dir)? {
@@ -1104,6 +1147,7 @@ impl Universe {
         self.session_has_delta = false;
         self.injection_ids.clear();
         self.injection_sources.clear();
+        self.held_sources.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
         self.session_effect_tags = crate::value::EffectTag::Pure;
@@ -1135,7 +1179,11 @@ impl Universe {
         }
         let injections = crate::injections::load_all(base_dir)?;
         self.effect_pending = None;
-        for injection in &injections {
+        // D84 (i): an injection HEAD already holds is not a proposal. The
+        // test is per member, against HEAD's root, before pin, discharge,
+        // or the fold. The file stays until a commit that lands collects it.
+        let proposals = self.proposals_at(engine, base_dir, injections)?;
+        for injection in &proposals {
             self.injection_ids.insert(injection.id.clone());
             self.injection_sources.push(injection.source.clone());
             self.pin_coords.extend(injection.pin_coords.iter().cloned());
@@ -1150,8 +1198,8 @@ impl Universe {
         if !self.pin_coords.is_empty() {
             self.pin_pending = true;
         }
-        if !injections.is_empty() {
-            match crate::injections::fold(engine, injections) {
+        if !proposals.is_empty() {
+            match crate::injections::fold(engine, proposals) {
                 Ok(combo) => {
                     self.staged = combo;
                     self.restamp_thunk_effects(engine);
@@ -1164,7 +1212,7 @@ impl Universe {
                     self.is_dirty = true;
                 }
             }
-        } else {
+        } else if self.held_sources.is_empty() {
             let staged_path = base_dir.join(".oo").join("staged");
             match std::fs::read_to_string(&staged_path) {
                 Ok(json) => {
@@ -1186,6 +1234,11 @@ impl Universe {
                     ));
                 }
             }
+        } else {
+            // Every member is already at HEAD. There is no proposal, and the
+            // legacy staged file is not the working set while members exist.
+            self.staged = ComboVal::default();
+            self.is_dirty = false;
         }
         // Q4: a v0.43.0 leftover sidecar still contributes to the gate on
         // layout ≤ 4 (and after migrate, until commit). A readable body that
@@ -1323,18 +1376,21 @@ impl Universe {
         };
         // R1 / I1: read `.oo/abandoned` before any object or HEAD write.
         // `NotFound` is no record. Any other read error refuses; nothing
-        // is written and the file is not deleted.
+        // is written and the file is not deleted. D84 (ii)(iii): a note
+        // already in HEAD's history, or naming HEAD or an ancestor, is
+        // not recorded. An empty file does not walk.
         let mut meta = meta;
         if meta.abandoned.is_none() {
-            let abs = Self::load_abandoned_file(base_dir)?;
+            let abs = Self::abandonments_still_to_record(engine, base_dir)?;
             if !abs.is_empty() {
                 meta.abandoned = Some(abs);
             }
         }
-        // I2: the directory that holds the members this commit folds must
-        // accept a new file, or this commit does not land. `clear` still
-        // returns a real unlink error; that path restores the previous HEAD.
-        if !self.injection_sources.is_empty() {
+        // The directory that holds the members this commit folds, and the
+        // held members it collects, must accept a new file, or this commit
+        // does not land. `clear` still returns a real unlink error; that
+        // path restores the previous HEAD.
+        if !self.injection_sources.is_empty() || !self.held_sources.is_empty() {
             crate::injections::ensure_directory_writable(&crate::injections::dir(base_dir))?;
         }
         let root_hash = engine.store.put_root(&new_root, &standard)?;
@@ -1352,27 +1408,16 @@ impl Universe {
         commit.kind = kind;
         let commit_hash = engine.store.put_commit(&commit)?;
         let previous_head = self.head.clone();
-        engine.store.set_head(base_dir, &commit_hash)?;
-        // D52/D55: put_commit → set_head → mint. Covering parent is the
-        // workset tip just submitted (S2 / G5). Ancestor is the previous
-        // HEAD's commit digest (`self.head` is still that HEAD) — a
-        // pre-arc HEAD has no circle, so naming a circle id would dangle.
+        // D84: the circle is in its final place before HEAD moves. A failure
+        // here has not moved HEAD. Covering parent is the workset tip.
+        // Ancestor is the previous HEAD's commit digest — a pre-arc HEAD
+        // has no circle, so naming a circle id would dangle.
         let ancestor = previous_head.as_ref().map(|h| hex::encode(&h.digest));
-        if let Err(e) = crate::savepoint::record_commit(
-            base_dir,
-            &commit_hash,
-            None,
-            ancestor.as_deref(),
-        ) {
-            return Self::undo_landed_head(
-                engine,
-                base_dir,
-                previous_head.as_ref(),
-                &commit_hash,
-                e,
-            );
-        }
-        let folded = crate::injections::clear(&self.injection_sources)
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
+        engine.store.set_head(base_dir, &commit_hash)?;
+        // After HEAD: collection only. A failure here puts HEAD back.
+        let folded = crate::injections::clear(&self.held_sources)
+            .and_then(|_| crate::injections::clear(&self.injection_sources))
             .and_then(|_| Self::unlink_legacy_staged(base_dir));
         if let Err(e) = folded {
             return Self::undo_landed_head(engine, base_dir, previous_head.as_ref(), &commit_hash, e);
@@ -1386,6 +1431,7 @@ impl Universe {
         self.session_has_delta = false;
         self.injection_ids.clear();
         self.injection_sources.clear();
+        self.held_sources.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
         self.session_effect_tags = crate::value::EffectTag::Pure;
@@ -1480,6 +1526,69 @@ impl Universe {
             .filter(|l| !l.is_empty())
             .map(|l| l.to_string())
             .collect())
+    }
+
+    /// Notes the next commit still has to record. An absent or empty file
+    /// does not walk. A note already stored on a commit in HEAD's history
+    /// is dropped (D84 (ii)). A note whose digest is HEAD or an ancestor
+    /// is dropped (D84 (iii)).
+    fn abandonments_still_to_record(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+    ) -> Result<Vec<String>> {
+        let notes = Self::load_abandoned_file(base_dir)?;
+        if notes.is_empty() {
+            return Ok(notes);
+        }
+        let (path, recorded) = Self::abandonment_history(engine, base_dir)?;
+        Ok(notes
+            .into_iter()
+            .filter(|note| {
+                let digest = note.rsplit(':').next().unwrap_or(note.as_str());
+                !path.contains(digest) && !recorded.contains(note.as_str()) && !recorded.contains(digest)
+            })
+            .collect())
+    }
+
+    /// Digests from HEAD back to the first commit this engine can name,
+    /// and every abandonment those commits already record (the note and
+    /// its digest). `open_commit`: a 64-hex ancestor is a v1 wrapper over
+    /// a value-addressed commit.
+    fn abandonment_history(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+    ) -> Result<(
+        std::collections::HashSet<String>,
+        std::collections::HashSet<String>,
+    )> {
+        let mut path = std::collections::HashSet::new();
+        let mut recorded = std::collections::HashSet::new();
+        let Some(mut curr) = engine.store.get_head(base_dir)? else {
+            return Ok((path, recorded));
+        };
+        let nodes = crate::savepoint::load_circles(base_dir)?;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let d = hex::encode(&curr.digest);
+            if !seen.insert(d.clone()) {
+                break;
+            }
+            path.insert(d.clone());
+            let (_addr, commit) = engine.store.open_commit(&curr)?;
+            if let Some(abs) = &commit.meta.abandoned {
+                for note in abs {
+                    recorded.insert(note.clone());
+                    if let Some(dig) = note.rsplit(':').next() {
+                        recorded.insert(dig.to_string());
+                    }
+                }
+            }
+            match crate::savepoint::previous_commit_in(&nodes, &commit, &d) {
+                Some(prev) => curr = prev,
+                None => break,
+            }
+        }
+        Ok((path, recorded))
     }
 
     fn append_abandoned_file(base_dir: &std::path::Path, caid: &ContentHash) -> Result<()> {
@@ -1601,10 +1710,11 @@ impl Universe {
         }
         // Confirm base object exists.
         let _ = engine.store.get_commit(base)?;
-        // The abandonment file is dropped after squash. Read it first so an
-        // unreadable record is refused before any write (I1). The lines are
-        // not copied into the squash commit (R2).
-        let _abandoned = Self::load_abandoned_file(base_dir)?;
+        // The abandonment file is dropped after squash. Read it first, with
+        // the same filter commit uses, so an unreadable record is refused
+        // before any write. The lines are not copied into the squash commit
+        // (R2). Squash does not start recording abandonments.
+        let _abandoned = Self::abandonments_still_to_record(engine, base_dir)?;
         // New commit: parent=base, root unchanged from HEAD, kind Squash.
         // Intentionally does NOT copy abandoned meta from intermediates —
         // those edges leave with the range (R2: Squash marker is the fact).
@@ -1612,23 +1722,14 @@ impl Universe {
         commit.kind = CommitKind::Squash;
         let commit_hash = engine.store.put_commit(&commit)?;
         let previous_head = self.head.clone();
-        engine.store.set_head(base_dir, &commit_hash)?;
+        // Circle before HEAD. A failure here has not moved HEAD.
         // Covering: unique tip (HEAD's commit-circle). Ancestor: the base
         // commit's digest, so log/squash skip the compressed range without
         // opening a hole. Name the commit, not a circle — the base may
         // predate this arc.
         let ancestor = hex::encode(&base.digest);
-        if let Err(e) =
-            crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))
-        {
-            return Err(Self::put_head_back(
-                engine,
-                base_dir,
-                previous_head.as_ref(),
-                &commit_hash,
-                e,
-            ));
-        }
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))?;
+        engine.store.set_head(base_dir, &commit_hash)?;
         // Root value is the same as before; reload for consistency.
         self.root = engine
             .store
@@ -2043,22 +2144,10 @@ impl Universe {
         }
         let commit_hash = engine.store.put_commit(&commit)?;
         let previous_head = self.head.clone();
-        engine.store.set_head(base_dir, &commit_hash)?;
+        // Circle before HEAD. A failure here has not moved HEAD.
         let ancestor = previous_head.as_ref().map(|h| hex::encode(&h.digest));
-        if let Err(e) = crate::savepoint::record_commit(
-            base_dir,
-            &commit_hash,
-            None,
-            ancestor.as_deref(),
-        ) {
-            return Err(Self::put_head_back(
-                engine,
-                base_dir,
-                previous_head.as_ref(),
-                &commit_hash,
-                e,
-            ));
-        }
+        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
+        engine.store.set_head(base_dir, &commit_hash)?;
         self.head = Some(commit_hash.clone());
 
         // Step 3: update RefineMap
