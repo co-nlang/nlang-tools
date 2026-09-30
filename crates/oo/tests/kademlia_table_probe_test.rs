@@ -1349,6 +1349,7 @@ fn p4_nothing_persisted() {
 fn p5_fetch_untouched() {
     let dir = fresh_dir("p5-srv");
     init(&dir);
+    oo(&dir, &["evolve", "seed.n"]); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
     write(
         &dir,
         "i.n",

@@ -777,6 +777,9 @@ pub struct Ouroboros {
     /// digest. Historical compatibility is data in this table.
     pub standard_roots: StandardRootSet,
     pub base_dir: Option<PathBuf>,
+    /// This engine can keep a value. False when bound to a workspace that
+    /// has no universe (D82 ③): `~%Engine./save` answers `#no_universe`.
+    pub holds_universe: bool,
     /// Owns the temp tree for [`Self::new_in_memory`]. Drop removes its `.oo/`.
     _ephemeral_root: Option<tempfile::TempDir>,
     pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), Value>>,
@@ -903,6 +906,7 @@ impl Ouroboros {
             store,
             standard_roots: StandardRootSet::default(),
             base_dir: None,
+            holds_universe: true,
             _ephemeral_root: Some(ephemeral),
             unify_memo: RwLock::new(HashMap::new()),
             force_memo: RwLock::new(HashMap::new()),
@@ -931,7 +935,23 @@ impl Ouroboros {
     }
 
     pub fn init(base_dir: &std::path::Path) -> Result<Self> {
-        let store = ObjectStore::init(base_dir)?;
+        Self::bind(base_dir, true)
+    }
+
+    /// Node settings from `base_dir`, values in an ephemeral store. Does not
+    /// create a universe in the workspace (D82). `save` answers `#no_universe`.
+    pub fn without_universe(base_dir: &std::path::Path) -> Result<Self> {
+        Self::bind(base_dir, false)
+    }
+
+    fn bind(base_dir: &std::path::Path, hold: bool) -> Result<Self> {
+        let (store, ephemeral) = if hold {
+            (ObjectStore::init(base_dir)?, None)
+        } else {
+            let ephemeral = crate::scratch::ephemeral_store_root()?;
+            let store = ObjectStore::init(ephemeral.path())?;
+            (store, Some(ephemeral))
+        };
         let builtins = create_default_builtins();
         // Lazy identity: do not mint on init (P5 — ordinary work must not
         // create ~/.oo/identity). Loaded on first signature / `oo identity`.
@@ -960,7 +980,8 @@ impl Ouroboros {
             store,
             standard_roots: StandardRootSet::default(),
             base_dir: Some(base_dir.to_path_buf()),
-            _ephemeral_root: None,
+            holds_universe: hold,
+            _ephemeral_root: ephemeral,
             unify_memo: RwLock::new(HashMap::new()),
             force_memo: RwLock::new(HashMap::new()),
             force_memo_rev: RwLock::new(HashMap::new()),

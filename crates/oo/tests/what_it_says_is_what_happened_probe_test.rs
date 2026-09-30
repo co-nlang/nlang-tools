@@ -370,6 +370,8 @@ fn r9_a_lock_that_cannot_be_taken_is_not_an_unreadable_working_set() {
 #[test]
 fn r10_a_sequential_commit_is_not_told_it_was_raced() {
     let never = Ws::new("r10a");
+    never.write("e.n", ""); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    let _ = never.oo(&["evolve", "e.n"]);
     let (want, want_rc) = never.oo(&["commit", "-m", "x"]);
     let w = Ws::new("r10b");
     w.write("p.n", "v: _\n");
@@ -428,6 +430,8 @@ fn r13_an_accepted_peer_is_recorded_or_the_command_says_it_was_not() {
     let (o, rc) = b.oo(&["node", "advertise", "--to", &s.addr(), "--service", &svc, "--listen-port", "9"]);
     assert!(rc == 0 && o.contains("#success"), "VOID READING: advertise did not land: {o}");
     let c = Ws::new("r13c");
+    c.write("seed.n", "seed: 0\n"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    c.ok(&["evolve", "seed.n"]);
     c.ok(&["status"]);
     let peers = c.ws.join(".oo/peers");
     fs::create_dir_all(&peers).unwrap();

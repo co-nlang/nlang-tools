@@ -140,6 +140,12 @@ pub fn register_engine_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             // Unconditional slot-0 took the first element of tuples / {{0:…}}.
             let v = crate::value::whole_argument(arg);
             let fv = oo.force_recursive(v, ctx);
+            // D82 ③: an address would claim the value was kept. A workspace
+            // with no universe has nowhere to keep it. `put_value` failing
+            // inside a universe is still `#conflict`.
+            if !oo.holds_universe {
+                return BottomCause::NoUniverse.into();
+            }
             if let Ok(hash) = oo.store.put_value(&fv) {
                 return Value::Atom(AtomKind::Str(hash.to_string()), EffectTag::IO, None);
             }

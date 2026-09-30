@@ -470,6 +470,8 @@ fn pin_ordinary_commit_meta_has_no_extra_keys() {
 #[test]
 fn pin_ordinary_value_caids_do_not_move() {
     let d = fresh_dir("p2");
+    std::fs::write(d.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n"); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    let _ = oo(&d, &["evolve", "seed.n"]);
     write(
         &d,
         "i.n",

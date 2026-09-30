@@ -123,6 +123,8 @@ fn walk(p: &Path) -> usize {
 #[test]
 fn g1_a_workspace_that_never_committed_still_commits() {
     let w = Ws::new("g1");
+    fs::write(w.ws.join("seed.n"), "seed: 0\n").unwrap(); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+    w.ok(&["evolve", "seed.n"]);
     w.ok(&["status"]);
     w.committed("a.n", "a: 1\n");
     w.ok(&["log"]);

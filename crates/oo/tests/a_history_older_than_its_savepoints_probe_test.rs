@@ -269,6 +269,8 @@ fn g3_rollback_is_the_way_back_on_old_stores() {
 #[test]
 fn g4_an_honest_empty_context_holding_a_commit_shaped_value_still_answers() {
     let w = Ws::new("g4");
+    fs::write(w.ws.join("seed.n"), "seed: 0\n").unwrap(); // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe; `save` where there is none is ⊥ #no_universe (D82 ③)
+    w.ok(&["evolve", "seed.n"]);
     w.ok(&["eval", r##"~%Engine./save { kind: #Standard, parent: "p", root: "r", s: "#nlang/store commit" }"##]);
     let held = w.store().iter().any(|(k, v)| {
         k.starts_with("objects") && String::from_utf8_lossy(v).contains("#nlang/store commit\"")

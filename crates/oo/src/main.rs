@@ -136,6 +136,7 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::NoStandardRoot => "#no_standard_root",
         BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
         BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
+        BottomCause::NoUniverse => "#no_universe",
     }
 }
 
@@ -550,6 +551,26 @@ fn main_on_large_stack() -> anyhow::Result<()> {
     }
 }
 
+const NO_UNIVERSE: &str = "no universe here: start one with evolve";
+
+fn require_universe(base: &Path) -> anyhow::Result<()> {
+    if nlang_interpreter::storage::universe_content(base)? {
+        Ok(())
+    } else {
+        anyhow::bail!("{NO_UNIVERSE}")
+    }
+}
+
+/// A command that does not need a universe still reads node settings.
+/// Values stay in an ephemeral store until a universe exists.
+fn engine_keeping_settings(base: &Path) -> anyhow::Result<Ouroboros> {
+    if nlang_interpreter::storage::universe_content(base)? {
+        Ouroboros::init(base)
+    } else {
+        Ouroboros::without_universe(base)
+    }
+}
+
 fn refuse_lost_context(
     store: &nlang_interpreter::storage::ObjectStore,
     base: &Path,
@@ -670,7 +691,7 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
         )
     })?.port();
     let current_dir = cwd()?;
-    let engine = Ouroboros::init(&current_dir)?;
+    let engine = engine_keeping_settings(&current_dir)?;
     // %source = node id (CAID of the node public key), not the listen port.
     // Two ports on one workspace share one id; two workspaces do not.
     let source_id = engine.node_id()?.to_string();
@@ -729,7 +750,7 @@ fn run_serve(port: u16) -> anyhow::Result<()> {
 fn run_node_id() -> anyhow::Result<()> {
     // Same shape as `oo identity`: id line, then path. Mint/load on demand.
     let cur = cwd()?;
-    let engine = Ouroboros::init(&cur)?;
+    let engine = engine_keeping_settings(&cur)?;
     let id = engine.node_id()?;
     let path = nlang_interpreter::Identity::node_key_path(&cur)?;
     // Force the key onto disk so the path we print is the key that exists.
@@ -747,7 +768,7 @@ fn run_node_affiliate(ttl_secs: Option<i64>) -> anyhow::Result<()> {
     };
 
     let cur = cwd()?;
-    let engine = Ouroboros::init(&cur)?;
+    let engine = engine_keeping_settings(&cur)?;
     // Node id for *this* workspace (minting a node key is allowed here —
     // affiliation is an actual network-identity need).
     let node_id = engine.node_id()?.to_string();
@@ -827,7 +848,7 @@ fn run_node_trust_remove(operator_key: String) -> anyhow::Result<()> {
 /// List known peers and verified affiliation operator keys (derived, not stored).
 fn run_node_peers() -> anyhow::Result<()> {
     let cur = cwd()?;
-    let engine = Ouroboros::init(&cur)?;
+    let engine = engine_keeping_settings(&cur)?;
     // Refresh derived affiliation from verbatim ad (R9: re-verify on every view).
     nlang_interpreter::peers::refresh_affiliations(&engine);
     let dir = engine
@@ -854,7 +875,7 @@ fn run_node_advertise(to: String, services: Vec<String>, listen_port: u16) -> an
     use std::time::Duration;
 
     let cur = cwd()?;
-    let engine = Ouroboros::init(&cur)?;
+    let engine = engine_keeping_settings(&cur)?;
     let identity = engine.node_identity()?;
     let (_ad, _nid, req) =
         oodp::signed_advert_nlang(&identity, &services, listen_port, 10, 15, &engine)
@@ -908,7 +929,7 @@ fn run_node_discover(to: String, target: String) -> anyhow::Result<()> {
     use nlang_interpreter::oodp;
 
     let cur = cwd()?;
-    let engine = Ouroboros::init(&cur)?;
+    let engine = engine_keeping_settings(&cur)?;
     let result = oodp::remote_discover_oodp(&engine, &to, &target)
         .map_err(|e| anyhow::anyhow!("#{}", e.as_tag()))?;
 
@@ -980,7 +1001,7 @@ fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
     use nlang_interpreter::oodp;
 
     let cur = cwd()?;
-    let engine = Ouroboros::init(&cur)?;
+    let engine = engine_keeping_settings(&cur)?;
     let result = oodp::remote_find_node_oodp(&engine, &to, &target)
         .map_err(|e| anyhow::anyhow!("#{}", e.as_tag()))?;
 
@@ -1002,6 +1023,7 @@ fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
 
 fn run_status() -> anyhow::Result<()> {
     let current_dir = cwd()?;
+    require_universe(&current_dir)?;
     let engine = Ouroboros::init(&current_dir)?;
     refuse_lost_context(&engine.store, &current_dir)?;
     if let Some(head) = engine.store.get_head(&current_dir)? {
@@ -1048,6 +1070,7 @@ fn run_status() -> anyhow::Result<()> {
 
 fn run_log() -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let engine = Ouroboros::init(&cur)?;
     refuse_lost_context(&engine.store, &cur)?;
     // A historical root that names an unavailable standard table is not an
@@ -1185,6 +1208,7 @@ fn format_commit_date_ms(ms: u64) -> String {
 
 fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.rollback {
@@ -1202,6 +1226,7 @@ fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::
 
 fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.squash {
@@ -1241,6 +1266,7 @@ fn run_commit(
     privileged: bool,
 ) -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     refuse_lost_context(&engine.store, &cur)?;
@@ -1349,6 +1375,7 @@ fn run_refine(
     message: Option<String>,
 ) -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let engine = Ouroboros::init(&cur)?;
     refuse_lost_context(&engine.store, &cur)?;
     let mut universe = load_universe(&engine, &cur)?;
@@ -1458,6 +1485,7 @@ fn run_refine(
 
 fn run_repl() -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let engine = Ouroboros::init(&cur)?;
     refuse_lost_context(&engine.store, &cur)?;
     let mut universe = load_universe(&engine, &cur)?;
@@ -1588,6 +1616,7 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
 
 fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.migrate {
@@ -1742,6 +1771,7 @@ fn engine_ord(v: &str) -> u32 {
 
 fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {
     let cur = cwd()?;
+    require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.gc {
@@ -1791,7 +1821,7 @@ fn run_one_shot(
     privileged: bool,
     grants: Vec<String>,
 ) -> anyhow::Result<()> {
-    let mut engine = Ouroboros::init(&cwd()?)?;
+    let mut engine = engine_keeping_settings(&cwd()?)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     // One-shot: pure universe, no local staged load, no durable store writes.
     // SPEC_03 simultaneity: all files/fields are one snapshot — evolve
@@ -1853,7 +1883,7 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
 
 fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Result<()> {
     let cur = cwd()?;
-    let mut engine = engine_or_ephemeral(&cur)?;
+    let mut engine = engine_keeping_settings(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
 
     let mut universe = Universe::new_with_standard(
@@ -1944,23 +1974,10 @@ fn run_identity() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Absent store, and none could be made: a pure expression still runs.
-/// A store that exists and refuses to open is returned as that refusal.
-/// The two `init` failures are both `anyhow::Error`; the split is whether
-/// a durable store is already there, not the error's type.
-fn engine_or_ephemeral(cur: &Path) -> anyhow::Result<Ouroboros> {
-    match Ouroboros::init(cur) {
-        Ok(engine) => Ok(engine),
-        Err(_) if !nlang_interpreter::storage::durable_store_present(cur) => {
-            Ok(Ouroboros::new_in_memory())
-        }
-        Err(e) => Err(e),
-    }
-}
-
 fn run_inspect(caid_str: String) -> anyhow::Result<()> {
     let cur = cwd()?;
-    let engine = engine_or_ephemeral(&cur)?;
+    require_universe(&cur)?;
+    let engine = Ouroboros::init(&cur)?;
 
     let hash = ContentHash::parse(&caid_str)
         .map_err(|_| anyhow::anyhow!("Invalid CAID format: {}", caid_str))?;
@@ -2050,7 +2067,7 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
         }
     }
 
-    let engine = Ouroboros::init(&cwd()?)?;
+    let engine = engine_keeping_settings(&cwd()?)?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;

@@ -163,6 +163,10 @@ fn object_path(dir: &Path, caid: &str) -> PathBuf {
 /// `identify_and_store` persists under `oo run` even after v0.2.43 removed
 /// the automatic store-put loop — verified before this file was written.
 fn store_value(dir: &Path, value_src: &str) -> String {
+    if !dir.join(".oo").exists() { // AMENDED 2026-09-30 for Q-064 (D82): only `evolve` creates a universe
+        std::fs::write(dir.join("seed.n"), "seed: { ok: #true }\n").expect("write seed.n");
+        let _ = oo(dir, &["evolve", "seed.n"]);
+    }
     let out = run_observe(
         dir,
         &format!("id: ~%Discovery./identify_and_store {value_src}\n"),
