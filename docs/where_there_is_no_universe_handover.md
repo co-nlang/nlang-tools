@@ -166,3 +166,9 @@ conformance：162 vectors，162 pass，0 fail。
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `da89d03`：全樹 ×3 **249 target／2391 passed／0 failed，`^error` 0，exit 0**，三輪相同，無失敗測試名；本弧探針 13／13，無 `VOID READING`；Q-063 13、Q-062 14、Q-061 10、Q-060 23 全綠；26 個修訂檔、探針、分隔線以上皆未動。
+**狀態矩陣**（12 種容器形狀 × 9 指令，逐格比對 `.oo/` 全檔雜湊，並與 v0.65.0 逐格 diff）：沒有宇宙的五種形狀（空目錄、空 `.oo/`、只有 `discovery.n`／`architects.json`／`objects.format`）上，`status`／`log`／`gc`／`migrate` 由「建出宇宙、rc=0」變為「no universe here: start one with evolve」rc=1、不寫；`eval`／`run`／`node *` 照答、不寫；`evolve` 建出宇宙。
+只有提議而缺宣告的倉由「被補寫宣告」變為拒絕開啟，其 `eval`／`run` 亦拒絕——與 v0.65.0 上「有提交而缺宣告」的倉原本的行為同一類（`REAL_03` §6.6）。讀不到的 `.oo/`、`.oo` 是檔案：行為不變（訊息少一對反引號）。三個舊夾具（`layout2_framed`、其丟了 `HEAD` 的變體、`layout7`）逐格無變化。
+交付 §8.3 自陳的一處（`objects.format` 不進述詞，否則並行 `evolve` 看見半份宣告）成立，已量。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4（且空目錄下不建 `.oo/`）；conformance 162／162；新倉 `layout=8`／`encoding=5`。
