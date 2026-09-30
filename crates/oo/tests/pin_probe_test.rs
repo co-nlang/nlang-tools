@@ -388,7 +388,12 @@ fn pin_intent_file_is_not_authority() {
         "precondition: the intent file is present by some other route"
     );
 
-    write(&d, "c.n", "y: @int\n");
+    // AMENDED 2026-10-01 for Q-066 (D84): `y: @int` over the committed `y: 5`
+    // does not move HEAD's position, so it is no longer a proposal and the
+    // commit would answer "Nothing to commit" before the intent file is ever
+    // consulted. An innocent change that does move the position keeps this
+    // layer measuring what it was written to measure.
+    write(&d, "c.n", "z: 1\n");
     oo(&d, &["evolve", "c.n"]);
     let committed = oo(&d, &["commit", "-m", "innocent"]);
     assert!(

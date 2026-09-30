@@ -316,25 +316,27 @@ pub fn record(base: &Path, combo: &ComboVal, positions_equal: bool) -> Result<Op
     Ok(Some(write_circle(base, &body)?))
 }
 
+/// Whether this declaration writes `point:`. Absent `.oo/format` is the
+/// old form (a unit-test scratch). An unreadable declaration refuses.
+fn records_point(base: &Path) -> Result<bool> {
+    let format = base.join(".oo").join("format");
+    match format.try_exists() {
+        Ok(false) => Ok(false),
+        Ok(true) => {
+            let declaration = crate::storage::read_layout_declaration(base)?;
+            Ok(crate::storage::layout_records_the_point(&declaration))
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "cannot read `.oo/format`: {}",
+            crate::operator_io_reason(&e)
+        )),
+    }
+}
+
 /// `point:` is the HEAD digest, read now (D55: not derived from the ○ graph).
 /// Older declarations omit the line. No HEAD omits it too: that is no point.
 fn point_to_write(base: &Path) -> Result<Option<String>> {
-    // A scratch with no declaration is not a layout=8 store. Unit-test
-    // refine writes its commit circle there. An absent file is the old
-    // form; an unreadable one still refuses.
-    let format = base.join(".oo").join("format");
-    match format.try_exists() {
-        Ok(false) => return Ok(None),
-        Ok(true) => {}
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "cannot read `.oo/format`: {}",
-                crate::operator_io_reason(&e)
-            ));
-        }
-    }
-    let declaration = crate::storage::read_layout_declaration(base)?;
-    if !crate::storage::layout_records_the_point(&declaration) {
+    if !records_point(base)? {
         return Ok(None);
     }
     let head_path = base.join(".oo").join("HEAD");
@@ -387,9 +389,14 @@ pub fn record_commit(
         }
     };
     let digest = hex::encode(&commit.digest);
-    // After set_head, HEAD is this commit. The point is that fact.
-    // `commit:` names the event; `point:` names where the context stands.
-    let point = point_to_write(base)?;
+    // Written before set_head (D84). `point:` is this commit's digest: the
+    // place HEAD will name. Reading HEAD here would record the previous point.
+    // `commit:` names the event; `point:` names where the context will stand.
+    let point = if records_point(base)? {
+        Some(digest.clone())
+    } else {
+        None
+    };
     let body = encode_savepoint(
         &ComboVal::default(),
         &parents,
@@ -417,21 +424,29 @@ pub fn previous_commit(
     commit: &crate::value::Commit,
     digest: &str,
 ) -> Result<Option<ContentHash>> {
-    if let Some(p) = &commit.parent {
-        return Ok(Some(p.clone()));
+    if commit.parent.is_some() {
+        return Ok(commit.parent.clone());
     }
     let nodes = load_circles(base)?;
-    let Some(start) = nodes
+    Ok(previous_commit_in(&nodes, commit, digest))
+}
+
+/// `previous_commit` against circles already loaded. One history walk
+/// reads the directory once.
+pub fn previous_commit_in(
+    nodes: &BTreeMap<String, Circle>,
+    commit: &crate::value::Commit,
+    digest: &str,
+) -> Option<ContentHash> {
+    if let Some(p) = &commit.parent {
+        return Some(p.clone());
+    }
+    let start = nodes
         .iter()
         .find(|(_, n)| n.commit_digest.as_deref() == Some(digest))
-        .map(|(id, _)| id.clone())
-    else {
-        return Ok(None);
-    };
-    let Some(aid) = nodes.get(&start).and_then(|n| n.ancestor.clone()) else {
-        return Ok(None);
-    };
-    Ok(hash_from_ancestor(&nodes, &aid, digest))
+        .map(|(id, _)| id.clone())?;
+    let aid = nodes.get(&start).and_then(|n| n.ancestor.clone())?;
+    hash_from_ancestor(nodes, &aid, digest)
 }
 
 fn is_hex64(s: &str) -> bool {
