@@ -137,6 +137,7 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
         BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
         BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
         BottomCause::NoUniverse => "#no_universe",
+        BottomCause::Unwritable => "#unwritable",
     }
 }
 

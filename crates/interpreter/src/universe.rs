@@ -903,10 +903,33 @@ impl Universe {
         }
     }
 
-    fn unlink_legacy_staged(base_dir: &std::path::Path) {
-        let staged_path = base_dir.join(".oo").join("staged");
-        if staged_path.exists() {
-            let _ = std::fs::remove_file(staged_path);
+    fn unlink_legacy_staged(base_dir: &std::path::Path) -> Result<()> {
+        Self::remove_durable(&base_dir.join(".oo").join("staged"))
+    }
+
+    /// Delete a durable file this command has already read. `NotFound` means
+    /// it is already gone. Any other host error is the delete not landing.
+    fn remove_durable(path: &std::path::Path) -> Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(anyhow::anyhow!(
+                "cannot write {}: {}",
+                path.display(),
+                crate::operator_io_reason(&e)
+            )),
+        }
+    }
+
+    /// Put `HEAD` back where it was before this commit's `set_head`.
+    fn restore_head(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        previous: Option<&ContentHash>,
+    ) -> Result<()> {
+        match previous {
+            Some(h) => engine.store.set_head(base_dir, h),
+            None => Self::remove_durable(&base_dir.join(".oo").join("HEAD")),
         }
     }
 
@@ -1004,21 +1027,50 @@ impl Universe {
             self.session_absorbs.clear();
             self.session_effect_tags = crate::value::EffectTag::Pure;
         }
-        Self::unlink_legacy_staged(base_dir);
+        if let Err(e) = Self::unlink_legacy_staged(base_dir) {
+            if let Some(id) = written_id.as_deref() {
+                let member = crate::injections::dir(base_dir).join(id);
+                if let Err(rm) = Self::remove_durable(&member) {
+                    return Err(anyhow::anyhow!("{e}; the injection remains: {rm}"));
+                }
+            }
+            return Err(e);
+        }
         // ○ lives beside the working set, not in CAS. Unchanged this arc
         // (D48 split: Q-014b owns identity and order). Identical bodies do
         // not mint a new ○ (D47).
         // The member is already on disk. If the circle cannot be written,
         // remove that member: a staged injection with no ○ is the split
         // SPEC_10 §3.1 forbids, and the operator must not be told the
-        // evolve landed.
+        // evolve landed. If that removal also fails, the error names both:
+        // the circle is absent and the member is still there.
         // (a): HEAD's root ⊓ the working set this injection read, against
         // HEAD's root ⊓ the working set it leaves.
-        let positions_equal =
-            Self::injection_positions_equal(engine, base_dir, before, &self.staged)?;
+        // A failed comparison has not recorded this evolve. The member
+        // already on disk would otherwise stay as a proposal (R-1).
+        let positions_equal = match Self::injection_positions_equal(
+            engine,
+            base_dir,
+            before,
+            &self.staged,
+        ) {
+            Ok(eq) => eq,
+            Err(e) => {
+                if let Some(id) = written_id.as_deref() {
+                    let member = crate::injections::dir(base_dir).join(id);
+                    if let Err(rm) = Self::remove_durable(&member) {
+                        return Err(anyhow::anyhow!("{e}; the injection remains: {rm}"));
+                    }
+                }
+                return Err(e);
+            }
+        };
         if let Err(e) = crate::savepoint::record(base_dir, &self.staged, positions_equal) {
             if let Some(id) = written_id.as_deref() {
-                let _ = std::fs::remove_file(crate::injections::dir(base_dir).join(id));
+                let member = crate::injections::dir(base_dir).join(id);
+                if let Err(rm) = Self::remove_durable(&member) {
+                    return Err(anyhow::anyhow!("{e}; the injection remains: {rm}"));
+                }
             }
             return Err(e);
         }
@@ -1027,8 +1079,8 @@ impl Universe {
         // legacy injection remains pending; never create or rewrite the shared
         // cell from a new evolve.
         let pin_path = base_dir.join(".oo").join("pin_pending");
-        if !self.legacy_pin_pending && pin_path.exists() {
-            let _ = std::fs::remove_file(pin_path);
+        if !self.legacy_pin_pending {
+            Self::remove_durable(&pin_path)?;
         }
         // Layout 5 discharge intent travels with the member. A leftover
         // `.oo/effect_pending` is still read (Q4) and only cleared at commit;
@@ -1039,8 +1091,8 @@ impl Universe {
         if !current {
             if let Some(tags) = self.effect_pending {
                 crate::storage::atomic_write(&effect_path, tags.to_bits().to_string().as_bytes())?;
-            } else if effect_path.exists() {
-                let _ = std::fs::remove_file(effect_path);
+            } else {
+                Self::remove_durable(&effect_path)?;
             }
         }
         Ok(())
@@ -1056,19 +1108,30 @@ impl Universe {
         self.session_absorbs.clear();
         self.session_effect_tags = crate::value::EffectTag::Pure;
         let pin_path = base_dir.join(".oo").join("pin_pending");
-        self.legacy_pin_pending = pin_path.exists();
-        self.pin_pending = self.legacy_pin_pending;
         self.pin_coords.clear();
-        if self.legacy_pin_pending {
-            // ACCEPTANCE REPAIR: restore the pinned coordinate set. An
-            // unreadable/legacy file means "pinned, coordinates unknown" — the
-            // safe reading is the EMPTY set (no coordinate gets replace
-            // semantics), never "all of them".
-            self.pin_coords = std::fs::read_to_string(&pin_path)
-                .ok()
-                .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-                .map(|v| v.into_iter().collect())
-                .unwrap_or_default();
+        match std::fs::read_to_string(&pin_path) {
+            Ok(s) => {
+                self.legacy_pin_pending = true;
+                self.pin_pending = true;
+                // A readable body that is not a coordinate list is "pinned,
+                // coordinates unknown": the empty set, so no coordinate gets
+                // replace semantics. An unreadable file is not that reading.
+                self.pin_coords = serde_json::from_str::<Vec<String>>(&s)
+                    .ok()
+                    .map(|v| v.into_iter().collect())
+                    .unwrap_or_default();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.legacy_pin_pending = false;
+                self.pin_pending = false;
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "cannot read {}: {}",
+                    pin_path.display(),
+                    crate::operator_io_reason(&e)
+                ));
+            }
         }
         let injections = crate::injections::load_all(base_dir)?;
         self.effect_pending = None;
@@ -1103,33 +1166,57 @@ impl Universe {
             }
         } else {
             let staged_path = base_dir.join(".oo").join("staged");
-            if staged_path.exists() {
-                let json = std::fs::read_to_string(staged_path)?;
-                // O42 repair: blur carries partial as CAID only — staged stays
-                // shallow; default serde recursion limit is correct again.
-                self.staged = if crate::store_codec::is_framed(&json) {
-                    crate::store_codec::decode_staged(&json)?
-                } else {
-                    serde_json::from_str(&json)?
-                };
-                self.is_dirty = true;
+            match std::fs::read_to_string(&staged_path) {
+                Ok(json) => {
+                    // O42 repair: blur carries partial as CAID only — staged stays
+                    // shallow; default serde recursion limit is correct again.
+                    self.staged = if crate::store_codec::is_framed(&json) {
+                        crate::store_codec::decode_staged(&json)?
+                    } else {
+                        serde_json::from_str(&json)?
+                    };
+                    self.is_dirty = true;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "cannot read {}: {}",
+                        staged_path.display(),
+                        crate::operator_io_reason(&e)
+                    ));
+                }
             }
         }
         // Q4: a v0.43.0 leftover sidecar still contributes to the gate on
-        // layout ≤ 4 (and after migrate, until commit). Unreadable sidecar
-        // stays today's `.ok()` path — that hole is not looser, and S2's
-        // refuse-if-unreadable applies to the member, not this cell.
-        if let Some(t) = std::fs::read_to_string(base_dir.join(".oo").join("effect_pending"))
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(crate::value::EffectTag::from_bits)
-            .filter(|t| !t.is_pure())
-        {
-            self.effect_pending = Some(
-                self.effect_pending
-                    .unwrap_or(crate::value::EffectTag::Pure)
-                    .union(t),
-            );
+        // layout ≤ 4 (and after migrate, until commit). A readable body that
+        // does not parse stays ignored. An unreadable file is `cannot read`
+        // (I1): absence is `NotFound` only. S2's content refusal stays on the
+        // member; this cell's host error is the same class as `abandoned`.
+        let effect_path = base_dir.join(".oo").join("effect_pending");
+        match std::fs::read_to_string(&effect_path) {
+            Ok(s) => {
+                if let Some(t) = s
+                    .trim()
+                    .parse::<u8>()
+                    .ok()
+                    .map(crate::value::EffectTag::from_bits)
+                    .filter(|t| !t.is_pure())
+                {
+                    self.effect_pending = Some(
+                        self.effect_pending
+                            .unwrap_or(crate::value::EffectTag::Pure)
+                            .union(t),
+                    );
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "cannot read {}: {}",
+                    effect_path.display(),
+                    crate::operator_io_reason(&e)
+                ));
+            }
         }
         Ok(())
     }
@@ -1234,17 +1321,23 @@ impl Universe {
         } else {
             engine.root_with_system()
         };
-        let root_hash = engine.store.put_root(&new_root, &standard)?;
-        // R1: next commit after a rollback records the abandoned head(s) in
-        // meta — never in values. Consumed from `.oo/abandoned` and cleared.
+        // R1 / I1: read `.oo/abandoned` before any object or HEAD write.
+        // `NotFound` is no record. Any other read error refuses; nothing
+        // is written and the file is not deleted.
         let mut meta = meta;
         if meta.abandoned.is_none() {
-            if let Some(abs) = Self::load_abandoned_file(base_dir) {
-                if !abs.is_empty() {
-                    meta.abandoned = Some(abs);
-                }
+            let abs = Self::load_abandoned_file(base_dir)?;
+            if !abs.is_empty() {
+                meta.abandoned = Some(abs);
             }
         }
+        // I2: the directory that holds the members this commit folds must
+        // accept a new file, or this commit does not land. `clear` still
+        // returns a real unlink error; that path restores the previous HEAD.
+        if !self.injection_sources.is_empty() {
+            crate::injections::ensure_directory_writable(&crate::injections::dir(base_dir))?;
+        }
+        let root_hash = engine.store.put_root(&new_root, &standard)?;
         // SPEC_08 §6.2 `#privileged_effect`: mark only when a discharge fact
         // was staged (effect_pending), never merely because a grant was present.
         if self.effect_pending.is_some() {
@@ -1258,20 +1351,37 @@ impl Universe {
         let mut commit = crate::value::Commit::new(None, root_hash, meta);
         commit.kind = kind;
         let commit_hash = engine.store.put_commit(&commit)?;
+        let previous_head = self.head.clone();
         engine.store.set_head(base_dir, &commit_hash)?;
         // D52/D55: put_commit → set_head → mint. Covering parent is the
         // workset tip just submitted (S2 / G5). Ancestor is the previous
         // HEAD's commit digest (`self.head` is still that HEAD) — a
         // pre-arc HEAD has no circle, so naming a circle id would dangle.
-        let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));
-        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
+        let ancestor = previous_head.as_ref().map(|h| hex::encode(&h.digest));
+        if let Err(e) = crate::savepoint::record_commit(
+            base_dir,
+            &commit_hash,
+            None,
+            ancestor.as_deref(),
+        ) {
+            return Self::undo_landed_head(
+                engine,
+                base_dir,
+                previous_head.as_ref(),
+                &commit_hash,
+                e,
+            );
+        }
+        let folded = crate::injections::clear(&self.injection_sources)
+            .and_then(|_| Self::unlink_legacy_staged(base_dir));
+        if let Err(e) = folded {
+            return Self::undo_landed_head(engine, base_dir, previous_head.as_ref(), &commit_hash, e);
+        }
         self.root = new_root;
         self.standard_root = standard;
         // Workset injections are consumed. Config is session-scoped (O37):
         // write one Config-only injection back so a "clear the directory"
         // cannot drop the horizon (recon Q18, candidate 3).
-        crate::injections::clear(&self.injection_sources)?;
-        Self::unlink_legacy_staged(base_dir);
         self.session_delta = ComboVal::default();
         self.session_has_delta = false;
         self.injection_ids.clear();
@@ -1288,7 +1398,15 @@ impl Universe {
             self.session_delta = restaged;
             self.session_has_delta = true;
             // Injections were just cleared. The config write reads an empty set.
-            self.save_staged(engine, base_dir, &ComboVal::default())?;
+            if let Err(e) = self.save_staged(engine, base_dir, &ComboVal::default()) {
+                return Self::undo_landed_head(
+                    engine,
+                    base_dir,
+                    previous_head.as_ref(),
+                    &commit_hash,
+                    e,
+                );
+            }
         } else {
             self.staged = ComboVal::default();
             self.is_dirty = false;
@@ -1299,59 +1417,87 @@ impl Universe {
         self.pin_coords.clear();
         self.effect_pending = None;
         let pin_path = base_dir.join(".oo").join("pin_pending");
-        if pin_path.exists() {
-            let _ = std::fs::remove_file(pin_path);
-        }
         let effect_path = base_dir.join(".oo").join("effect_pending");
-        if effect_path.exists() {
-            let _ = std::fs::remove_file(effect_path);
+        let cleared = Self::remove_durable(&pin_path)
+            .and_then(|_| Self::remove_durable(&effect_path))
+            .and_then(|_| Self::remove_durable(&Self::abandoned_path(base_dir)));
+        if let Err(e) = cleared {
+            return Self::undo_landed_head(engine, base_dir, previous_head.as_ref(), &commit_hash, e);
         }
-        Self::clear_abandoned_file(base_dir);
         Ok((commit_hash, config_not_committed, reported))
+    }
+
+    /// `set_head` already ran. Put it back. If that write also fails, the
+    /// error names the digest HEAD stayed on.
+    fn put_head_back(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        previous: Option<&ContentHash>,
+        landed: &ContentHash,
+        cause: anyhow::Error,
+    ) -> anyhow::Error {
+        match Self::restore_head(engine, base_dir, previous) {
+            Ok(()) => cause,
+            Err(restore) => anyhow::anyhow!("{cause}; HEAD stayed at {landed}: {restore}"),
+        }
+    }
+
+    /// The commit object was written and HEAD moved, then a later durable
+    /// step failed. Put HEAD back so the refusal is the whole story.
+    fn undo_landed_head(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        previous: Option<&ContentHash>,
+        landed: &ContentHash,
+        consume: anyhow::Error,
+    ) -> Result<(ContentHash, bool, Vec<(String, String)>)> {
+        Err(Self::put_head_back(
+            engine, base_dir, previous, landed, consume,
+        ))
     }
 
     fn abandoned_path(base_dir: &std::path::Path) -> std::path::PathBuf {
         base_dir.join(".oo").join("abandoned")
     }
 
-    fn load_abandoned_file(base_dir: &std::path::Path) -> Option<Vec<String>> {
+    /// `NotFound` is no record. Any other host error is named. `exists`
+    /// reports a permission error as absence, so this reads the file.
+    fn load_abandoned_file(base_dir: &std::path::Path) -> Result<Vec<String>> {
         let p = Self::abandoned_path(base_dir);
-        if !p.exists() {
-            return None;
-        }
-        let s = std::fs::read_to_string(p).ok()?;
-        let lines: Vec<String> = s
-            .lines()
+        let s = match std::fs::read_to_string(&p) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "cannot read {}: {}",
+                    p.display(),
+                    crate::operator_io_reason(&e)
+                ))
+            }
+        };
+        Ok(s.lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(|l| l.to_string())
-            .collect();
-        if lines.is_empty() {
-            None
-        } else {
-            Some(lines)
-        }
-    }
-
-    fn clear_abandoned_file(base_dir: &std::path::Path) {
-        let p = Self::abandoned_path(base_dir);
-        if p.exists() {
-            let _ = std::fs::remove_file(p);
-        }
+            .collect())
     }
 
     fn append_abandoned_file(base_dir: &std::path::Path, caid: &ContentHash) -> Result<()> {
         let oo = base_dir.join(".oo");
-        if !oo.exists() {
-            std::fs::create_dir_all(&oo)?;
-        }
+        std::fs::create_dir_all(&oo).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot write {}: {}",
+                oo.display(),
+                crate::operator_io_reason(&e)
+            )
+        })?;
         let p = Self::abandoned_path(base_dir);
-        let mut existing = Self::load_abandoned_file(base_dir).unwrap_or_default();
+        let mut existing = Self::load_abandoned_file(base_dir)?;
         let s = caid.to_string();
         if !existing.contains(&s) {
             existing.push(s);
         }
-        crate::storage::atomic_write(&p, existing.join("\n") + "\n")?;
+        crate::storage::atomic_write(&p, format!("{}\n", existing.join("\n")))?;
         Ok(())
     }
 
@@ -1455,19 +1601,34 @@ impl Universe {
         }
         // Confirm base object exists.
         let _ = engine.store.get_commit(base)?;
+        // The abandonment file is dropped after squash. Read it first so an
+        // unreadable record is refused before any write (I1). The lines are
+        // not copied into the squash commit (R2).
+        let _abandoned = Self::load_abandoned_file(base_dir)?;
         // New commit: parent=base, root unchanged from HEAD, kind Squash.
         // Intentionally does NOT copy abandoned meta from intermediates —
         // those edges leave with the range (R2: Squash marker is the fact).
         let mut commit = crate::value::Commit::new(None, head_commit.root.clone(), meta);
         commit.kind = CommitKind::Squash;
         let commit_hash = engine.store.put_commit(&commit)?;
+        let previous_head = self.head.clone();
         engine.store.set_head(base_dir, &commit_hash)?;
         // Covering: unique tip (HEAD's commit-circle). Ancestor: the base
         // commit's digest, so log/squash skip the compressed range without
         // opening a hole. Name the commit, not a circle — the base may
         // predate this arc.
         let ancestor = hex::encode(&base.digest);
-        crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))?;
+        if let Err(e) =
+            crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))
+        {
+            return Err(Self::put_head_back(
+                engine,
+                base_dir,
+                previous_head.as_ref(),
+                &commit_hash,
+                e,
+            ));
+        }
         // Root value is the same as before; reload for consistency.
         self.root = engine
             .store
@@ -1478,7 +1639,16 @@ impl Universe {
         self.is_dirty = false;
         // Pending abandonment file may point into the compressed range;
         // drop it — squash made those edges unreachable and marks itself.
-        Self::clear_abandoned_file(base_dir);
+        if let Err(e) = Self::remove_durable(&Self::abandoned_path(base_dir)) {
+            match Self::restore_head(engine, base_dir, previous_head.as_ref()) {
+                Ok(()) => return Err(e),
+                Err(restore) => {
+                    return Err(anyhow::anyhow!(
+                        "{e}; HEAD stayed at {commit_hash}: {restore}"
+                    ));
+                }
+            }
+        }
         engine.clear_force_memo();
         Ok(commit_hash)
     }
@@ -1872,9 +2042,23 @@ impl Universe {
             }
         }
         let commit_hash = engine.store.put_commit(&commit)?;
+        let previous_head = self.head.clone();
         engine.store.set_head(base_dir, &commit_hash)?;
-        let ancestor = self.head.as_ref().map(|h| hex::encode(&h.digest));
-        crate::savepoint::record_commit(base_dir, &commit_hash, None, ancestor.as_deref())?;
+        let ancestor = previous_head.as_ref().map(|h| hex::encode(&h.digest));
+        if let Err(e) = crate::savepoint::record_commit(
+            base_dir,
+            &commit_hash,
+            None,
+            ancestor.as_deref(),
+        ) {
+            return Err(Self::put_head_back(
+                engine,
+                base_dir,
+                previous_head.as_ref(),
+                &commit_hash,
+                e,
+            ));
+        }
         self.head = Some(commit_hash.clone());
 
         // Step 3: update RefineMap

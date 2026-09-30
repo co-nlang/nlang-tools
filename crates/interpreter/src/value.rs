@@ -1377,6 +1377,7 @@ impl BottomDetail {
             BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
             BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
             BottomCause::NoUniverse => "#no_universe",
+            BottomCause::Unwritable => "#unwritable",
         };
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
@@ -1628,6 +1629,10 @@ pub enum BottomCause {
     /// `~%Engine./save` was asked to keep a value where no universe exists
     /// (D82 ③). An address would claim the value was stored. Append-only tail.
     NoUniverse,
+    /// The host refused a write (D83). The bytes did not land. This does not
+    /// say the refusal is permanent, and it does not say a partial file is
+    /// absent. Append-only tail.
+    Unwritable,
 }
 
 impl BottomCause {
@@ -1668,6 +1673,7 @@ impl BottomCause {
             BottomCause::UnprojectedBuiltin => "unprojected_builtin",
             BottomCause::UnprovidedBuiltin => "unprovided_builtin",
             BottomCause::NoUniverse => "no_universe",
+            BottomCause::Unwritable => "unwritable",
         }
     }
 
@@ -1688,7 +1694,8 @@ impl BottomCause {
             | BottomCause::StandardRootUnavailable
             | BottomCause::NoStandardRoot
             | BottomCause::UnprojectedBuiltin
-            | BottomCause::UnprovidedBuiltin => 1,
+            | BottomCause::UnprovidedBuiltin
+            | BottomCause::Unwritable => 1,
             BottomCause::Conflict
             | BottomCause::H1Split
             | BottomCause::H2Split
