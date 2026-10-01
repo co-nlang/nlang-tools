@@ -69,17 +69,74 @@ v0.41.0 … v0.67.0 的每一版提交時都**先移 `HEAD`、後寫提交 ○**
 
 ### 8.1 射程逐項對照
 
+I1. 從 `HEAD` 沿祖先走到的新式提交，若沒有 ○ 的 `commit:` 宣告它，`gc` 與 `gc --dry-run` 都在刪除之前、也在印出可回收清單之前返回。rc=1。`.oo/` 一個位元組不變。stderr 一行：`Error: gc refused: commit <64-hex> is value-addressed and no circle declares it`。r1–r5。
+
+I2. 判準只掛在不跟隨放棄邊的那一趟標記上。被 rollback 越過的分支上的切點不使 `gc` 拒絕。g4。
+
+I3. 完整的倉、squash 留下的、rollback 留下的，以及六個真實舊版倉（原樣、續提交、遷移後再提交），`gc` 照常回收。g1–g3、g5、g6。
+
+I4. 判斷時讀不到 ○ 目錄：rc=1，`Error: cannot read .oo/savepoints: permission denied`，`.oo/` 不變。讀不到一筆提交物件：rc=1，`Error: cannot read store object <64-hex>: permission denied`，`.oo/` 不變。`--dry-run` 同一句。
+
+I5. 沒有補寫缺掉的 ○，沒有推斷切點的祖先，沒有新的耐久檔，沒有改磁碟格式，沒有推進佈局。值位址與提交位址沒動。版本仍是 `oo v0.68.0`。
+
 ### 8.2 順手改動（逐項指名）
+
+`plan_gc` 把 ○ 目錄讀一次，兩趟標記共用這一份圈。前一筆改走 `previous_commit_in`。會刪物件的那一次 `gc`，在 `remove` 之前由 `mark` 再讀一次目錄。沒有可回收物件時不跑這次確認，目錄仍是一次。
+
+改動檔：`crates/interpreter/src/gc.rs`、本工單 §8。
+
+探針、夾具、版本、規格、`TAG_REGISTRY` 維持原檔。沒有跑 rustfmt。
 
 ### 8.3 工單哪裡是錯的
 
+工單的判準與探針一致。新式是 `open_commit` 對 64-hex 回傳的位址版本為 v2。參考實作每一筆重讀 ○ 目錄；這裡一次計劃讀一次。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 判準在 `gc` 的標記走訪裡，只在不跟隨放棄邊的那一趟。每個可達物件用 `open_commit` 讀它的 64-hex。回傳位址是 v2，即值定址的新式提交。某一圈的 `commit:` 等於這個摘要，才算有 ○ 宣告它。圈在 `plan_gc` 讀一次，兩趟共用。
+
+`gc --dry-run` 讀 ○ 目錄 1 次。1000 筆那倉的 strace 是 1。會刪物件的 `gc` strace 是 2。改前兩筆提交的 dry-run strace 是 6，等於兩趟各讀（1＋提交數）；1000 筆按同一式是 2002。
+
+量到的時間：1000 筆互不衝突的欄位提交，2001 個物件，`gc --dry-run --grant gc`。改前 82.200 秒，rc=0，`2001 reachable, 0 collectable`。改後 44.692 秒，rc=0，同一行報告。
+
+Q2. ○ 目錄不可讀：rc=1。stdout 空。stderr 一行 `Error: cannot read .oo/savepoints: permission denied`。`.oo/` 不變。`--dry-run` 同一句。
+
+一筆提交物件不可讀：rc=1。stdout 空。stderr 一行 `Error: cannot read store object <該物件 64-hex>: permission denied`。`.oo/` 不變。`--dry-run` 同一句。
+
+Q3. r1 的殘留：兩筆提交之後拿掉第二筆的 ○，HEAD 停在切點。下面四條沒有改。
+
+1. `log` rc=0。只印切點那一筆：一行 `commit`，`message: b`。
+2. `status` rc=0。先印標準根那一行，然後 `Universe is static (no staged changes).`
+3. `rollback <切點之前那筆> --grant rollback` rc=0。`Rolled back to <那筆的完整位址>`。
+4. `squash <切點之前那筆> --grant squash` rc=1。`Error: squash base is not an ancestor of HEAD`。
+
+Q4. `layout5_repo` 續寫 `c: 3`。新的 HEAD 是 `hash:sha256:v1:d089d8c77798eb66785658151cc6af64a15b2a2a29d3be88b485685c3bc6b62e`。拿掉這一筆的 ○ 之後，`gc --grant gc` rc=0，stdout：
+
+`oo gc: 6 objects, 3 reachable, 3 collectable (1257 bytes)`
+
+`oo gc: removed 3 objects, freed 1257 bytes`
+
+切點之前的 HEAD 物件不在了。切點這筆還在。這是 D85 寫明的舊式留白。
 
 ### 8.5 探針
 
+`a_history_an_old_crash_cut_probe_test`：11 passed、0 failed，5.61 s。無空洞讀數。
+
+Q-066 10、Q-065 12、Q-064 13、Q-063 13、Q-062 14、Q-061 10，皆 0 failed。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 252 行 `test result:`、2424 passed、0 failed、`^error` 0 行、exit 0。去掉 `finished in` 之後三輪 `cmp` 相同。沒有失敗測試名。
+
+conformance：162 vectors、162 pass、0 fail。
+
+`~%Math./add (1, 2)` 是 3，`(1, 3)` 是 4，rc=0。這兩次 eval 沒有建立 `.oo/`。
+
+`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`、`encoding=5`。
+
 ### 8.7 你認為需要改規格之處
+
+沒有改規格文字。`SPEC_08` §6.2.1 仍由驗收方收尾。
 
 ---
 

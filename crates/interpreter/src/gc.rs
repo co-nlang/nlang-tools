@@ -9,10 +9,11 @@
 //! REAL_03 §6.6 (verdict_must_gate): reachable `#object_undecodable` /
 //! `#caid_mismatch` make the walk **incomplete** — `run_gc` must not sweep.
 
+use crate::savepoint::Circle;
 use crate::storage::ObjectStore;
-use crate::value::{Commit, ContentHash, Value};
+use crate::value::{CaidVersion, Commit, ContentHash, Value};
 use serde_json::Value as JsonValue;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 #[derive(Debug, Clone, Default)]
@@ -111,8 +112,10 @@ enum VerifiedObject {
     Ok(Vec<String>),
     /// Bytes present but do not hash/decode to the requested address.
     CaidMismatch,
-    /// Present but neither a Value nor a Commit (or unreadable).
+    /// Present but neither a Value nor a Commit.
     Undecodable,
+    /// The host refused the read. Not a missing object and not a decode failure.
+    Unreadable(String),
 }
 
 fn json_refs(json: &JsonValue, follow_abandoned: bool) -> Vec<String> {
@@ -128,8 +131,18 @@ fn verify_reachable_object(
     digest_hex: &str,
     follow_abandoned: bool,
 ) -> VerifiedObject {
-    let Ok(bytes) = store.read_raw_digest(digest_hex) else {
-        return VerifiedObject::Undecodable;
+    let bytes = match store.read_raw_digest(digest_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            let msg = e.to_string();
+            // `not found` is absence. A `cannot read` is the host refusing
+            // the bytes (D85 I4: unreadable is not "no circle" and not
+            // "not a new-form commit").
+            if msg.starts_with("cannot read ") {
+                return VerifiedObject::Unreadable(msg);
+            }
+            return VerifiedObject::Undecodable;
+        }
     };
     let want = digest_hex.to_lowercase();
     let text = String::from_utf8_lossy(&bytes);
@@ -212,20 +225,22 @@ fn verify_reachable_object(
 /// or an object this engine reads as a Commit). A declaration and no HEAD
 /// is a lost context: refuse, do not collect. A root that exists and
 /// cannot be read is not an empty walk (REAL_03 §6.6).
-fn roots_readable(store: &ObjectStore, base_dir: &Path) -> Result<(), String> {
-    store
-        .get_head(base_dir)
-        .map_err(|e| e.to_string())?;
-    crate::savepoint::load_circles(base_dir).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub fn mark(
+///
+/// D85: on the walk that does not follow abandoned heads, a value-addressed
+/// commit that no circle's `commit:` names is a cut. `gc` refuses before
+/// it reports or deletes. The abandoned-content walk does not apply that
+/// test. Circles are the map passed in — one directory read per `gc` plan.
+fn mark_walk(
     store: &ObjectStore,
     base_dir: &Path,
     follow_abandoned: bool,
+    circles: &BTreeMap<String, Circle>,
 ) -> Result<(BTreeSet<String>, Vec<String> /* integrity */), String> {
-    roots_readable(store, base_dir)?;
+    let judge = !follow_abandoned;
+    let declared: BTreeSet<&str> = circles
+        .values()
+        .filter_map(|c| c.commit_digest.as_deref())
+        .collect();
     let mut integrity = Vec::new();
     let mut seen = BTreeSet::new();
     let Some(head) = store.get_head(base_dir).map_err(|e| e.to_string())? else {
@@ -254,10 +269,17 @@ pub fn mark(
                     }
                 }
                 // D52: `parent: None` contributes zero bytes, so JSON refs
-                // no longer name the predecessor. Dual-walk via
-                // `previous_commit` (parent if set, else `ancestor:` as a
-                // commit digest — a pre-arc HEAD has no circle).
-                push_commit_predecessor(store, base_dir, &d, &seen, &mut stack)?;
+                // no longer name the predecessor. Dual-walk via the circle
+                // already loaded (parent if set, else `ancestor:`).
+                push_commit_predecessor(
+                    store,
+                    &d,
+                    &seen,
+                    &mut stack,
+                    circles,
+                    &declared,
+                    judge,
+                )?;
             }
             VerifiedObject::CaidMismatch => {
                 integrity.push(format!(
@@ -270,17 +292,40 @@ pub fn mark(
                     "integrity #object_undecodable: reachable digest {d} cannot be decoded"
                 ));
             }
+            VerifiedObject::Unreadable(msg) => {
+                if judge {
+                    let reason = msg
+                        .strip_prefix("cannot read store object: ")
+                        .unwrap_or(msg.as_str());
+                    return Err(format!("cannot read store object {d}: {reason}"));
+                }
+                integrity.push(format!(
+                    "integrity #object_undecodable: reachable digest {d} cannot be decoded"
+                ));
+            }
         }
     }
     Ok((seen, integrity))
 }
 
-fn push_commit_predecessor(
+pub fn mark(
     store: &ObjectStore,
     base_dir: &Path,
+    follow_abandoned: bool,
+) -> Result<(BTreeSet<String>, Vec<String> /* integrity */), String> {
+    store.get_head(base_dir).map_err(|e| e.to_string())?;
+    let circles = crate::savepoint::load_circles(base_dir).map_err(|e| e.to_string())?;
+    mark_walk(store, base_dir, follow_abandoned, &circles)
+}
+
+fn push_commit_predecessor(
+    store: &ObjectStore,
     digest: &str,
     seen: &BTreeSet<String>,
     stack: &mut VecDeque<String>,
+    circles: &BTreeMap<String, Circle>,
+    declared: &BTreeSet<&str>,
+    judge: bool,
 ) -> Result<(), String> {
     let Ok(raw) = hex::decode(digest) else {
         return Ok(());
@@ -288,31 +333,48 @@ fn push_commit_predecessor(
     if raw.len() != 32 {
         return Ok(());
     }
-    let commit = match store.open_commit(&ContentHash::v1(raw)) {
-        Ok((_, c)) => c,
-        Err(_) => return Ok(()),
-    };
-    match crate::savepoint::previous_commit(base_dir, &commit, digest) {
-        Ok(Some(p)) => {
-            let pd = hex::encode(&p.digest);
-            if !seen.contains(&pd) {
-                stack.push_back(pd);
+    let (addr, commit) = match store.open_commit(&ContentHash::v1(raw)) {
+        Ok(pair) => pair,
+        Err(e) => {
+            if judge {
+                if let Some(crate::storage::StoreReadError::Unreadable { reason, .. }) =
+                    e.downcast_ref::<crate::storage::StoreReadError>()
+                {
+                    return Err(format!("cannot read store object {digest}: {reason}"));
+                }
             }
-            Ok(())
+            return Ok(());
         }
-        Ok(None) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    };
+    // Value-addressed (layout >= 6): `open_commit` of the 64-hex note
+    // returns the v2 address. A v1 address is the legacy algorithm, which
+    // D85 does not judge.
+    if judge && matches!(addr.version, CaidVersion::V2) && !declared.contains(digest) {
+        return Err(format!(
+            "gc refused: commit {digest} is value-addressed and no circle declares it"
+        ));
     }
+    if let Some(p) = crate::savepoint::previous_commit_in(circles, &commit, digest) {
+        let pd = hex::encode(&p.digest);
+        if !seen.contains(&pd) {
+            stack.push_back(pd);
+        }
+    }
+    Ok(())
 }
 
 /// Plan a collection without deleting.
 pub fn plan_gc(store: &ObjectStore, base_dir: &Path) -> Result<GcReport, String> {
+    store.get_head(base_dir).map_err(|e| e.to_string())?;
+    // One read of the ○ directory for both walks. A sweep that actually
+    // deletes loads again in `mark`, before it removes anything.
+    let circles = crate::savepoint::load_circles(base_dir).map_err(|e| e.to_string())?;
     let all = store
         .list_digests()
         .map_err(|e| format!("list objects: {e}"))?;
     let total_objects = all.len();
-    let (live, integrity) = mark(store, base_dir, false)?;
-    let (live_abs, _) = mark(store, base_dir, true)?;
+    let (live, integrity) = mark_walk(store, base_dir, false, &circles)?;
+    let (live_abs, _) = mark_walk(store, base_dir, true, &circles)?;
 
     let mut collectable = 0usize;
     let mut collectable_bytes = 0u64;
