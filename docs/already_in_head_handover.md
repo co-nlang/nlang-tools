@@ -148,3 +148,12 @@ conformance：162 vectors、162 pass、0 fail。
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合；驗收方另修一支既有探針（錯在驗收方）。** 交付 `e674115`：改動只在 `universe.rs`、`main.rs`；探針、Q-066 兩支修訂檔、分隔線以上皆未動。
+**第一次全樹 ×3**：兩輪 253／2431／0；**第三輪 1 紅**——`a_commit_that_ate_what_it_never_read_probe_test::r2` 的 `VOID READING`（「沒有一輪重疊」）。〔量〕單跑：交付 4／20 開火、v0.69.0 基線 0／20；一輪的結局：基線 1 落地＋19 `consumed`，交付 1 落地＋19 `already in HEAD`。
+**成因在驗收方**：該探針以 `contains("consumed")` 當「有競爭」的訊號，而 D86 正是改掉這句話的裁定；只有某輪碰巧落地兩筆時才武裝。驗收方開卡時 grep 了 `Nothing to commit`、**沒有 grep `consumed`**；參考實作那一次全樹碰巧沒開火（機率型）。**交付照工單做對了。**
+**驗收方修訂**：訊號改為不看措辭——「失敗、且答覆不等於誠實的空（探針內以對照工作區量出）」；依序世界裡其餘提交恰得誠實的空 ⟹ 守衛仍活。標 `AMENDED 2026-10-03 for Q-068 (D86)`。**兩邊驗證**：交付 20／20、基線 20／20，零開火。
+**修訂後全樹 ×3**（機器安靜，期間不跑任何其他量測）：**253 target／2431 passed／0 failed，`^error` 0，exit 0**，三輪逐行相同，無失敗測試名。
+**驗收方矩陣**〔交付與 v0.69.0 兩個引擎；並行以持有提交鎖做成決定性〕：C1 一落地、一答 `already in HEAD <落地那筆>`；C2 點名 `HEAD`；誠實的空、`v: _`、只有 `~%Config` 仍 `Nothing to commit`；拿走而未落地仍 `consumed`；讀不到成員、讀不到 `HEAD` ⟹ 與基線同答、`.oo/` 不變。
+**Q3 揭出射程外的事，驗收方另量**：`refine`、`squash`、`rollback` 都不拿提交鎖。〔量，v0.69.0〕`commit` 與 `refine` 並行 **30／30**：兩邊 rc=0，`refine` 以舊 `HEAD` 為父寫回，**蓋掉剛落地的提交**——內容不在 `HEAD` 的根、注入已被消費、`status` 說 static、`gc` 刪掉那筆；依序對照組兩筆皆在。`squash`／`rollback` 各 20 次 0 遺失——工作集非空時它們以 `dirty worktree` 拒絕（靠檢查，不靠鎖）。**記入 Inbox。**
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4；conformance 162／162；新倉 `layout=8`／`encoding=5`。

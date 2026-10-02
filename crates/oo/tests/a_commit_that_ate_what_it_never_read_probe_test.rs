@@ -246,6 +246,24 @@ fn r1_a_definition_that_was_accepted_is_never_deleted_unread() {
 // ---------------------------------------------------------------------
 #[test]
 fn r2_no_raw_os_error_reaches_the_operator() {
+    // AMENDED 2026-10-03 for Q-068 (D86): the contention signal keyed on the
+    // word "consumed", and D86 gives a loser whose working set landed its own
+    // answer (it names HEAD) -- every round then read as "nothing
+    // overlapped" unless two commits happened to land. Wording-free now: a
+    // commit that failed with something other than the honest-empty answer
+    // (measured here, in a workspace that commits twice) was raced. In a
+    // workspace where the twenty ran one after another, every later commit
+    // gets exactly that honest-empty answer.
+    let honest_empty = {
+        let s = scratch("r2-honest");
+        let d = s.path();
+        write(d, "seed.n", "seed: 0\n");
+        assert_eq!(oo(d, &["evolve", "seed.n"]).1, 0, "REACH: control evolve");
+        assert_eq!(oo(d, &["commit", "-m", "base"]).1, 0, "REACH: control commit");
+        let (t, rc) = oo(d, &["commit", "-m", "again"]);
+        assert!(rc != 0, "REACH: the control's second commit refused: {t}");
+        t
+    };
     let mut armed = 0;
     for round in 0..3 {
         let s = scratch(&format!("r2-{round}"));
@@ -286,7 +304,7 @@ fn r2_no_raw_os_error_reaches_the_operator() {
             if text.contains("Commit successful") {
                 landed += 1;
             }
-            if text.contains("consumed") {
+            if !o.status.success() && text.trim() != honest_empty.trim() {
                 consumed += 1;
             }
             outs.push(text);
