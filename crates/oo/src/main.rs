@@ -1261,6 +1261,19 @@ fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Re
     Ok(())
 }
 
+/// D86. The HEAD CAID that holds `combos`, when every one of them is
+/// already at that HEAD. `Ok(None)` is not that sentence.
+fn already_in_head(
+    engine: &Ouroboros,
+    base: &Path,
+    combos: &[nlang_interpreter::value::ComboVal],
+) -> anyhow::Result<Option<String>> {
+    match Universe::head_if_it_holds(engine, base, combos)? {
+        Some(head) => Ok(Some(format!("already in HEAD {head}"))),
+        None => Ok(None),
+    }
+}
+
 fn run_commit(
     message: Option<String>,
     grants: Vec<String>,
@@ -1271,10 +1284,32 @@ fn run_commit(
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     refuse_lost_context(&engine.store, &cur)?;
-    // Snapshot before the lock: a late waiter that listed members, then
-    // found them gone, consumed them. G3 lists zero (the previous commit
-    // already returned).
+    // Before the lock: list, then read. A member that disappears between
+    // those two reads was not verified. D86 is only for content this
+    // process did read. G3 lists zero (the previous commit already returned).
     let listed_before = nlang_interpreter::injections::paths(&cur)?.len();
+    let (seen_committable, unverified) = match nlang_interpreter::injections::load_all(&cur) {
+        Ok(members) => {
+            let seen = members
+                .into_iter()
+                .filter(|m| {
+                    nlang_interpreter::universe::injection_has_committable_content(
+                        &engine,
+                        &m.combo,
+                    )
+                })
+                .map(|m| m.combo)
+                .collect::<Vec<_>>();
+            (seen, false)
+        }
+        Err(e)
+            if e.to_string()
+                .starts_with(nlang_interpreter::injections::CONSUMED_MSG) =>
+        {
+            (Vec::new(), true)
+        }
+        Err(e) => return Err(e),
+    };
     let (_commit_lock, contended) = CommitLock::acquire(&cur)?;
     let listed_count = nlang_interpreter::injections::paths(&cur)?.len();
     let mut universe = load_universe(&engine, &cur)?;
@@ -1294,7 +1329,23 @@ fn run_commit(
         // a wait, or a member that disappeared between the two listings.
         let config_only = universe.staged.get_field("~%Config").is_some();
         let lost_a_member = listed_count < listed_before;
-        if !config_only && (contended || lost_a_member) {
+        if config_only {
+            anyhow::bail!("Nothing to commit");
+        }
+        // C2: the members are still here, and proposals_at already checked
+        // them against this HEAD. Name that HEAD only when the check holds.
+        let held = universe.held_committable().to_vec();
+        if let Some(sentence) = already_in_head(&engine, &cur, &held)? {
+            anyhow::bail!("{sentence}");
+        }
+        if contended || lost_a_member {
+            // C1: content read before the wait, checked against the HEAD
+            // that exists now. Unread content keeps the consumed answer.
+            if !unverified {
+                if let Some(sentence) = already_in_head(&engine, &cur, &seen_committable)? {
+                    anyhow::bail!("{sentence}");
+                }
+            }
             anyhow::bail!("{}", nlang_interpreter::injections::CONSUMED_MSG);
         }
         anyhow::bail!("Nothing to commit");

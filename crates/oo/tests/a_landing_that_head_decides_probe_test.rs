@@ -233,8 +233,12 @@ fn r1_a_folded_injection_left_behind_is_not_a_proposal() {
     let w = Ws::s3("r1");
     let st = w.ok(&["status"]);
     assert!(!st.contains("x: 2"), "the injection HEAD already holds is listed as a proposal:\n{st}");
+    // AMENDED 2026-10-03 for Q-068 (D86): this is the held-injection case
+    // D86 gives its own answer (it names HEAD); "not a proposal" is measured
+    // by the refusal and HEAD not moving, not by the words `Nothing to commit`.
+    let before = w.head();
     let (o, rc) = w.oo(&["commit", "-m", "again"]);
-    assert!(rc != 0 && o.contains("Nothing to commit"), "a commit found something to commit in what HEAD already holds: rc={rc} {o}");
+    assert!(rc != 0 && w.head() == before, "a commit found something to commit in what HEAD already holds: rc={rc} {o}");
 }
 
 /// S3. Baseline: an unrelated commit is asked for `--grant pin`, and once
@@ -276,8 +280,11 @@ fn r4_an_injection_identical_to_head_is_not_a_proposal() {
     w.committed("a.n", "x: 2\n");
     w.write("p.n", "x: 2\n");
     let _ = w.oo(&["evolve", "p.n", "--pin", "--grant", "pin"]);
+    // AMENDED 2026-10-03 for Q-068 (D86): as r1 — measured by the refusal
+    // and HEAD not moving, not by the words `Nothing to commit`.
+    let before = w.head();
     let (o, rc) = w.oo(&["commit", "-m", "same"]);
-    assert!(rc != 0 && o.contains("Nothing to commit"), "an injection identical to HEAD was committed as a proposal: rc={rc} {o}");
+    assert!(rc != 0 && w.head() == before, "an injection identical to HEAD was committed as a proposal: rc={rc} {o}");
 }
 
 /// S5. Baseline: the next commit records the same abandonment again.
