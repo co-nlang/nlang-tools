@@ -71,17 +71,79 @@
 
 ### 8.1 射程逐項對照
 
+I1. 等鎖前讀到的成員裡有可提交內容，而且那些內容此刻都在 `HEAD` 裡：rc=1，一句 `Error: already in HEAD <HEAD 檔裡的完整 CAID>`。r1。
+
+I2. 工作集裡有 `HEAD` 已持有、且有可提交內容的注入，沒有提議：同一句。rc=1。`.oo/` 不寫。與 `Error: Nothing to commit` 可分辨。r2。
+
+I3. C1 與 C2 把各自的 `HEAD` 換成佔位符之後，輸出相同。r3。
+
+I4. 成員被拿走、內容不在 `HEAD` 裡：`Error: working set consumed by a concurrent commit`。g2。等鎖前讀不到成員：權限拒絕是 `Error: cannot read injection <檔名>: permission denied`。列出與讀取之間成員消失：同一句 consumed，`HEAD` 留在原處。
+
+I5. 誠實的空、`v: _`、只有 `~%Config`，仍是 `Error: Nothing to commit`。g1；`what_it_says_is_what_happened` 的 g1、r10。已持有旁邊有新提議，照常提交。g3。並行的勝者照常落地。g4。Q-067 11、Q-066 10、Q-065 12、`a_commit_that_ate_what_it_never_read` 6，皆 0 failed。
+
+I6. 沒有新的耐久檔，沒有改磁碟格式，沒有推進佈局。值位址與提交位址沒動。版本仍是 `oo v0.69.0`。
+
 ### 8.2 順手改動（逐項指名）
+
+`proposals_at` 記下已持有、而且自己有可提交內容的成員。`v: _` 與只有 `~%Config` 的成員留在已持有名單，不進這份。
+
+`commit` 在取鎖前先 `paths` 再 `load_all`。取鎖之後，成員還在就用 D84 (i) 的同一判準對當下的 `HEAD` 再核對一次。被拿走、而且核對得過，回同一句。
+
+改動檔：`crates/interpreter/src/universe.rs`、`crates/oo/src/main.rs`、本工單 §8。
+
+探針、Q-066 預先修訂的兩支、版本、規格、`TAG_REGISTRY` 維持原檔。沒有跑 rustfmt。
 
 ### 8.3 工單哪裡是錯的
 
+工單的判準與探針一致。`squash` 與 `refine` 不拿 `.oo/format` 這把鎖，也不刪注入。見 Q3。
+
 ### 8.4 工單指名要你回答的問題
+
+Q1. 等鎖前看到的工作集是取鎖之前的兩次讀：`injections::paths` 列出 `.oo/injections`，接著 `load_all` 讀每個成員。有可提交內容的成員（與空 combo 合一之後，去掉 `~%Config` 仍有內容）留在這個行程裡。
+
+列出與讀取之間成員消失時，`load_all` 回 consumed。這次讀標記為未核對，然後仍去取鎖。鎖後成員已不在：rc=1，`Error: working set consumed by a concurrent commit`。量到的那一次，注入目錄被清空，`HEAD` 仍是取鎖前那一筆 `f0ce3cb9610360bf986ed75dd6222761a36c64fa43f7938eec56a07cf2e9a97b`。
+
+Q2. 點名印的是 `HEAD` 檔裡的完整 CAID（`hash:sha256:v2:…:<64-hex>`）。64-hex 在這串裡面。
+
+`HEAD` 檔權限 000：
+
+1. C2：rc=1。`Error: cannot read .oo/HEAD: permission denied`。恢復權限後 `HEAD` 仍是提交 `x: 1` 的那一筆。
+2. C1，等鎖期間把 `HEAD` 改成 000，注入刪掉或留著，兩次都是同一句：rc=1，`Error: cannot read .oo/HEAD: permission denied`。
+
+Q3. `squash` 與 `refine` 不刪工作集。有一份尚未落地的 `x: 1` 時：
+
+1. `squash` rc=1。`Error: dirty worktree: commit or discard staged changes before squash`。等鎖的 `commit` 隨後 rc=0，`Commit successful:`。
+2. `refine --source <根> --target <根> -m r` rc=0。`Refine commit:`，下一行 `Refine authority: unverified`。等鎖的 `commit` 隨後 rc=0，`Commit successful:`。
+
+工作集已是持有（重 evolve 已提交的 `a: 1`）時，`squash` 與 `refine` 各自落地。等鎖的 `commit` rc=1，`Error: already in HEAD <剛落地的那筆完整 CAID>`。注入檔還在，判準對上的是新的 `HEAD`。這兩個命令的路徑沒有改。
+
+Q4. C2 之後 `status` rc=0。兩行：
+
+`Standard root dependency: 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)`
+
+`Universe is static (no staged changes).`
+
+與那句話一致：沒有新的提議。`status` 沒有改。
 
 ### 8.5 探針
 
+`already_in_head_probe_test`：7 passed、0 failed，7.19 s。無空洞讀數。
+
+`what_it_says_is_what_happened_probe_test` 23、`a_commit_that_ate_what_it_never_read_probe_test` 6、Q-067 11、Q-066 10、Q-065 12，皆 0 failed。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 253 行 `test result:`、2431 passed、0 failed、`^error` 0 行、exit 0。去掉 `finished in` 之後三輪 `cmp` 相同。沒有失敗測試名。
+
+conformance：162 vectors、162 pass、0 fail。
+
+`~%Math./add (1, 2)` 是 3，`(1, 3)` 是 4，rc=0。這兩次 eval 沒有建立 `.oo/`。
+
+`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`、`encoding=5`。
+
 ### 8.7 你認為需要改規格之處
+
+沒有改規格文字。`SPEC_10` §4.1.3 自陳缺口仍由驗收方收尾。
 
 ---
 

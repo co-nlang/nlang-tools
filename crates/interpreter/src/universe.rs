@@ -140,6 +140,19 @@ pub fn staged_has_committable_content(staged: &ComboVal) -> bool {
         || !s.local.is_empty()
 }
 
+/// Committable content this member would contribute on its own.
+/// Unifying with an empty combo drops a literal `_`. `~%Config` is session
+/// state. Either one alone is not committable.
+pub fn injection_has_committable_content(engine: &Ouroboros, combo: &ComboVal) -> bool {
+    match engine.unify(
+        Value::Combo(combo.clone()),
+        Value::Combo(ComboVal::default()),
+    ) {
+        Value::Combo(c) => staged_has_committable_content(&c),
+        _ => false,
+    }
+}
+
 /// Genesis ∧ staged overrides — effective closed config (display + resolve).
 pub(crate) fn effective_config(
     root: &ComboVal,
@@ -353,6 +366,9 @@ pub struct Universe {
     /// Not proposals: not folded, not a pin, not a discharge. A commit that
     /// lands unlinks them; a commit that does not run leaves the files.
     held_sources: Vec<std::path::PathBuf>,
+    /// Held members that carry committable content. `v: _` and a
+    /// `~%Config`-only member are held and are not in this list. Process-local.
+    held_committable: Vec<ComboVal>,
     /// Pin metadata for the one injection this evolve process will mint.
     session_pin_coords: std::collections::BTreeSet<String>,
     session_absorbs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -392,6 +408,7 @@ impl Universe {
             injection_ids: std::collections::BTreeSet::new(),
             injection_sources: Vec::new(),
             held_sources: Vec::new(),
+            held_committable: Vec::new(),
             session_pin_coords: std::collections::BTreeSet::new(),
             session_absorbs: std::collections::BTreeMap::new(),
             session_effect_tags: crate::value::EffectTag::Pure,
@@ -949,6 +966,7 @@ impl Universe {
         injections: Vec<crate::injections::Injection>,
     ) -> Result<Vec<crate::injections::Injection>> {
         self.held_sources.clear();
+        self.held_committable.clear();
         if injections.is_empty() {
             return Ok(injections);
         }
@@ -969,11 +987,53 @@ impl Universe {
                 .content_hash();
             if at == at_head {
                 self.held_sources.push(injection.source);
+                if injection_has_committable_content(engine, &injection.combo) {
+                    self.held_committable.push(injection.combo);
+                }
             } else {
                 kept.push(injection);
             }
         }
         Ok(kept)
+    }
+
+    /// Held members that are committable content. Empty when every held
+    /// member is `v: _` or `~%Config` only.
+    pub fn held_committable(&self) -> &[ComboVal] {
+        &self.held_committable
+    }
+
+    /// `Some(head)` when every combo meets HEAD's root at the same position
+    /// as an empty working set (D84 (i)) and HEAD can be read. `Ok(None)`
+    /// when one of them moves that position, or there is no HEAD. A read
+    /// error is not a negative answer.
+    pub fn head_if_it_holds(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        combos: &[ComboVal],
+    ) -> Result<Option<ContentHash>> {
+        if combos.is_empty() {
+            return Ok(None);
+        }
+        let root = Self::root_now(engine, base_dir)?;
+        let at_head = engine
+            .unify(
+                Value::Combo(root.clone()),
+                Value::Combo(ComboVal::default()),
+            )
+            .content_hash();
+        for combo in combos {
+            let at = engine
+                .unify(
+                    Value::Combo(root.clone()),
+                    Value::Combo(combo.clone()),
+                )
+                .content_hash();
+            if at != at_head {
+                return Ok(None);
+            }
+        }
+        Ok(engine.store.get_head(base_dir)?)
     }
 
     /// HEAD's commit root. No HEAD is the empty combo (there is no point).
@@ -1148,6 +1208,7 @@ impl Universe {
         self.injection_ids.clear();
         self.injection_sources.clear();
         self.held_sources.clear();
+        self.held_committable.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
         self.session_effect_tags = crate::value::EffectTag::Pure;
@@ -1432,6 +1493,7 @@ impl Universe {
         self.injection_ids.clear();
         self.injection_sources.clear();
         self.held_sources.clear();
+        self.held_committable.clear();
         self.session_pin_coords.clear();
         self.session_absorbs.clear();
         self.session_effect_tags = crate::value::EffectTag::Pure;
