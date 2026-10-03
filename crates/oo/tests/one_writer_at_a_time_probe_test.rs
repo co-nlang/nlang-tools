@@ -251,24 +251,37 @@ fn r5_commit_beside_refine_loses_nothing() {
     }
 }
 
-/// r6 — outcome: squash raced against refine. Baseline: 10/10 lose one.
+/// r6 — outcome: squash raced against refine. AMENDED 2026-10-03 for Q-069
+/// R-1 (acceptor's error): the first version required both reported commits
+/// in history, and that is not what serializability gives — in the serial
+/// order refine-then-squash, the squash folds the refine away, rightly. What
+/// every serial order does give: the squash's own commit is in history (it
+/// is HEAD, or the parent of the refine that came after it). Baseline: the
+/// squash is the one lost, 10/10. Trials alternate which command starts
+/// first, so both serial orders are exercised (the first version always
+/// started squash first, and passed a lock-only reference by that luck).
 #[test]
 fn r6_squash_beside_refine_loses_nothing() {
-    for t in 0..5 {
+    for t in 0..6 {
         let w = Ws::new(&format!("r6-{t}"));
         let a = w.committed("a.n", "a: 1\n");
         w.committed("b.n", "b: 2\n");
         let c = w.committed("c.n", "c: 3\n");
         let root = w.root_of(&c);
-        let s = w.spawn(&["squash", "--grant", "squash", &a]);
-        let r = w.spawn(&["refine", "--source", &root, "--target", &root, "-m", "r"]);
+        let squash = ["squash", "--grant", "squash", a.as_str()];
+        let refine = ["refine", "--source", root.as_str(), "--target", root.as_str(), "-m", "r"];
+        let (s, r) = if t % 2 == 0 {
+            let s = w.spawn(&squash);
+            (s, w.spawn(&refine))
+        } else {
+            let r = w.spawn(&refine);
+            (w.spawn(&squash), r)
+        };
         let (so, src) = finish(s);
         let (ro, rrc) = finish(r);
         assert_eq!((src, rrc), (0, 0), "trial {t}: squash {so} / refine {ro}");
-        for (who, o) in [("squash", &so), ("refine", &ro)] {
-            let caid = reported(o).unwrap_or_else(|| panic!("VOID READING: trial {t}: {who} reported no commit: {o}"));
-            assert!(w.log_has(&caid), "trial {t}: {who} reported {caid} and it is not in history");
-        }
+        let caid = reported(&so).unwrap_or_else(|| panic!("VOID READING: trial {t}: squash reported no commit: {so}"));
+        assert!(w.log_has(&caid), "trial {t}: squash reported {caid} and it is not in history (refine: {ro})");
     }
 }
 
