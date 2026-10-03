@@ -73,17 +73,69 @@
 
 ### 8.1 射程逐項對照
 
+1. **I1** `commit`、`refine`、`squash`、`rollback` 在同一把 `CommitLock`（既有 `.oo/format` 排他鎖）裡讀 `HEAD`，再移動它。r1–r3、g4。r5 的五次、r6 的五次，每個回報的提交都在 `oo log` 裡。另量 r6 的兩種啟動順序各 20 次，遺失 0。
+2. **I2** `migrate` 換掉 `.oo/format` 的那一步在同一把鎖裡。r4。`flock` 返回後比對打開的檔與路徑上的檔；不是同一個就放開再取。量到：在舊檔上排到鎖的 `commit`，新檔仍被別人鎖著時不落地；新檔放開之後才 `Commit successful`。
+3. **I3** `status`／`log`／`inspect`、`evolve`、`gc` 不取這把鎖。g1–g3。
+4. **I4** 取不到鎖時具名拒絕、不寫。句型與今天的 `commit` 相同：`cannot lock <路徑>: permission denied`。`what_it_says_is_what_happened::r9` 仍綠。
+5. **I5** 依序的四個寫者仍落地（g4）。`commit` 仍在鎖前列出並讀工作集，鎖後重讀 `HEAD`（D86）。紅線：`already_in_head` 7、`a_commit_that_ate_what_it_never_read` 6、`what_it_says_is_what_happened` 23、Q-067 11、Q-066 10、Q-065 12，皆 0 failed。範圍裡沒有 refine 的 squash 仍把中間提交壓出 log（依序三筆壓成 2 行）。
+6. **I6** 沒有新耐久檔，沒有佈局號，值位址與提交位址沒有動。版本仍是 `oo v0.70.0`。
+
 ### 8.2 順手改動（逐項指名）
+
+1. `CommitLock::acquire`（`crates/oo/src/main.rs`）在鎖到手之後核對檔案身份。Unix 是裝置號加 inode，Windows 是磁碟區序號加檔案索引。平台報不出身份時，這一關視為同一檔，互斥只靠鎖本身。
+2. `run_refine`／`run_squash`／`run_rollback` 在 `require_universe` 之後、`Ouroboros::init` 之前取鎖。
+3. `run_migrate`：宣告已經是這次會寫下的 layout 與 encoding 時不取鎖，仍印 `Nothing was changed`。否則取鎖，鎖內重新 `init`、重讀宣告，再 `migrate_layout`。
+4. `run_commit` 在取鎖之後再 `Ouroboros::init` 一次，讓佈局旗標和 `HEAD` 屬於鎖住的那個檔。鎖前的 `paths`／`load_all` 沒有搬。
+5. `Universe::squash`（`universe.rs`）與 `savepoint::rewrite_commit_ancestor`（`savepoint.rs`）：範圍裡的 refine 留在 log 走訪上。squash 那顆的 `ancestor:` 指向最新的 refine；`set_head` 之後把這些 refine 的 ○ `ancestor:` 改成下一顆 refine，最舊的改成 base。改寫失敗會把已改的 ○ 改回，並把 `HEAD` 放回移動前。沒有 refine 時 `ancestor:` 仍是 base，不改舊 ○。`commits_after` 不把留下的 refine 算進 `compressed` 的數目。提交物件本身不改寫。
 
 ### 8.3 工單哪裡是錯的
 
+工單說只取同一把鎖、再做 inode 重取，r6 就永不遺失，全樹 254／2441／0。只取鎖時，refine 先做完再 squash，結果等於依序「先 refine 再 squash」：squash 把那顆 refine 壓出祖先走訪，`oo log` 的 `commit` 行沒有它的 digest。量到 refine 先啟動 20／20 這樣；squash 先啟動仍有 1／20。探針用 `contains(digest)`，那一序會紅。全樹數字在加上「refine 留在走訪上」之後成立：254 行、2441 passed、0 failed。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1**
+
+| 寫者 | 取鎖 | 讀 `HEAD` |
+| :-- | :-- | :-- |
+| `commit` | `run_commit` 裡，`injections::paths` 與 `load_all` 之後，`CommitLock::acquire` | 鎖前：`refuse_lost_context` → `get_head`，只決定要不要在進鎖前拒絕。鎖後：再次 `init`、`refuse_lost_context`、`Universe::load` → `get_head`、`head_if_it_holds`、`Universe::commit` 裡的 `refuse_lost_context`。落地用的是鎖後這幾次。 |
+| `refine` | `run_refine`，`require_universe` 之後、`Ouroboros::init` 之前 | 鎖後：`refuse_lost_context`、`Universe::load`、`Universe::refine`（用剛載入的 `self.head`，並再 `refuse_lost_context`）。`--sign` 的身分檔在鎖內讀；探針不簽。 |
+| `squash` | `run_squash`，同一位置 | 鎖後：`Universe::load`、`commits_after`（用 `self.head`）、`Universe::squash` 的 `get_commit`／`commit_is_ancestor`。 |
+| `rollback` | `run_rollback`，同一位置 | 鎖後：`Universe::load`，`Universe::rollback` 用 `self.head`，然後 `set_head`。 |
+| `migrate` | 宣告尚未現行時，`migrate_layout` 之前 | 不讀 `HEAD`。鎖前讀過的宣告只用來跳過「已經現行」。鎖內重讀，寫的是重讀的結果。 |
+
+`require_universe` 只看見證檔在不在，不讀 `HEAD`，四個寫者都在取鎖之前做這一步。`refine` 在取鎖前沒有別的倉讀取，沒有要在鎖內重驗的倉讀結果。
+
+**Q2** `acquire` 的迴圈：打開路徑、`try_lock`／`lock`，然後 `still_the_directory_entry`。打開的 fd 做 `metadata`，路徑再 `metadata`。Unix 比 `(dev, ino)`，Windows 比 `(volume_serial_number, file_index)`。不相等，或路徑已經不在，就 `unlock` 再打開路徑。排在舊 inode 上的寫者要等舊 fd 的 `lock` 返回才做這次比對；比對失敗就不會帶著那把鎖去 `set_head`。它改去鎖路徑上的新檔。新檔上已經有人通過比對並持鎖時，它堵在新檔的 `flock` 上。量（euid 1000）：持有舊檔的鎖、把 `.oo/format` rename 走、寫入新檔並鎖住新檔、放開舊檔之後，排隊的 `commit` 仍在跑，`HEAD` 未動；放開新檔之後 rc=0，`Commit successful`，`HEAD` 已動。
+
+**Q3** `.oo/format` 模式 0400，euid 1000。今天（v0.70.0 二進位）與改後：
+
+| 指令 | 今天 | 改後 |
+| :-- | :-- | :-- |
+| `commit` | rc=1 `Error: cannot lock <路徑>: permission denied`，`HEAD` 與 format 不動 | 同一句，不動 |
+| `refine` | rc=0 `Refine commit: …`，`HEAD` 移動 | rc=1 同一句 `cannot lock`，不動 |
+| `squash` | rc=0 `Squash commit: …`，`HEAD` 移動 | rc=1 同一句，不動 |
+| `rollback` | rc=0 `Rolled back to …`，`HEAD` 成為目標 | rc=1 同一句，不動 |
+| `migrate`（已是 layout=8、encoding=5） | rc=0 `Store declarations are already layout=8 and encoding=5. Nothing was changed.` | 同一句，不動 |
+| `migrate`（layout=7） | rc=0，先印成本，再 `Migrated store layout to layout=8.`，`HEAD` 不動 | rc=1 `cannot lock`，format 仍是 `layout=7`，`HEAD` 不動 |
+
+**Q4** 沒有改 `gc`。`gc` 不取這把鎖（g3）。`Universe::commit` 在 `set_head` 之前寫根、寫提交物件、寫 ○。`gc::run_gc` 用較早的 `list_digests`，再用當時的 `HEAD` 做 `mark`（`follow_abandoned == false`），刪掉清單裡走不到的 digest。視窗：新物件已經在那份清單裡，`mark` 讀到的仍是舊 `HEAD`，物件被刪，隨後 `set_head` 指向被刪的那顆。`rollback` 不鑄新提交：`append_abandoned` 然後 `set_head`。目標是移動前 `HEAD` 的祖先，`mark` 讀到移動前或移動後的 `HEAD` 都走得到它。移動之後，只有舊尖端才走得到的物件變成可收集，與 rollback 完成之後再 `gc` 同一件事。
 
 ### 8.5 探針
 
+`crates/oo/tests/one_writer_at_a_time_probe_test.rs` 未改，未 rustfmt。夾具未改。臨界區仍是 `.oo/format` 上的同一種排他鎖，r1–r4 量得到。本探針 10／10（紅線那輪 17.51s）。
+
 ### 8.6 數字
 
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 254 行，2441 passed，0 failed。去掉 ` finished in ` 之後三輪 `cmp` 相同。
+2. conformance 162／162，rc=0。
+3. `~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。
+4. `x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
+5. 依序先 refine 再 squash 到第一筆：log 為 3 行（squash、那顆 refine、base），中間的一般提交不在 log。依序只 squash 三筆一般提交：仍是 2 行。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_10` §4.1 與 `SPEC_08` §6.2.1 仍由驗收方收尾。這次沒有改規格檔。建議補一句：squash 壓過的範圍裡，refine 提交留在 log 走訪上，其餘提交離開走訪。
 
 ---
 

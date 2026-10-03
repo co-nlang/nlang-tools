@@ -9,20 +9,72 @@ use std::fs;
 use std::io::{stdin, stdout, Write};
 use std::path::{Path, PathBuf};
 
-/// Exclusive lock over a store's commit critical section (load through
-/// consume). Advisory; evolves do not take it. Not compare-and-swap on HEAD
-/// and not a shared workset cell (S4 / Q4).
+/// Exclusive lock over a store's commit critical section.
+/// `commit`, `refine`, `squash`, `rollback`, and `migrate` take it.
+/// Reads, `evolve`, and `gc` do not. Not compare-and-swap on HEAD.
 ///
 /// The lock is `std::fs::File::{try_lock, lock}` (stable 1.89), the same
 /// exclusive-file API on every target std supports. Taken on the existing
 /// `.oo/format` file — a new lock file would be a layout change. Process-held;
 /// crash releases it. Does not write the file.
+///
+/// `migrate` replaces that file by rename. A waiter that opened the old
+/// inode can be granted its lock after the name points somewhere else.
+/// The lock counts only when the open file is still the directory entry;
+/// otherwise it is dropped and the path is opened again.
 struct CommitLock {
     file: fs::File,
 }
 
+/// Identity of a directory entry. Unix is device + inode. Windows is
+/// volume serial + file index. A platform that reports neither has no
+/// replacement check; the exclusive lock is the whole section there.
+fn file_id(meta: &fs::Metadata) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return Some((meta.dev(), meta.ino()));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return Some((meta.volume_serial_number()? as u64, meta.file_index()?));
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = meta;
+        None
+    }
+}
+
+fn still_the_directory_entry(file: &fs::File, path: &Path) -> anyhow::Result<bool> {
+    let open_meta = file.metadata().map_err(|e| {
+        anyhow::anyhow!(
+            "cannot lock {}: {}",
+            path.display(),
+            oo::operator_io_reason(&e)
+        )
+    })?;
+    let path_meta = match fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "cannot lock {}: {}",
+                path.display(),
+                oo::operator_io_reason(&e)
+            ));
+        }
+    };
+    match (file_id(&open_meta), file_id(&path_meta)) {
+        (Some(open_id), Some(path_id)) => Ok(open_id == path_id),
+        (None, None) => Ok(true),
+        _ => Ok(false),
+    }
+}
+
 impl CommitLock {
-    /// Returns whether this process had to wait for another committer.
+    /// Returns whether this process had to wait for another holder.
     /// Waited-then-empty is "consumed", not "Nothing to commit" (S2/S3).
     fn acquire(base: &Path) -> anyhow::Result<(Self, bool)> {
         let oo = base.join(".oo");
@@ -35,36 +87,43 @@ impl CommitLock {
         // do not truncate. The write bit is the lock, not a rewrite of the
         // declaration — a readable `format` can still refuse this open.
         let path = oo.join("format");
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "cannot lock {}: {}",
-                    path.display(),
-                    oo::operator_io_reason(&e)
-                )
-            })?;
-        match file.try_lock() {
-            Ok(()) => Ok((Self { file }, false)),
-            Err(std::fs::TryLockError::WouldBlock) => {
-                file.lock().map_err(|e| {
+        let mut contended = false;
+        loop {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .map_err(|e| {
                     anyhow::anyhow!(
                         "cannot lock {}: {}",
                         path.display(),
                         oo::operator_io_reason(&e)
                     )
                 })?;
-                Ok((Self { file }, true))
+            match file.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    file.lock().map_err(|e| {
+                        anyhow::anyhow!(
+                            "cannot lock {}: {}",
+                            path.display(),
+                            oo::operator_io_reason(&e)
+                        )
+                    })?;
+                    contended = true;
+                }
+                Err(std::fs::TryLockError::Error(e)) => {
+                    anyhow::bail!(
+                        "cannot lock {}: {}",
+                        path.display(),
+                        oo::operator_io_reason(&e)
+                    )
+                }
             }
-            Err(std::fs::TryLockError::Error(e)) => {
-                anyhow::bail!(
-                    "cannot lock {}: {}",
-                    path.display(),
-                    oo::operator_io_reason(&e)
-                )
+            if still_the_directory_entry(&file, &path)? {
+                return Ok((Self { file }, contended));
             }
+            let _ = file.unlock();
         }
     }
 }
@@ -1210,6 +1269,9 @@ fn format_commit_date_ms(ms: u64) -> String {
 fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     let cur = cwd()?;
     require_universe(&cur)?;
+    // HEAD is read in `Universe::load` and moved in `Universe::rollback`.
+    // Both sit inside this section.
+    let (_commit_lock, _) = CommitLock::acquire(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.rollback {
@@ -1228,6 +1290,9 @@ fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::
 fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
     let cur = cwd()?;
     require_universe(&cur)?;
+    // `commits_after` and `Universe::squash` both read HEAD. The count in
+    // the message is the chain this critical section squashes.
+    let (_commit_lock, _) = CommitLock::acquire(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     if !engine.privilege.squash {
@@ -1311,6 +1376,12 @@ fn run_commit(
         Err(e) => return Err(e),
     };
     let (_commit_lock, contended) = CommitLock::acquire(&cur)?;
+    // `acquire` returns only when the lock is on the current `.oo/format`.
+    // A migrate that renamed the file while this commit waited is not the
+    // store `engine` opened above. Read HEAD and the layout from this one.
+    let mut engine = Ouroboros::init(&cur)?;
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
+    refuse_lost_context(&engine.store, &cur)?;
     let listed_count = nlang_interpreter::injections::paths(&cur)?.len();
     let mut universe = load_universe(&engine, &cur)?;
     if let Some(d) = &universe.workset_bottom {
@@ -1428,6 +1499,9 @@ fn run_refine(
 ) -> anyhow::Result<()> {
     let cur = cwd()?;
     require_universe(&cur)?;
+    // `refuse_lost_context`, `Universe::load`, and `Universe::refine` read
+    // HEAD. Nothing above this lock reads the store except the witness check.
+    let (_commit_lock, _) = CommitLock::acquire(&cur)?;
     let engine = Ouroboros::init(&cur)?;
     refuse_lost_context(&engine.store, &cur)?;
     let mut universe = load_universe(&engine, &cur)?;
@@ -1676,20 +1750,43 @@ fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
             "#privileged_required: migrate requires --grant migrate (privilege.migrate capability)"
         );
     }
-    let declaration = nlang_interpreter::storage::read_layout_declaration(&cur)?;
     let target = nlang_interpreter::storage::STORE_LAYOUT_VERSION;
-    let from_enc = engine.store.encoding_version();
-    let to_enc = nlang_interpreter::storage::encoding_after_migration(from_enc);
-    let layout_done = nlang_interpreter::storage::layout_declaration_is_current(&declaration);
-    let encoding_done = from_enc == to_enc;
-    // Both axes, not the layout alone. A half-written pair (layout already
-    // 5, encoding still 4) is the state migrate exists to finish.
-    if layout_done && encoding_done {
+    // A store that is already current does not replace `.oo/format`.
+    // That answer stays available when the declaration can be read and
+    // the critical section cannot (a mode-0400 file still reads).
+    let already = |engine: &Ouroboros| -> anyhow::Result<Option<(String, u32, u32)>> {
+        let declaration = nlang_interpreter::storage::read_layout_declaration(&cur)?;
+        let from_enc = engine.store.encoding_version();
+        let to_enc = nlang_interpreter::storage::encoding_after_migration(from_enc);
+        let layout_done = nlang_interpreter::storage::layout_declaration_is_current(&declaration);
+        let encoding_done = from_enc == to_enc;
+        if layout_done && encoding_done {
+            Ok(None)
+        } else {
+            Ok(Some((declaration, from_enc, to_enc)))
+        }
+    };
+    if already(&engine)?.is_none() {
+        let from_enc = engine.store.encoding_version();
         println!(
             "Store declarations are already layout={target} and encoding={from_enc}. Nothing was changed."
         );
         return Ok(());
     }
+    // The rename of `.oo/format` is the critical section. Re-read after the
+    // lock: the pre-lock declaration is not the one that is written.
+    let (_commit_lock, _) = CommitLock::acquire(&cur)?;
+    let mut engine = Ouroboros::init(&cur)?;
+    apply_cli_privilege(&mut engine, privileged, &grants)?;
+    let Some((declaration, from_enc, to_enc)) = already(&engine)? else {
+        println!(
+            "Store declarations are already layout={target} and encoding={}. Nothing was changed.",
+            engine.store.encoding_version()
+        );
+        return Ok(());
+    };
+    let layout_done = nlang_interpreter::storage::layout_declaration_is_current(&declaration);
+    let encoding_done = from_enc == to_enc;
     // REAL_02 §5.1.1: the cost is on the operator's screen before any
     // declaration byte is written. A later write failure still leaves it there.
     println!("{}", migrate_cost(&declaration, from_enc, to_enc));

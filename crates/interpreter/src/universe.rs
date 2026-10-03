@@ -1735,11 +1735,78 @@ impl Universe {
             if !seen.insert(d.clone()) {
                 break;
             }
-            n += 1;
             let (_resolved, commit) = engine.store.open_commit(&h)?;
+            // A refine stays on the walk (see `squash`). The count is the
+            // commits that leave it.
+            if commit.kind != CommitKind::Refine {
+                n += 1;
+            }
             curr = crate::savepoint::previous_commit(base_dir, &commit, &d)?;
         }
         Err(anyhow::anyhow!("squash base is not an ancestor of HEAD"))
+    }
+
+    /// Refine commits strictly after `base`, newest first.
+    fn refine_digests_until(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+        head: &ContentHash,
+        base: &ContentHash,
+    ) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        let mut curr = Some(head.clone());
+        let mut seen = std::collections::HashSet::new();
+        while let Some(h) = curr {
+            if h.digest == base.digest {
+                break;
+            }
+            let d = hex::encode(&h.digest);
+            if !seen.insert(d.clone()) {
+                break;
+            }
+            let (_addr, commit) = engine.store.open_commit(&h)?;
+            if commit.kind == CommitKind::Refine {
+                out.push(d.clone());
+            }
+            curr = crate::savepoint::previous_commit(base_dir, &commit, &d)?;
+        }
+        Ok(out)
+    }
+
+    /// After HEAD names the squash, point each kept refine at the next
+    /// kept refine, and the oldest at `base`. A failed rewrite is undone
+    /// before the error returns; the caller restores HEAD.
+    fn relink_kept_refines(
+        base_dir: &std::path::Path,
+        kept: &[String],
+        base_digest: &str,
+    ) -> Result<()> {
+        let mut undone: Vec<(String, String)> = Vec::new();
+        for (i, digest) in kept.iter().enumerate() {
+            let next = kept.get(i + 1).map(String::as_str).unwrap_or(base_digest);
+            let previous = match crate::savepoint::rewrite_commit_ancestor(base_dir, digest, next) {
+                Ok(Some(prev)) => prev,
+                Ok(None) => {
+                    let _ = Self::undo_relinks(base_dir, &undone);
+                    anyhow::bail!("squash cannot keep refine {digest}: no circle names it");
+                }
+                Err(e) => {
+                    let _ = Self::undo_relinks(base_dir, &undone);
+                    return Err(e);
+                }
+            };
+            if previous != next {
+                undone.push((digest.clone(), previous));
+            }
+        }
+        Ok(())
+    }
+
+    fn undo_relinks(base_dir: &std::path::Path, undone: &[(String, String)]) -> Result<()> {
+        for (digest, prev) in undone.iter().rev() {
+            crate::savepoint::rewrite_commit_ancestor(base_dir, digest, prev)?;
+        }
+        Ok(())
     }
 
     pub fn squash(
@@ -1785,13 +1852,27 @@ impl Universe {
         let commit_hash = engine.store.put_commit(&commit)?;
         let previous_head = self.head.clone();
         // Circle before HEAD. A failure here has not moved HEAD.
-        // Covering: unique tip (HEAD's commit-circle). Ancestor: the base
-        // commit's digest, so log/squash skip the compressed range without
-        // opening a hole. Name the commit, not a circle — the base may
-        // predate this arc.
-        let ancestor = hex::encode(&base.digest);
+        // No refine in the range: ancestor is the base, and the walk skips
+        // the compressed commits. A refine stays on the walk; the squash
+        // points at the newest one, and that circle is retargeted after
+        // HEAD moves. Name the commit, not a circle.
+        let kept = Self::refine_digests_until(engine, base_dir, &head, base)?;
+        let ancestor = kept
+            .first()
+            .cloned()
+            .unwrap_or_else(|| hex::encode(&base.digest));
         crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))?;
         engine.store.set_head(base_dir, &commit_hash)?;
+        if let Err(e) = Self::relink_kept_refines(base_dir, &kept, &hex::encode(&base.digest)) {
+            match Self::restore_head(engine, base_dir, previous_head.as_ref()) {
+                Ok(()) => return Err(e),
+                Err(restore) => {
+                    return Err(anyhow::anyhow!(
+                        "{e}; HEAD stayed at {commit_hash}: {restore}"
+                    ));
+                }
+            }
+        }
         // Root value is the same as before; reload for consistency.
         self.root = engine
             .store

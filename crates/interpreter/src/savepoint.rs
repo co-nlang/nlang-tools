@@ -407,6 +407,49 @@ pub fn record_commit(
     Ok(Some(write_circle(base, &body)?))
 }
 
+/// Point the circle that names `commit_digest` at `new_ancestor`.
+/// Returns the previous `ancestor:` token. `Ok(None)` when no circle
+/// names that commit — the caller leaves the chain as it was.
+/// The commit object is not rewritten.
+pub fn rewrite_commit_ancestor(
+    base: &Path,
+    commit_digest: &str,
+    new_ancestor: &str,
+) -> Result<Option<String>> {
+    let Some(id) = circle_id_for_commit(base, commit_digest)? else {
+        return Ok(None);
+    };
+    let path = dir(base).join(&id);
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(cannot_read_savepoints(&e)),
+    };
+    let previous = parse_savepoint_ancestor(&text);
+    if previous.as_deref() == Some(new_ancestor) {
+        return Ok(previous);
+    }
+    let mut out = String::new();
+    let mut replaced = false;
+    for line in text.split_inclusive('\n') {
+        let core = line.trim_end_matches(['\n', '\r']);
+        if !replaced && core.trim_start().starts_with("ancestor:") {
+            let ending = &line[core.len()..];
+            out.push_str("ancestor: ");
+            out.push_str(new_ancestor);
+            out.push_str(ending);
+            replaced = true;
+        } else {
+            out.push_str(line);
+        }
+    }
+    if !replaced {
+        return Ok(None);
+    }
+    crate::storage::atomic_write(&path, out)?;
+    Ok(previous)
+}
+
 /// Directory is truth. Built per call; not a durable cache.
 pub fn circle_id_for_commit(base: &Path, digest: &str) -> Result<Option<String>> {
     let nodes = load_circles(base)?;
