@@ -72,17 +72,98 @@
 
 ### 8.1 射程逐項對照
 
+1. **I1** `--universe <p>` 把儲存目錄換成 `<p>` 的絕對路徑。相對的檔案引數照行程目錄打開。r4、r5：呼叫者旁邊沒有 `.oo/`，`<p>` 裡隨後的 `eval _.c` 是 `3`。
+2. **I2** 有宇宙時，`eval`／`run`／`test` 走 `Universe::load`（`HEAD` 的根）。r1–r3、g1。站在沒有宇宙的地方時，`without_universe` 加空白根，目錄裡不出現 `.oo/`。g2。`HEAD` 缺席而儲存宣告過提交時，一次性求值器具名拒絕，輸出含 `rollback`。r10。
+3. **I3** `--universe` 指向沒有宇宙的目錄：讀取類在 `Ouroboros::init` 之前拒絕，句子是 `no universe here: start one with evolve`，該目錄不出現 `.oo/`。r6。`evolve --universe <p>` 仍在 `<p>` 建宇宙。
+4. **I4** `--ephemeral` 把基底指到一個新的空暫存目錄，再 `without_universe`。與在沒有宇宙的地方跑，輸出逐位元組相同；所在宇宙的 `.oo/` 不變。明示 `save` 答 `#no_universe`，rc 0。r7、r8。
+5. **I5** 三個一次性求值器不載工作集、不寫入注入、不提交。明示 `~%Engine./save` 只動物件儲存。g3、g4。
+6. **I6** `--universe` 在 13 個指令上同一句說明；`--ephemeral` 只在 `eval`、`run`、`test`，同一句說明。`evolve`、`commit`、`rollback`、`squash`、`refine`、`gc`、`migrate` 的說明只有 `--universe`。r9。兩個旗標同時出現時，程式拒絕：`--ephemeral and --universe name two universes; pass one`。說明文字沒有 clap 的衝突註記，所以 13 句與 3 句仍然各自相同。
+7. **I7** `Ouroboros::log` 收 `base_dir`。`run_log` 把 `cwd()` 的結果傳進去。其餘讀行程目錄的地方見 Q1。
+8. **I8** 沒有新耐久檔，佈局與編碼仍是新倉的 `layout=8`／`encoding=5`。三個根位址與工單相同。版本仍是 `oo v0.71.0`。
+
 ### 8.2 順手改動（逐項指名）
+
+1. `select_universe`／`cwd()`（`crates/oo/src/main.rs`）。`--universe` 與 `--ephemeral` 把執行緒局部的絕對路徑設為儲存目錄。相對的 `--universe` 用 `real_cwd()` 接上，保留呼叫者寫下的路徑，不做 `canonicalize`。
+2. `engine_for_one_shot`／`one_shot_view`。有宇宙：`Ouroboros::init` 然後 `Universe::load`。`--ephemeral`，或人站在沒有宇宙的地方：`without_universe` 加空白根。點名一個沒有宇宙的目錄：在 `init` 之前拒絕。
+3. 十三個指令先 `select_universe(..., false)`，再走原來的 `require_universe`、`CommitLock`、D86、lost-context 順序。
+4. `run_test` 把 `SelectedUniverse` 留在手上，`process::exit(1)` 之前 `drop`。`exit` 不跑解構，暫存目錄要在那之前刪。
+5. `Ouroboros::log(&self, base_dir)`（`crates/interpreter/src/lib.rs`）。
+
+探針、規格、夾具、`Cargo.lock`、版本都未改。
 
 ### 8.3 工單哪裡是錯的
 
+工單寫的全樹是參考實作、且 `g5` 仍失敗的那一次：255 target、2453 passed、1 failed。驗收方隨後把 `g5` 改成「已知答案，或指向 rollback 的具名拒絕」。本交付跑的是已修訂的那支探針，三輪都是 255 行、2455 passed、0 failed。通過數比「2453 再把那 1 筆算進通過」多 1。這次沒有增刪測試。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1** 以行程工作目錄決定宇宙或儲存的地方：
+
+1. `crates/oo/src/main.rs:241` `real_cwd()`。未給 `--universe`／`--ephemeral` 時，`cwd()` 用它當儲存目錄。相對的 `--universe` 用它接成絕對路徑。檔案引數的 `read_source_file` 仍打開呼叫者給的路徑。
+2. `crates/interpreter/src/lib.rs:4943` `Ouroboros::log`。參數改為 `base_dir`。`run_log` 傳入 `cwd()`。
+3. `crates/interpreter/src/value.rs:2783` `Identity::node_key_path`。工作區路徑已是絕對路徑時直接採用；相對路徑才接上 `current_dir()`。`node` 子指令傳入的是 `cwd()`，而那些子指令沒有選擇器，所以今天仍是行程目錄。見 Q5。
+4. `crates/interpreter/src/builtins/fs_guard.rs:65` 與 `:95`。這是語言路徑的檔案邊界，用來辨認操作者身分檔。儲存目錄不由這裡決定。留著。
+5. `crates/interpreter/src/builtins/env.rs:64` `env.cwd`。它把行程目錄交給程式。宇宙不由這裡決定。`--universe` 之下，程式看到的仍是呼叫者站的地方。留著。
+
+`crates/interpreter/src/storage.rs:38` 的 `Path::new(".")` 是原子寫入時目標沒有父目錄的後備目錄，不選宇宙。探針裡的 `Command::current_dir` 是把子行程放進樣本目錄。
+
+**Q2** 臨時宇宙在 `std::env::temp_dir()` 下，目錄名 `oo-ephemeral-<pid>-<nanos>`。`SelectedUniverse` 的 `Drop` 對它 `remove_dir_all`。`oo test` 在 `process::exit(1)` 之前先 `drop`。量過：一次 `eval --ephemeral '_.a'`（rc 0，輸出 `_`）前後，`/tmp/oo-ephemeral-*` 都是 29 個。這 29 個是更早一輪探針留下的空目錄；這次指令的目錄有被刪掉。
+
+求值與「沒有宇宙的地方」在 D82 上同一條路：`without_universe`，`holds_universe` 為假，根是空白的，明示 `save` 答 `#no_universe`。探針的 `away` 沒有節點設定，所以 r7 逐位元組相同。
+
+節點設定讀的是這個基底，不是呼叫者的工作區。`without_universe` 會讀基底上的 `.oo/discovery.n`（缺檔則空集合，不建檔）、`.oo/peers/`（缺檔則空）、`.oo/architects.json`（缺檔則空集合，不建檔）。空的暫存目錄得到這些空值。一個沒有宇宙、目錄裡卻放了這些檔的地方，會讀到那些檔。物件本體另存在 `scratch::ephemeral_store_root`（前綴 `nlang-test-`），隨引擎放下，與上面這個宇宙基底不是同一個目錄。
+
+**Q3** 自述，取自這支 `target/release/oo` 的說明：
+
+```
+run
+Inject files into a read-only view of this universe's committed root and observe. Does not stage or commit. An explicit ~%Engine./save writes this universe's object store; with no universe it answers #no_universe
+
+eval
+Evaluate one n/ expression from this universe's committed root and print it. The working set does not count. Where there is no universe, the root is empty
+
+test
+Observe `test_` fields from this universe's committed root and report pass/fail (use lint for a static graph check that does not run)
+```
+
+共用的旗標說明：`--universe` 是 `Use the universe in this directory instead of the one where this command is run`（`value_name` 為 `DIR`）。`--ephemeral` 是 `Evaluate against an anonymous temporary universe and leave this universe untouched`。
+
+**Q4** euid 1000。宇宙裡已有一次提交。
+
+| 情況 | `eval '_.a'` |
+| :-- | :-- |
+| `.oo/HEAD` 模式 000 | rc 1，stdout 空，stderr `Error: cannot read .oo/HEAD: permission denied`。測完改回 644。 |
+| `.oo/HEAD` 被改名挪開，儲存裡已有提交 | rc 1，stdout 空，stderr `Error: lost context: HEAD is absent and the store records a commit; restore it with rollback <commit> --grant rollback`。 |
+
+**Q5**
+
+1. `node` 的子指令呼叫 `cwd()`，沒有 `--universe`。`run_node_id` 與 `run_serve`（`main.rs:961`）把這個路徑交給 `engine_keeping_settings` 與 `Identity::node_key_path`。今天「這個工作區」是行程目錄。
+2. `fmt` 打開參數上的那個檔（`read_source_file`）。相對路徑相對行程目錄。
+3. `lint` 打開參數上的檔或目錄（`nlint::run_cli`）。相對路徑相對行程目錄。
+4. `identity` 用 `Identity::resolve_path()`：環境變數 `OO_IDENTITY`（必須是絕對路徑），否則 `~/.oo/identity`。它不讀工作區的 `.oo/`。
+
+這四個指令，以及 `repl`，都沒有 `--universe`。
 
 ### 8.5 探針
 
+`crates/oo/tests/the_universe_you_are_in_probe_test.rs` 未改，未 rustfmt。14／14，1.27s。
+
+`crates/oo/tests/a_history_older_than_its_savepoints_probe_test.rs` 未改。13／13，0.98s，含驗收方已修訂的 g5。
+
+紅線，皆 `test result: ok`、0 failed：`a_history_an_old_crash_cut` 11（5.37s）、`a_landing_that_head_decides` 10（2.11s）、`already_in_head` 7（7.42s）、`cas_integrity` 13（1.65s）、`one_writer_at_a_time` 10（17.74s）、`what_it_says_is_what_happened` 23（2.04s）、`where_there_is_no_universe` 13（3.79s）。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.34s，`^error` 0。
+
 ### 8.6 數字
 
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 255 行，2455 passed，0 failed。去掉 ` finished in ` 之後三輪 `cmp` 相同。
+2. conformance 162／162，rc=0。cwd 是 `/home/gali/nlang`。
+3. `~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。
+4. `x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `.oo/format` 為 `layout=8`，`.oo/objects.format` 為 `encoding=5`。
+
 ### 8.7 你認為需要改規格之處
+
+規格檔這次沒有改。`REAL_01` §1.1、§1.4 的 D88、以及 `SYNTAX_03` 若要註記，仍由驗收方收尾。建議把 `run` 的自述，以及 `--universe`／`--ephemeral` 的那兩句說明，收成與 Q3 相同的句子。
 
 ---
 

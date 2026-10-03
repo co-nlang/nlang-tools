@@ -237,13 +237,78 @@ fn bottom_cause_tag(c: BottomCause) -> &'static str {
     }
 }
 
-fn cwd() -> anyhow::Result<PathBuf> {
+fn real_cwd() -> anyhow::Result<PathBuf> {
     std::env::current_dir().map_err(|e| {
         anyhow::anyhow!(
             "cannot read the working directory: {}",
             oo::operator_io_reason(&e)
         )
     })
+}
+
+std::thread_local! {
+    static SELECTED_UNIVERSE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Store directory for this process. `--universe` / `--ephemeral` replace it.
+/// File arguments stay on the process directory: `File::open` does not come
+/// through here.
+fn cwd() -> anyhow::Result<PathBuf> {
+    if let Some(path) = SELECTED_UNIVERSE.with(|slot| slot.borrow().clone()) {
+        return Ok(path);
+    }
+    real_cwd()
+}
+
+/// Removes an `--ephemeral` directory when the command returns.
+struct SelectedUniverse {
+    ephemeral: Option<PathBuf>,
+}
+
+impl Drop for SelectedUniverse {
+    fn drop(&mut self) {
+        SELECTED_UNIVERSE.with(|slot| *slot.borrow_mut() = None);
+        if let Some(path) = self.ephemeral.take() {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
+fn select_universe(universe: Option<&Path>, ephemeral: bool) -> anyhow::Result<SelectedUniverse> {
+    if ephemeral && universe.is_some() {
+        anyhow::bail!("--ephemeral and --universe name two universes; pass one");
+    }
+    if ephemeral {
+        let path = std::env::temp_dir().join(format!(
+            "oo-ephemeral-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot write {}: {}",
+                path.display(),
+                oo::operator_io_reason(&e)
+            )
+        })?;
+        SELECTED_UNIVERSE.with(|slot| *slot.borrow_mut() = Some(path.clone()));
+        return Ok(SelectedUniverse {
+            ephemeral: Some(path),
+        });
+    }
+    if let Some(path) = universe {
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            real_cwd()?.join(path)
+        };
+        SELECTED_UNIVERSE.with(|slot| *slot.borrow_mut() = Some(abs));
+    }
+    Ok(SelectedUniverse { ephemeral: None })
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -283,6 +348,8 @@ const HELP_GRANT: &str = "Grant one named capability (repeatable; union). Use th
 const HELP_PRIVILEGED: &str = "Grant every §6 capability at once. Cannot be set from inside an n/ program (SPEC_08 §6.1.2). Prefer --grant when only one capability is needed";
 const HELP_MESSAGE: &str = "Human-readable message stored on the recorded event";
 const HELP_FILES: &str = "n/ source files to read";
+const HELP_UNIVERSE: &str = "Use the universe in this directory instead of the one where this command is run";
+const HELP_EPHEMERAL: &str = "Evaluate against an anonymous temporary universe and leave this universe untouched";
 const HELP_PEER_TO: &str = "Peer address host:port";
 const HELP_OPERATOR_KEY: &str = "Operator public key to trust (64 lowercase hex)";
 
@@ -295,7 +362,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Evolve files in a fresh universe and print; does not write this workspace (use evolve+commit for that)
+    /// Inject files into a read-only view of this universe's committed root and observe. Does not stage or commit. An explicit ~%Engine./save writes this universe's object store; with no universe it answers #no_universe
     Run {
         #[arg(required = true, help = HELP_FILES)]
         files: Vec<PathBuf>,
@@ -314,6 +381,10 @@ enum Commands {
             help = HELP_GRANT
         )]
         grants: Vec<String>,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
+        #[arg(long, help = HELP_EPHEMERAL)]
+        ephemeral: bool,
     },
     /// Stage file contents into this workspace's working set; does not record a commit
     Evolve {
@@ -329,8 +400,10 @@ enum Commands {
             help = HELP_GRANT
         )]
         grants: Vec<String>,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
-    /// Observe `test_` fields and report pass/fail (use lint for a static graph check that does not run)
+    /// Observe `test_` fields from this universe's committed root and report pass/fail (use lint for a static graph check that does not run)
     Test {
         /// Check that `test_` fields parse, without observing them
         #[arg(long)]
@@ -340,13 +413,23 @@ enum Commands {
         pattern: Option<String>,
         #[arg(help = HELP_FILES)]
         files: Vec<PathBuf>,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
+        #[arg(long, help = HELP_EPHEMERAL)]
+        ephemeral: bool,
     },
     /// Read-eval-print loop against this workspace
     Repl,
     /// Show the staged working set, or that the universe is static
-    Status,
+    Status {
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
+    },
     /// List commits from HEAD backward (the history; status is the working set)
-    Log,
+    Log {
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
+    },
     /// Record the staged working set as a new commit and move HEAD
     Commit {
         #[arg(short, long, help = HELP_MESSAGE)]
@@ -360,6 +443,8 @@ enum Commands {
         grants: Vec<String>,
         #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
     /// Write a signed refinement from source coordinates onto target coordinates
     Refine {
@@ -374,6 +459,8 @@ enum Commands {
         sign: bool,
         #[arg(short, long, help = HELP_MESSAGE)]
         message: Option<String>,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
     /// Print canonical n/ for a file (use --write to replace the file; use evolve to stage it)
     Fmt {
@@ -388,7 +475,7 @@ enum Commands {
         #[command(subcommand)]
         action: NodeCmd,
     },
-    /// Evaluate one n/ expression and print it (no file, no working set)
+    /// Evaluate one n/ expression from this universe's committed root and print it. The working set does not count. Where there is no universe, the root is empty
     Eval {
         /// n/ expression to evaluate (quote it for the shell)
         expr: String,
@@ -401,11 +488,17 @@ enum Commands {
             help = HELP_GRANT
         )]
         grants: Vec<String>,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
+        #[arg(long, help = HELP_EPHEMERAL)]
+        ephemeral: bool,
     },
     /// Print a stored object by CAID (the bytes, not a path in the working set)
     Inspect {
         /// CAID of the object to print (hash:sha256:v1:… or v2:…)
         caid: String,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
     /// Move HEAD to a historical commit without creating one. Requires `--grant rollback`
     Rollback {
@@ -420,6 +513,8 @@ enum Commands {
         grants: Vec<String>,
         #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
     /// Fold commits after BASE through HEAD into one. Requires `--grant squash`
     Squash {
@@ -434,6 +529,8 @@ enum Commands {
         grants: Vec<String>,
         #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
     /// Remove unreachable objects under `.oo/objects/`. Requires `--grant gc`; never automatic
     Gc {
@@ -449,6 +546,8 @@ enum Commands {
         /// Report what would be removed; do not delete
         #[arg(long)]
         dry_run: bool,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
     /// Advance the container layout declaration only. Requires `--grant migrate`; does not move HEAD
     Migrate {
@@ -461,6 +560,8 @@ enum Commands {
         grants: Vec<String>,
         #[arg(long, help = HELP_PRIVILEGED)]
         privileged: bool,
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
     },
     /// Show the operator public key and identity file path; mint them on first use
     Identity,
@@ -578,8 +679,23 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             format,
             privileged,
             grants,
-        } => run_one_shot(files, observe, format, privileged, grants),
-        Commands::Evolve { files, pin, grants } => run_evolve(files, pin, grants),
+            universe,
+            ephemeral,
+        } => run_one_shot(
+            files,
+            observe,
+            format,
+            privileged,
+            grants,
+            universe,
+            ephemeral,
+        ),
+        Commands::Evolve {
+            files,
+            pin,
+            grants,
+            universe,
+        } => run_evolve(files, pin, grants, universe),
         Commands::Fmt { file, write } => run_fmt(file, write),
         Commands::Node { action } => match action {
             NodeCmd::Serve { port } => run_serve(port),
@@ -599,48 +715,61 @@ fn main_on_large_stack() -> anyhow::Result<()> {
                 TrustCmd::Remove { operator_key } => run_node_trust_remove(operator_key),
             },
         },
-        Commands::Status => run_status(),
-        Commands::Log => run_log(),
+        Commands::Status { universe } => run_status(universe),
+        Commands::Log { universe } => run_log(universe),
         Commands::Commit {
             message,
             grants,
             privileged,
-        } => run_commit(message, grants, privileged),
+            universe,
+        } => run_commit(message, grants, privileged, universe),
         Commands::Refine {
             source,
             target,
             sign,
             message,
-        } => run_refine(source, target, sign, message),
+            universe,
+        } => run_refine(source, target, sign, message, universe),
         Commands::Repl => run_repl(),
         Commands::Test {
             static_only,
             pattern,
             files,
-        } => run_test(static_only, pattern, files),
+            universe,
+            ephemeral,
+        } => run_test(static_only, pattern, files, universe, ephemeral),
         Commands::Eval {
             expr,
             privileged,
             grants,
-        } => run_eval(expr, privileged, grants),
-        Commands::Inspect { caid } => run_inspect(caid),
+            universe,
+            ephemeral,
+        } => run_eval(expr, privileged, grants, universe, ephemeral),
+        Commands::Inspect { caid, universe } => run_inspect(caid, universe),
         Commands::Identity => run_identity(),
         Commands::Rollback {
             caid,
             grants,
             privileged,
-        } => run_rollback(caid, grants, privileged),
+            universe,
+        } => run_rollback(caid, grants, privileged, universe),
         Commands::Squash {
             caid,
             grants,
             privileged,
-        } => run_squash(caid, grants, privileged),
+            universe,
+        } => run_squash(caid, grants, privileged, universe),
         Commands::Gc {
             grants,
             privileged,
             dry_run,
-        } => run_gc(grants, privileged, dry_run),
-        Commands::Migrate { grants, privileged } => run_migrate(grants, privileged),
+            universe,
+        } => run_gc(grants, privileged, dry_run, universe),
+        Commands::Migrate {
+            grants,
+            privileged,
+            universe,
+        } => run_migrate(grants, privileged, universe),
         Commands::Lint { path, json } => {
             let code = oo::nlint::run_cli(&path, json);
             std::process::exit(code);
@@ -660,6 +789,42 @@ fn require_universe(base: &Path) -> anyhow::Result<()> {
 
 /// A command that does not need a universe still reads node settings.
 /// Values stay in an ephemeral store until a universe exists.
+/// One-shot view. A named directory with no universe is a refusal.
+/// Standing where there is none, or `--ephemeral`, is an empty root.
+/// The working set is not loaded.
+fn one_shot_view(
+    engine: &Ouroboros,
+    cur: &Path,
+    named: bool,
+) -> anyhow::Result<Universe> {
+    if !engine.holds_universe {
+        if named {
+            anyhow::bail!("{NO_UNIVERSE}");
+        }
+        return Ok(Universe::new_with_standard(
+            None,
+            nlang_interpreter::value::ComboVal::default(),
+            engine.root_with_system(),
+        ));
+    }
+    refuse_lost_context(&engine.store, cur)?;
+    Universe::load(engine, cur)
+}
+
+fn engine_for_one_shot(
+    cur: &Path,
+    named: bool,
+    ephemeral: bool,
+) -> anyhow::Result<Ouroboros> {
+    if ephemeral || !nlang_interpreter::storage::universe_content(cur)? {
+        if named && !ephemeral {
+            anyhow::bail!("{NO_UNIVERSE}");
+        }
+        return Ouroboros::without_universe(cur);
+    }
+    Ouroboros::init(cur)
+}
+
 fn engine_keeping_settings(base: &Path) -> anyhow::Result<Ouroboros> {
     if nlang_interpreter::storage::universe_content(base)? {
         Ouroboros::init(base)
@@ -678,7 +843,13 @@ fn refuse_lost_context(
     Ok(())
 }
 
-fn run_evolve(files: Vec<PathBuf>, pin: bool, grants: Vec<String>) -> anyhow::Result<()> {
+fn run_evolve(
+    files: Vec<PathBuf>,
+    pin: bool,
+    grants: Vec<String>,
+    universe: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     let mut engine = Ouroboros::init(&cur)?;
     // Reuse the same grant parser as run/eval — never a second code path.
@@ -1118,7 +1289,8 @@ fn run_node_find_node(to: String, target: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_status() -> anyhow::Result<()> {
+fn run_status(universe: Option<PathBuf>) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let current_dir = cwd()?;
     require_universe(&current_dir)?;
     let engine = Ouroboros::init(&current_dir)?;
@@ -1165,7 +1337,8 @@ fn run_status() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_log() -> anyhow::Result<()> {
+fn run_log(universe: Option<PathBuf>) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     let engine = Ouroboros::init(&cur)?;
@@ -1176,7 +1349,7 @@ fn run_log() -> anyhow::Result<()> {
     let _universe = Universe::load(&engine, &cur)?;
     // Surface CAS integrity failures distinctly (tampered commit chain).
     let history = engine
-        .log()
+        .log(&cur)
         .map_err(|e| format_store_read_error(e, "HEAD chain"))?;
     for (hash, meta, kind) in history {
         println!("commit {}", hash);
@@ -1303,7 +1476,13 @@ fn format_commit_date_ms(ms: u64) -> String {
     }
 }
 
-fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
+fn run_rollback(
+    caid: String,
+    grants: Vec<String>,
+    privileged: bool,
+    universe: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     // HEAD is read in `Universe::load` and moved in `Universe::rollback`.
@@ -1324,7 +1503,13 @@ fn run_rollback(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::
     Ok(())
 }
 
-fn run_squash(caid: String, grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
+fn run_squash(
+    caid: String,
+    grants: Vec<String>,
+    privileged: bool,
+    universe: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     // `commits_after` and `Universe::squash` both read HEAD. The count in
@@ -1380,7 +1565,9 @@ fn run_commit(
     message: Option<String>,
     grants: Vec<String>,
     privileged: bool,
+    universe: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
@@ -1533,7 +1720,9 @@ fn run_refine(
     targets: Vec<String>,
     sign: bool,
     message: Option<String>,
+    universe: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     // `refuse_lost_context`, `Universe::load`, and `Universe::refine` read
@@ -1777,7 +1966,12 @@ fn parse_grant_spec(spec: &str) -> anyhow::Result<Privilege> {
     }
 }
 
-fn run_migrate(grants: Vec<String>, privileged: bool) -> anyhow::Result<()> {
+fn run_migrate(
+    grants: Vec<String>,
+    privileged: bool,
+    universe: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
@@ -1955,7 +2149,13 @@ fn engine_ord(v: &str) -> u32 {
     major * 1_000_000 + minor * 1_000 + patch
 }
 
-fn run_gc(grants: Vec<String>, privileged: bool, dry_run: bool) -> anyhow::Result<()> {
+fn run_gc(
+    grants: Vec<String>,
+    privileged: bool,
+    dry_run: bool,
+    universe: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     let mut engine = Ouroboros::init(&cur)?;
@@ -2006,20 +2206,19 @@ fn run_one_shot(
     format: bool,
     privileged: bool,
     grants: Vec<String>,
+    universe_dir: Option<PathBuf>,
+    ephemeral: bool,
 ) -> anyhow::Result<()> {
-    let mut engine = engine_keeping_settings(&cwd()?)?;
+    let _hold = select_universe(universe_dir.as_deref(), ephemeral)?;
+    let cur = cwd()?;
+    let mut engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
-    // One-shot: pure universe, no local staged load, no durable store writes.
-    // SPEC_03 simultaneity: all files/fields are one snapshot — evolve
-    // everything first, then --observe. Automatic store-put was removed
-    // (cas_integrity R-2): it forced recursive types into multi-MB orphans
-    // (SPEC_04 §158 / SPEC_12 #recursive_lazy) and contradicted "pure one-shot".
+    // Read-only view of the committed root. The working set is not loaded,
+    // and nothing here stages or commits. SPEC_03 simultaneity: all
+    // files/fields are one snapshot — evolve everything first, then
+    // --observe. Automatic store-put stays off (cas_integrity R-2).
     // Explicit persistence remains `~%Engine./save`.
-    let mut universe = Universe::new_with_standard(
-        None,
-        nlang_interpreter::value::ComboVal::default(),
-        engine.root_with_system(),
-    );
+    let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
 
     for file in files {
         let input = oo::read_source_file(&file).map_err(|m| anyhow::anyhow!("{m}"))?;
@@ -2067,16 +2266,18 @@ fn run_fmt(file: PathBuf, write: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_eval(expr: String, privileged: bool, grants: Vec<String>) -> anyhow::Result<()> {
+fn run_eval(
+    expr: String,
+    privileged: bool,
+    grants: Vec<String>,
+    universe_dir: Option<PathBuf>,
+    ephemeral: bool,
+) -> anyhow::Result<()> {
+    let _hold = select_universe(universe_dir.as_deref(), ephemeral)?;
     let cur = cwd()?;
-    let mut engine = engine_keeping_settings(&cur)?;
+    let mut engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
-
-    let mut universe = Universe::new_with_standard(
-        None,
-        nlang_interpreter::value::ComboVal::default(),
-        engine.root_with_system(),
-    );
+    let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
 
     let parsed_expr = match nlang_parser::parse_expr_only(expr.trim()) {
         Ok(expr) => expr,
@@ -2160,7 +2361,8 @@ fn run_identity() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_inspect(caid_str: String) -> anyhow::Result<()> {
+fn run_inspect(caid_str: String, universe: Option<PathBuf>) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
     let cur = cwd()?;
     require_universe(&cur)?;
     let engine = Ouroboros::init(&cur)?;
@@ -2243,7 +2445,14 @@ fn parse_path_only(s: &str) -> anyhow::Result<nlang_parser::ast::Path> {
     }
 }
 
-fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> anyhow::Result<()> {
+fn run_test(
+    static_only: bool,
+    pattern: Option<String>,
+    files: Vec<PathBuf>,
+    universe_dir: Option<PathBuf>,
+    ephemeral: bool,
+) -> anyhow::Result<()> {
+    let hold = select_universe(universe_dir.as_deref(), ephemeral)?;
     let mut all_files = Vec::new();
     for f in files {
         if f.is_dir() {
@@ -2253,7 +2462,8 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
         }
     }
 
-    let engine = engine_keeping_settings(&cwd()?)?;
+    let cur = cwd()?;
+    let engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -2276,11 +2486,7 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
             }
         };
 
-        let mut universe = Universe::new_with_standard(
-            None,
-            nlang_interpreter::value::ComboVal::default(),
-            engine.root_with_system(),
-        );
+        let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
 
         let mut evolve_failed = false;
         for f in &program.fields {
@@ -2389,7 +2595,9 @@ fn run_test(static_only: bool, pattern: Option<String>, files: Vec<PathBuf>) -> 
         "\nTest Summary: {} passed, {} failed, {} skipped files without tests",
         passed, failed, skipped
     );
-    if failed > 0 {
+    let failed_count = failed;
+    drop(hold);
+    if failed_count > 0 {
         std::process::exit(1);
     }
     Ok(())

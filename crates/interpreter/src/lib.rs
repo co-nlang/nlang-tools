@@ -4940,9 +4940,11 @@ impl Ouroboros {
     /// History newest-first: (hash, meta, kind). Kind is required so privileged
     /// commits (`CommitKind::Pin`) are auditable from `oo log` without living
     /// inside values (SPEC_08 §6.2).
-    pub fn log(&self) -> Result<Vec<(ContentHash, CommitMeta, CommitKind)>> {
-        let current_dir = std::env::current_dir()?;
-        if let Some(head) = self.store.get_head(&current_dir)? {
+    pub fn log(
+        &self,
+        base_dir: &std::path::Path,
+    ) -> Result<Vec<(ContentHash, CommitMeta, CommitKind)>> {
+        if let Some(head) = self.store.get_head(base_dir)? {
             let mut history = Vec::new();
             let mut curr = Some(head);
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -4953,11 +4955,11 @@ impl Ouroboros {
                 }
                 let (h, commit) = self.store.open_commit(&h)?;
                 history.push((h.clone(), commit.meta.clone(), commit.kind));
-                curr = crate::savepoint::previous_commit(&current_dir, &commit, &d)?;
+                curr = crate::savepoint::previous_commit(base_dir, &commit, &d)?;
             }
             return Ok(history);
         }
-        if crate::savepoint::records_a_commit(&current_dir)? {
+        if crate::savepoint::records_a_commit(base_dir)? {
             anyhow::bail!("{}", crate::savepoint::LOST_CONTEXT);
         }
         Ok(Vec::new())
