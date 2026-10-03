@@ -156,3 +156,14 @@
 4. 在 §9.2（交付方填，新開）回答：撤回之後，r6 的兩種啟動順序各 20 次的結果。
 
 ### 9.2 R-1 交付回報（交付方填；本行以上一字不得動）
+
+1. **撤回 §8.2 第 5 項。** `savepoint::rewrite_commit_ancestor` 刪除。`Universe::squash` 回到交付前：新 ○ 的 `ancestor:` 是 base 的 digest，`set_head` 之後不改任何既有 ○。`commits_after` 再次把範圍裡的每一顆都算進 `compressed`。這兩個檔與 `609fc78` 的對應內容相同。
+2. **§8.2 第 1–4 項留著。** `CommitLock` 鎖到手之後仍核對檔案身份並重取；`refine`／`squash`／`rollback` 仍在 `require_universe` 之後取鎖；會改寫宣告的 `migrate` 仍在鎖內重讀再寫；`commit` 仍在鎖後再 `init`，鎖前的 `paths`／`load_all` 沒有搬。探針這次沒有再改（r6 的修訂是 `4cbaff7`）。版本仍是 `oo v0.70.0`。
+3. **修訂後的本探針 10／10**（17.65s）。`history_ops` 15／15，含全部 `red_squash_*`：三筆一般提交壓成 2 行。
+4. **撤回之後，r6 的兩種啟動順序各 20 次**（release 二進位，euid 1000）。兩邊都是 rc=0，squash 回報的 digest 都在 `oo log`，遺失 0。
+   - squash 先啟動 20／20：refine 回報的 digest 也在 log，`commit` 行 3。
+   - refine 先啟動 20／20：refine 回報的 digest 不在 log，`commit` 行 2。這就是依序先 refine 再 squash。
+5. **紅線。** `a_commit_that_ate_what_it_never_read` 6（8.43s）、Q-067 11（5.19s）、Q-066 10（1.94s）、`already_in_head` 7（7.47s）、Q-065 12（1.85s）、`what_it_says_is_what_happened` 23（1.77s），皆 0 failed。g1–g4 在第 3 項的本探針裡。
+6. **三輪** `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 254 行，2441 passed，0 failed。去掉 ` finished in ` 之後三輪相同。
+7. conformance 162／162，rc=0。`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0，這兩次沒有建立 `.oo/`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
+8. 規格檔沒有改。§8.7 那句「refine 留在走訪上」隨這次撤回一起收回。`SPEC_10` §4.1 與 `SPEC_08` §6.2.1 仍由驗收方收尾。
