@@ -168,3 +168,9 @@ Observe `test_` fields from this universe's committed root and report pass/fail 
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `8c6e47e`：改動只在 `main.rs`、`interpreter/src/lib.rs`；探針、驗收方預先修訂的 g5、分隔線以上、`Cargo.lock` 皆未動。
+**交叉編譯**（驗收方 `touch` 後強制重查）0 error。**全樹 ×3**（期間不跑其他量測）：**255 target／2455 passed／0 failed，`^error` 0，exit 0**，三輪逐行相同。交付 §8.3 指出工單的全樹數字過時（驗收方跑參考實作時本探針尚無 r10，13 支）——**對，記帳誤差在驗收方**。
+**驗收方矩陣**〔交付二進位〕：`eval '_.a'`=1、`_.n.k`=2、只在工作集的 `_.y`=`_`（v0.71.0：`_.a`=`_`）；從別處 `--universe ../ws` 得同值、`status` 逐字相同、呼叫者旁無 `.oo/`；`--universe` 指向空目錄 rc=1、不建；兩旗標並用 rc=1；`--ephemeral` 得 `_`、`save` 答 `#no_universe`；`run` 觀測 `b: a + 10` 得 11、`--ephemeral` 得 `_`；`test` 讀已提交欄位 rc=0；以上全部之後 `.oo/` 逐位元組不變；`node id` 未加選擇器（`--universe` 為用法錯誤）。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4；conformance 162／162；新倉 `layout=8`／`encoding=5`。
+**記帳（不擋）**：`--universe` 指向沒有宇宙的目錄時，訊息是 `no universe here`——操作者點名的是別處，「here」不精確（D77「說出來的就是發生的事」那一族，小）。
