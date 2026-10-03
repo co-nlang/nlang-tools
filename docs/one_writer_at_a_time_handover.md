@@ -167,3 +167,18 @@
 6. **三輪** `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 254 行，2441 passed，0 failed。去掉 ` finished in ` 之後三輪相同。
 7. conformance 162／162，rc=0。`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0，這兩次沒有建立 `.oo/`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`。新倉 `layout=8`／`encoding=5`。
 8. 規格檔沒有改。§8.7 那句「refine 留在走訪上」隨這次撤回一起收回。`SPEC_10` §4.1 與 `SPEC_08` §6.2.1 仍由驗收方收尾。
+
+### 9.3 R-1 驗收：**行為受理；開 R-2（一項：Windows 編不過）**
+
+R-1 交付 `a26b562`：`savepoint.rs`、`universe.rs` 與 `609fc78` 無差異（`rewrite_commit_ancestor` 已不存在）；探針、分隔線以上未動。全樹 ×3 **254／2441／0／exit 0**，三輪逐行相同（期間不跑其他量測）。
+**驗收方矩陣**〔交付二進位，Linux〕：持鎖時 `migrate` 等待、宣告仍 `layout=7`，放開後 rc=0、`layout=8`（v0.70.0：不等、直接改寫）；`commit`＋`refine` 30 次 0 遺失；`squash`＋`refine` 兩種啟動順序各 10 次——squash 先：兩筆皆在；refine 先：refine 被正當壓掉；squash 0 遺失。**恰是兩種依序的結果。**
+**擋下的一項**：`cargo check --release -p oo --target x86_64-pc-windows-gnu` ⟹ **2 error，E0658 `windows_by_handle`**（`main.rs:41` 的 `volume_serial_number()`／`file_index()` 在 stable 上不穩定）。對照：交付前 `609fc78` 同一指令 0 error。交叉編譯 0 error 是先前弧已立的驗收項（`a_ceiling_that_was_not_yours` 工單）。
+**成因兩半**：交付用了 nightly API；**驗收方的 §4 紅線沒有列交叉編譯**，只寫了「不要照抄 `std::os::unix`」。
+
+**R-2 射程（交付方）**：
+1. `cargo check --release -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` **0 error**（stable，本機 rustc 1.96.1）。
+2. I2 在 Windows 上：用 stable 可得的機制保持（`windows-sys` 已是間接依賴、`Cargo.lock` 有 0.48／0.52／0.59——若加為直接依賴，用鎖檔裡已有的版本，不得引入新下載）；**或**在報告裡逐字說明 Windows 上哪一半不成立、為什麼。不得默默退化。
+3. Linux 行為不變：本探針 10／10、全樹 ×3。
+4. 在 §9.4（交付方填，新開）回答以上三項。
+
+### 9.4 R-2 交付回報（交付方填；本行以上一字不得動）
