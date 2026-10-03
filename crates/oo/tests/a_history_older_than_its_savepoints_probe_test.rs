@@ -292,10 +292,18 @@ fn g5_context_free_commands_still_answer_on_a_lost_old_store() {
     let w = Ws::from_fixture("g5", F2);
     w.lose_head();
     w.ok(&["inspect", F2_HEAD]);
-    let o = w.ok(&["eval", "~%Math./add (1, 2)"]);
-    assert_eq!(o.trim(), "3", "known answer: {o}");
-    let o = w.ok(&["eval", "~%Math./add (1, 3)"]);
-    assert_eq!(o.trim(), "4", "known answer: {o}");
+    // AMENDED 2026-10-03 for Q-070 (D88): `eval` now starts from HEAD's root,
+    // so on a lost context it is no longer context-free -- it may refuse by
+    // name (SPEC_08 §6.2.1, D79), and its context-free form is
+    // `eval --ephemeral` (measured in the_universe_you_are_in r10). What this
+    // cell still guards: it never answers wrongly.
+    for (expr, want) in [("~%Math./add (1, 2)", "3"), ("~%Math./add (1, 3)", "4")] {
+        let (o, rc) = w.oo(&["eval", expr]);
+        assert!(
+            (rc == 0 && o.trim() == want) || (rc != 0 && o.contains("rollback")),
+            "eval on a lost context neither answered {want} nor refused by name: rc={rc} {o}"
+        );
+    }
 }
 
 /// D79's own evidence (the savepoint note) still works as before.
