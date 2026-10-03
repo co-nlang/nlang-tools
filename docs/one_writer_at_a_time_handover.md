@@ -186,3 +186,12 @@ R-1 交付 `a26b562`：`savepoint.rs`、`universe.rs` 與 `609fc78` 無差異（
 1. **交叉編譯 0 error。** 修之前，同一棵樹：`cargo check --release -p oo --target x86_64-pc-windows-gnu --offline` 是 2 個 `error[E0658]`（`windows_by_handle`），`could not compile oo`。修之後：`cargo check --release -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu --offline` 為 `Finished`，`^error` 0。rustc 1.96.1。`--offline` 成功，沒有新下載。
 2. **I2 在 Windows 上仍成立。** 鎖到手之後，對鎖住的 handle 與路徑上重新打開的檔各呼叫 `GetFileInformationByHandle`，比 `(dwVolumeSerialNumber, nFileIndexHigh∥nFileIndexLow)`。不相等，或路徑已經不在，就 `unlock` 再打開路徑。這是 stable Win32，數字與 nightly 的 `volume_serial_number`／`file_index` 在索引放得進 64 位時相同。API 失敗答 `cannot lock <路徑>: …`，不把兩個檔當成同一個。`windows-sys` 用鎖檔裡已有的 0.59.0，只加在 `cfg(windows)`；`Cargo.lock` 只給 `oo` 多這一條依賴，沒有新版本。Unix 仍是裝置號加 inode，這條路徑的程式沒有改。
 3. **Linux 不變。** 本探針 10／10（17.63s）。三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 254 行，2441 passed，0 failed。去掉 ` finished in ` 之後三輪相同。版本仍是 `oo v0.70.0`。探針未改。
+
+### 9.5 R-2 驗收：**受理（兩個修補回合；R-1 成因在驗收方的探針，R-2 一半在驗收方的紅線）**
+
+R-2 交付 `2740c49`：只動 `main.rs`、`crates/oo/Cargo.toml`、`Cargo.lock`（`oo` 多一條 `windows-sys 0.59.0` 依賴邊，無新套件）；探針、分隔線以上未動。
+**交叉編譯**：`cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` **0 error**（驗收方 `touch` 後強制重查 `oo`，仍 0）；`cargo metadata --locked --offline` 通過。Windows 的身分比對用 stable `GetFileInformationByHandle`，失敗時具名拒絕、不當成同一個檔。
+**全樹 ×3**（期間不跑其他量測）：**254 target／2441 passed／0 failed，`^error` 0，exit 0**，三輪逐行相同，無失敗測試名。
+**驗收方矩陣（R-1 已量，R-2 未改 Unix 路徑；`migrate` 複驗）**：持鎖時 `migrate` 等待、宣告 `layout=7`，放開後 `layout=8`；`commit`＋`refine` 30／0；`squash`＋`refine` 兩序各 10，恰為依序結果。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4；conformance 162／162；新倉 `layout=8`／`encoding=5`。
+**記帳**：squash 讀到舊 `HEAD` 而蓋掉 refine 的遺失與依序結果在磁碟上不可分（§9.1），由區段機制本身與 r2 覆蓋；`gc` 並行仍為聲明的獨佔（D87 否決乙）。
