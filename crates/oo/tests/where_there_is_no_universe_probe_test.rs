@@ -197,7 +197,10 @@ fn needs_a_universe() -> Vec<Vec<&'static str>> {
         vec!["squash", NO_CAID, "--grant", "squash"],
         vec!["refine", "-s", NO_CAID, "-t", NO_CAID, "-m", "r"],
         vec!["rollback", NO_CAID, "--grant", "rollback"],
-        vec!["repl"],
+        // AMENDED 2026-10-04 for Q-071 (D89): `repl` is an interactive eval
+        // and answers from an empty root where there is no universe; it
+        // moved to needs_no_universe(), where r1 still requires it to write
+        // nothing. The new answer is measured in an_interactive_eval r4.
         vec!["inspect", NO_CAID],
     ]
 }
@@ -237,6 +240,7 @@ fn needs_no_universe() -> Vec<Vec<&'static str>> {
         vec!["fmt", "c.n"],
         vec!["lint", "c.n"],
         vec!["identity"],
+        vec!["repl"], // AMENDED 2026-10-04 for Q-071 (D89): see needs_a_universe()
     ]
 }
 
