@@ -182,3 +182,7 @@ R-1 交付 `a26b562`：`savepoint.rs`、`universe.rs` 與 `609fc78` 無差異（
 4. 在 §9.4（交付方填，新開）回答以上三項。
 
 ### 9.4 R-2 交付回報（交付方填；本行以上一字不得動）
+
+1. **交叉編譯 0 error。** 修之前，同一棵樹：`cargo check --release -p oo --target x86_64-pc-windows-gnu --offline` 是 2 個 `error[E0658]`（`windows_by_handle`），`could not compile oo`。修之後：`cargo check --release -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu --offline` 為 `Finished`，`^error` 0。rustc 1.96.1。`--offline` 成功，沒有新下載。
+2. **I2 在 Windows 上仍成立。** 鎖到手之後，對鎖住的 handle 與路徑上重新打開的檔各呼叫 `GetFileInformationByHandle`，比 `(dwVolumeSerialNumber, nFileIndexHigh∥nFileIndexLow)`。不相等，或路徑已經不在，就 `unlock` 再打開路徑。這是 stable Win32，數字與 nightly 的 `volume_serial_number`／`file_index` 在索引放得進 64 位時相同。API 失敗答 `cannot lock <路徑>: …`，不把兩個檔當成同一個。`windows-sys` 用鎖檔裡已有的 0.59.0，只加在 `cfg(windows)`；`Cargo.lock` 只給 `oo` 多這一條依賴，沒有新版本。Unix 仍是裝置號加 inode，這條路徑的程式沒有改。
+3. **Linux 不變。** 本探針 10／10（17.63s）。三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 254 行，2441 passed，0 failed。去掉 ` finished in ` 之後三輪相同。版本仍是 `oo v0.70.0`。探針未改。

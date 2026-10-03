@@ -26,6 +26,11 @@ indexmap = "=2.5.0"
 rustyline = "11.0"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+[target.'cfg(windows)'.dependencies]
+# Stable file identity for the commit lock. `MetadataExt::file_index` is
+# nightly (`windows_by_handle`). 0.59 is already in Cargo.lock.
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 # Probe-side only. The advertise_wire probes must be able to mint packets the
 # engine would never mint — a valid signature under the wrong identity, a

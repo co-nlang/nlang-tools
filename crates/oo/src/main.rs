@@ -27,26 +27,45 @@ struct CommitLock {
 }
 
 /// Identity of a directory entry. Unix is device + inode. Windows is
-/// volume serial + file index. A platform that reports neither has no
-/// replacement check; the exclusive lock is the whole section there.
+/// volume serial + file index from `GetFileInformationByHandle` (stable;
+/// the same pair `MetadataExt` would report). A platform that reports
+/// neither has no replacement check; the exclusive lock is the whole
+/// section there.
+#[cfg(not(windows))]
 fn file_id(meta: &fs::Metadata) -> Option<(u64, u64)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         return Some((meta.dev(), meta.ino()));
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        return Some((meta.volume_serial_number()? as u64, meta.file_index()?));
-    }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(unix))]
     {
         let _ = meta;
         None
     }
 }
 
+#[cfg(windows)]
+fn windows_file_id(file: &fs::File, path: &Path) -> anyhow::Result<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    let rc = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
+    if rc == 0 {
+        let e = std::io::Error::last_os_error();
+        anyhow::bail!(
+            "cannot lock {}: {}",
+            path.display(),
+            oo::operator_io_reason(&e)
+        );
+    }
+    let index = ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+    Ok((info.dwVolumeSerialNumber as u64, index))
+}
+
+#[cfg(not(windows))]
 fn still_the_directory_entry(file: &fs::File, path: &Path) -> anyhow::Result<bool> {
     let open_meta = file.metadata().map_err(|e| {
         anyhow::anyhow!(
@@ -71,6 +90,24 @@ fn still_the_directory_entry(file: &fs::File, path: &Path) -> anyhow::Result<boo
         (None, None) => Ok(true),
         _ => Ok(false),
     }
+}
+
+#[cfg(windows)]
+fn still_the_directory_entry(file: &fs::File, path: &Path) -> anyhow::Result<bool> {
+    let open_id = windows_file_id(file, path)?;
+    let path_file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "cannot lock {}: {}",
+                path.display(),
+                oo::operator_io_reason(&e)
+            ));
+        }
+    };
+    let path_id = windows_file_id(&path_file, path)?;
+    Ok(open_id == path_id)
 }
 
 impl CommitLock {
