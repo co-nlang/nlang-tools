@@ -848,39 +848,19 @@ fn refuse_lost_context(
     Ok(())
 }
 
-fn run_evolve(
-    files: Vec<PathBuf>,
-    pin: bool,
-    grants: Vec<String>,
-    universe: Option<PathBuf>,
+fn evolve_files(
+    universe: &mut Universe,
+    engine: &Ouroboros,
+    files: &[PathBuf],
 ) -> anyhow::Result<()> {
-    let _hold = select_universe(universe.as_deref(), false)?;
-    let cur = cwd()?;
-    let mut engine = Ouroboros::init(&cur)?;
-    // Reuse the same grant parser as run/eval — never a second code path.
-    apply_cli_privilege(&mut engine, false, &grants)?;
-    refuse_lost_context(&engine.store, &cur)?;
-    // Two-step gate (SPEC_08 §6.2 / P1): `--pin` is the request; `--grant pin`
-    // is the capability. Request without capability is a loud refuse — never
-    // silently downgraded to ordinary (conflicting) evolve.
-    if pin && !engine.privilege.pin {
-        anyhow::bail!(
-            "#privileged_required: --pin requires --grant pin (privilege.pin capability)"
-        );
-    }
-    let mut universe = load_universe(&engine, &cur)?;
-    universe.pin_mode = pin;
-    // The working set this command read, before its own fields land.
-    let before = universe.staged.clone();
-
     for file in files {
-        let input = oo::read_source_file(&file).map_err(|m| anyhow::anyhow!("{m}"))?;
+        let input = oo::read_source_file(file).map_err(|m| anyhow::anyhow!("{m}"))?;
         let program = match parse_program(&input) {
             Ok(program) => program,
             Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
         };
         for f in &program.fields {
-            if let Err(e) = universe.evolve(&engine, &f) {
+            if let Err(e) = universe.evolve(engine, f) {
                 let fb = field_key_label(&f.key);
                 anyhow::bail!(
                     "Evolution Conflict in \"{}\": {}",
@@ -890,9 +870,206 @@ fn run_evolve(
             }
         }
     }
-    universe.save_staged(&engine, &cur, &before)?;
+    Ok(())
+}
+
+/// Evolve into a store that already exists at `base`. Creates nothing
+/// about whether the result is a proposal: an existing universe keeps
+/// today's write, including an injection `status` will not list.
+fn evolve_at(base: &Path, files: &[PathBuf], pin: bool, grants: &[String]) -> anyhow::Result<()> {
+    let mut engine = Ouroboros::init(base)?;
+    // Reuse the same grant parser as run/eval — never a second code path.
+    apply_cli_privilege(&mut engine, false, grants)?;
+    refuse_lost_context(&engine.store, base)?;
+    // Two-step gate (SPEC_08 §6.2 / P1): `--pin` is the request; `--grant pin`
+    // is the capability. Request without capability is a loud refuse — never
+    // silently downgraded to ordinary (conflicting) evolve.
+    if pin && !engine.privilege.pin {
+        anyhow::bail!(
+            "#privileged_required: --pin requires --grant pin (privilege.pin capability)"
+        );
+    }
+    let mut universe = load_universe(&engine, base)?;
+    universe.pin_mode = pin;
+    // The working set this command read, before its own fields land.
+    let before = universe.staged.clone();
+    evolve_files(&mut universe, &engine, files)?;
+    universe.save_staged(&engine, base, &before)?;
     print_integrity_incidents(&engine);
     Ok(())
+}
+
+/// Deletes `path` on drop. The fresh-universe evolve builds its store here,
+/// beside the workspace, and publishes only after `save_staged` succeeds.
+struct UnpublishedStore {
+    path: PathBuf,
+}
+
+impl Drop for UnpublishedStore {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Where the rehearsed store went.
+enum FreshPublish {
+    /// `dest` is the rehearsed store. This process created the universe.
+    Installed,
+    /// A concurrent evolve already created the universe. The caller writes
+    /// this session into that store; the rehearsed directory is discarded.
+    Replay,
+}
+
+/// Move a finished store into the workspace. Absent `.oo/` is one rename.
+/// A directory that already holds node settings receives the new entries
+/// and keeps the names that were already there. A universe that appeared
+/// while this process was rehearsing is left untouched (`Replay`).
+fn publish_store(produced: &Path, dest: &Path) -> anyhow::Result<FreshPublish> {
+    let workspace = dest.parent().unwrap_or(Path::new("."));
+    if nlang_interpreter::storage::universe_content(workspace)? {
+        return Ok(FreshPublish::Replay);
+    }
+    if !dest.exists() {
+        match fs::rename(produced, dest) {
+            Ok(()) => return Ok(FreshPublish::Installed),
+            Err(e) => {
+                if nlang_interpreter::storage::universe_content(workspace)? {
+                    return Ok(FreshPublish::Replay);
+                }
+                if !dest.exists() {
+                    return Err(anyhow::anyhow!(
+                        "cannot write {}: {}",
+                        dest.display(),
+                        oo::operator_io_reason(&e)
+                    ));
+                }
+            }
+        }
+    }
+    if nlang_interpreter::storage::universe_content(workspace)? {
+        return Ok(FreshPublish::Replay);
+    }
+    let mut moved: Vec<std::ffi::OsString> = Vec::new();
+    let entries = fs::read_dir(produced).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read {}: {}",
+            produced.display(),
+            oo::operator_io_reason(&e)
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            anyhow::anyhow!(
+                "cannot read {}: {}",
+                produced.display(),
+                oo::operator_io_reason(&e)
+            )
+        })?;
+        let name = entry.file_name();
+        let to = dest.join(&name);
+        if to.exists() {
+            let _ = unpublish(dest, &moved);
+            anyhow::bail!("cannot write {}: already present", to.display());
+        }
+        if let Err(e) = fs::rename(entry.path(), &to) {
+            let remove_err = unpublish(dest, &moved);
+            let write_err = anyhow::anyhow!(
+                "cannot write {}: {}",
+                to.display(),
+                oo::operator_io_reason(&e)
+            );
+            return match remove_err {
+                Ok(()) => Err(write_err),
+                Err(rm) => Err(anyhow::anyhow!("{write_err}; the published entries remain: {rm}")),
+            };
+        }
+        moved.push(name);
+    }
+    Ok(FreshPublish::Installed)
+}
+
+fn unpublish(dest: &Path, moved: &[std::ffi::OsString]) -> anyhow::Result<()> {
+    for name in moved.iter().rev() {
+        let path = dest.join(name);
+        let result = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        if let Err(e) = result {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                anyhow::bail!(
+                    "cannot write {}: {}",
+                    path.display(),
+                    oo::operator_io_reason(&e)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// No universe at `cur` yet (D92). The store is built in a sibling directory.
+/// A refusal, or a session `status` would not list, drops that directory
+/// and leaves `cur` untouched. The workspace declaration appears only when
+/// the finished store is renamed into place.
+fn evolve_where_absent(
+    cur: &Path,
+    files: &[PathBuf],
+    pin: bool,
+    grants: &[String],
+) -> anyhow::Result<()> {
+    let id = nlang_interpreter::injections::mint_id()?;
+    let scratch = cur.join(format!(".nlang-evolve-{id}"));
+    fs::create_dir(&scratch).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot write {}: {}",
+            scratch.display(),
+            oo::operator_io_reason(&e)
+        )
+    })?;
+    let _scratch = UnpublishedStore { path: scratch.clone() };
+
+    let mut engine = Ouroboros::init(&scratch)?;
+    apply_cli_privilege(&mut engine, false, grants)?;
+    refuse_lost_context(&engine.store, &scratch)?;
+    if pin && !engine.privilege.pin {
+        anyhow::bail!(
+            "#privileged_required: --pin requires --grant pin (privilege.pin capability)"
+        );
+    }
+    let mut universe = load_universe(&engine, &scratch)?;
+    universe.pin_mode = pin;
+    let before = universe.staged.clone();
+    evolve_files(&mut universe, &engine, files)?;
+    if !universe.session_would_be_listed(&engine) {
+        print_integrity_incidents(&engine);
+        return Ok(());
+    }
+    universe.save_staged(&engine, &scratch, &before)?;
+    print_integrity_incidents(&engine);
+    match publish_store(&scratch.join(".oo"), &cur.join(".oo"))? {
+        FreshPublish::Installed => Ok(()),
+        // The winner's rename is the declaration. This session still has to
+        // land in that store, or a second evolve of a fresh workspace loses
+        // its injection.
+        FreshPublish::Replay => evolve_at(cur, files, pin, grants),
+    }
+}
+
+fn run_evolve(
+    files: Vec<PathBuf>,
+    pin: bool,
+    grants: Vec<String>,
+    universe: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let _hold = select_universe(universe.as_deref(), false)?;
+    let cur = cwd()?;
+    if nlang_interpreter::storage::universe_content(&cur)? {
+        evolve_at(&cur, &files, pin, &grants)
+    } else {
+        evolve_where_absent(&cur, &files, pin, &grants)
+    }
 }
 
 enum CappedRequestLine {

@@ -63,6 +63,87 @@
 
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
+### 8.1 做了什麼
+
+沒有宇宙的地方，`evolve` 先在工作區旁邊的 `.nlang-evolve-<id>/` 裡演練。拒絕、或這次會話 `status` 不會列出，就丟掉那個目錄，工作區一個位元組都不動。會列出時，先在旁邊的倉 `save_staged`，成功之後才把那個 `.oo` 換進工作區。工作區還沒有 `.oo/` 時，換進去是一次 `rename`。`.oo/` 裡只有節點設定時，逐項搬進去，原本的名字留著；這次搬進去的若回報失敗，只移走這次搬的名字。
+
+「會不會列出」與 `proposals_at` 對空根的比較相同，再套 `load_staged` 的 `is_dirty`：沒有 delta 的（空檔、只有註解、只有空白）不列；`v: _` 停在原位，不列；逐欄 `_|_` 與 `~%Config.fuel` 會列。
+
+另一個 `evolve` 已經把宇宙發布出去時，這次不覆蓋那個 `.oo`，改走原本已有宇宙的寫入，所以第二份注入還在。已有宇宙的 `evolve` 仍是原來的路徑。
+
+套件版本仍是 `oo` `0.75.0`。`layout=9`，`encoding=5`。
+
+### 8.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/universe.rs`：`session_would_be_listed`。沒有 HEAD、沒有先前的成員時，`status` 會不會列出這次會話。
+2. `crates/oo/src/main.rs`：沒有宇宙時走旁邊的倉；有宇宙時仍是 `evolve_at`。發布時若宇宙已經出現，把這次檔案再演進進那個倉。
+
+探針、規格、`Cargo.toml`、`Cargo.lock` 未改。沒有 rustfmt `main.rs`、`universe.rs`、探針。
+
+### 8.3 工單哪裡是錯的
+
+無。工單寫的交付後全樹是 259 target、2502 passed、0 failed。這次三輪的 `test result:` 與此相同。
+
+### 8.4 工單指名要你回答的問題
+
+**Q1** 沒有宇宙的空目錄，rc 都是 1，stdout 空，`.oo` 不存在，旁邊的 `.nlang-evolve-*` 也不留。euid 1000。
+
+1. `a: (`：`Error: Parse Error in "f.n"`，`expected unary_expr`（箭頭在第 2 列）。
+2. 檔案是 `a: 1`，引數是 `nofile.n`：`Error: cannot read nofile.n: file not found`。
+3. 同檔 `a: 1` 與 `a: 2`：`Error: Evolution Conflict in "f.n": #conflict at a`。
+4. 兩檔 `a: 1` 再 `a: 2`：`Error: Evolution Conflict in "b.n": #conflict at a`。
+5. `good.n` 是 `a: 1`，`bad.n` 是 `b: (`：`Error: Parse Error in "bad.n"`，`expected unary_expr`。
+6. `~%Foo: 1`：`Error: Evolution Conflict in "f.n": #system_reserved at ~%Foo`。
+7. `_.a: 1`：`Error: Parse Error in "f.n": definition key may not anchor at the root: _.a (at byte 0)`。
+8. `x: { _.a: 1 }`：同一句，`at byte 5`。
+9. `~%Config.bogus: 1`：`Error: Evolution Conflict in "f.n": #invalid_config at ~%Config.bogus`。
+10. `~%Config.fuel: "no"` 與 `~%Config.fuel: -1`：`Error: Evolution Conflict in "f.n": #invalid_config at ~%Config.fuel`。
+11. `--grant nonsense`，檔案 `a: 1`：`Error: unknown grant SPEC `nonsense` (allowed: effect_override[:tag[+tag]*], pin, rollback, squash, gc, migrate, connect)`。
+12. `--pin f.n` 而沒有 `--grant pin`，檔案 `a: 1`：`Error: #privileged_required: --pin requires --grant pin (privilege.pin capability)`。
+13. `--pin --grant pin` 而檔案是 `a: (`：同第 1 條的剖析錯誤。
+14. 路徑是目錄：`Error: cannot read notafile: is a directory`。
+15. 來源模式 000：`Error: cannot read f.n: permission denied`。量完改回 644。
+
+之後的 `status` 與 `log` 都是 rc 1，`Error: no universe here: start one with evolve`，與沒人碰過的目錄相同。
+
+丟了 context 要已有記載提交的 ○，那已經是宇宙內容，不是這一條。
+
+**Q2** 沒有宇宙：空檔、`;; nothing`、只有空白、`v: _`，`evolve` 都是 rc 0，stdout 與 stderr 都空，沒有 `.oo`。接著 `status` rc 1，`Error: no universe here: start one with evolve`。只有節點設定（`node trust add` 那把 64 個 a 的鍵）再 `evolve` `v: _`：rc 0，`.oo` 與演進前 `diff -rq` 相同。
+
+已有宇宙（先 `k: 1` 再 `commit -m k`，○ 數 2）：空檔與只有註解 rc 0，不印字，○ 數仍是 2，沒有注入檔。`v: _` rc 0，不印字，○ 數仍是 2，注入檔有一個；`status` rc 0，仍是
+
+`Standard root dependency: 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)`
+
+`Universe is static (no staged changes).`
+
+**Q3** 晚發布。宣告出現在已經知道這次會列出、而且旁邊的 `save_staged` 已經成功之後。拒絕或不會列出的，在 `rename` 之前就丟掉旁邊的目錄。崩潰在 `rename` 之前留下的是 `.nlang-evolve-<id>/`，裡面有它自己的 `.oo`，工作區仍然沒有宣告。`evolve` 不呼叫 `process::exit`。
+
+工作區沒有 `.oo/` 時，發布是同檔案系統上的一次 `rename`。只有節點設定時是逐項搬；崩潰在那個窗口可以在節點設定旁邊留下見證。那次搬移若回報失敗，只移走這次搬進去的名字。
+
+**Q4** 不修。`~%Discovery./connect` 的非 tcp 路徑對目標呼叫 `ObjectStore::init`。
+
+沒有宇宙的地方，`run --observe p p.n`，`p: ~%Discovery./connect { 0: "peer", 1: "../peer" }`：rc 0，stdout `#true  ;; %effect: #io`，呼叫端沒有 `.oo`，`../peer/.oo` 出現 `format`、`objects.format`、`objects/`。`eval '~%Discovery./connect { 0: "peer", 1: "../peer" }'` 同樣：rc 0，呼叫端沒有 `.oo`，目標出現那三項。呼叫端已經 `evolve` 過 `k: 1` 時，目標同樣出現那三項。
+
+### 8.5 探針
+
+`crates/oo/tests/a_refusal_that_built_a_universe_probe_test.rs` 未改，未 rustfmt。全樹第三輪 6／6，0.53s。r1–r4、g1–g2 皆綠。
+
+紅線，全樹第三輪皆 `test result: ok`、0 failed：`where_there_is_no_universe` 13（3.75s）、`nothing_here_or_nothing_you_can_see` 7（14.12s）、`what_did_not_land` 12（2.02s）、`what_an_observation_leaves` 15（3.03s）、`one_writer_at_a_time` 10（17.69s）。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 0.88s，`^error` 0。
+
+### 8.6 數字
+
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 259 行，2502 passed，0 failed。`running`／`test `／`test result:` 三輪各 3020 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. `~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。
+5. `b: 1 & 2` rc 0，有 `.oo`，`status` rc 0，列出 `b: _|_  ;; %cause: #conflict`，熵 200 bits。`~%Config.fuel: 20` rc 0，列出 `~%Config: { fuel: 20 }`，熵 229 bits。
+
+### 8.7 你認為需要改規格之處
+
+規格檔這次沒有改。建議驗收方依工單第 6 節：`REAL_02` §5.1.1 補「沒有寫進提議的演化不建立宇宙」，並收 `CHANGELOG`。Q4 的 `Discovery./connect` 仍會在沒有宇宙的目標寫下宣告，本弧未動。
+
 ---
 
 ## 9. 驗收（驗收方填）

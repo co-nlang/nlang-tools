@@ -1204,6 +1204,49 @@ impl Universe {
         }
     }
 
+    /// Whether `status` would list this session on a workspace with no
+    /// HEAD and no prior members (D92). That is `proposals_at`'s comparison
+    /// against an empty root, then the same `is_dirty` rule `load_staged`
+    /// uses. A delta already at that position (`v: _`) is held, not listed.
+    /// No delta means there is nothing to list.
+    pub fn session_would_be_listed(&self, engine: &Ouroboros) -> bool {
+        if !self.session_has_delta {
+            return false;
+        }
+        let root = ComboVal::default();
+        let at_head = engine
+            .unify(
+                Value::Combo(root.clone()),
+                Value::Combo(ComboVal::default()),
+            )
+            .content_hash();
+        let at = engine
+            .unify(
+                Value::Combo(root),
+                Value::Combo(self.session_delta.clone()),
+            )
+            .content_hash();
+        if at == at_head {
+            return false;
+        }
+        match crate::injections::fold(
+            engine,
+            [crate::injections::Injection {
+                id: String::new(),
+                source: std::path::PathBuf::new(),
+                combo: self.session_delta.clone(),
+                pin_coords: self.session_pin_coords.clone(),
+                absorbs: self.session_absorbs.clone(),
+                effect_tags: self.session_effect_tags,
+            }],
+        ) {
+            Ok(combo) => {
+                staged_has_committable_content(&combo) || combo.get_field("~%Config").is_some()
+            }
+            Err(_) => true,
+        }
+    }
+
     /// D80 ②: both sides use the HEAD that exists now. `before` is the
     /// working set this injection read; `after` is the working set it
     /// leaves. T's recorded point is not an input. Two or more tips, or
