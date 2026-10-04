@@ -1247,6 +1247,16 @@ impl Ouroboros {
                     }
                 }
                 for f in fields {
+                    // Same expansion `Universe::evolve` uses. The thunk
+                    // stores the fully nested combo, so an unforced print
+                    // is `{ b: { c: v } }` and `^` counts each container.
+                    let expanded_field;
+                    let f = if let Some(expanded) = crate::universe::expand_dotted_field(f) {
+                        expanded_field = expanded;
+                        &expanded_field
+                    } else {
+                        f
+                    };
                     match &f.key {
                         FieldKey::Quoted(name) if name == "..." => {
                             // SPEC_03 §3.1: spread is lattice merge (intersect on
