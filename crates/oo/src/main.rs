@@ -1895,9 +1895,52 @@ fn repl_readback(key: &FieldKey) -> Result<nlang_parser::ast::Path, ()> {
     }
 }
 
-fn print_observed(universe: &Universe, engine: &Ouroboros, path: &nlang_parser::ast::Path) {
+fn print_observed(universe: &Universe, engine: &Ouroboros, path: &nlang_parser::ast::Path) -> Value {
     let res = universe.observe(engine, path);
     println!("=> {}", res.to_nlang(0));
+    res
+}
+
+/// Where an observation ○ may be written. `--ephemeral` and a place with
+/// no universe write none.
+fn observation_root<'a>(engine: &Ouroboros, base: &'a Path, ephemeral: bool) -> Option<&'a Path> {
+    if ephemeral || !engine.holds_universe {
+        None
+    } else {
+        Some(base)
+    }
+}
+
+fn answer_should_be_recorded(
+    trace: &nlang_interpreter::observation::AnswerTrace,
+    value: &Value,
+) -> bool {
+    trace.reduced_thunk()
+        || trace.touched_horizon()
+        || matches!(value, Value::Bottom(_))
+        || value.contains_blur()
+}
+
+fn record_if_leaves(
+    base: Option<&Path>,
+    question: &str,
+    value: &Value,
+    trace: &nlang_interpreter::observation::AnswerTrace,
+) -> anyhow::Result<()> {
+    let Some(base) = base else {
+        return Ok(());
+    };
+    if !answer_should_be_recorded(trace, value) {
+        return Ok(());
+    }
+    nlang_interpreter::savepoint::record_observation(base, question, &value.to_nlang(0))?;
+    Ok(())
+}
+
+fn during_answer<T>(f: impl FnOnce() -> T) -> (T, std::sync::Arc<nlang_interpreter::observation::AnswerTrace>) {
+    let trace = nlang_interpreter::observation::AnswerTrace::new();
+    let _guard = nlang_interpreter::observation::push_answer_trace(std::sync::Arc::clone(&trace));
+    (f(), trace)
 }
 
 fn repl_unobserved(key: &FieldKey) -> String {
@@ -1920,6 +1963,8 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
     let cur = cwd()?;
     let engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
     let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
+    let record_at = observation_root(&engine, &cur, ephemeral);
+    let mut session: Vec<String> = Vec::new();
     println!("n/ Ouroboros REPL (Genesis)");
     println!("Type 'exit' to quit.");
 
@@ -1945,6 +1990,8 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
 
         match parse_program(input) {
             Ok(program) => {
+                session.push(input.to_string());
+                let transcript = session.join("\n");
                 for f in &program.fields {
                     let spread = matches!(&f.key, FieldKey::Quoted(name) if name == "...");
                     let known = repl_readback(&f.key).is_ok();
@@ -1953,24 +2000,44 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
                     } else {
                         None
                     };
-                    if let Err(e) = universe.evolve(&engine, &f) {
-                        let fb = field_key_label(&f.key);
-                        println!("{}", format_evolution_conflict(&e, Some(&fb)));
-                    } else if spread || !known {
-                        let after = staged_coord_names(&universe);
-                        let before = before.unwrap_or_default();
-                        let mut any = false;
-                        for name in &after {
-                            if !before.iter().any(|b| b == name) {
-                                any = true;
-                                print_observed(&universe, &engine, &coordinate_path(name));
+                    let (pairs, trace) = during_answer(|| -> Vec<(String, Value)> {
+                        if let Err(e) = universe.evolve(&engine, &f) {
+                            let fb = field_key_label(&f.key);
+                            println!("{}", format_evolution_conflict(&e, Some(&fb)));
+                            return Vec::new();
+                        }
+                        let mut pairs = Vec::new();
+                        if spread || !known {
+                            let after = staged_coord_names(&universe);
+                            let before = before.unwrap_or_default();
+                            let mut any = false;
+                            for name in &after {
+                                if !before.iter().any(|b| b == name) {
+                                    any = true;
+                                    let value = print_observed(
+                                        &universe,
+                                        &engine,
+                                        &coordinate_path(name),
+                                    );
+                                    pairs.push((name.clone(), value));
+                                }
                             }
+                            if !any {
+                                println!("no coordinate to observe: {}", repl_unobserved(&f.key));
+                            }
+                        } else if let Ok(path) = repl_readback(&f.key) {
+                            let value = print_observed(&universe, &engine, &path);
+                            pairs.push((path.to_key(), value));
                         }
-                        if !any {
-                            println!("no coordinate to observe: {}", repl_unobserved(&f.key));
-                        }
-                    } else if let Ok(path) = repl_readback(&f.key) {
-                        print_observed(&universe, &engine, &path);
+                        pairs
+                    });
+                    for (coord, value) in pairs {
+                        record_if_leaves(
+                            record_at,
+                            &format!("repl\n{coord}\n{transcript}"),
+                            &value,
+                            &trace,
+                        )?;
                     }
                 }
             }
@@ -2132,8 +2199,9 @@ fn run_migrate(
 /// Split-axis, oldest opener (then through v0.43.0, intersected with encoding):
 ///   layout 2: v0.22.0.  layout 3: v0.42.0.  layout 4: v0.43.0.  layout 5: v0.44.0.
 ///   encoding 1..=3: v0.22.0.  encoding 4: v0.26.0.  encoding 5: v0.36.0.
-/// Newest engine that opens any of those and does not open layout 8 is v0.63.0.
+/// Newest engine that opens any of those and does not open layout 9 is v0.74.0.
 /// layout 6 opens from v0.59.0. layout 7 opens from v0.61.0.
+/// layout 8 opens from v0.64.0 (and v0.74.0 still writes it).
 /// Bare number (the pre-split `.oo/format`), oldest opener:
 ///   1: v0.2.55 (exact `"1"`).  2: v0.20.0 (writes 2, reads 1..=2).
 ///   3: v0.21.0 (writes 3, reads 1..=3).  4: v0.26.0.  5: v0.36.0.
@@ -2147,7 +2215,7 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
              locks out no engine."
         );
     };
-    let newest = "v0.63.0";
+    let newest = "v0.74.0";
     let who = if oldest == newest {
         format!("oo {oldest}")
     } else {
@@ -2183,7 +2251,7 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
 }
 
 /// Oldest tagged engine that opens this declaration. `None` when the
-/// declaration is already layout 8 (only an encoding advance remains, and
+/// declaration is already layout 9 (only an encoding advance remains, and
 /// this engine already reads encoding 1 through 5).
 fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> {
     let layout = declaration
@@ -2197,6 +2265,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
             5 => "v0.44.0",
             6 => "v0.59.0",
             7 => "v0.61.0",
+            8 => "v0.64.0",
             _ => return None,
         };
         let by_encoding = match enc {
@@ -2216,7 +2285,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
     } else {
         return None;
     };
-    if engine_ord(floor) > engine_ord("v0.63.0") {
+    if engine_ord(floor) > engine_ord("v0.74.0") {
         None
     } else {
         Some(floor)
@@ -2306,31 +2375,59 @@ fn run_one_shot(
     // --observe. Automatic store-put stays off (cas_integrity R-2).
     // Explicit persistence remains `~%Engine./save`.
     let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
+    let record_at = observation_root(&engine, &cur, ephemeral);
 
-    for file in files {
-        let input = oo::read_source_file(&file).map_err(|m| anyhow::anyhow!("{m}"))?;
-        let program = match parse_program(&input) {
-            Ok(program) => program,
-            Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
-        };
-        for f in &program.fields {
-            if let Err(e) = universe.evolve(&engine, &f) {
-                let fb = field_key_label(&f.key);
-                anyhow::bail!(
-                    "Evolution Conflict in \"{}\": {}",
-                    file.display(),
-                    format_conflict_where(&e, Some(&fb))
-                );
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let (outcome, trace) = during_answer(|| -> anyhow::Result<Option<Value>> {
+        for file in &files {
+            let input = oo::read_source_file(file).map_err(|m| anyhow::anyhow!("{m}"))?;
+            sources.push((file.display().to_string(), input.clone()));
+            let program = match parse_program(&input) {
+                Ok(program) => program,
+                Err(error) => {
+                    return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error));
+                }
+            };
+            for f in &program.fields {
+                if let Err(e) = universe.evolve(&engine, &f) {
+                    let fb = field_key_label(&f.key);
+                    anyhow::bail!(
+                        "Evolution Conflict in \"{}\": {}",
+                        file.display(),
+                        format_conflict_where(&e, Some(&fb))
+                    );
+                }
             }
         }
-    }
-
-    if let Some(path_str) = observe {
-        let path = parse_path_only(&path_str)?;
-        let result = universe.observe(&engine, &path);
+        if let Some(path_str) = &observe {
+            let path = parse_path_only(path_str)?;
+            Ok(Some(universe.observe(&engine, &path)))
+        } else if format {
+            Ok(Some(Value::Combo(universe.staged.clone())))
+        } else {
+            Ok(None)
+        }
+    });
+    if let Some(result) = outcome? {
         println!("{}", result.to_nlang(0));
-    } else if format {
-        println!("{}", Value::Combo(universe.staged).to_nlang(0));
+        let mut question = String::from("run\n");
+        if let Some(path_str) = &observe {
+            question.push_str("observe ");
+            question.push_str(path_str);
+            question.push('\n');
+        }
+        if format {
+            question.push_str("format\n");
+        }
+        for (path, text) in &sources {
+            question.push_str(path);
+            question.push('\n');
+            question.push_str(text);
+            if !text.ends_with('\n') {
+                question.push('\n');
+            }
+        }
+        record_if_leaves(record_at, &question, &result, &trace)?;
     }
     print_integrity_incidents(&engine);
     Ok(())
@@ -2365,6 +2462,8 @@ fn run_eval(
     let mut engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
+    let record_at = observation_root(&engine, &cur, ephemeral);
+    let asked = expr.trim().to_string();
 
     let parsed_expr = match nlang_parser::parse_expr_only(expr.trim()) {
         Ok(expr) => expr,
@@ -2384,20 +2483,23 @@ fn run_eval(
         fields: vec![field],
     };
 
-    for f in &program.fields {
-        if let Err(e) = universe.evolve(&engine, f) {
-            let fb = field_key_label(&f.key);
-            anyhow::bail!("Eval error: {}", format_conflict_where(&e, Some(&fb)));
+    let (outcome, trace) = during_answer(|| -> anyhow::Result<Value> {
+        for f in &program.fields {
+            if let Err(e) = universe.evolve(&engine, f) {
+                let fb = field_key_label(&f.key);
+                anyhow::bail!("Eval error: {}", format_conflict_where(&e, Some(&fb)));
+            }
         }
-    }
-
-    let path = nlang_parser::ast::Path {
-        anchor: nlang_parser::ast::PathAnchor::Bare,
-        segments: vec!["__eval_result".to_string()],
-        span: nlang_parser::ast::Span { start: 0, end: 0 },
-    };
-    let result = universe.observe(&engine, &path);
+        let path = nlang_parser::ast::Path {
+            anchor: nlang_parser::ast::PathAnchor::Bare,
+            segments: vec!["__eval_result".to_string()],
+            span: nlang_parser::ast::Span { start: 0, end: 0 },
+        };
+        Ok(universe.observe(&engine, &path))
+    });
+    let result = outcome?;
     println!("{}", result.to_nlang(0));
+    record_if_leaves(record_at, &format!("eval\n{asked}"), &result, &trace)?;
     // ACCEPTANCE REPAIR (peer-fetch arc). §6.6 條款四 is not satisfied by the
     // verdict reaching the VALUE: when one source lies and another answers
     // correctly the value is right and the lie is the only trace. Every
@@ -2551,6 +2653,7 @@ fn run_test(
 
     let cur = cwd()?;
     let engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
+    let record_at = observation_root(&engine, &cur, ephemeral);
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -2632,12 +2735,12 @@ fn run_test(
             }
 
             let path = parse_path_only(&name)?;
-            let result = universe.observe(&engine, &path);
+            let (result, trace) = during_answer(|| universe.observe(&engine, &path));
 
             // SPEC_16 §2.2 (ruling B): PASS = definite fact decided by this
             // observation. FAIL = ⊥ / #false / #fail / Top (undetermined —
             // vacuous truth forbidden) / #blur (horizon undetermined).
-            match result {
+            match &result {
                 Value::Bottom(b) => {
                     println!("FAIL: {:?} - {} (%cause: {:?})", file, name, b.cause);
                     failed += 1;
@@ -2667,6 +2770,12 @@ fn run_test(
                     passed += 1;
                 }
             }
+            record_if_leaves(
+                record_at,
+                &format!("test\n{name}\n{}\n{input}", file.display()),
+                &result,
+                &trace,
+            )?;
         }
         // ACCEPTANCE REPAIR (peer-fetch arc). Drained per file so an incident
         // is attributed to the file that caused it, and BEFORE the summary —

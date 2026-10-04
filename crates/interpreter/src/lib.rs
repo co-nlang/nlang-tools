@@ -3491,6 +3491,10 @@ impl Ouroboros {
                 call_ctx.dep_collector = inner_collector;
                 // in_flight rides sub_context clone for nested observation.
                 call_ctx.in_flight.insert(thunk_id.clone());
+                // SPEC_10 §3.1 (b): entering the body is the reduction.
+                // A memo hit returned above and does not count. Fuel spent
+                // on the way in does not count either.
+                crate::observation::note_thunk_reduced();
                 let res = self.eval(&expr, &mut call_ctx);
                 // Solidify residual Thunks under the same in_flight set:
                 // - Path-shaped: re-fetched Thunk of the same expr hits

@@ -103,6 +103,12 @@ pub fn load_circles(base: &Path) -> Result<BTreeMap<String, Circle>> {
             }
             Err(e) => return Err(cannot_read_savepoints(&e)),
         };
+        // An observation ○ is a leaf on the context it stood on (D91).
+        // It is not a tip, not a commit, and not a predecessor of the
+        // next injection. Readers of the main line never see it.
+        if observation_frame(&text) {
+            continue;
+        }
         let parents = parse_savepoint_parents(&text);
         let combo = savepoint_combo_text(&text).to_string();
         let commit = parse_savepoint_commit(&text);
@@ -313,6 +319,162 @@ pub fn record(base: &Path, combo: &ComboVal, positions_equal: bool) -> Result<Op
     }
     let point = point_to_write(base)?;
     let body = encode_savepoint(combo, &tips, None, None, point.as_deref());
+    Ok(Some(write_circle(base, &body)?))
+}
+
+/// Frame marker of an observation ○. Only lines before the combo count,
+/// so a field whose text is `observation:` stays a main-line circle.
+fn observation_frame(text: &str) -> bool {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('{') {
+            return false;
+        }
+        if line == "observation:" {
+            return true;
+        }
+    }
+    false
+}
+
+fn escape_frame(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn unescape_frame(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+struct ObservationBody {
+    point: Option<String>,
+    question: String,
+    answer: String,
+}
+
+fn parse_observation(text: &str) -> Option<ObservationBody> {
+    if !observation_frame(text) {
+        return None;
+    }
+    let mut point = None;
+    let mut question = None;
+    let mut answer = None;
+    for line in text.lines() {
+        let line = line.trim_start();
+        if line.starts_with('{') {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("point:") {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                point = Some(rest.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("question:") {
+            question = Some(unescape_frame(rest.strip_prefix(' ').unwrap_or(rest)));
+        } else if let Some(rest) = line.strip_prefix("answer:") {
+            answer = Some(unescape_frame(rest.strip_prefix(' ').unwrap_or(rest)));
+        }
+    }
+    Some(ObservationBody {
+        point,
+        question: question?,
+        answer: answer?,
+    })
+}
+
+fn encode_observation(
+    parents: &[String],
+    point: Option<&str>,
+    question: &str,
+    answer: &str,
+) -> String {
+    let raw = encode_savepoint(&ComboVal::default(), parents, None, None, point);
+    let split = raw.rfind("\n{").unwrap_or(raw.len());
+    let (head, combo) = raw.split_at(split);
+    format!(
+        "{head}\nobservation:\nquestion: {}\nanswer: {}{combo}",
+        escape_frame(question),
+        escape_frame(answer)
+    )
+}
+
+/// This declaration receives observation savepoints. Absent `.oo/format`
+/// does not (a scratch with no store). An unreadable declaration refuses.
+fn records_observations(base: &Path) -> Result<bool> {
+    let format = base.join(".oo").join("format");
+    match format.try_exists() {
+        Ok(false) => Ok(false),
+        Ok(true) => {
+            let declaration = crate::storage::read_layout_declaration(base)?;
+            Ok(crate::storage::layout_records_observations(&declaration))
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "cannot read `.oo/format`: {}",
+            crate::operator_io_reason(&e)
+        )),
+    }
+}
+
+/// Write one observation ○ unless this declaration does not record them,
+/// or the same point, question, and answer are already on disk.
+///
+/// The predecessor set is the main line's current tips. The new file is
+/// not itself a tip (`load_circles` skips it), so a later injection still
+/// stands on those tips.
+///
+/// Two writers can both pass the scan and both mint. The extra file is a
+/// second leaf with the same triple; the main line does not fork.
+pub fn record_observation(base: &Path, question: &str, answer: &str) -> Result<Option<String>> {
+    if !records_observations(base)? {
+        return Ok(None);
+    }
+    let point = point_to_write(base)?;
+    let nodes = load_circles(base)?;
+    if !nodes.is_empty() && tips_of(&nodes).is_empty() {
+        anyhow::bail!("savepoint cycle: ids nonempty and tips empty");
+    }
+    let mut tips = tips_of(&nodes);
+    tips.sort();
+    for path in paths(base)? {
+        let text = match fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(cannot_read_savepoints(&e)),
+        };
+        let Some(existing) = parse_observation(&text) else {
+            continue;
+        };
+        if existing.point == point && existing.question == question && existing.answer == answer {
+            return Ok(None);
+        }
+    }
+    let body = encode_observation(&tips, point.as_deref(), question, answer);
     Ok(Some(write_circle(base, &body)?))
 }
 
