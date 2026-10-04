@@ -157,3 +157,9 @@ Read-eval-print loop from this universe's committed root. Each line is printed a
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `55b43cd`：改動只在 `main.rs`；探針、預先修訂的 D82 探針、分隔線以上、`Cargo.lock` 皆未動。
+**交叉編譯**（`touch` 後強制重查）0 error。**全樹 ×3**（期間不跑其他量測）：**256 target／2466 passed／0 failed，`^error` 0，exit 0**，三輪逐行相同。
+**驗收方矩陣**〔交付二進位〕：已提交 `a: 40`、工作集 `y: 7` ⟹ `z: _.a + 2`／`w: z + 1`／`q: _.y` 依序 `=> 42`／`=> 43`／`=> _`；沒有宇宙處 `=> 42` 且不建 `.oo/`；`--universe` `=> 40`；`--ephemeral` `=> _`；`@{1}: 2` 答 `no coordinate to observe: @{1}`；會話後 `HEAD`／注入／宣告逐位元組不變。
+**Q1 揭出射程外的既有缺陷，驗收方另量**：頂層點路徑鍵被**靜默丟掉**——`a.b: 42` 經 `run --format` 得 `{}`、`evolve` rc=0 而 `status` 不見它、提交後 `_.a.b` 為 `_`；`_.a: 42` 亦然；v0.40.0、v0.60.0 相同。巢狀於 Combo 內（`x: { a.b: 42 }`）正常。`SYNTAX_03` §46 第 3 條明文「點路徑即巢狀座標，`a.b.c: v` 與 `{a: {b: {c: v}}}` 等價」。**交付在 `repl` 裡答 `no coordinate to observe: a.b` 是如實的**（值確實沒有落在任何座標）；該缺陷修好之後這一格要改成觀測該路徑——**記入 Inbox**。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4；conformance 162／162；新倉 `layout=8`／`encoding=5`。
