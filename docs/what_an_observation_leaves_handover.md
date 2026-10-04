@@ -172,3 +172,9 @@ rc 0，並寫了一顆 ○（答案就是這一行）。一次性觀測讀的是
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `9bd3172`：探針、預先修訂的十檔、分隔線以上、`Cargo.lock`、版本皆未動。
+**交叉編譯**（`touch` 後強制重查）0 error。**全樹 ×3**（期間不跑其他量測）：**258 target／2496 passed／0 failed，`^error` 0，exit 0**，三輪逐行相同。
+**驗收方矩陣**〔交付二進位〕：真 v0.74.0 建的 `layout=8` 倉——`eval _.v` 照答、○ 不增；`migrate --grant migrate` 點名 `oo v0.64.0 through v0.74.0` 並推進到 `layout=9`；之後 `eval _.v` 兩次只增一顆。v0.74.0 對 `layout=9` 倉的 `status`／`eval` 皆 `store layout declaration "layout=9" is not supported; refusing to open`。`repl`：新會話的同一句第一行去重；同一會話重複一行再寫一顆（問題含會話到該行為止）。`savepoints/` 唯讀：`eval` 先印答案、`Error: cannot write …/.oo/savepoints: permission denied`、rc=1。
+**成本**〔量〕：1000 顆觀測 ○ ⟹ 會寫的 `eval` 22→36 ms、讀原子 20→19 ms、`evolve` 22→43 ms、`commit` 38→54 ms，目錄 4.0 M。線性而小；○ 無回收（射程外，入 Inbox）。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4（不建 `.oo/`）；conformance 162／162；新倉 `layout=9`／`encoding=5`。
