@@ -16,6 +16,52 @@ fn is_spread_field(field: &Field) -> bool {
     matches!(&field.key, FieldKey::Quoted(name) if name == "...")
 }
 
+/// A dotted definition is the nested combo it spells (`a.b.c: v` ≡
+/// `a: { b: { c: v } }`). One expansion, used by `Universe::evolve` and by
+/// combo-literal construction, so every entry that writes a field goes
+/// through it. `~%…` stays a single key: root `~%Config.<knob>` is a
+/// partial override, and any other `~%` axis is the ownership refusal.
+/// Intermediate containers are open — `{| a.b: v |}` is `{| a: { b: v } |}`.
+pub fn expand_dotted_field(field: &Field) -> Option<Field> {
+    let FieldKey::Path(p) = &field.key else {
+        return None;
+    };
+    if p.anchor != PathAnchor::Bare || p.segments.len() < 2 {
+        return None;
+    }
+    if p.segments[0].trim().starts_with("~%") {
+        return None;
+    }
+    let mut value = field.value.clone();
+    for seg in p.segments.iter().skip(1).rev() {
+        value = Expr::new(
+            ExprKind::Combo {
+                fields: vec![Field {
+                    key: FieldKey::Path(Path {
+                        anchor: PathAnchor::Bare,
+                        segments: vec![seg.clone()],
+                        span: p.span,
+                    }),
+                    value,
+                    span: field.span,
+                }],
+                relations: vec![],
+                closed: false,
+            },
+            field.span,
+        );
+    }
+    Some(Field {
+        key: FieldKey::Path(Path {
+            anchor: PathAnchor::Bare,
+            segments: vec![p.segments[0].clone()],
+            span: p.span,
+        }),
+        value,
+        span: field.span,
+    })
+}
+
 /// Coordinate names a field key will occupy in staged (prefixed + bare).
 fn field_coords(key: &FieldKey) -> Vec<String> {
     match key {
@@ -521,6 +567,11 @@ impl Universe {
                 ..Default::default()
             });
         }
+        // Dotted keys are the nested combo, before this function's
+        // one-segment write. `~%` is not expanded (checked above).
+        if let Some(expanded) = expand_dotted_field(field) {
+            return self.evolve(engine, &expanded);
+        }
 
         let mut ctx =
             EvalContext::new(self.root.clone()).with_standard_root(self.standard_root.clone());
@@ -547,6 +598,13 @@ impl Universe {
         // phase so expansion re-queues instead of consuming (cocoon face:
         // {{...later, b: 1}} with later defined below).
         ctx.in_evolve = true;
+
+        // `@{expr}` is a real definition inside a combo. The top is the same
+        // container: build that one-field combo and land it. Doing it before
+        // the eager value eval keeps the thunk the combo literal stores.
+        if matches!(&field.key, FieldKey::Pattern(_)) {
+            return self.evolve_pattern_field(engine, field, &mut ctx);
+        }
 
         if is_spread_field(field) {
             return self.evolve_spread(engine, field, ctx);
@@ -798,6 +856,105 @@ impl Universe {
             Value::Combo(incoming.clone()),
         );
         match res {
+            Value::Combo(m) => {
+                self.note_session_incoming(engine, &incoming);
+                self.staged = m;
+                self.is_dirty = true;
+                self.restamp_thunk_effects(engine);
+                Ok(())
+            }
+            Value::Bottom(d) => Err(*d),
+            _ => Err(crate::value::BottomDetail {
+                cause: BottomCause::Conflict,
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// Top-level `@{expr}: v` uses the combo-literal rule for that one field
+    /// and lands the resulting coordinates on the root.
+    fn evolve_pattern_field(
+        &mut self,
+        engine: &Ouroboros,
+        field: &Field,
+        ctx: &mut EvalContext,
+    ) -> std::result::Result<(), crate::value::BottomDetail> {
+        let synthetic = Expr::new(
+            ExprKind::Combo {
+                fields: vec![field.clone()],
+                relations: vec![],
+                closed: false,
+            },
+            field.span,
+        );
+        let built = engine.eval(&synthetic, ctx);
+        let Value::Combo(incoming) = built else {
+            return match built {
+                Value::Bottom(d) => Err(*d),
+                other => Err(crate::value::BottomDetail {
+                    cause: BottomCause::Conflict,
+                    message: Some(other.to_nlang(0)),
+                    ..Default::default()
+                }),
+            };
+        };
+        let evolved_coords = incoming.field_keys();
+        if !(self.pin_mode && engine.privilege.pin) {
+            for c in &evolved_coords {
+                let Some(root_val) = self
+                    .root
+                    .get_field(c)
+                    .cloned()
+                    .or_else(|| self.root.get_local_field(c).cloned())
+                else {
+                    continue;
+                };
+                let Some(val) = incoming.get_field(c).cloned() else {
+                    continue;
+                };
+                if let Value::Bottom(mut d) = engine.unify(root_val, val) {
+                    let leaf = d.path.take().filter(|s| !s.is_empty());
+                    d.path = Some(match leaf {
+                        Some(p) if p == *c || p.starts_with(&format!("{c}.")) => p,
+                        Some(p) => format!("{c}.{p}"),
+                        None => c.clone(),
+                    });
+                    return Err(*d);
+                }
+            }
+        }
+        if !evolved_coords.is_empty() {
+            engine.invalidate_coords(&evolved_coords);
+        }
+        let discharged = engine.take_privileged_discharge();
+        if !discharged.is_pure() {
+            self.effect_pending = Some(
+                self.effect_pending
+                    .unwrap_or(crate::value::EffectTag::Pure)
+                    .union(discharged),
+            );
+            self.session_effect_tags = self.session_effect_tags.union(discharged);
+        }
+        if self.pin_mode && engine.privilege.pin {
+            self.note_session_incoming(engine, &incoming);
+            self.staged = Self::replace_merge(&self.staged, &incoming);
+            self.is_dirty = true;
+            self.pin_pending = true;
+            for c in &evolved_coords {
+                self.pin_coords.insert(c.clone());
+                self.session_pin_coords.insert(c.clone());
+                self.session_absorbs
+                    .entry(c.clone())
+                    .or_default()
+                    .extend(self.injection_ids.iter().cloned());
+            }
+            self.restamp_thunk_effects(engine);
+            return Ok(());
+        }
+        match engine.unify(
+            Value::Combo(self.staged.clone()),
+            Value::Combo(incoming.clone()),
+        ) {
             Value::Combo(m) => {
                 self.note_session_incoming(engine, &incoming);
                 self.staged = m;

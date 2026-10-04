@@ -1877,17 +1877,19 @@ fn repl_readback(key: &FieldKey) -> Result<nlang_parser::ast::Path, ()> {
             Ok(coordinate_path(&stored))
         }
         FieldKey::Quoted(name) if name != "..." => Ok(coordinate_path(name)),
-        FieldKey::Path(p)
-            if p.anchor == nlang_parser::ast::PathAnchor::Bare && p.segments.len() == 1 =>
-        {
-            Ok(coordinate_path(&p.segments[0]))
-        }
-        FieldKey::Path(p)
-            if p.anchor == nlang_parser::ast::PathAnchor::Bare
-                && p.segments.len() == 2
-                && p.segments[0].trim() == "~%Config" =>
-        {
-            Ok(p.clone())
+        FieldKey::Path(p) if p.anchor == nlang_parser::ast::PathAnchor::Bare => {
+            if p.segments.len() == 1 {
+                Ok(coordinate_path(&p.segments[0]))
+            } else if p.segments.len() == 2 && p.segments[0].trim() == "~%Config" {
+                Ok(p.clone())
+            } else if p.segments.first().is_some_and(|s| s.trim().starts_with("~%")) {
+                Err(())
+            } else if !p.segments.is_empty() {
+                // The dotted key landed as the nested combo. Read the leaf.
+                Ok(p.clone())
+            } else {
+                Err(())
+            }
         }
         _ => Err(()),
     }
@@ -1945,7 +1947,8 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
             Ok(program) => {
                 for f in &program.fields {
                     let spread = matches!(&f.key, FieldKey::Quoted(name) if name == "...");
-                    let before = if spread {
+                    let known = repl_readback(&f.key).is_ok();
+                    let before = if spread || !known {
                         Some(staged_coord_names(&universe))
                     } else {
                         None
@@ -1953,8 +1956,9 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
                     if let Err(e) = universe.evolve(&engine, &f) {
                         let fb = field_key_label(&f.key);
                         println!("{}", format_evolution_conflict(&e, Some(&fb)));
-                    } else if let Some(before) = before {
+                    } else if spread || !known {
                         let after = staged_coord_names(&universe);
+                        let before = before.unwrap_or_default();
                         let mut any = false;
                         for name in &after {
                             if !before.iter().any(|b| b == name) {
@@ -1967,8 +1971,6 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
                         }
                     } else if let Ok(path) = repl_readback(&f.key) {
                         print_observed(&universe, &engine, &path);
-                    } else {
-                        println!("no coordinate to observe: {}", repl_unobserved(&f.key));
                     }
                 }
             }

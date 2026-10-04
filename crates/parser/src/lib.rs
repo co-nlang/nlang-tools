@@ -127,7 +127,19 @@ pub fn parse_field(pair: pest::iterators::Pair<Rule>) -> Result<Field, Box<dyn E
         });
     }
 
+    let key_at = key_pair.as_span().start();
     let key = parse_field_key(key_pair)?;
+    // D90: a definition key is relative to its container. `_.…` and `_.:`
+    // would be a second spelling of a bare key at the top, and inside a
+    // literal they would write through to the root. Name the key.
+    if let FieldKey::Path(p) = &key {
+        if p.anchor == PathAnchor::Root {
+            return Err(format!(
+                "definition key may not anchor at the root: {p} (at byte {key_at})"
+            )
+            .into());
+        }
+    }
     let value_pair = inner.next().ok_or("Field missing value")?;
     let value = parse_expr(value_pair)?;
     Ok(Field { key, value, span })
