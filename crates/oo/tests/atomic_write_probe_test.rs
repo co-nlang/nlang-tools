@@ -394,11 +394,13 @@ fn p2_format_moves_only_when_declared() {
     //                                        commit; layout=6 keeps the old form)
     //   layout=8     Q-062 / D80             (a savepoint records the point it
     //                                        stood on; layout=7 keeps the old form)
+    //   layout=9     Q-073 / D91             (observation savepoints; layout=8
+    //                                        receives none) — AMENDED 2026-10-04 for Q-073 (D91)
     let oo_dir = d.path().join(".oo");
     let layout = fs::read_to_string(oo_dir.join("format")).unwrap();
     assert_eq!(
         layout.trim(),
-        "layout=8",
+        "layout=9",
         ".oo/format moved without a ruling saying it should"
     );
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();

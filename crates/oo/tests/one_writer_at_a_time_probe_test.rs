@@ -226,7 +226,7 @@ fn r4_migrate_does_not_open_the_section() {
     assert!(!moved_while_held, "a commit landed while the section was held, after migrate (finished={finished}): {co}");
     assert_eq!(mrc, 0, "VOID READING: migrate did not complete: {mo}");
     assert_eq!(crc, 0, "VOID READING: the commit did not complete: {co}");
-    assert!(fs::read_to_string(w.ws.join(".oo/format")).unwrap().contains("layout=8"), "VOID READING: migrate did not advance the declaration");
+    assert!(fs::read_to_string(w.ws.join(".oo/format")).unwrap().contains("layout=9"), "VOID READING: migrate did not advance the declaration"); // AMENDED 2026-10-04 for Q-073 (D91)
 }
 
 /// r5 — outcome: commit raced against refine. Every commit a command

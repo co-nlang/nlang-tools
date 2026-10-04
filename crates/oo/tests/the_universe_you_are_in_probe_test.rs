@@ -129,8 +129,14 @@ fn objects(m: &BTreeMap<String, Vec<u8>>) -> usize {
 
 /// Everything in `.oo/` except the object store: HEAD, injections,
 /// savepoints, declarations.
+// AMENDED 2026-10-04 for Q-073 (D91): one-shot observations now write observation savepoints, so
+// savepoints/ is not part of the state these probes freeze (HEAD, the
+// working set, the declarations are).
 fn state(m: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Vec<u8>> {
-    m.iter().filter(|(k, _)| !k.starts_with("objects/")).map(|(k, v)| (k.clone(), v.clone())).collect()
+    m.iter()
+        .filter(|(k, _)| !k.starts_with("objects/") && !k.starts_with("savepoints/"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
 }
 
 // ── Red: C1 — the one-shot evaluators read HEAD ─────────────────────────
@@ -151,7 +157,7 @@ fn r2_run_sees_the_committed_root() {
     let before = w.snapshot(&w.ws);
     let (o, rc) = w.oo(&["run", "b.n", "--observe", "b"]);
     assert_eq!((o.as_str(), rc), ("2", 0), "run observing b: a + 1 over a committed a: 1");
-    assert!(w.snapshot(&w.ws) == before, "run changed .oo/");
+    assert!(state(&w.snapshot(&w.ws)) == state(&before), "run changed .oo/"); // AMENDED 2026-10-04 for Q-073 (D91)
 }
 
 /// r3 — test: a test that reads the committed root passes; its control

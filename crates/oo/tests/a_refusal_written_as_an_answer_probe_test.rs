@@ -236,7 +236,8 @@ fn names_the_boundary(out: &str) -> bool {
     // which v0.59.0 and v0.60.0 do not open either; the newest locked-out
     // reference engine is v0.60.0.
     // AMENDED 2026-09-27 for Q-062 (D80): layout=8; the newest locked-out reference engine is v0.63.0.
-    out.contains("v0.63.0")
+    // AMENDED 2026-10-04 for Q-073 (D91): layout=9; the newest locked-out reference engine is v0.74.0.
+    out.contains("v0.74.0")
 }
 
 // ── Controls and guards (green at baseline, must stay green) ─────────────
@@ -324,7 +325,7 @@ fn k1_every_red_predicate_is_met_by_a_real_refusal() {
     assert!(!reads_as_absence(&o, rc), "{o}");
 
     // r6/r7: the predicate is met by a sentence of the required kind.
-    assert!(names_the_boundary("oo v0.22.0 through v0.63.0 will no longer open this store"));
+    assert!(names_the_boundary("oo v0.22.0 through v0.74.0 will no longer open this store")); // AMENDED 2026-10-04 for Q-073 (D91)
     assert!(!names_the_boundary(
         "unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout=5."
     ));
@@ -547,8 +548,8 @@ fn r11_the_cost_names_the_oldest_engine_it_locks_out() {
             // layout D74 introduces).
             // AMENDED 2026-09-26 for Q-059 (D76 ③): v0.60.0 (layout=7).
             // AMENDED 2026-09-27 for Q-062 (D80): v0.63.0 (layout=8).
-            o.contains(oldest) && o.contains("v0.63.0"),
-            "layout=2/{enc}: the cost must name {oldest} through v0.63.0: {o}"
+            o.contains(oldest) && o.contains("v0.74.0"), // AMENDED 2026-10-04 for Q-073 (D91)
+            "layout=2/{enc}: the cost must name {oldest} through v0.74.0: {o}"
         );
     }
 }
