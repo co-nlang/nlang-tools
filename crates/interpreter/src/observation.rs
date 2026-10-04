@@ -4,6 +4,9 @@ use crate::value::{
 };
 use nlang_parser::ast::AtomKind;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObservationState {
@@ -78,6 +81,9 @@ pub fn handle_resource_exhausted(
     partial_result: Option<Value>,
     effect: EffectTag,
 ) -> Value {
+    // A horizon suspension is part of this answer when an answer is in
+    // progress. No active answer: injection and commit stay unmarked.
+    note_horizon();
     // W4‴: implementation stack ceiling is incapacity — always ⊥
     // `#stack_overflow`, never `#blur` (a blur claims an addressable snapshot;
     // an aborted stack has none). Strategy is ignored for this cause.
@@ -132,4 +138,72 @@ pub fn handle_resource_exhausted(
             Value::Atom(AtomKind::Tag("approximate".to_string()), effect, None)
         }
     }
+}
+
+/// What one one-shot answer did, judged by the engine while it ran.
+///
+/// `reduced_thunk` is set only when a thunk body is actually evaluated.
+/// A memo hit does not set it, and neither does spending the entry fuel.
+/// `touched_horizon` is set when that answer suspends (fuel, depth,
+/// timeout, the stack ceiling, or the approximate tag).
+pub struct AnswerTrace {
+    reduced_thunk: AtomicBool,
+    touched_horizon: AtomicBool,
+}
+
+impl AnswerTrace {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            reduced_thunk: AtomicBool::new(false),
+            touched_horizon: AtomicBool::new(false),
+        })
+    }
+
+    pub fn reduced_thunk(&self) -> bool {
+        self.reduced_thunk.load(Ordering::Relaxed)
+    }
+
+    pub fn touched_horizon(&self) -> bool {
+        self.touched_horizon.load(Ordering::Relaxed)
+    }
+}
+
+thread_local! {
+    static ACTIVE_ANSWER: RefCell<Option<Arc<AnswerTrace>>> = const { RefCell::new(None) };
+}
+
+/// Restores the previous answer, including on panic.
+pub struct AnswerTraceGuard {
+    prev: Option<Arc<AnswerTrace>>,
+}
+
+impl Drop for AnswerTraceGuard {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        ACTIVE_ANSWER.with(|slot| {
+            *slot.borrow_mut() = prev;
+        });
+    }
+}
+
+/// Marks thunk reduction and horizon suspension until dropped.
+pub fn push_answer_trace(trace: Arc<AnswerTrace>) -> AnswerTraceGuard {
+    let prev = ACTIVE_ANSWER.with(|slot| slot.borrow_mut().replace(trace));
+    AnswerTraceGuard { prev }
+}
+
+pub fn note_thunk_reduced() {
+    ACTIVE_ANSWER.with(|slot| {
+        if let Some(trace) = slot.borrow().as_ref() {
+            trace.reduced_thunk.store(true, Ordering::Relaxed);
+        }
+    });
+}
+
+pub fn note_horizon() {
+    ACTIVE_ANSWER.with(|slot| {
+        if let Some(trace) = slot.borrow().as_ref() {
+            trace.touched_horizon.store(true, Ordering::Relaxed);
+        }
+    });
 }

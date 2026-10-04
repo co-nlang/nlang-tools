@@ -358,7 +358,7 @@ fn r5_a_granted_migrate_moves_the_container_and_not_the_root() {
     let (after, after_enc) = read_decl(d.path());
     assert_eq!(
         after.trim(),
-        "layout=8", // AMENDED 2026-09-27 for Q-062 (D80)
+        "layout=9", // AMENDED 2026-10-04 for Q-073 (D91): observation savepoints (REAL_02 §5.1.1)
         "a granted migrate advances the layout declaration; got {after:?}"
     );
     assert!(
@@ -396,7 +396,7 @@ fn g1_a_current_repo_keeps_its_own_declarations() {
     oo(d.path(), &["evolve", "main.n"]);
     oo(d.path(), &["commit", "-m", "one"]);
     let (l1, e1) = read_decl(d.path());
-    assert_eq!(l1.trim(), "layout=8", "REACH: a fresh repo declares its layout"); // AMENDED 2026-09-27 for Q-062 (D80)
+    assert_eq!(l1.trim(), "layout=9", "REACH: a fresh repo declares its layout"); // AMENDED 2026-10-04 for Q-073 (D91)
     assert!(e1.is_some(), "REACH: a fresh repo declares its encoding");
 
     fs::write(d.path().join("main.n"), "app: { a: 1, b: 2 }\n").expect("write");

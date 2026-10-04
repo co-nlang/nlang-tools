@@ -244,7 +244,7 @@ fn r5_a_fresh_store_declares_layout8() {
     let w = Ws::new("r5");
     w.write("a.n", "a: 1\n");
     w.ok(&["evolve", "a.n"]);
-    assert_eq!(w.layout(), "layout=8");
+    assert_eq!(w.layout(), "layout=9"); // AMENDED 2026-10-04 for Q-073 (D91): layout=9 still records the point
 }
 
 /// An explicit migrate advances layout=7 to what a fresh store declares,
@@ -255,8 +255,9 @@ fn r6_a_migrated_layout7_store_records_points() {
     let w = Ws::layout7("r6");
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     assert_eq!(rc, 0, "migrate: {o}");
-    assert_eq!(w.layout(), "layout=8", "migrate did not advance the declaration: {o}");
-    assert!(o.contains("v0.61.0") && o.contains("v0.63.0"), "the cost must name v0.61.0 through v0.63.0: {o}");
+    assert_eq!(w.layout(), "layout=9", "migrate did not advance the declaration: {o}"); // AMENDED 2026-10-04 for Q-073 (D91)
+    // AMENDED 2026-10-04 for Q-073 (D91): layout 7 opens from v0.61.0; the newest engine that does not open layout 9 is v0.74.0.
+    assert!(o.contains("v0.61.0") && o.contains("v0.74.0"), "the cost must name v0.61.0 through v0.74.0: {o}");
     let point = w.head_digest();
     w.write("c.n", "c: 3\n");
     let text = one(w.evolve_new("c.n"), "c.n after migrate");
