@@ -147,3 +147,9 @@
 ---
 
 ## 9. 驗收（驗收方填）
+
+**受理，零修補回合。** 交付 `260be65`：探針、既有測試、分隔線以上、`Cargo.lock`、版本皆未動。
+**交叉編譯**（`touch` 後強制重查）0 error。**全樹 ×3**（期間不跑其他量測）：**259 target／2502 passed／0 failed，`^error` 0，exit 0**，三輪逐行相同。
+**驗收方矩陣**〔交付二進位〕：`x: 0`／`v: 1 + 1`／`v: 1+1` 三個新倉提交後皆無殘留的 `.nlang-evolve-*`。空目錄裡 `evolve a.n` 與 `evolve b.n` 並行、交替先後 ×6：兩份注入皆在（`status` 列出 `a: 1` 與 `b: 2`，注入檔 2 個）、無殘留、無錯誤輸出——**未以對照組證明撞進發布窗口**，記為「沒看到問題」。
+**Q4 重現**：沒有宇宙的地方 `eval '~%Discovery./connect { 0: "peer", 1: "../peer" }'` ⟹ `#true ;; %effect: #io`；呼叫端無 `.oo`；`../peer` 被建出並有 `format`／`objects.format`／`objects/`，在那裡 `status` 答 `Universe is static`。v0.75.0 相同 ⟹ 既有、射程外，入 Inbox。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4（不建 `.oo/`）；conformance 162／162；新倉 `layout=9`／`encoding=5`。
