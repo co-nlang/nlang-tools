@@ -337,12 +337,19 @@ fn g2_no_universe_is_still_empty() {
     assert_eq!(o2, "2", "VOID READING: eval does not evaluate here: {o2}");
 }
 
-/// g3 — C4: run and eval neither stage nor commit: HEAD, injections and
-/// savepoints are byte-identical after them.
+/// g3 — C4: run and eval neither stage nor commit: HEAD and the injections
+/// are byte-identical after them.
+/// AMENDED 2026-10-04 (acceptor): the first version also froze the
+/// savepoints, and D88 did not rule on them — a one-shot evaluation is an
+/// observation, and SPEC_10 §3.1 asks observations to write savepoints (an
+/// open, unimplemented gap; Q6). This cell must not decide that.
 #[test]
 fn g3_one_shot_does_not_stage_or_commit() {
     let w = Ws::committed("g3");
     w.write(&w.ws, "b.n", "b: 5\n");
+    let state = |m: &BTreeMap<String, Vec<u8>>| -> BTreeMap<String, Vec<u8>> {
+        state(m).into_iter().filter(|(k, _)| !k.starts_with("savepoints/")).collect()
+    };
     let before = state(&w.snapshot(&w.ws));
     let _ = w.oo(&["run", "b.n", "--observe", "b"]);
     let _ = w.oo(&["eval", "{ z: 9 }"]);

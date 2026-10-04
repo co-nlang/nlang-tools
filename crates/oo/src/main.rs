@@ -418,8 +418,13 @@ enum Commands {
         #[arg(long, help = HELP_EPHEMERAL)]
         ephemeral: bool,
     },
-    /// Read-eval-print loop against this workspace
-    Repl,
+    /// Read-eval-print loop from this universe's committed root. Each line is printed and kept in this session only; it is not staged or committed. The working set does not count. Where there is no universe, the root is empty. An explicit ~%Engine./save writes this universe's object store; with no universe it answers #no_universe
+    Repl {
+        #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
+        universe: Option<PathBuf>,
+        #[arg(long, help = HELP_EPHEMERAL)]
+        ephemeral: bool,
+    },
     /// Show the staged working set, or that the universe is static
     Status {
         #[arg(long, value_name = "DIR", help = HELP_UNIVERSE)]
@@ -730,7 +735,7 @@ fn main_on_large_stack() -> anyhow::Result<()> {
             message,
             universe,
         } => run_refine(source, target, sign, message, universe),
-        Commands::Repl => run_repl(),
+        Commands::Repl { universe, ephemeral } => run_repl(universe, ephemeral),
         Commands::Test {
             static_only,
             pattern,
@@ -1835,12 +1840,84 @@ fn run_refine(
     Ok(())
 }
 
-fn run_repl() -> anyhow::Result<()> {
+/// A path that reads a coordinate back. Bare `_`, `_|_`, `#_|_`, and `#_`
+/// are literals in `resolve_path`, so those spellings are read from the
+/// root (`_.…`) instead of the literal.
+fn coordinate_path(segment: &str) -> nlang_parser::ast::Path {
+    let segment = segment.trim().to_string();
+    let literal = matches!(segment.as_str(), "_" | "_|_" | "#_|_" | "#_");
+    nlang_parser::ast::Path {
+        anchor: if literal {
+            nlang_parser::ast::PathAnchor::Root
+        } else {
+            nlang_parser::ast::PathAnchor::Bare
+        },
+        segments: vec![segment],
+        span: nlang_parser::ast::Span { start: 0, end: 0 },
+    }
+}
+
+/// The path evolve stored this key at. `Err` means the line was accepted
+/// and no coordinate holds its value (pattern, spread, or a path evolve
+/// does not write).
+fn repl_readback(key: &FieldKey) -> Result<nlang_parser::ast::Path, ()> {
+    match key {
+        FieldKey::Named { name, prefix } => {
+            let trimmed = name.trim();
+            let stored = match prefix {
+                Some(nlang_parser::ast::Prefix::Logic) => format!("/{trimmed}"),
+                Some(nlang_parser::ast::Prefix::Type) => format!("@{trimmed}"),
+                Some(nlang_parser::ast::Prefix::Meta) => format!("%{trimmed}"),
+                Some(nlang_parser::ast::Prefix::System) => format!("~%{trimmed}"),
+                Some(nlang_parser::ast::Prefix::Private) => format!("~{trimmed}"),
+                Some(nlang_parser::ast::Prefix::Local)
+                | Some(nlang_parser::ast::Prefix::Data)
+                | None => trimmed.to_string(),
+            };
+            Ok(coordinate_path(&stored))
+        }
+        FieldKey::Quoted(name) if name != "..." => Ok(coordinate_path(name)),
+        FieldKey::Path(p)
+            if p.anchor == nlang_parser::ast::PathAnchor::Bare && p.segments.len() == 1 =>
+        {
+            Ok(coordinate_path(&p.segments[0]))
+        }
+        FieldKey::Path(p)
+            if p.anchor == nlang_parser::ast::PathAnchor::Bare
+                && p.segments.len() == 2
+                && p.segments[0].trim() == "~%Config" =>
+        {
+            Ok(p.clone())
+        }
+        _ => Err(()),
+    }
+}
+
+fn print_observed(universe: &Universe, engine: &Ouroboros, path: &nlang_parser::ast::Path) {
+    let res = universe.observe(engine, path);
+    println!("=> {}", res.to_nlang(0));
+}
+
+fn repl_unobserved(key: &FieldKey) -> String {
+    match key {
+        FieldKey::Pattern(e) => format!("@{{{}}}", e.to_nlang(0)),
+        other => other.to_string_canonical(),
+    }
+}
+
+fn staged_coord_names(universe: &Universe) -> Vec<String> {
+    let mut keys = universe.staged.field_keys();
+    for k in universe.staged.local.keys() {
+        keys.push(format!("~{k}"));
+    }
+    keys
+}
+
+fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()> {
+    let _hold = select_universe(universe_dir.as_deref(), ephemeral)?;
     let cur = cwd()?;
-    require_universe(&cur)?;
-    let engine = Ouroboros::init(&cur)?;
-    refuse_lost_context(&engine.store, &cur)?;
-    let mut universe = load_universe(&engine, &cur)?;
+    let engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
+    let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
     println!("n/ Ouroboros REPL (Genesis)");
     println!("Type 'exit' to quit.");
 
@@ -1867,23 +1944,31 @@ fn run_repl() -> anyhow::Result<()> {
         match parse_program(input) {
             Ok(program) => {
                 for f in &program.fields {
+                    let spread = matches!(&f.key, FieldKey::Quoted(name) if name == "...");
+                    let before = if spread {
+                        Some(staged_coord_names(&universe))
+                    } else {
+                        None
+                    };
                     if let Err(e) = universe.evolve(&engine, &f) {
                         let fb = field_key_label(&f.key);
                         println!("{}", format_evolution_conflict(&e, Some(&fb)));
-                    } else {
-                        // 嘗試觀測剛剛進化的欄位
-                        let path = match &f.key {
-                            FieldKey::Named { name, .. } | FieldKey::Quoted(name) => {
-                                nlang_parser::ast::Path {
-                                    anchor: nlang_parser::ast::PathAnchor::Bare,
-                                    segments: vec![name.clone()],
-                                    span: nlang_parser::ast::Span::default(),
-                                }
+                    } else if let Some(before) = before {
+                        let after = staged_coord_names(&universe);
+                        let mut any = false;
+                        for name in &after {
+                            if !before.iter().any(|b| b == name) {
+                                any = true;
+                                print_observed(&universe, &engine, &coordinate_path(name));
                             }
-                            _ => continue,
-                        };
-                        let res = universe.observe(&engine, &path);
-                        println!("=> {}", res.to_nlang(0));
+                        }
+                        if !any {
+                            println!("no coordinate to observe: {}", repl_unobserved(&f.key));
+                        }
+                    } else if let Ok(path) = repl_readback(&f.key) {
+                        print_observed(&universe, &engine, &path);
+                    } else {
+                        println!("no coordinate to observe: {}", repl_unobserved(&f.key));
                     }
                 }
             }
