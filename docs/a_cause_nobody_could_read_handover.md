@@ -151,6 +151,51 @@ r1–r3 改用 `unrecognized(o)`：含 `#unrecognized_cause`、不含 `#conflict
 
 ## 10. R-1 交付回報（交付方填；本行以上一字不得動）
 
+### 10.1 做了什麼
+
+讀不懂的已存 ⊥ 成因改為 `BottomCause::UnrecognizedCause`，標籤 `#unrecognized_cause`（D94）。不認得的標籤與不是標籤的值都進這裡。`#object_undecodable` 仍是表上自己的一列，留給物件本身沒有解出來的情況。
+
+成因的裸名字只寫在 `cause_tags!` 那一列。`BottomDetail::as_cause_combo` 的 `%val` 取 `cause.as_tag()`。`oo` 的 `bottom_cause_tag` 是 `"#" + as_tag()`。`primary_rank` 仍是窮盡比對，排的是優先序，不是名字。
+
+套件仍是 `oo` `0.76.0`。`layout=9`，`encoding=5`。探針這回合沒有再改。
+
+### 10.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/value.rs`：列舉尾端 `UnrecognizedCause`；表上一列；`from_stored_tag` 的鏈尾改為它；`as_cause_combo` 改由表取名字；`primary_rank` 把它放在 1。
+2. `crates/interpreter/src/store_codec.rs`：`cause_from_value` 的非標籤退路改為 `UnrecognizedCause`。
+3. `crates/oo/src/main.rs`：`bottom_cause_tag` 改為 `"#" + as_tag()`。
+
+規格、`Cargo.toml`、`Cargo.lock`、探針未改。沒有 rustfmt `value.rs`、`store_codec.rs`、`main.rs`、探針。
+
+### 10.3 工單哪裡是錯的
+
+無。上一輪 `2e8b23a` 按當時的 D93 甲報了 `#object_undecodable`。本回合按 D94 改報 `#unrecognized_cause`。
+
+### 10.4 工單指名要你回答的問題
+
+**R1-Q1** `UnrecognizedCause` 的 `primary_rank` 是 **1**。數字小的更優先。0 只有 `Divergent`：那是本引擎已經判定的不終止。2 是 `Conflict` 那一組。讀不懂的成因若排在 2 或更後，多分支塌陷會留下一個叫得出名字的成因。排在 1，它會蓋過 `#conflict`，並留在 `#divergent` 後面。同一層還有 `ObjectUndecodable`：兩者都要留在格子衝突前面，標籤仍然各寫各的。同層並列時，`min_by_key` 留先遇到的那一個。
+
+**R1-Q2** 名字的字串只在表上。`as_cause_combo` 與 `bottom_cause_tag` 沒有自己的清單，所以表上多一列，這兩處就用那一列的名字。`primary_rank` 不導出名字；漏了它的分支，程式庫編譯不過。
+
+量過：臨時加入 `BottomCause::CauseProbeOnly`，只在表上加 `cause_probe_only`，兩處名字函式沒有改。`cargo check -p nlang-interpreter` 只有一條 `error[E0004]: non-exhaustive patterns: BottomCause::CauseProbeOnly not covered`，落在 `primary_rank` 的 `match`。兩處名字函式沒有錯誤。補上 `CauseProbeOnly => 9` 之後，`bottom_cause_tag` 得到 `#cause_probe_only`，`as_cause_combo` 印出的文字含 `#cause_probe_only`。臨時成員與那個測試已從樹上拿掉。
+
+**R1-Q3** debug 二進位，來源與這次提交相同。先提交 `a: 1` / `b: 1 & 2`，`eval _.b` 是 `_|_  ;; %cause: #conflict`。把 `~%__nlang_bottom: #conflict` 改成 `#from_the_future` 之後，`eval _.b` rc 0，`_|_  ;; %cause: #unrecognized_cause`。再 `evolve k: _.b` 並 `commit -m k`，新根寫著 `b` 與 `k` 都是 `~%__nlang_bottom: #unrecognized_cause`。根位址 `4745c4b046c49956944300d06fb2961f46fd151ab90447c2243210bbc35d9def`。對照組全程留著 `#conflict`，第二次提交的根位址相同，根裡仍是 `#conflict`。兩筆提交物件不同：`reported_bottoms` 是 `["b #unrecognized_cause", "k #unrecognized_cause"]` 與 `["b #conflict", "k #conflict"]`，`timestamp` 是 `1791195365471` 與 `1791195365911`，提交雜湊是 `f7f25e278617d6d4b02c81f95b30d5ed4e50e2c84fed36c734d6f323d2476e1b` 與 `3ad34967223d75e0e2fad62d556b7154ddad6fb457236f5e432062702a19655e`。
+
+### 10.5 探針
+
+`crates/oo/tests/a_cause_nobody_could_read_probe_test.rs` 本回合未改。全樹第三輪 6／6，0.87s。g1–g3 與 r1–r3 皆綠。
+
+紅線，全樹第三輪皆 `test result: ok`、0 failed：`a_success_that_was_a_bottom` 5（0.42s）、`where_the_conflict_is` 9（0.64s）、`what_an_observation_leaves` 15（3.05s）。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.47s，`^error` 0。
+
+### 10.6 數字
+
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 260 行，2508 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3025 行，去掉耗時後相同。
+2. conformance 162／162，rc=0。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. `~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `layout=9`，`encoding=5`。
+
 ---
 
 ## 11. R-1 驗收（驗收方填）

@@ -1635,12 +1635,13 @@ fn string_of(v: &Value) -> Option<String> {
 }
 
 fn cause_from_value(v: &Value) -> Result<BottomCause> {
-    // A durable cause is a tag. Anything else this engine cannot judge is
-    // `#object_undecodable` (D93), not a cause it can name.
+    // A durable cause is a tag. A tag this engine does not know, and any
+    // non-tag, is `#unrecognized_cause` (D94). `#object_undecodable` remains
+    // the REAL_03 §6.6 verdict for a value the decoder did not return.
     const _: () = BottomCause::CAUSE_TAG_ROUND_TRIP;
     match v {
         Value::Atom(AtomKind::Tag(t), _, _) => Ok(BottomCause::from_stored_tag(t)),
-        _ => Ok(BottomCause::ObjectUndecodable),
+        _ => Ok(BottomCause::UnrecognizedCause),
     }
 }
 
