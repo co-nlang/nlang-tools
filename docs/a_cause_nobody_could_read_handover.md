@@ -61,6 +61,65 @@
 
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
+### 8.1 做了什麼
+
+已存 ⊥ 的成因由一張 `cause_tags!` 讀寫。36 個 `BottomCause` 各一行。`as_tag` 是窮盡的 `const fn`。`from_stored_tag` 按字節對這張表；表上沒有的標籤，以及不是標籤的值，讀成 `BottomCause::ObjectUndecodable`。`cause_from_value` 裡的 `const _: () = BottomCause::CAUSE_TAG_ROUND_TRIP` 要求每一行的標籤解回去再編出來仍是自己。
+
+`decode_bottom` 在成因鍵缺席時仍是 `Conflict`。呼叫點只在成因鍵存在時進來。`#blur` 的解碼未改。磁碟格式、`layout=9`、`encoding=5`、套件 `oo` `0.76.0` 留在原處。
+
+### 8.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/value.rs`：`cause_tags!`、`as_tag`、`from_stored_tag`、`CAUSE_TAG_ROUND_TRIP`。`as_cause_combo` 與 `primary_rank` 仍是各自的窮盡比對。
+2. `crates/interpreter/src/store_codec.rs`：`cause_from_value` 改走這張表，並強制那份 const。
+
+探針、規格、`Cargo.toml`、`Cargo.lock` 未改。沒有 rustfmt `value.rs`、`store_codec.rs`、探針。
+
+### 8.3 工單哪裡是錯的
+
+無。工單寫的交付後全樹是 260 target、2508 passed、0 failed。這次三輪的 `test result:` 與此相同。
+
+### 8.4 工單指名要你回答的問題
+
+**Q1** 從耐久形讀回 ⊥ 成因，改後都進 `cause_from_value`：標籤走 `from_stored_tag`，其餘值是 `#object_undecodable`。
+
+1. 已裝框的 CAS 物件：`ObjectStore::decode_cas_value` → `store_codec::decode_value` → `decode_bottom`。量：把已提交 `b: 1 & 2` 物件裡的 `~%__nlang_bottom: #conflict` 改成 `~%__nlang_bottom: #from_the_future` 之後，`eval _.b` rc 0，stdout `_|_  ;; %cause: #object_undecodable`。探針 r1 對 `#from_the_future`、`42`、`"conflict"`、`{ x: 1 }` 同樣，輸出裡沒有 `#conflict`。
+2. 注入：`injections::load_all` 把本文框成 injection 再 `decode_staged`。探針 r2：`status` 含 `#object_undecodable`，不含 `#conflict`。
+3. Savepoint 的 combo 本文：`decode_document` 對 `savepoint` 跳過框線後 `expr_to_value`，同一條 `decode_bottom`。觀測的 `answer:` 是字串行，不再走 `cause_from_value`。這次改 blur 成因時，物件與 savepoint 兩份檔都含 `cause: #fuel_exhausted`。`oo log` 不印 combo 裡的成因，所以沒有另一句 CLI 句子；combo 本身的答案與第 1 條相同。
+4. 線上：`oodp` 對已裝框的 `%result`，以及舊協定的裝框緩衝，呼叫 `decode_value`。文件本身解不開時記完整性事件，回 `#caid_mismatch`。裝框成功而成因標籤是外來的，走 `cause_from_value`。這次沒有架起對等點。未裝框的 JSON 仍用 serde：不認得的變體讓整份值失敗，呼叫端記 `StoreReadError::ObjectUndecodable`。現在的倉是 encoding=5 的裝框文字；g2 那條文字路徑上，只有成因讀不懂時物件的其他欄位仍在。
+
+**Q2** 一張表展開成三件事：`as_tag` 的窮盡 `match`、`from_stored_tag` 的字節鏈、`CAUSE_TAG_ROUND_TRIP`。未知標籤的鏈尾是 `ObjectUndecodable`，沒有把未列成因收進某個讀得懂的成因。另外兩處手寫的窮盡比對是 `BottomDetail::as_cause_combo` 與 `BottomCause::primary_rank`。`oo` 的 `bottom_cause_tag` 也是窮盡比對；下面的編譯只查了 `nlang-interpreter`，所以日誌裡沒有它的診斷。
+
+臨時加上 `BottomCause::CauseProbeOnly` 且不放進表，`cargo check -p nlang-interpreter` 三條 `error[E0004]: non-exhaustive patterns: BottomCause::CauseProbeOnly not covered`，分別在 `as_cause_combo`、`as_tag`、`primary_rank`。樹已復原。
+
+把表上每一行的解碼都改成 `Conflict` 時，`error[E0080]: evaluation panicked: BottomCause::MissingKey does not round-trip through its stored tag`，`evaluation of value::BottomCause::CAUSE_TAG_ROUND_TRIP failed`。註記指向 `cause_from_value` 裡的那份 const。`Conflict` 自己仍對得上，所以第一條失敗的是 `MissingKey`。樹已復原。`let _ = CAUSE_TAG_ROUND_TRIP` 在 rustc 1.96 不會強迫求值；現在用的是 `const _: () = …`。
+
+**Q3** 成立，未修。release 二進位。`~%Config.fuel: 1` 加上 `s: ~%Math./add (1, ~%Math./add (1, ~%Math./add (1, 1)))` 提交後，物件與 savepoint 都寫著 `~%__nlang_blur: #true cause: #fuel_exhausted`。把 `cause: #fuel_exhausted` 改成 `cause: #from_the_future` 之後，`eval _.s` 與 `status` 都是 rc 1：
+
+`Error: #caid_mismatch: object at digest path is corrupt (integrity failure); requested 7ffd588e59282d46ecafdb02fb9032f45652c0eecf7c4ba93050e8b8934d6b9f, recomputed hash:sha256:v2:…:01d69276e9046d47e81a52589158f22abe9d0ebe097ce4916b1c66764ac669d4`
+
+`status` 的句子前面多了 `Universe unavailable:`。
+
+**Q4** release 二進位。先提交 `a: 1` / `b: 1 & 2`，`eval _.b` 是 `_|_  ;; %cause: #conflict`。把物件與 savepoint 裡的 `~%__nlang_bottom: #conflict` 改成 `#from_the_future` 之後，`eval _.b` rc 0，`_|_  ;; %cause: #object_undecodable`。該物件仍在原位址 `d3c78179a67500a8f7fbb8f39ed452715c4e0040f3406d1f3df16a98f3c4867d`。再 `evolve k: _.b` 並 `commit -m k`，新根裡 `b` 與 `k` 都寫成 `#object_undecodable`。這筆根位址是 `4745c4b046c49956944300d06fb2961f46fd151ab90447c2243210bbc35d9def`。對照組全程留著 `#conflict`，第二次提交的根位址相同。兩筆提交物件不同：`reported_bottoms` 是 `["b #object_undecodable", "k #object_undecodable"]` 與 `["b #conflict", "k #conflict"]`，`timestamp` 是 `1791170865253` 與 `1791170865424`，提交雜湊因此是 `5ed800815b45f6f7b81dd145ca2ddd5050886aa75f8690ff4672d9ae557b73f9` 與 `012fe6edcc370d5e8b2388ec6dc93504252edb0e45e29dc2f84f764cdea955fb`。
+
+### 8.5 探針
+
+`crates/oo/tests/a_cause_nobody_could_read_probe_test.rs` 未改，未 rustfmt。全樹第三輪 6／6，0.84s。`g1_known_causes_read_back_as_written`、`g2_only_the_cause_is_unreadable`、`g3_a_known_cause_is_read_as_written`、r1–r3 皆綠。
+
+紅線，全樹第三輪皆 `test result: ok`、0 failed：`a_success_that_was_a_bottom` 5（0.36s）、`where_the_conflict_is` 9（0.65s）、`what_an_observation_leaves` 15（2.90s）。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.48s，`^error` 0。
+
+### 8.6 數字
+
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 260 行，2508 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3025 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. `~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。
+
+### 8.7 你認為需要改規格之處
+
+規格檔這次沒有改。建議驗收方依工單第 6 節：`REAL_02` §5.1.1 判例旁補一句，擴充 `TAG_REGISTRY` 裡 `#object_undecodable` 的用法，並收 `CHANGELOG`。Q3 的 `#blur` 成因解碼仍是原樣。
+
 ---
 
 ## 9. 驗收（驗收方填）

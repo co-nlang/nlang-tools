@@ -1635,46 +1635,109 @@ pub enum BottomCause {
     Unwritable,
 }
 
-impl BottomCause {
-    pub fn as_tag(&self) -> &str {
-        match self {
-            BottomCause::Conflict => "conflict",
-            BottomCause::MissingKey => "missing_key",
-            BottomCause::FuelExhausted => "fuel_exhausted",
-            BottomCause::Timeout => "timeout",
-            BottomCause::PeerUnreachable => "peer_unreachable",
-            BottomCause::PeerClosed => "peer_closed",
-            BottomCause::PeerTimeout => "peer_timeout",
-            BottomCause::Divergent => "divergent",
-            BottomCause::InvalidPath => "invalid_path",
-            BottomCause::PrivateAccessViolation => "private_access_violation",
-            BottomCause::NumericalError => "numerical_error",
-            BottomCause::ArithmeticOnAnchor => "arithmetic_on_anchor",
-            BottomCause::H1Split => "h1_split",
-            BottomCause::H2Split => "h2_split",
-            BottomCause::SemanticEclipse => "semantic_eclipse",
-            BottomCause::NoContext => "no_context",
-            BottomCause::OutOfHorizon => "out_of_horizon",
-            BottomCause::SystemReserved => "system_reserved",
-            BottomCause::InvalidConfig => "invalid_config",
-            BottomCause::EffectViolation => "effect_violation",
-            BottomCause::PrivilegedRequired => "privileged_required",
-            BottomCause::StoreBoundary => "store_boundary",
-            BottomCause::CaidMismatch => "caid_mismatch",
-            BottomCause::PeerNotImplemented => "peer_not_implemented",
-            BottomCause::PeerUnknownStatus => "peer_unknown_status",
-            BottomCause::PeerRefused => "peer_refused",
-            BottomCause::RoutingBudgetExceeded => "routing_budget_exceeded",
-            BottomCause::MaxDepthExceeded => "max_depth_exceeded",
-            BottomCause::StackOverflow => "stack_overflow",
-            BottomCause::ObjectUndecodable => "object_undecodable",
-            BottomCause::StandardRootUnavailable => "standard_root_unavailable",
-            BottomCause::NoStandardRoot => "no_standard_root",
-            BottomCause::UnprojectedBuiltin => "unprojected_builtin",
-            BottomCause::UnprovidedBuiltin => "unprovided_builtin",
-            BottomCause::NoUniverse => "no_universe",
-            BottomCause::Unwritable => "unwritable",
+/// Leading `#` is spelling. The durable name is the bare tag.
+const fn strip_stored_cause_tag(tag: &str) -> &str {
+    let bytes = tag.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i] == b'#' {
+        i += 1;
+    }
+    tag.split_at(i).1
+}
+
+const fn cause_tags_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
         }
+        i += 1;
+    }
+    true
+}
+
+/// One row is one cause. Expanded inside `impl BottomCause` into the
+/// encode match, the decode chain, and a const round-trip of every row.
+/// A new enum variant that is not a row fails `as_tag` (non-exhaustive).
+/// A row whose stored tag does not read back as itself fails
+/// `CAUSE_TAG_ROUND_TRIP`. A tag that is not a row reads as
+/// `#object_undecodable` (D93), never as another cause.
+macro_rules! cause_tags {
+    ($($variant:ident => $tag:literal),* $(,)?) => {
+        pub const fn as_tag(self) -> &'static str {
+            match self {
+                $(Self::$variant => $tag,)*
+            }
+        }
+
+        pub const fn from_stored_tag(tag: &str) -> Self {
+            let bare = strip_stored_cause_tag(tag);
+            $(
+                if cause_tags_eq(bare, $tag) {
+                    return Self::$variant;
+                }
+            )*
+            Self::ObjectUndecodable
+        }
+
+        pub(crate) const CAUSE_TAG_ROUND_TRIP: () = {
+            $(
+                assert!(
+                    cause_tags_eq(Self::from_stored_tag($tag).as_tag(), $tag),
+                    concat!(
+                        "BottomCause::",
+                        stringify!($variant),
+                        " does not round-trip through its stored tag"
+                    )
+                );
+            )*
+        };
+    };
+}
+
+impl BottomCause {
+    cause_tags! {
+        Conflict => "conflict",
+        MissingKey => "missing_key",
+        FuelExhausted => "fuel_exhausted",
+        Timeout => "timeout",
+        PeerUnreachable => "peer_unreachable",
+        PeerClosed => "peer_closed",
+        PeerTimeout => "peer_timeout",
+        Divergent => "divergent",
+        InvalidPath => "invalid_path",
+        PrivateAccessViolation => "private_access_violation",
+        NumericalError => "numerical_error",
+        ArithmeticOnAnchor => "arithmetic_on_anchor",
+        H1Split => "h1_split",
+        H2Split => "h2_split",
+        SemanticEclipse => "semantic_eclipse",
+        NoContext => "no_context",
+        OutOfHorizon => "out_of_horizon",
+        SystemReserved => "system_reserved",
+        InvalidConfig => "invalid_config",
+        EffectViolation => "effect_violation",
+        PrivilegedRequired => "privileged_required",
+        StoreBoundary => "store_boundary",
+        CaidMismatch => "caid_mismatch",
+        PeerNotImplemented => "peer_not_implemented",
+        PeerUnknownStatus => "peer_unknown_status",
+        PeerRefused => "peer_refused",
+        RoutingBudgetExceeded => "routing_budget_exceeded",
+        MaxDepthExceeded => "max_depth_exceeded",
+        StackOverflow => "stack_overflow",
+        ObjectUndecodable => "object_undecodable",
+        StandardRootUnavailable => "standard_root_unavailable",
+        NoStandardRoot => "no_standard_root",
+        UnprojectedBuiltin => "unprojected_builtin",
+        UnprovidedBuiltin => "unprovided_builtin",
+        NoUniverse => "no_universe",
+        Unwritable => "unwritable",
     }
 
     /// REAL_04 §4 primary-cause priority for multi-branch collapse
