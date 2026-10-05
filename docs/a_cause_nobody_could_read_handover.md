@@ -199,3 +199,9 @@ r1–r3 改用 `unrecognized(o)`：含 `#unrecognized_cause`、不含 `#conflict
 ---
 
 ## 11. R-1 驗收（驗收方填）
+
+**R-1 受理（一個修補回合；成因在驗收方的工單）。** 交付 `ce68844`：探針、分隔線以上、`Cargo.lock`、版本皆未動。
+**交叉編譯**（`touch` 後強制重查）0 error。**全樹 ×3**（期間不跑其他量測）：**260 target／2508 passed／0 failed，`^error` 0，exit 0**，三輪逐行相同。
+**驗收方矩陣**〔交付二進位〕：已提交 `a: 1`／`b: 1 & 2`／`c: c + 1`，把物件裡 `b` 的 `#conflict` 改成 `#from_the_future` ⟹ `_.a` 1、`_.b` `_|_  ;; %cause: #unrecognized_cause`、`_.b.%cause` `#unrecognized_cause`、`_.c` `#divergent`；`(1 & 2).%cause` 仍 `#conflict`。R1-2：名字只在 `cause_tags!` 表上，`as_cause_combo` 與 `bottom_cause_tag` 由 `as_tag()` 導出（讀碼確認）。
+**驗收方的引用錯誤（本工單 §1、§2、§6 皆受影響）**：「一個引擎無法判斷的狀態，不得被報成另一個它判斷得了的狀態」在 `REAL_02` **§4.1.1**（D73 之註），不是 §5.1.1。帳本與規格已改正。
+身分：`31745ef0…`／`f4f32e7b…`（`1 + 1` 與 `1+1`）／標準根 `7038e250…`；known-answer 3／4（不建 `.oo/`）；conformance 162／162；新倉 `layout=9`／`encoding=5`。
