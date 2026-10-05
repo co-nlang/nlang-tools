@@ -15,9 +15,13 @@
 // `_ => BottomCause::Conflict`. A cause written by another engine, a newer
 // one or a second implementation, would be read the same way.
 //
-// D93 (user, 2026-10-05, 甲): a cause this engine cannot read is reported
-// as `#object_undecodable`, never as a cause it can read. The encoder and the
-// decoder are kept exhaustive by the compiler (no `_ =>` tail).
+// D93 (user, 2026-10-05, 甲): a cause this engine cannot read is never
+// reported as a cause it can read. The encoder and the decoder are kept
+// exhaustive by the compiler (no `_ =>` tail).
+// D94 (AMENDED 2026-10-05 at Q-075 R-1 (D94)): the answer is a new cause, `#unrecognized_cause` — not
+// `#object_undecodable`, which REAL_03 §6.6 defines as an integrity verdict
+// ("cannot decode, integrity unknown"); here the address verified and only
+// the cause is unreadable (D65). The acceptor's order named the wrong tag.
 //
 // ── Probe integrity ──────────────────────────────────────────────────────
 //
@@ -115,10 +119,16 @@ fn walk(p: &Path, out: &mut Vec<PathBuf>) {
 
 const FOREIGN: &[&str] = &["#from_the_future", "42", "\"conflict\"", "{ x: 1 }"];
 
+/// AMENDED 2026-10-05 at Q-075 R-1 (D94): the unreadable cause is named as such, and as nothing else.
+fn unrecognized(o: &str) -> bool {
+    o.contains("#unrecognized_cause") && !o.contains("#conflict") && !o.contains("#object_undecodable")
+}
+
 // ── Red ──────────────────────────────────────────────────────────────────
 
 /// r1 — a committed `_|_` whose stored cause this engine cannot read is
-/// reported as `#object_undecodable`, never as `#conflict`.
+/// reported as `#unrecognized_cause`, never as `#conflict` and never as the
+/// integrity verdict `#object_undecodable` (D94).
 #[test]
 fn r1_a_committed_foreign_cause_is_undecodable() {
     let mut wrong = Vec::new();
@@ -128,7 +138,7 @@ fn r1_a_committed_foreign_cause_is_undecodable() {
         assert!(before.contains("#conflict"), "VOID READING: {before}");
         assert!(w.rewrite("objects", cause) >= 1, "VOID READING: no stored object holds {MARK}");
         let (o, _) = w.oo(&["eval", "_.b"]);
-        if !o.contains("#object_undecodable") || o.contains("#conflict") {
+        if !unrecognized(&o) { // AMENDED 2026-10-05 at Q-075 R-1 (D94)
             wrong.push(format!("{cause}: {o}"));
         }
     }
@@ -145,7 +155,7 @@ fn r2_a_staged_foreign_cause_is_undecodable() {
     assert!(before.contains("#conflict"), "VOID READING: {before}");
     assert!(w.rewrite("injections", "#from_the_future") >= 1, "VOID READING: no injection holds {MARK}");
     let (o, _) = w.oo(&["status"]);
-    assert!(o.contains("#object_undecodable") && !o.contains("#conflict"), "a staged foreign cause: {o}");
+    assert!(unrecognized(&o), "a staged foreign cause: {o}"); // AMENDED 2026-10-05 at Q-075 R-1 (D94)
 }
 
 /// r3 — every surface agrees: `run --format` over the committed root says
@@ -158,7 +168,7 @@ fn r3_every_surface_says_undecodable() {
     let mut wrong = Vec::new();
     for args in [&["eval", "_.b"][..], &["run", "--observe", "q", "q.n"][..], &["run", "--observe", "b", "q.n"][..]] {
         let (o, _) = w.oo(args);
-        if !o.contains("#object_undecodable") || o.contains("#conflict") {
+        if !unrecognized(&o) { // AMENDED 2026-10-05 at Q-075 R-1 (D94)
             wrong.push(format!("`oo {}`: {o}", args.join(" ")));
         }
     }
@@ -173,7 +183,7 @@ fn g1_known_causes_read_back_as_written() {
     let w = Ws::committed("g1", "b: 1 & 2\nc: c + 1\nt: ~%Math./add (1, \"x\")\n");
     for (k, cause) in [("b", "#conflict"), ("c", "#divergent"), ("t", "#conflict")] {
         let (o, _) = w.oo(&["eval", &format!("_.{k}")]);
-        assert!(o.contains(cause) && !o.contains("#object_undecodable"), "`_.{k}` did not read back {cause}: {o}");
+        assert!(o.contains(cause) && !o.contains("#object_undecodable") && !o.contains("#unrecognized_cause"), "`_.{k}` did not read back {cause}: {o}"); // AMENDED 2026-10-05 at Q-075 R-1 (D94)
     }
 }
 
