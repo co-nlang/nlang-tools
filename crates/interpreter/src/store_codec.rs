@@ -1635,49 +1635,14 @@ fn string_of(v: &Value) -> Option<String> {
 }
 
 fn cause_from_value(v: &Value) -> Result<BottomCause> {
-    let tag = match v {
-        Value::Atom(AtomKind::Tag(t), _, _) => t.trim_start_matches('#').to_string(),
-        _ => return Ok(BottomCause::Conflict),
-    };
-    Ok(match tag.as_str() {
-        "conflict" => BottomCause::Conflict,
-        "missing_key" => BottomCause::MissingKey,
-        "fuel_exhausted" => BottomCause::FuelExhausted,
-        "timeout" => BottomCause::Timeout,
-        "peer_unreachable" => BottomCause::PeerUnreachable,
-        "peer_closed" => BottomCause::PeerClosed,
-        "peer_timeout" => BottomCause::PeerTimeout,
-        "divergent" => BottomCause::Divergent,
-        "invalid_path" => BottomCause::InvalidPath,
-        "private_access_violation" => BottomCause::PrivateAccessViolation,
-        "numerical_error" => BottomCause::NumericalError,
-        "arithmetic_on_anchor" => BottomCause::ArithmeticOnAnchor,
-        "h1_split" => BottomCause::H1Split,
-        "h2_split" => BottomCause::H2Split,
-        "semantic_eclipse" => BottomCause::SemanticEclipse,
-        "no_context" => BottomCause::NoContext,
-        "out_of_horizon" => BottomCause::OutOfHorizon,
-        "system_reserved" => BottomCause::SystemReserved,
-        "invalid_config" => BottomCause::InvalidConfig,
-        "effect_violation" => BottomCause::EffectViolation,
-        "privileged_required" => BottomCause::PrivilegedRequired,
-        "store_boundary" => BottomCause::StoreBoundary,
-        "caid_mismatch" => BottomCause::CaidMismatch,
-        "peer_not_implemented" => BottomCause::PeerNotImplemented,
-        "peer_unknown_status" => BottomCause::PeerUnknownStatus,
-        "peer_refused" => BottomCause::PeerRefused,
-        "routing_budget_exceeded" => BottomCause::RoutingBudgetExceeded,
-        "max_depth_exceeded" => BottomCause::MaxDepthExceeded,
-        "stack_overflow" => BottomCause::StackOverflow,
-        "object_undecodable" => BottomCause::ObjectUndecodable,
-        "standard_root_unavailable" => BottomCause::StandardRootUnavailable,
-        "no_standard_root" => BottomCause::NoStandardRoot,
-        "unprojected_builtin" => BottomCause::UnprojectedBuiltin,
-        "unprovided_builtin" => BottomCause::UnprovidedBuiltin,
-        "no_universe" => BottomCause::NoUniverse,
-        "unwritable" => BottomCause::Unwritable,
-        _ => BottomCause::Conflict,
-    })
+    // A durable cause is a tag. A tag this engine does not know, and any
+    // non-tag, is `#unrecognized_cause` (D94). `#object_undecodable` remains
+    // the REAL_03 §6.6 verdict for a value the decoder did not return.
+    const _: () = BottomCause::CAUSE_TAG_ROUND_TRIP;
+    match v {
+        Value::Atom(AtomKind::Tag(t), _, _) => Ok(BottomCause::from_stored_tag(t)),
+        _ => Ok(BottomCause::UnrecognizedCause),
+    }
 }
 
 fn blur_cause_from_value(v: &Value) -> Result<BlurCause> {

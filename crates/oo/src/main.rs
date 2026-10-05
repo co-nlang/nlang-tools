@@ -196,45 +196,9 @@ fn format_evolution_conflict(detail: &BottomDetail, field_fallback: Option<&str>
     )
 }
 
-fn bottom_cause_tag(c: BottomCause) -> &'static str {
-    match c {
-        BottomCause::Conflict => "#conflict",
-        BottomCause::MissingKey => "#missing_key",
-        BottomCause::FuelExhausted => "#fuel_exhausted",
-        BottomCause::Timeout => "#timeout",
-        BottomCause::PeerUnreachable => "#peer_unreachable",
-        BottomCause::PeerClosed => "#peer_closed",
-        BottomCause::PeerTimeout => "#peer_timeout",
-        BottomCause::Divergent => "#divergent",
-        BottomCause::InvalidPath => "#invalid_path",
-        BottomCause::PrivateAccessViolation => "#private_access_violation",
-        BottomCause::NumericalError => "#numerical_error",
-        BottomCause::ArithmeticOnAnchor => "#arithmetic_on_anchor",
-        BottomCause::H1Split => "#h1_split",
-        BottomCause::H2Split => "#h2_split",
-        BottomCause::SemanticEclipse => "#semantic_eclipse",
-        BottomCause::NoContext => "#no_context",
-        BottomCause::OutOfHorizon => "#out_of_horizon",
-        BottomCause::SystemReserved => "#system_reserved",
-        BottomCause::InvalidConfig => "#invalid_config",
-        BottomCause::EffectViolation => "#effect_violation",
-        BottomCause::PrivilegedRequired => "#privileged_required",
-        BottomCause::StoreBoundary => "#store_boundary",
-        BottomCause::CaidMismatch => "#caid_mismatch",
-        BottomCause::PeerNotImplemented => "#peer_not_implemented",
-        BottomCause::PeerUnknownStatus => "#peer_unknown_status",
-        BottomCause::PeerRefused => "#peer_refused",
-        BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
-        BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
-        BottomCause::StackOverflow => "#stack_overflow",
-        BottomCause::ObjectUndecodable => "#object_undecodable",
-        BottomCause::StandardRootUnavailable => "#standard_root_unavailable",
-        BottomCause::NoStandardRoot => "#no_standard_root",
-        BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
-        BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
-        BottomCause::NoUniverse => "#no_universe",
-        BottomCause::Unwritable => "#unwritable",
-    }
+fn bottom_cause_tag(c: BottomCause) -> String {
+    // The bare name lives once, on `BottomCause::as_tag`.
+    format!("#{}", c.as_tag())
 }
 
 fn real_cwd() -> anyhow::Result<PathBuf> {

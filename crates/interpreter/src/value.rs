@@ -1341,55 +1341,16 @@ impl BottomDetail {
     pub fn as_cause_combo(&self) -> Value {
         use num_bigint::BigInt;
         let mut fields = IndexMap::new();
-        let type_tag = match self.cause {
-            BottomCause::Conflict => "#conflict",
-            BottomCause::MissingKey => "#missing_key",
-            BottomCause::FuelExhausted => "#fuel_exhausted",
-            BottomCause::Timeout => "#timeout",
-            BottomCause::PeerUnreachable => "#peer_unreachable",
-            BottomCause::PeerClosed => "#peer_closed",
-            BottomCause::PeerTimeout => "#peer_timeout",
-            BottomCause::Divergent => "#divergent",
-            BottomCause::InvalidPath => "#invalid_path",
-            BottomCause::PrivateAccessViolation => "#private_access_violation",
-            BottomCause::NumericalError => "#numerical_error",
-            BottomCause::ArithmeticOnAnchor => "#arithmetic_on_anchor",
-            BottomCause::H1Split => "#h1_split",
-            BottomCause::H2Split => "#h2_split",
-            BottomCause::SemanticEclipse => "#semantic_eclipse",
-            BottomCause::NoContext => "#no_context",
-            BottomCause::OutOfHorizon => "#out_of_horizon",
-            BottomCause::SystemReserved => "#system_reserved",
-            BottomCause::InvalidConfig => "#invalid_config",
-            BottomCause::EffectViolation => "#effect_violation",
-            BottomCause::PrivilegedRequired => "#privileged_required",
-            BottomCause::StoreBoundary => "#store_boundary",
-            BottomCause::CaidMismatch => "#caid_mismatch",
-            BottomCause::PeerNotImplemented => "#peer_not_implemented",
-            BottomCause::PeerUnknownStatus => "#peer_unknown_status",
-            BottomCause::PeerRefused => "#peer_refused",
-            BottomCause::RoutingBudgetExceeded => "#routing_budget_exceeded",
-            BottomCause::MaxDepthExceeded => "#max_depth_exceeded",
-            BottomCause::StackOverflow => "#stack_overflow",
-            BottomCause::ObjectUndecodable => "#object_undecodable",
-            BottomCause::StandardRootUnavailable => "#standard_root_unavailable",
-            BottomCause::NoStandardRoot => "#no_standard_root",
-            BottomCause::UnprojectedBuiltin => "#unprojected_builtin",
-            BottomCause::UnprovidedBuiltin => "#unprovided_builtin",
-            BottomCause::NoUniverse => "#no_universe",
-            BottomCause::Unwritable => "#unwritable",
-        };
+        // The bare name lives once, on `BottomCause::as_tag`. `%val` is that
+        // tag. A new cause needs no arm here.
+        let bare = self.cause.as_tag();
         // F2 (REAL_04 §1 / SYNTAX_08 §4 #3): %cause is a Cocoon whose duality
         // core is %val = the cause tag. Direct observation collapses via G6
         // value-context projection; <<path>> keeps the full chain.
         // Fossil %type twin removed (cocoon_shape arc 2026-07-19).
         fields.insert(
             "%val".to_string(),
-            Value::Atom(
-                AtomKind::Tag(type_tag[1..].to_string()),
-                EffectTag::Pure,
-                None,
-            ),
+            Value::Atom(AtomKind::Tag(bare.to_string()), EffectTag::Pure, None),
         );
         // Non-empty data axis so lattice unify does not treat this as a pure
         // wrapper and peel to the bare tag during evolve field-merge (which
@@ -1633,48 +1594,117 @@ pub enum BottomCause {
     /// say the refusal is permanent, and it does not say a partial file is
     /// absent. Append-only tail.
     Unwritable,
+    /// A decoded bottom carried a cause this engine cannot name (D94).
+    /// The object decoded and its address checked (D65).
+    /// [`Self::ObjectUndecodable`] remains the REAL_03 §6.6 verdict for an
+    /// object the decoder did not return. Append-only tail.
+    UnrecognizedCause,
+}
+
+/// Leading `#` is spelling. The durable name is the bare tag.
+const fn strip_stored_cause_tag(tag: &str) -> &str {
+    let bytes = tag.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i] == b'#' {
+        i += 1;
+    }
+    tag.split_at(i).1
+}
+
+const fn cause_tags_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// One row is one cause. Expanded inside `impl BottomCause` into the
+/// encode match, the decode chain, and a const round-trip of every row.
+/// A new enum variant that is not a row fails `as_tag` (non-exhaustive).
+/// A row whose stored tag does not read back as itself fails
+/// `CAUSE_TAG_ROUND_TRIP`. A tag that is not a row reads as
+/// `#unrecognized_cause` (D94). `#object_undecodable` stays a row of its own.
+macro_rules! cause_tags {
+    ($($variant:ident => $tag:literal),* $(,)?) => {
+        pub const fn as_tag(self) -> &'static str {
+            match self {
+                $(Self::$variant => $tag,)*
+            }
+        }
+
+        pub const fn from_stored_tag(tag: &str) -> Self {
+            let bare = strip_stored_cause_tag(tag);
+            $(
+                if cause_tags_eq(bare, $tag) {
+                    return Self::$variant;
+                }
+            )*
+            Self::UnrecognizedCause
+        }
+
+        pub(crate) const CAUSE_TAG_ROUND_TRIP: () = {
+            $(
+                assert!(
+                    cause_tags_eq(Self::from_stored_tag($tag).as_tag(), $tag),
+                    concat!(
+                        "BottomCause::",
+                        stringify!($variant),
+                        " does not round-trip through its stored tag"
+                    )
+                );
+            )*
+        };
+    };
 }
 
 impl BottomCause {
-    pub fn as_tag(&self) -> &str {
-        match self {
-            BottomCause::Conflict => "conflict",
-            BottomCause::MissingKey => "missing_key",
-            BottomCause::FuelExhausted => "fuel_exhausted",
-            BottomCause::Timeout => "timeout",
-            BottomCause::PeerUnreachable => "peer_unreachable",
-            BottomCause::PeerClosed => "peer_closed",
-            BottomCause::PeerTimeout => "peer_timeout",
-            BottomCause::Divergent => "divergent",
-            BottomCause::InvalidPath => "invalid_path",
-            BottomCause::PrivateAccessViolation => "private_access_violation",
-            BottomCause::NumericalError => "numerical_error",
-            BottomCause::ArithmeticOnAnchor => "arithmetic_on_anchor",
-            BottomCause::H1Split => "h1_split",
-            BottomCause::H2Split => "h2_split",
-            BottomCause::SemanticEclipse => "semantic_eclipse",
-            BottomCause::NoContext => "no_context",
-            BottomCause::OutOfHorizon => "out_of_horizon",
-            BottomCause::SystemReserved => "system_reserved",
-            BottomCause::InvalidConfig => "invalid_config",
-            BottomCause::EffectViolation => "effect_violation",
-            BottomCause::PrivilegedRequired => "privileged_required",
-            BottomCause::StoreBoundary => "store_boundary",
-            BottomCause::CaidMismatch => "caid_mismatch",
-            BottomCause::PeerNotImplemented => "peer_not_implemented",
-            BottomCause::PeerUnknownStatus => "peer_unknown_status",
-            BottomCause::PeerRefused => "peer_refused",
-            BottomCause::RoutingBudgetExceeded => "routing_budget_exceeded",
-            BottomCause::MaxDepthExceeded => "max_depth_exceeded",
-            BottomCause::StackOverflow => "stack_overflow",
-            BottomCause::ObjectUndecodable => "object_undecodable",
-            BottomCause::StandardRootUnavailable => "standard_root_unavailable",
-            BottomCause::NoStandardRoot => "no_standard_root",
-            BottomCause::UnprojectedBuiltin => "unprojected_builtin",
-            BottomCause::UnprovidedBuiltin => "unprovided_builtin",
-            BottomCause::NoUniverse => "no_universe",
-            BottomCause::Unwritable => "unwritable",
-        }
+    cause_tags! {
+        Conflict => "conflict",
+        MissingKey => "missing_key",
+        FuelExhausted => "fuel_exhausted",
+        Timeout => "timeout",
+        PeerUnreachable => "peer_unreachable",
+        PeerClosed => "peer_closed",
+        PeerTimeout => "peer_timeout",
+        Divergent => "divergent",
+        InvalidPath => "invalid_path",
+        PrivateAccessViolation => "private_access_violation",
+        NumericalError => "numerical_error",
+        ArithmeticOnAnchor => "arithmetic_on_anchor",
+        H1Split => "h1_split",
+        H2Split => "h2_split",
+        SemanticEclipse => "semantic_eclipse",
+        NoContext => "no_context",
+        OutOfHorizon => "out_of_horizon",
+        SystemReserved => "system_reserved",
+        InvalidConfig => "invalid_config",
+        EffectViolation => "effect_violation",
+        PrivilegedRequired => "privileged_required",
+        StoreBoundary => "store_boundary",
+        CaidMismatch => "caid_mismatch",
+        PeerNotImplemented => "peer_not_implemented",
+        PeerUnknownStatus => "peer_unknown_status",
+        PeerRefused => "peer_refused",
+        RoutingBudgetExceeded => "routing_budget_exceeded",
+        MaxDepthExceeded => "max_depth_exceeded",
+        StackOverflow => "stack_overflow",
+        ObjectUndecodable => "object_undecodable",
+        StandardRootUnavailable => "standard_root_unavailable",
+        NoStandardRoot => "no_standard_root",
+        UnprojectedBuiltin => "unprojected_builtin",
+        UnprovidedBuiltin => "unprovided_builtin",
+        NoUniverse => "no_universe",
+        Unwritable => "unwritable",
+        UnrecognizedCause => "unrecognized_cause",
     }
 
     /// REAL_04 §4 primary-cause priority for multi-branch collapse
@@ -1691,6 +1721,9 @@ impl BottomCause {
             | BottomCause::StoreBoundary
             | BottomCause::CaidMismatch
             | BottomCause::ObjectUndecodable
+            // D94: an unnamed stored cause stays ahead of a lattice
+            // `#conflict` (rank 2) and behind a judged `#divergent` (rank 0).
+            | BottomCause::UnrecognizedCause
             | BottomCause::StandardRootUnavailable
             | BottomCause::NoStandardRoot
             | BottomCause::UnprojectedBuiltin
