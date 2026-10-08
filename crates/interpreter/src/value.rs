@@ -1599,6 +1599,14 @@ pub enum BottomCause {
     /// [`Self::ObjectUndecodable`] remains the REAL_03 §6.6 verdict for an
     /// object the decoder did not return. Append-only tail.
     UnrecognizedCause,
+    /// No branch's pattern met the argument (D97). Append-only tail.
+    /// A failed match, beside [`Self::Conflict`].
+    NoMatchingBranch,
+    /// An old-engine dispatch table kept a printed pattern name and not
+    /// the pattern (D99). The engine does not guess it back. Append-only
+    /// tail. Ranked with the other unnamed / unreadable causes so a
+    /// multi-branch collapse does not report it as `#conflict`.
+    PatternNotKept,
 }
 
 /// Leading `#` is spelling. The durable name is the bare tag.
@@ -1705,6 +1713,8 @@ impl BottomCause {
         NoUniverse => "no_universe",
         Unwritable => "unwritable",
         UnrecognizedCause => "unrecognized_cause",
+        NoMatchingBranch => "no_matching_branch",
+        PatternNotKept => "pattern_not_kept",
     }
 
     /// REAL_04 §4 primary-cause priority for multi-branch collapse
@@ -1724,12 +1734,14 @@ impl BottomCause {
             // D94: an unnamed stored cause stays ahead of a lattice
             // `#conflict` (rank 2) and behind a judged `#divergent` (rank 0).
             | BottomCause::UnrecognizedCause
+            | BottomCause::PatternNotKept
             | BottomCause::StandardRootUnavailable
             | BottomCause::NoStandardRoot
             | BottomCause::UnprojectedBuiltin
             | BottomCause::UnprovidedBuiltin
             | BottomCause::Unwritable => 1,
             BottomCause::Conflict
+            | BottomCause::NoMatchingBranch
             | BottomCause::H1Split
             | BottomCause::H2Split
             | BottomCause::SemanticEclipse

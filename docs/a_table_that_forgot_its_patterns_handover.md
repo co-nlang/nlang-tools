@@ -78,14 +78,89 @@
 
 ### 8.1 做了什麼
 
+裁定日 2026-10-09。模式以值留在 `%rules`。分支名是 `"{" + hex(content_digest(模式)) + "}"`。表裡的普通資料鍵與引號鍵收成約束：`_` 是 Top，整段能解析成整數的鍵是該整數，其餘是該字串。標籤鍵本來就是模式鍵。
+
+只有綁定名的態射保持原位元組：裸名、`x y ->`（剖析器已折成巢狀 curry）、`((a, b) -> …)`、以及 `_ ->`（剖析成 `Atom(Top)`）。這些不寫 `%param`。
+
+其餘 `->` 把模式值放進該分支的 `%pattern`，本體仍走 `%code`。`x @T` 且型別側是裸名時，同一分支另存 `%param` 為該綁定名；求值前把型別側的裸名 `int` 改寫成路徑段 `@int`。
+
+分派讀 `%pattern`，缺席則 Top。`$`：`%val` 的 thunk 在 force 前把 context 換成引數；`%code` 仍把呼叫 context 設成引數。無匹配是 `NoMatchingBranch`（`#no_matching_branch`）。`it` 與隱含綁定 `0` 退場。沒有模式鍵的 Combo 只對原子查鍵；非原子落到 `_`，再無則同一成因。
+
+舊形（有 `%morphism`、無 `%rules`、無 `%builtin`、且有非 meta 非數字鍵）答 `PatternNotKept`（`#pattern_not_kept`）。只有數字鍵的 `%morphism` 仍是內建的部分施用。
+
+兩個新成員接在列舉尾端 `UnrecognizedCause` 之後。名字只寫在 `cause_tags!`。`primary_rank`：`PatternNotKept` 為 1，與 `UnrecognizedCause` 同列；`NoMatchingBranch` 為 2，與 `Conflict` 同列。
+
+表的規則繭是 `{ %pattern, %val, _: Top }`，繭關閉。`%rules` 持有者打開。資料軸 `_ : Top` 讓這顆繭在相交時不被壓成 `%val`。模式箭的規則用 `%code`，沒有這顆 `_`。
+
+套件留在 `oo` 0.77.0。磁碟 `layout=9`、`encoding=5`。
+
 ### 8.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/value.rs`：`NoMatchingBranch`、`PatternNotKept`，以及上面的兩列 rank。
+2. `crates/interpreter/src/dispatch.rs`：`resolve_pattern` 已刪。分支名走 `content_digest`。表規則繭與「父資料鍵補成約束」的繭都帶 `_ : Top`。
+3. `crates/interpreter/src/eval.rs`：綁定名態射（含 `Atom(Top)`）走原構造；其餘走模式箭。`%rules` 持有者 `closed: false`。`morphism_parameter_names` 走進 `TypeAnnotation`，`x @int -> x + 1` 的 `x` 算綁定名。
+4. `crates/interpreter/src/lib.rs`：舊形回 `PatternNotKept`。查鍵只在引數塌成原子時用印出形。落空是 `NoMatchingBranch`。
+
+`_ : Top` 沿用既有腳手架：印出時 `is_engine_scaffold_field` 把它拿掉，與成因繭同一條路。`unify.rs`、`bn_serial.rs`、剖析器、探針未改。沒有 rustfmt 這四個檔與探針。
 
 ### 8.3 工單哪裡是錯的
 
+工單寫 `to_string_plain` 在 `crates/interpreter/src` 非測試碼有 23 處呼叫。這次點名：定義 1 處（`value.rs:3172`），呼叫 57 處。`value.rs:3208` 一行裡有起點與終點兩個呼叫。23 與這次的點名對不上。逐處判斷在 Q1。
+
+工單預期的交付後全樹是 261 target、2525 passed、0 failed。三輪的 `test result:` 與此相同。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1** 行號是改完之後的。本病三處已改：
+
+1. `@{expr}:`（`eval.rs` 的 `FieldKey::Pattern`）。座標不再是 `to_string_plain()`。模式值留在分支的 `%pattern`，名字是 digest。這處呼叫已不在清單裡。
+2. `->` 的左手邊（`eval.rs` `ExprKind::Morphism`）。只有綁定名的形保持原位元組。其餘左手邊的模式值留下。
+3. Combo 施用查鍵（`lib.rs:3282`）。只在 `arg.collapse()` 是原子時用印出形當鍵。非原子沒有鍵。落空是 `NoMatchingBranch`。不再退到欄位 `it`。
+
+`resolve_pattern` 是把字串猜回模式的那一半，唯一呼叫者是舊的 `dispatch_morphism`。它本身不是 `to_string_plain` 呼叫。已刪。
+
+`store_boundary_probe_test.rs:23–27` 的註解：已死的 `~%Official./add_architect` 對 `{0: str}` 做 `force(arg).to_string_plain()`，得到 `"{...}"`。是同一類。該內建仍是死的，探針未改，沒有把它復活。
+
+其餘呼叫判為不是本病，未改：
+
+1. 印表機自身：`value.rs:3200`、`3208`（兩個）、`3210`。`value.rs:3289` 拿來比 `"#list"`。
+2. `lib.rs:1419`：force 一個 `%kind` 標籤，再比 `"list"`。
+3. `eval.rs:1499`、`1500`、`2191`、`2192`：關係兩側原子自己的拼寫。`1759`：標籤等於 `eager`。`2088`：透鏡沿著使用者寫下的那段鍵走。`2101`：字串插值。
+4. `type_constraint.rs:145`、`280`：標籤等於 `list`／`type`。
+5. `builtins/diff.rs:183`。`query.rs:116`、`187`。`reflection.rs:55`、`128`、`263`、`298`、`316`、`335`。`engine.rs:210`、`805`、`824`、`834`、`854`。`string.rs:295`、`346`、`395`。`disc.rs:111`、`112`、`178`、`179`、`182`、`187`、`499`。
+6. `builtins/list.rs:229`、`230`、`565`、`601`、`768`、`801`、`919`、`1324`、`1374` 比的是 list 標籤或列印。`1030` 是 `list.group_by` 的分組鍵，用的是該鍵的印出形，不是把分派模式重建出來。
+
+**Q2** 分支名 `"{" + hex(content_digest(P)) + "}"`。`content_digest` 是 `serialize_bn` 的 sha256。`serialize_combo` 先按軸、再按鍵排序，所以 IndexMap 的寫入序不進 digest。這個名字不會與數字 curry 槽相撞。同一模式兩次是同一分支、兩個本體相交（g7）。書寫順序不進位元組（g5）。`x @T` 的綁定名在同一分支的 `%param`（字串）。只有綁定名的態射不寫 `%param`，鍵仍是原來的綁定名或元組鍵。
+
+**Q3** 空目錄、release 二進位、`parse_expr_only`：
+
+1. `x @{ 4.. }` 剖析成 `Apply(Path(Bare:x), AnonSet(Range(Int 4, TagEnd)))`。它不是型別註記。`(x @{ 4.. } -> x)` 的 `%pattern` 是 `_`（Top），digest `a8100ae6aa1940d0b663bb31cd466142ebbdbd5187131b92d93818987832eb89`，沒有 `%param`。對 1、對 5、對 9 都答 `_`。單獨求值 `x @{ 4.. }` 也是 `_`：自由的 `x` 是 Top。
+2. `x @(1 | 2)` 剖析成 `TypeAnnotation(Path(Bare:x), Join(Int 1, Int 2))`。`(x @(1 | 2) -> x)` 的 `%pattern` 是 `1 | 2`，`%param` 是 `"x"`。對 1 答 `1`，對 3 答 `#no_matching_branch`。
+3. 對照：`x @int -> x` 剖析成 `Morphism(TypeAnnotation(Path(Bare:x), Path(Bare:int)), Path(Bare:x))`，型別側是裸名 `int`。`@int -> 7` 的左手邊是 `Path(Bare:@int)`。`_ -> 1` 的左手邊是 `Atom(Top)`。`4.. -> "big"` 的左手邊是 `Range`。
+
+**Q4** 未修。空目錄、release 二進位。`@int & 4..` 印成 `4..#_`，`(@int & 4..) = 4..` 是 `#true`。`@int & 4..6` 印成 `4..6`。`@int & ..6` 印成 `#_|_..6`。`@string & 1` 得 `1`。`@str & 1` 是 `_|_  ;; %cause: #conflict  ;; Value is not a string`。因此 `@int` 與區間寫在一起，和那個區間是同一個值。g1 仍綠：三個區間分支對 5 答 `"C"`。探針不要求 `@int & 4..` 與 `4..` 是兩個模式。
+
+**Q5** 空目錄、release 二進位。`oo eval` 把 `{ @{ @int }: "A", @{ @str }: "B", _: "other" }` 印成剝開的本體：三個 digest 鍵下面是 `"A"`、`"other"`、`"B"`。`oo run --format` 印出 `%pattern` 與 `%val`：`88d2c99cfaaea4df5f1c5d5c43314b9b1361e87f83d522825ff3122bbb490c44` 的模式是 `{{ %kind: #type, %name: "int" }}`，`e935c5cea0c20553e6c7d7fdff175ec0611ef6242816e67ab9991b534e764a13` 是 `@str`，`a8100ae6aa1940d0b663bb31cd466142ebbdbd5187131b92d93818987832eb89` 的模式是 `_`。格式文本裡看不到資料軸 `_`。把 `oo eval` 的文本貼回去，與來源字面比較，是 `#false`。把 `run --format` 的 `t` 本體貼回去再比較，也是 `#false`。來源字面與自己比較是 `#true`。這兩次 `eval`／`run` 都沒有建立 `.oo/`。
+
+**Q6** 空目錄、release 二進位。`({ @{ @int }: "A" } & { @{ @str }: "B" })` 印出一張合併的 `%rules`，兩個 digest 鍵的本體是 `"A"` 與 `"B"`。`({ @{ 4.. }: "A" } & { @{ 4.. }: "B" })` 是 `_|_  ;; %cause: #conflict  ;; Incompatible types: "A" vs "B"`。`({ @{ 4.. }: "A" } & { @{ ..6 }: "B" }) 5` 是 `"A" | "B"`。`((x @int -> "i") | (x @str -> "s"))` 對 4、對 `"s"`、對 2.5 都是 `_|_  ;; %cause: #conflict`。輸出裡沒有 `Incompatible types`。被施用的是一個聯集。
 
 ### 8.5 探針
 
+`crates/oo/tests/a_table_that_forgot_its_patterns_probe_test.rs` 未改，未 rustfmt。兩支預先修訂的測試未再改：`dispatch_test.rs` 的 `test_dispatch_it_fallback`，`a_name_is_no_longer_a_credential_probe_test.rs` 的 `c4_no_builtin_key_is_still_a_conflict`。
+
+全樹第三輪該探針 17／17，1.62s。`g1_range_tables_still_dispatch`、`g2_lookup_still_works`、`g3_bare_binders_behave_as_before`、`g4_bare_binders_keep_their_bytes`、`g5_order_does_not_reach_the_bytes`、`g6_any_arrows_still_answer`、`g7_the_same_pattern_twice_meets`、r1–r10 皆 `ok`。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.27s，`^error` 0。
+
 ### 8.6 數字
 
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 261 行，2525 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3044 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。g4 四個根：`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`；`g` 與 `h` 同倉為 `e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`；`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`；`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.77.0。未推送。
+
 ### 8.7 你認為需要改規格之處
+
+規格檔這次沒有改。建議驗收方依工單第 6 節收尾：`SPEC_07` §1／§1.1 情境 A／§1.1.1、`SYNTAX_11`、`SPEC_05` §3.3、`REAL_03` §5.2、`SPEC_06`、`SPEC_09` L475、`SYNTAX_12` L78、`TAG_REGISTRY`（`#no_matching_branch` 與 `#pattern_not_kept`）、`CHANGELOG`。
+
+三件實測留給規格。Q5：兩種印出貼回去都與來源字面比較得 `#false`，來源字面與自己比較是 `#true`。Q6：兩個態射的聯集再施用，答的是 `#conflict`。Q4 照工單留著：`@int & 4..` 與 `4..` 是同一個值，`@string & 1` 得 `1`。

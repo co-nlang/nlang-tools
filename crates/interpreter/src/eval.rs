@@ -28,6 +28,10 @@ fn morphism_parameter_names(param: &Expr) -> HashSet<String> {
         ExprKind::Path(p) if p.anchor == PathAnchor::Bare && p.segments.len() == 1 => {
             names.insert(p.segments[0].trim().to_string());
         }
+        // `x @T` binds `x`. The type side is the pattern, not a binder.
+        ExprKind::TypeAnnotation(inner, _) => {
+            names.extend(morphism_parameter_names(inner));
+        }
         ExprKind::Tuple(items) => {
             for item in items {
                 names.extend(morphism_parameter_names(item));
@@ -36,6 +40,130 @@ fn morphism_parameter_names(param: &Expr) -> HashSet<String> {
         _ => {}
     }
     names
+}
+
+/// A binder-only arrow (`x ->`, `_ ->`, `(a, b) ->`, and the curry of
+/// `x y ->`) keeps the SPEC_07 §5.2 definition-1 bytes. A segment that
+/// already carries a sigil is a pattern (`@int`, `#a`), not a binder.
+fn binder_name(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Path(p) if p.anchor == PathAnchor::Bare && p.segments.len() == 1 => {
+            let name = p.segments[0].trim();
+            if name.is_empty() || name.starts_with(['@', '/', '%', '~', '#']) {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_binder_only_morphism(param: &Expr) -> bool {
+    if binder_name(param).is_some() {
+        return true;
+    }
+    // `_` is the atom Top, not a path. It is still the binder-only arrow.
+    if matches!(param.kind, ExprKind::Atom(AtomKind::Top)) {
+        return true;
+    }
+    match &param.kind {
+        ExprKind::Tuple(items) if !items.is_empty() => items.iter().all(|it| binder_name(it).is_some()),
+        _ => false,
+    }
+}
+
+/// `x @int` parses the type side as the bare path `int`. The pattern is
+/// the type value `@int`. Any other type side (`@{ 4.. }`, `(1 | 2)`) is
+/// evaluated as written.
+fn pattern_expr_of_param(param: &Expr) -> (Expr, Option<String>) {
+    match &param.kind {
+        ExprKind::TypeAnnotation(binder, ty) => {
+            let pattern = if let Some(name) = binder_name(ty) {
+                if name == "_" {
+                    ty.as_ref().clone()
+                } else {
+                    let ExprKind::Path(path) = &ty.kind else {
+                        return (ty.as_ref().clone(), binder_name(binder));
+                    };
+                    let mut path = path.clone();
+                    path.segments[0] = format!("@{name}");
+                    Expr::new(ExprKind::Path(path), ty.span)
+                }
+            } else {
+                ty.as_ref().clone()
+            };
+            (pattern, binder_name(binder))
+        }
+        _ => (param.clone(), None),
+    }
+}
+
+fn is_plain_data_key(key: &str) -> bool {
+    let key = key.trim();
+    !(key.starts_with('%')
+        || key.starts_with('/')
+        || key.starts_with('@')
+        || key.starts_with('~'))
+}
+
+/// Same pattern twice is one branch: the bodies meet (SPEC_03 §3.1).
+fn meet_branch_bodies(left: Value, right: Value) -> Value {
+    let left = quote_branch_body(left);
+    let right = quote_branch_body(right);
+    match (left, right) {
+        (
+            Value::Thunk {
+                expr: a,
+                closure,
+                context,
+                effect: ea,
+            },
+            Value::Thunk {
+                expr: b,
+                effect: eb,
+                ..
+            },
+        ) => Value::Thunk {
+            expr: Box::new(Expr::new(
+                ExprKind::Meet(a, b),
+                nlang_parser::ast::Span::unknown(),
+            )),
+            closure,
+            context,
+            effect: ea.union(eb),
+        },
+        (left, _) => left,
+    }
+}
+
+fn quote_branch_body(v: Value) -> Value {
+    match v {
+        Value::Thunk { .. } => v,
+        Value::Atom(kind, effect, _) => Value::Thunk {
+            expr: Box::new(Expr::new(
+                ExprKind::Atom(kind),
+                nlang_parser::ast::Span::unknown(),
+            )),
+            closure: Vec::new(),
+            context: None,
+            effect,
+        },
+        other => other,
+    }
+}
+
+fn acc_pattern_branch(
+    acc: &mut IndexMap<String, (Value, Value)>,
+    pattern: Value,
+    body: Value,
+) {
+    let name = crate::dispatch::pattern_branch_name(&pattern);
+    if let Some((_, prev)) = acc.get(&name).cloned() {
+        acc.insert(name, (pattern, meet_branch_bodies(prev, body)));
+    } else {
+        acc.insert(name, (pattern, body));
+    }
 }
 
 /// Lexically free bare names in an expression. Combo fields form a
@@ -351,6 +479,145 @@ impl Ouroboros {
     /// SPEC_03 §3.1 / §1.1: collision-aware field write — key already present
     /// → force both sides and `unify_internal` (intersect `&`); absent → insert
     /// as-is (preserves Thunk laziness on non-colliding keys).
+    /// One `%rules` combo for the whole pattern batch, plus every plain
+    /// data key of this literal turned into a constraint. The holder is
+    /// open so a later pattern field can join another rule key.
+    fn install_dispatch_table(
+        &self,
+        rf: &mut IndexMap<String, Value>,
+        quoted_data: &mut IndexMap<String, Value>,
+        pattern_rules: Vec<(Value, Value)>,
+        ctx: &mut EvalContext,
+    ) {
+        let mut acc: IndexMap<String, (Value, Value)> = IndexMap::new();
+        for (pattern, body) in pattern_rules {
+            acc_pattern_branch(&mut acc, pattern, body);
+        }
+        let data_keys: Vec<String> = rf
+            .keys()
+            .filter(|k| is_plain_data_key(k))
+            .cloned()
+            .collect();
+        for key in data_keys {
+            if let Some(body) = rf.shift_remove(&key) {
+                acc_pattern_branch(
+                    &mut acc,
+                    crate::dispatch::constraint_from_data_key(&key),
+                    body,
+                );
+            }
+        }
+        let quoted: Vec<(String, Value)> = quoted_data.drain(..).collect();
+        for (key, body) in quoted {
+            acc_pattern_branch(
+                &mut acc,
+                crate::dispatch::constraint_from_data_key(&key),
+                body,
+            );
+        }
+        let mut rules_fields: IndexMap<String, Value> = IndexMap::new();
+        let mut effect = EffectTag::Pure;
+        for (name, (pattern, body)) in acc {
+            let te = body.effect();
+            effect = effect.union(te);
+            let mut fields = IndexMap::new();
+            fields.insert("%pattern".to_string(), pattern);
+            fields.insert("%val".to_string(), body);
+            // Data-axis `_` keeps unify from peeling this cocoon down to
+            // `%val` (is_pure_wrapper). The pattern has to survive a meet.
+            fields.insert("_".to_string(), Value::Top);
+            rules_fields.insert(
+                name,
+                Value::Combo(ComboVal::new(
+                    fields,
+                    true,
+                    IndexMap::new(),
+                    te,
+                    vec![],
+                )),
+            );
+        }
+        let rules = Value::Combo(ComboVal::new(
+            rules_fields,
+            false,
+            IndexMap::new(),
+            effect,
+            vec![],
+        ));
+        self.merge_field_into(
+            rf,
+            "%rules".to_string(),
+            rules,
+            ctx,
+        );
+        self.merge_field_into(
+            rf,
+            "%morphism".to_string(),
+            Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+            ctx,
+        );
+    }
+
+    /// Arrow whose left side is not only a binder. The pattern value is
+    /// kept on the branch. `x @T` also stores the binder in `%param`.
+    fn eval_pattern_morphism(&self, param: &Expr, body: &Expr, ctx: &mut EvalContext) -> Value {
+        let (pattern_expr, param_name) = pattern_expr_of_param(param);
+        let pattern = self.eval(&pattern_expr, ctx);
+        let te = self.predict_effect(body, ctx);
+        let mut rule_fields = IndexMap::new();
+        rule_fields.insert("%code".to_string(), Value::Code(Box::new(body.clone())));
+        rule_fields.insert("%pattern".to_string(), pattern.clone());
+        if let Some(name) = param_name {
+            rule_fields.insert(
+                "%param".to_string(),
+                Value::Atom(AtomKind::Str(name), EffectTag::Pure, None),
+            );
+        }
+        let mut free = free_bare_names(body, &morphism_parameter_names(param));
+        close_free_dependencies(&ctx.scopes, &mut free);
+        let mut closure_fields = IndexMap::new();
+        let current_scopes = ctx.scopes.clone();
+        for (i, s) in current_scopes.iter().enumerate() {
+            let captured = capture_free_fields(s, &free);
+            closure_fields.insert(i.to_string(), Value::Combo(captured));
+        }
+        rule_fields.insert(
+            "%closure".to_string(),
+            Value::Combo(ComboVal::new(
+                closure_fields,
+                true,
+                IndexMap::new(),
+                EffectTag::Pure,
+                vec![],
+            )),
+        );
+        let mut rules = IndexMap::new();
+        rules.insert(
+            crate::dispatch::pattern_branch_name(&pattern),
+            Value::Combo(ComboVal::new(
+                rule_fields,
+                true,
+                IndexMap::new(),
+                te,
+                vec![],
+            )),
+        );
+        let mut fields = IndexMap::new();
+        fields.insert(
+            "%morphism".to_string(),
+            Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+        );
+        fields.insert(
+            "%kind".to_string(),
+            Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None),
+        );
+        fields.insert(
+            "%rules".to_string(),
+            Value::Combo(ComboVal::new(rules, false, IndexMap::new(), te, vec![])),
+        );
+        Value::Combo(ComboVal::new(fields, true, IndexMap::new(), te, vec![]))
+    }
+
     fn merge_field_into(
         &self,
         map: &mut IndexMap<String, Value>,
@@ -1212,6 +1479,9 @@ impl Ouroboros {
                 let mut rf = IndexMap::new();
                 let mut quoted_data: IndexMap<String, Value> = IndexMap::new();
                 let mut rl = IndexMap::new();
+                // Pattern keys stay out of `rf` until the whole batch is one
+                // `%rules` value. Field-by-field merge crushes a `%val` cocoon.
+                let mut pattern_rules: Vec<(Value, Value)> = Vec::new();
                 let mut me = EffectTag::Pure;
                 let mut rv = Vec::new();
                 // T1 (cause_canon): blur spread absorbs the target but does
@@ -1354,35 +1624,15 @@ impl Ouroboros {
                             );
                         }
                         FieldKey::Pattern(pe) => {
-                            let pk = self.eval(pe, ctx).to_string_plain().trim().to_string();
+                            let pattern = self.eval(pe, ctx);
                             let te = self.predict_effect(&f.value, ctx);
-                            let rb = Value::Combo(ComboVal::new(
-                                IndexMap::from_iter(vec![(
-                                    "%val".to_string(),
-                                    Value::Thunk {
-                                        expr: Box::new(f.value.clone()),
-                                        closure: ctx.scopes.clone(),
-                                        context: ctx.context_value.clone().map(Box::new),
-                                        effect: te,
-                                    },
-                                )]),
-                                true,
-                                IndexMap::new(),
-                                te,
-                                vec![],
-                            ));
-                            self.merge_field_into(&mut rf, pk, rb, ctx);
-                            // Repeated %morphism inserts: #true & #true = #true.
-                            self.merge_field_into(
-                                &mut rf,
-                                "%morphism".to_string(),
-                                Value::Atom(
-                                    AtomKind::Tag("true".to_string()),
-                                    EffectTag::Pure,
-                                    None,
-                                ),
-                                ctx,
-                            );
+                            let body = Value::Thunk {
+                                expr: Box::new(f.value.clone()),
+                                closure: ctx.scopes.clone(),
+                                context: ctx.context_value.clone().map(Box::new),
+                                effect: te,
+                            };
+                            pattern_rules.push((pattern, body));
                         }
                         FieldKey::Path(p) => {
                             // Stage 2 (call-by-observation): build a Thunk carrying the
@@ -1449,6 +1699,9 @@ impl Ouroboros {
                 // expand time, not here (construction no longer forces sources).
                 if let Some(bd) = blur_absorb {
                     return Value::Blur(bd);
+                }
+                if !pattern_rules.is_empty() {
+                    self.install_dispatch_table(&mut rf, &mut quoted_data, pattern_rules, ctx);
                 }
                 let ranks = self.compute_ranks(&rv);
                 for (tag_name, rank) in ranks {
@@ -1575,6 +1828,9 @@ impl Ouroboros {
                 self.pipe_apply(lv, r, ctx)
             }
             ExprKind::Morphism { param, body } => {
+                if !is_binder_only_morphism(param) {
+                    return self.eval_pattern_morphism(param, body, ctx);
+                }
                 // G5: Tuple of bare single-segment paths → one rule + %params
                 // (positional destructure). Nested/non-path tuples keep `_` key.
                 let (pk, tuple_params) = match &param.kind {
