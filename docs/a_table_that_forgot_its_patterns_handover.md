@@ -318,12 +318,68 @@
 
 ### 12.1 做了什麼
 
+同一分支的多個本體是一個集合。鍵是該規則繭的 `content_digest`，形如 `"{" + hex + "}"`。集合裡只剩一個本體時，值就是那個繭。鍵按摘要排序，同一摘要再併一次仍是同一格，所以左右對調、分組、重複併入都不進位元組。
+
+本體在分派選中該分支時才求值。選中之後，每個本體用自己的閉包施用（`$` 是這次的引數），結果再 `unify_internal`。沒被選中的分支保持 thunk，不產生效應。
+
+兩張表或兩個模式箭頭以同一模式相交時，衝突留在該分支：別的引數照常作答，對該模式的引數答 ⊥。
+
+套件仍是 `oo` 0.77.0。`layout=9`，`encoding=5`。
+
 ### 12.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/dispatch.rs`：`join_rule_cocoons` 把兩個規則繭收成 `%bodies`。`rules_with_parent_data` 只把到來的資料鍵併進這個集合，不在這裡強制。`apply_single_rule` 見到 `%bodies` 時逐一施用再相交。
+2. `crates/interpreter/src/unify.rs`：兩個規則繭相交時走同一個集合，`%val` 不在這一步強制。
+
+字面建構仍是 `eval.rs` 的 `meet_branch_bodies`。探針、規格、`Cargo.toml`、`Cargo.lock` 未改。沒有 rustfmt。
 
 ### 12.3 工單哪裡是錯的
 
+無。
+
 ### 12.4 工單指名要你回答的問題
+
+**R2-Q1** 一個分支多個本體時，規則繭是 `{ %pattern, %bodies }`。`%bodies` 的資料鍵是 `"{" + hex(content_digest(繭)) + "}"`，值是那個繭。`BTreeMap` 按鍵排序，序列化也按軸與鍵排序，所以 `a & b` 與 `b & a` 的位元組相同。同一摘要寫入會蓋掉同一格，所以 `(a & b) & b` 與 `a & b` 相同。只剩一個本體時不包一層，值就是那個繭，因此兩個摘要相同的表相交之後與單張表同一形。
+
+**R2-Q2** R-1 的三個相遇點現在是：
+
+1. 字面，`eval.rs` `acc_pattern_branch`／`meet_branch_bodies`。同作用域的兩個 thunk 仍合成一個 `Meet`，閉包留那一份。這個 `Meet` 是分支的 `%val`，要等該分支被選中才強制。作用域不同的對子仍在建構時 `unify_internal`。這條路本回合沒有改。
+2. 施用時的資料鍵，`dispatch.rs` `rules_with_parent_data`。到來的繭併進 `%bodies`，這裡不強制。相交改到 `apply_single_rule`，而且只在分派選中該分支時：每個本體留自己的閉包，thunk 的 context 換成這次的引數，`%code` 在自己的 `%closure` 裡求值，然後 `unify_internal`。
+3. 兩張表（或兩個模式箭頭）的 `&`。`unify.rs` `unify_combo` 在兩個值都是規則繭時呼叫 `join_rule_cocoons`。`%val` 不再在相交當下被 `force`。相交同樣在選中該分支時。
+
+跨作用域再量，release 二進位，空目錄。`{ left: { a: 10, t: { @{ "k" }: { x: a } } }, right: { b: 7, u: { k: { y: b } } }, q: (left.t & right.u) "k" }.q` 是 `{ x: 10, y: 7 }`。`a` 留在 left，`b` 留在 right。
+
+**R2-Q3** 兩對提交後的根都不同。release 二進位，各自的空倉，提交 `t:`。
+
+模式鍵：
+
+- `t: { @{ "k" }: 1, @{ "k" }: 2, _: 0 }` 根 `cbffaaee6fda3a40c12d8f2d081c1101be20e421ecc9803cc4ec44b094290811`
+- `t: { @{ "k" }: 1, _: 0 } & { @{ "k" }: 2 }` 根 `0d5c3b0725506697f7082d2ce3023da3d57afe8aa44035c524882b3923c1cf87`
+- 兩邊 `(_.t) "z"` 都是 `0`
+
+字面在建構時把兩個 `"k"` 本體收成一個 `%val`。`oo eval` 印出該分支已是 `_|_`，`Incompatible types: 1 vs 2`，`_` 分支是 `0`。`&` 把兩個繭放在 `%bodies`，印出是 `1` 與 `2`，施用於 `"k"` 時才相交。
+
+資料鍵：
+
+- `t: { @{ "k" }: 1, k: 5 }` 根 `7f0be6aa3b3e01ed926038be7a6eeb221bfdba93ee90744bfb72c688315ca9fc`
+- `t: { @{ "k" }: 1 } & { k: 5 }` 根 `70ea829c048486318da1baaf104b10bc87b882412b7a5a36925745919ad59c42`
+- 兩邊 `(_.t) "z"` 都是 `_|_` `#no_matching_branch`
+
+字面把 `k: 5` 折進該分支，印出已是 `1` 對 `5` 的 `#conflict`。`&` 的提交值仍是 `%rules` 裡本體 `1`，資料軸另有 `k: 5`。兩件在施用 `"k"` 時才相交。
+
+**R2-Q4** release 二進位，空目錄。`{ @{ "k" }: 1, j: 5 }.j` 是 `_`。`({ @{ "k" }: 1 } & { j: 5 }).j` 是 `5`。兩者 `=` 是 `#false`。
 
 ### 12.5 探針
 
+`crates/oo/tests/a_table_that_forgot_its_patterns_r2_probe_test.rs` 未改，未 rustfmt。原探針、R-1 探針、兩支預先修訂未改。
+
+全樹第三輪：原探針 17／17，1.65s，g1–g7 與 r1–r10 皆 `ok`。R-1 探針 6／6，0.42s，`ga1_a_new_key_still_joins`、`ga2_equal_bodies_still_meet_to_themselves`、`ra0_the_literal_meets`、`ra1_a_key_that_arrives_by_meet_meets_its_branch`、`ra2_a_default_that_arrives_by_meet_meets_the_default`、`ra3_a_root_built_in_two_evolves_answers_like_its_literal` 皆 `ok`。R-2 探針 10／10，1.16s，`gb1_a_chosen_branch_runs`、`gb2_bodies_of_one_pattern_still_meet`、`rb0_in_a_literal_an_unchosen_branch_does_not_run`、`rb1_an_arriving_body_of_an_unmatched_branch_does_not_run`、`rb2_an_existing_body_of_an_unmatched_branch_does_not_run`、`rb3_a_matching_but_not_minimal_branch_does_not_run`、`rb4_tables_that_meet_do_not_run_an_unchosen_branch`、`rb5_a_conflict_between_two_bodies_is_the_branchs`、`rb6_arrows_with_one_pattern_conflict_at_application`、`rb7_the_bodies_of_one_branch_are_a_set` 皆 `ok`。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.73s，`^error` 0。
+
 ### 12.6 數字
+
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 263 行，2541 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3064 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. 提交 `x: 0` 之後 `status` 的標準根是 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)`，該倉 `Universe is static (no staged changes).`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。g4 四個根仍是 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`、`e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`、`24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`、`c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `layout=9`，`encoding=5`。套件仍是 `oo` 0.77.0。未推送。

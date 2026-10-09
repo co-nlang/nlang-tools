@@ -54,28 +54,79 @@ fn branch_cocoon(pattern: Value, body: Value) -> Value {
     ))
 }
 
+/// A dispatch branch: a pattern plus one body, or a set of bodies.
+pub(crate) fn is_rule_cocoon(c: &ComboVal) -> bool {
+    c.get_field("%pattern").is_some()
+        && (c.get_field("%val").is_some()
+            || c.get_field("%code").is_some()
+            || c.get_field("%bodies").is_some())
+}
+
+/// Bodies of one branch are a set keyed by each body's content digest.
+/// The key sorts, so which side arrived first is not in the bytes, and a
+/// body already in the set is the same entry. One body is that body.
+pub(crate) fn join_rule_cocoons(a: ComboVal, b: ComboVal) -> Value {
+    let pattern = a
+        .get_field("%pattern")
+        .expect("rule cocoon has %pattern")
+        .clone();
+    let mut set: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+    for c in [a, b] {
+        if let Some(Value::Combo(bs)) = c.get_field("%bodies") {
+            for (k, v) in bs.data.iter() {
+                set.insert(k.clone(), v.clone());
+            }
+        } else {
+            let v = Value::Combo(c);
+            set.insert(
+                format!("{{{}}}", hex::encode(crate::bn_serial::content_digest(&v))),
+                v,
+            );
+        }
+    }
+    if set.len() == 1 {
+        return set.into_values().next().unwrap();
+    }
+    let bodies = ComboVal::new(
+        set.into_iter().collect(),
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    );
+    let mut holder = IndexMap::new();
+    holder.insert("%pattern".to_string(), pattern);
+    holder.insert("%bodies".to_string(), Value::Combo(bodies));
+    Value::Combo(ComboVal::new(
+        holder,
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+}
+
 impl Ouroboros {
     /// Data keys that arrived beside an already-built `%rules` are
-    /// constraints too. A key whose pattern already names a branch meets
-    /// that branch: each body is forced with its own closure (and `$` is
-    /// this argument), then the values are unified. A new key is added.
+    /// constraints too. A key whose pattern already names a branch joins
+    /// that branch's body set. Nothing is forced here: dispatch forces a
+    /// body only when it selects the branch. A new key is added.
     pub(crate) fn rules_with_parent_data(
         &self,
         rules: &ComboVal,
         parent: &ComboVal,
-        arg: &Value,
-        ctx: &mut EvalContext,
+        _arg: &Value,
+        _ctx: &mut EvalContext,
     ) -> ComboVal {
         let mut out = rules.clone();
         for (k, v) in &parent.data {
             let pattern = constraint_from_data_key(k);
             let name = pattern_branch_name(&pattern);
             if let Some(existing) = out.data.get(&name).cloned() {
-                let left = self.apply_single_rule(existing, arg.clone(), name.clone(), ctx);
                 let arriving = branch_cocoon(pattern.clone(), v.clone());
-                let right = self.apply_single_rule(arriving, arg.clone(), name.clone(), ctx);
-                let met = self.unify_internal(left, right, ctx);
-                out.data.insert(name, branch_cocoon(pattern, met));
+                if let (Value::Combo(e), Value::Combo(r)) = (existing, arriving) {
+                    out.data.insert(name, join_rule_cocoons(e, r));
+                }
             } else {
                 out.data.insert(name, branch_cocoon(pattern, v.clone()));
             }
@@ -198,6 +249,20 @@ impl Ouroboros {
         ctx: &mut EvalContext,
     ) -> Value {
         let rule = self.force(rule, ctx);
+
+        if let Value::Combo(ref rc) = rule {
+            // Several bodies of this branch. Each keeps its own closure;
+            // `$` is this argument. The results meet. A branch dispatch
+            // did not select never reaches here, so its bodies stay thunks.
+            if let Some(Value::Combo(bs)) = rc.get_field("%bodies") {
+                let mut acc = Value::Top;
+                for (_, body) in bs.data.iter() {
+                    let r = self.apply_single_rule(body.clone(), arg.clone(), pattern_key.clone(), ctx);
+                    acc = self.unify_internal(acc, r, ctx);
+                }
+                return acc;
+            }
+        }
 
         if let Value::Combo(ref rc) = rule {
             // Morphic rule: %code body
