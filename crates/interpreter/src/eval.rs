@@ -107,33 +107,66 @@ fn is_plain_data_key(key: &str) -> bool {
         || key.starts_with('~'))
 }
 
+fn same_thunk_scope(
+    a_closure: &[std::sync::Arc<ComboVal>],
+    a_context: &Option<Box<Value>>,
+    b_closure: &[std::sync::Arc<ComboVal>],
+    b_context: &Option<Box<Value>>,
+) -> bool {
+    if a_closure.len() != b_closure.len() {
+        return false;
+    }
+    if !a_closure
+        .iter()
+        .zip(b_closure.iter())
+        .all(|(x, y)| std::sync::Arc::ptr_eq(x, y))
+    {
+        return false;
+    }
+    match (a_context, b_context) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.content_hash() == y.content_hash(),
+        _ => false,
+    }
+}
+
 /// Same pattern twice is one branch: the bodies meet (SPEC_03 §3.1).
-fn meet_branch_bodies(left: Value, right: Value) -> Value {
+/// Two thunks from the same defining scope keep one `Meet` and that
+/// scope, so `$` is still the argument at the call. Any other pair is
+/// forced in its own closure and then unified — the right body is not
+/// dropped, and it is not evaluated in the left body's scope.
+fn meet_branch_bodies(
+    oo: &Ouroboros,
+    left: Value,
+    right: Value,
+    ctx: &mut EvalContext,
+) -> Value {
     let left = quote_branch_body(left);
     let right = quote_branch_body(right);
     match (left, right) {
         (
             Value::Thunk {
                 expr: a,
-                closure,
-                context,
+                closure: ca,
+                context: xa,
                 effect: ea,
             },
             Value::Thunk {
                 expr: b,
+                closure: cb,
+                context: xb,
                 effect: eb,
-                ..
             },
-        ) => Value::Thunk {
+        ) if same_thunk_scope(&ca, &xa, &cb, &xb) => Value::Thunk {
             expr: Box::new(Expr::new(
                 ExprKind::Meet(a, b),
                 nlang_parser::ast::Span::unknown(),
             )),
-            closure,
-            context,
+            closure: ca,
+            context: xa,
             effect: ea.union(eb),
         },
-        (left, _) => left,
+        (left, right) => oo.unify_internal(left, right, ctx),
     }
 }
 
@@ -154,13 +187,15 @@ fn quote_branch_body(v: Value) -> Value {
 }
 
 fn acc_pattern_branch(
+    oo: &Ouroboros,
     acc: &mut IndexMap<String, (Value, Value)>,
     pattern: Value,
     body: Value,
+    ctx: &mut EvalContext,
 ) {
     let name = crate::dispatch::pattern_branch_name(&pattern);
     if let Some((_, prev)) = acc.get(&name).cloned() {
-        acc.insert(name, (pattern, meet_branch_bodies(prev, body)));
+        acc.insert(name, (pattern, meet_branch_bodies(oo, prev, body, ctx)));
     } else {
         acc.insert(name, (pattern, body));
     }
@@ -491,7 +526,7 @@ impl Ouroboros {
     ) {
         let mut acc: IndexMap<String, (Value, Value)> = IndexMap::new();
         for (pattern, body) in pattern_rules {
-            acc_pattern_branch(&mut acc, pattern, body);
+            acc_pattern_branch(self, &mut acc, pattern, body, ctx);
         }
         let data_keys: Vec<String> = rf
             .keys()
@@ -501,18 +536,22 @@ impl Ouroboros {
         for key in data_keys {
             if let Some(body) = rf.shift_remove(&key) {
                 acc_pattern_branch(
+                    self,
                     &mut acc,
                     crate::dispatch::constraint_from_data_key(&key),
                     body,
+                    ctx,
                 );
             }
         }
         let quoted: Vec<(String, Value)> = quoted_data.drain(..).collect();
         for (key, body) in quoted {
             acc_pattern_branch(
+                self,
                 &mut acc,
                 crate::dispatch::constraint_from_data_key(&key),
                 body,
+                ctx,
             );
         }
         let mut rules_fields: IndexMap<String, Value> = IndexMap::new();

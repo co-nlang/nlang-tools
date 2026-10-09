@@ -38,38 +38,51 @@ pub(crate) fn rules_have_pattern(rules: &ComboVal) -> bool {
     })
 }
 
-/// Data keys that arrived beside an already-built `%rules` (a later
-/// evolve of `k: 5` on a root that already holds `@{1}:`) are
-/// constraints too. Keys already named by that pattern are left alone.
-pub(crate) fn rules_with_parent_data(rules: &ComboVal, parent: &ComboVal) -> ComboVal {
-    let mut out = rules.clone();
-    for (k, v) in &parent.data {
-        let pattern = constraint_from_data_key(k);
-        let name = pattern_branch_name(&pattern);
-        if out.data.contains_key(&name) {
-            continue;
-        }
-        let te = v.effect();
-        out.data.insert(
-            name,
-            Value::Combo(ComboVal::new(
-                IndexMap::from_iter([
-                    ("%pattern".to_string(), pattern),
-                    ("%val".to_string(), v.clone()),
-                    // Same anti-peel as a table rule built by eval.
-                    ("_".to_string(), Value::Top),
-                ]),
-                true,
-                IndexMap::new(),
-                te,
-                vec![],
-            )),
-        );
-    }
-    out
+fn branch_cocoon(pattern: Value, body: Value) -> Value {
+    let te = body.effect();
+    Value::Combo(ComboVal::new(
+        IndexMap::from_iter([
+            ("%pattern".to_string(), pattern),
+            ("%val".to_string(), body),
+            // Same anti-peel as a table rule built by eval.
+            ("_".to_string(), Value::Top),
+        ]),
+        true,
+        IndexMap::new(),
+        te,
+        vec![],
+    ))
 }
 
 impl Ouroboros {
+    /// Data keys that arrived beside an already-built `%rules` are
+    /// constraints too. A key whose pattern already names a branch meets
+    /// that branch: each body is forced with its own closure (and `$` is
+    /// this argument), then the values are unified. A new key is added.
+    pub(crate) fn rules_with_parent_data(
+        &self,
+        rules: &ComboVal,
+        parent: &ComboVal,
+        arg: &Value,
+        ctx: &mut EvalContext,
+    ) -> ComboVal {
+        let mut out = rules.clone();
+        for (k, v) in &parent.data {
+            let pattern = constraint_from_data_key(k);
+            let name = pattern_branch_name(&pattern);
+            if let Some(existing) = out.data.get(&name).cloned() {
+                let left = self.apply_single_rule(existing, arg.clone(), name.clone(), ctx);
+                let arriving = branch_cocoon(pattern.clone(), v.clone());
+                let right = self.apply_single_rule(arriving, arg.clone(), name.clone(), ctx);
+                let met = self.unify_internal(left, right, ctx);
+                out.data.insert(name, branch_cocoon(pattern, met));
+            } else {
+                out.data.insert(name, branch_cocoon(pattern, v.clone()));
+            }
+        }
+        out
+    }
+
     pub fn dispatch_morphism(
         &self,
         rules: &ComboVal,

@@ -3160,7 +3160,7 @@ impl Ouroboros {
 
                 if let Some(Value::Combo(rules_source)) = c.get_field("%rules") {
                     let rules_for_dispatch = if dispatch::rules_have_pattern(rules_source) {
-                        dispatch::rules_with_parent_data(rules_source, c)
+                        self.rules_with_parent_data(rules_source, c, &arg, ctx)
                     } else {
                         rules_source.clone()
                     };

@@ -211,12 +211,59 @@
 
 ### 10.1 做了什麼
 
+事後到達的資料鍵在**施用時**與已有分支相交。`rules_with_parent_data` 不再在名字已存在時把到來的值丟掉。兩邊的本體各自用自己的閉包強制（`$` 是這次的引數），再 `unify_internal`。新的約束仍另開一支。
+
+同一個字面裡的相遇仍在建構時做。兩個 thunk 的閉包與 context 相同時，合成一個 `Meet`，留下那一個作用域。其餘的對子先各自強制再相交，右側不再被丟掉。
+
+第二次 `evolve` **接受**。施用答 ⊥ `#conflict`。套件仍是 `oo` 0.77.0。`layout=9`，`encoding=5`。
+
 ### 10.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/dispatch.rs`：`rules_with_parent_data` 改成施用時的方法。已有分支的兩個本體相交後寫回該分支的 `%val`。
+2. `crates/interpreter/src/lib.rs`：呼叫帶上引數與 context。
+3. `crates/interpreter/src/eval.rs`：`meet_branch_bodies` 的最後一臂改為 `unify_internal`。同作用域的兩個 thunk 仍合成 `Meet`。
+
+探針、兩支預先修訂、規格、`Cargo.toml`、`Cargo.lock` 未改。沒有 rustfmt 這三個檔與探針。`unify.rs` 未改。
 
 ### 10.3 工單哪裡是錯的
 
+無。R1-Q4 已寫明第一輪工單的「23 處」是驗收方數錯，§8.3 的 57 是對的。
+
 ### 10.4 工單指名要你回答的問題
+
+**R1-Q1** 在施用時相交。到來的 thunk 只有在強制時才用上自己的閉包，`$` 要等引數出現。建構或 `evolve` 當時還沒有這次的引數。
+
+第二次 `evolve` 接受。release 二進位，空倉。先提交 `@{ "k" }: 1`，`status` 是 `Universe is static (no staged changes).`，標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)`。再 `evolve` `k: 5`，rc 0。`status` 的暫存是 `{ k: 5 }`，`Total Logical Entropy: 75 bits`。`commit -m b` 之後 `log` 兩筆：`b` 為 `7ca94739077de531ee5ef1756bbcc9c128a0d5f65bc42b0cb680ba41fae2c0bc`（2026-10-09T03:53:04.157Z），`a` 為 `31e6f5f6c0a964ef6a1366c8bc93526ef2d1f5934343736f5cbab60c75d4c24f`（2026-10-09T03:53:04.057Z）。`(_.) "k"` 是 `_|_  ;; %cause: #conflict  ;; Incompatible types: 1 vs 5`。
+
+**R1-Q2** 三處相遇：
+
+1. `eval.rs` `acc_pattern_branch`／`meet_branch_bodies`。同一個字面。兩個 thunk 的閉包 `Arc` 相同、context 的雜湊相同時，表達式合成 `Meet`，閉包留那一份。否則 `unify_internal`：每個 thunk 在 `force` 裡換成自己的閉包。舊的 `(left, _) => left` 已不在。
+2. `dispatch.rs` `rules_with_parent_data`。施用時，資料鍵的約束已經是某分支的名字。左右都走 `apply_single_rule`：`%val` 的 thunk 保留自己的閉包，context 換成這次的引數；`%code` 在自己的 `%closure` 裡求值。然後 `unify_internal`。新鍵只新增，不跟自己相交。
+3. 兩張表的 `&` 走 `unify_internal`。規則繭的 `%val` 在相交前被 `force`，各用各的閉包。這條路原來就這樣，本回合沒有改 `unify.rs`。
+
+不同作用域：release 二進位。`{ left: { a: 10, t: { @{ "k" }: { x: a } } }, right: { b: 7, u: { k: { y: b } } }, q: (left.t & right.u) "k" }.q` 是 `{ x: 10, y: 7 }`。`a` 留在 left，`b` 留在 right。
+
+**R1-Q3** 未改導航。release 二進位，空目錄。`{ @{ "k" }: 1, j: 5 }.j` 是 `_`。`({ @{ "k" }: 1 } & { j: 5 }).j` 是 `5`。兩者 `=` 是 `#false`。
+
+**R1-Q4** 只判不改。`oodp.rs` 這 7 個呼叫都不是分派表把模式從印出形猜回去。
+
+1. `identify_caid`（486）：送進 `identify` 的是 `to_nlang(0)`。`to_string_plain` 用在 identify 的結果上，把 CAID 收成字串。
+2. `identify_caid_src`（492）：同一件事，來源是呼叫端給的原文。
+3. `field_as_str`（589）：欄位的印出形當成廣告欄位的字串。Combo 會變成 `"{...}"`。
+4. `field_as_i64`（594）：印出形再 `parse` 成 `i64`。字串原子的印出形就是內容，所以欄位是字串 `"42"` 時 `parse` 得到 42，整數 42 也得到 42。標籤 `#42` 的印出形是 `#42`，解析失敗。Combo 的印出形是 `{...}`，解析失敗。呼叫點是 `expires`、`listen_port`、`capacity`、`ts`、`ttl`。是「印出形讀回成值」，線上格式不在本卡，未改。
+5. `field_as_str_list` 三處（750、756、757）：清單元素、聯集分支、其餘值，各自的印出形收成服務名字。Combo 元素是 `"{...}"`。
 
 ### 10.5 探針
 
+`crates/oo/tests/a_table_that_forgot_its_patterns_r1_probe_test.rs` 未改，未 rustfmt。原探針與兩支預先修訂未改。
+
+全樹第三輪：原探針 17／17，1.73s，g1–g7 與 r1–r10 皆 `ok`。R-1 探針 6／6，0.42s，`ga1_a_new_key_still_joins`、`ga2_equal_bodies_still_meet_to_themselves`、`ra0_the_literal_meets`、`ra1_a_key_that_arrives_by_meet_meets_its_branch`、`ra2_a_default_that_arrives_by_meet_meets_the_default`、`ra3_a_root_built_in_two_evolves_answers_like_its_literal` 皆 `ok`。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.89s，`^error` 0。
+
 ### 10.6 數字
+
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 262 行，2531 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3052 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。g4 四個根仍是 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`、`e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`、`24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`、`c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `layout=9`，`encoding=5`。套件仍是 `oo` 0.77.0。未推送。
