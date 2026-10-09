@@ -383,3 +383,13 @@
 2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
 3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
 4. 提交 `x: 0` 之後 `status` 的標準根是 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)`，該倉 `Universe is static (no staged changes).`。`x: 0` 根 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 根 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。g4 四個根仍是 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`、`e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`、`24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`、`c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `layout=9`，`encoding=5`。套件仍是 `oo` 0.77.0。未推送。
+
+---
+
+## 13. R-2 驗收（驗收方填）
+
+### 13.1 R-2 驗收：**受理**（兩個修補回合；兩者起因皆在驗收方）
+
+交付 `a241593`：同一分支的多個本體是 `{ %pattern, %bodies: { "{<位址>}": 繭 } }`，只剩一個即該繭；施用時的資料鍵與 `unify` 裡的兩個規則繭只併進集合、不強制；分派選中的分支才逐一施用再相交。驗收方重量：全樹 ×3 **263／2541／0**（rc 皆 0，去耗時排序測試行 md5 三輪相同）、交叉編譯 0 error、conformance 162／162、`x: 0`／`1+1`／`1 + 1`／g4 根逐位元組不動、標準根 `7038e250…` available、`~%Math./add` 3／4、新倉 `layout=9`／`encoding=5`。差異純度乾淨。
+旁量〔交付二進位〕：字面裡作用域不同的一對本體建構時不求值；被選中的分支效應照常；規格引用的例子（`/fib 5`、情境 A、`SPEC_06` 範例 A、`_:` 預設、`it`、三元展開）皆照新文字作答。
+R2-Q3／R2-Q4 的陳述（字面與 `&` 位址不同、表上導航不一致）入佇列 Inbox。規格收尾於 spec `local 7fd48a3`。
