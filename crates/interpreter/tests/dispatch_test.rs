@@ -61,13 +61,15 @@ fn test_dispatch_exact_key_lookup() {
     }
 }
 
+// AMENDED 2026-10-09 for Q-076 (D98): `it` is retired — not a fallback key.
+// A miss with no `_` is `#no_matching_branch` (SPEC_07 §1.1).
 #[test]
 fn test_dispatch_it_fallback() {
     let val = eval_observed(&setup(), r#"res: { it: "default" } 42"#);
     println!("it fallback = {:?}", val);
     match val {
-        Value::Atom(AtomKind::Str(s), _, _) if s == "default" => {}
-        other => panic!("FAIL: expected \"default\" (it fallback), got {:?}", other),
+        Value::Bottom(ref b) if format!("{:?}", b.cause) == "NoMatchingBranch" => {}
+        other => panic!("FAIL: expected ⊥ #no_matching_branch (`it` retired), got {:?}", other),
     }
 }
 

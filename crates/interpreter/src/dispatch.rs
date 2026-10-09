@@ -3,7 +3,137 @@ use indexmap::IndexMap;
 use nlang_parser::ast::AtomKind;
 use num_bigint::BigInt;
 
+/// REAL_03 §5.2 item 3: a pattern branch is named by the pattern's
+/// content digest. The name is a function of the value, so it is
+/// injective up to the hash and does not depend on write order.
+/// `"{" … "}"` cannot collide with a numeric curry slot.
+pub(crate) fn pattern_branch_name(pattern: &Value) -> String {
+    format!(
+        "{{{}}}",
+        hex::encode(crate::bn_serial::content_digest(pattern))
+    )
+}
+
+/// A table's non-pattern key is a constraint: `_` is Top, a key that
+/// is entirely an integer is that integer, anything else is that string.
+pub(crate) fn constraint_from_data_key(key: &str) -> Value {
+    if key == "_" {
+        return Value::Top;
+    }
+    if let Ok(n) = key.parse::<BigInt>() {
+        return Value::Atom(AtomKind::Int(n), EffectTag::Pure, None);
+    }
+    Value::Atom(AtomKind::Str(key.to_string()), EffectTag::Pure, None)
+}
+
+pub(crate) fn rules_have_pattern(rules: &ComboVal) -> bool {
+    rules.all_fields_iter().any(|(k, v)| {
+        if k.starts_with('%') {
+            return false;
+        }
+        match v {
+            Value::Combo(rc) => rc.get_field("%pattern").is_some(),
+            _ => false,
+        }
+    })
+}
+
+fn branch_cocoon(pattern: Value, body: Value) -> Value {
+    let te = body.effect();
+    Value::Combo(ComboVal::new(
+        IndexMap::from_iter([
+            ("%pattern".to_string(), pattern),
+            ("%val".to_string(), body),
+            // Same anti-peel as a table rule built by eval.
+            ("_".to_string(), Value::Top),
+        ]),
+        true,
+        IndexMap::new(),
+        te,
+        vec![],
+    ))
+}
+
+/// A dispatch branch: a pattern plus one body, or a set of bodies.
+pub(crate) fn is_rule_cocoon(c: &ComboVal) -> bool {
+    c.get_field("%pattern").is_some()
+        && (c.get_field("%val").is_some()
+            || c.get_field("%code").is_some()
+            || c.get_field("%bodies").is_some())
+}
+
+/// Bodies of one branch are a set keyed by each body's content digest.
+/// The key sorts, so which side arrived first is not in the bytes, and a
+/// body already in the set is the same entry. One body is that body.
+pub(crate) fn join_rule_cocoons(a: ComboVal, b: ComboVal) -> Value {
+    let pattern = a
+        .get_field("%pattern")
+        .expect("rule cocoon has %pattern")
+        .clone();
+    let mut set: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+    for c in [a, b] {
+        if let Some(Value::Combo(bs)) = c.get_field("%bodies") {
+            for (k, v) in bs.data.iter() {
+                set.insert(k.clone(), v.clone());
+            }
+        } else {
+            let v = Value::Combo(c);
+            set.insert(
+                format!("{{{}}}", hex::encode(crate::bn_serial::content_digest(&v))),
+                v,
+            );
+        }
+    }
+    if set.len() == 1 {
+        return set.into_values().next().unwrap();
+    }
+    let bodies = ComboVal::new(
+        set.into_iter().collect(),
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    );
+    let mut holder = IndexMap::new();
+    holder.insert("%pattern".to_string(), pattern);
+    holder.insert("%bodies".to_string(), Value::Combo(bodies));
+    Value::Combo(ComboVal::new(
+        holder,
+        true,
+        IndexMap::new(),
+        EffectTag::Pure,
+        vec![],
+    ))
+}
+
 impl Ouroboros {
+    /// Data keys that arrived beside an already-built `%rules` are
+    /// constraints too. A key whose pattern already names a branch joins
+    /// that branch's body set. Nothing is forced here: dispatch forces a
+    /// body only when it selects the branch. A new key is added.
+    pub(crate) fn rules_with_parent_data(
+        &self,
+        rules: &ComboVal,
+        parent: &ComboVal,
+        _arg: &Value,
+        _ctx: &mut EvalContext,
+    ) -> ComboVal {
+        let mut out = rules.clone();
+        for (k, v) in &parent.data {
+            let pattern = constraint_from_data_key(k);
+            let name = pattern_branch_name(&pattern);
+            if let Some(existing) = out.data.get(&name).cloned() {
+                let arriving = branch_cocoon(pattern.clone(), v.clone());
+                if let (Value::Combo(e), Value::Combo(r)) = (existing, arriving) {
+                    out.data.insert(name, join_rule_cocoons(e, r));
+                }
+            } else {
+                out.data.insert(name, branch_cocoon(pattern, v.clone()));
+            }
+        }
+        out
+    }
+
     pub fn dispatch_morphism(
         &self,
         rules: &ComboVal,
@@ -17,7 +147,14 @@ impl Ouroboros {
             if pattern_key.starts_with('%') {
                 continue;
             }
-            let pattern_value = self.resolve_pattern(&pattern_key, ctx);
+            let pattern_value = match &rule_val {
+                Value::Combo(rc) => match rc.get_field("%pattern") {
+                    Some(p) => self.force(p.clone(), ctx),
+                    // Binder-only rule: no stored pattern, matches any argument.
+                    None => Value::Top,
+                },
+                _ => Value::Top,
+            };
             let unified = self.unify_internal(arg.clone(), pattern_value.clone(), ctx);
 
             if !matches!(unified, Value::Bottom(_)) {
@@ -62,87 +199,6 @@ impl Ouroboros {
                 }
             }
         }
-    }
-
-    fn resolve_pattern(&self, pattern_key: &str, ctx: &mut EvalContext) -> Value {
-        let trimmed = pattern_key.trim();
-
-        if trimmed == "_" || trimmed == "it" || trimmed == "0" {
-            return Value::Top;
-        }
-
-        // E2: range canonical keys (`4..#_`, `1..9`, `4..6`, …) must resolve to
-        // Value::Range — not fall through to Top (silent match-all).
-        if trimmed.contains("..") {
-            if let Ok(expr) = nlang_parser::parse_expr_only(trimmed) {
-                let v = self.eval(&expr, ctx);
-                if matches!(v, Value::Range { .. }) {
-                    return v;
-                }
-                // Parsed but not a range (e.g. arithmetic with `..` in a string
-                // path) — fall through to legacy string arms.
-            }
-        }
-
-        if !trimmed.starts_with('@')
-            && !trimmed.starts_with('#')
-            && trimmed.parse::<i64>().is_err()
-            && trimmed.parse::<f64>().is_err()
-            && !(trimmed.starts_with('"') && trimmed.ends_with('"'))
-        {
-            return Value::Top;
-        }
-
-        if trimmed.starts_with('@') {
-            let type_name = trimmed.trim_start_matches('@');
-            if type_name.starts_with('{') {
-                return Value::Top;
-            }
-            // kind_tag B3 + type_super R1: `#type` + `%name` (fossil `%type` retired).
-            return Value::Combo(ComboVal::new(
-                IndexMap::from_iter(vec![
-                    (
-                        "%kind".to_string(),
-                        Value::Atom(AtomKind::Tag("type".to_string()), EffectTag::Pure, None),
-                    ),
-                    (
-                        "%name".to_string(),
-                        Value::Atom(AtomKind::Str(type_name.to_string()), EffectTag::Pure, None),
-                    ),
-                ]),
-                true,
-                IndexMap::new(),
-                EffectTag::Pure,
-                vec![],
-            ));
-        }
-
-        if trimmed.parse::<BigInt>().is_ok() {
-            return Value::Atom(
-                AtomKind::Int(trimmed.parse::<BigInt>().unwrap()),
-                EffectTag::Pure,
-                None,
-            );
-        }
-
-        if trimmed.parse::<f64>().is_ok() {
-            return Value::Atom(
-                AtomKind::Float(trimmed.parse::<f64>().unwrap()),
-                EffectTag::Pure,
-                None,
-            );
-        }
-
-        if trimmed.starts_with('"') && trimmed.ends_with('"') {
-            let s = trimmed[1..trimmed.len() - 1].to_string();
-            return Value::Atom(AtomKind::Str(s), EffectTag::Pure, None);
-        }
-
-        if trimmed.starts_with('#') {
-            return Value::Atom(AtomKind::Tag(trimmed.to_string()), EffectTag::Pure, None);
-        }
-
-        Value::Top
     }
 
     /// Minimal elements by **pattern** refinement (SPEC_07 情境 C):
@@ -195,6 +251,20 @@ impl Ouroboros {
         let rule = self.force(rule, ctx);
 
         if let Value::Combo(ref rc) = rule {
+            // Several bodies of this branch. Each keeps its own closure;
+            // `$` is this argument. The results meet. A branch dispatch
+            // did not select never reaches here, so its bodies stay thunks.
+            if let Some(Value::Combo(bs)) = rc.get_field("%bodies") {
+                let mut acc = Value::Top;
+                for (_, body) in bs.data.iter() {
+                    let r = self.apply_single_rule(body.clone(), arg.clone(), pattern_key.clone(), ctx);
+                    acc = self.unify_internal(acc, r, ctx);
+                }
+                return acc;
+            }
+        }
+
+        if let Value::Combo(ref rc) = rule {
             // Morphic rule: %code body
             if let Some(Value::Code(expr)) = rc.get_field("%code") {
                 let mut call_ctx = self.sub_context(ctx);
@@ -216,12 +286,22 @@ impl Ouroboros {
                     }
                 }
 
-                let param_name = pattern_key.trim().to_string();
                 let mut arg_map = IndexMap::new();
-                // Whole-argument bindings (keep even under tuple destructure).
-                arg_map.insert("it".to_string(), arg.clone());
-                arg_map.insert("0".to_string(), arg.clone());
-                arg_map.insert(param_name.clone(), arg.clone());
+                // `x @T` stores the binder next to the pattern. A binder-only
+                // rule has no `%pattern`; its key is the binder (or the
+                // tuple key). A digest key is not a name. `it` and the
+                // implicit `0` are retired (D98).
+                let param_from_rule = rc.get_field("%param").and_then(|v| {
+                    match self.force(v.clone(), ctx) {
+                        Value::Atom(AtomKind::Str(s), _, _) => Some(s),
+                        _ => None,
+                    }
+                });
+                if let Some(name) = param_from_rule {
+                    arg_map.insert(name, arg.clone());
+                } else if rc.get_field("%pattern").is_none() {
+                    arg_map.insert(pattern_key.trim().to_string(), arg.clone());
+                }
 
                 // G5 R-B: `%params` → positional destructure of a tuple arg.
                 if let Some(params_v) = rc.get_field("%params") {
@@ -280,7 +360,23 @@ impl Ouroboros {
             // If v is itself a morphism, apply it to the argument (e.g.
             // `{ @{ 4.. }: (x -> x + 1) } 5` → 6).
             if let Some(val) = rc.get_field("%val") {
-                let forced = self.force(val.clone(), ctx);
+                // A stored thunk context would hide the matched input.
+                // `$` in the branch is that input (SYNTAX_12 §2 #5).
+                let val = match val.clone() {
+                    Value::Thunk {
+                        expr,
+                        closure,
+                        effect,
+                        ..
+                    } => Value::Thunk {
+                        expr,
+                        closure,
+                        context: Some(Box::new(arg.clone())),
+                        effect,
+                    },
+                    other => other,
+                };
+                let forced = self.force(val, ctx);
                 if forced.is_morphism() {
                     return self.apply_morphism(forced, arg, ctx);
                 }
@@ -338,15 +434,7 @@ impl MorphismDispatchResult {
                     crate::value::normalize_union(vs).with_effect(effect)
                 }
             }
-            MorphismDispatchResult::NoMatch => Value::Bottom(Box::new(BottomDetail {
-                cause: BottomCause::Conflict,
-                path: None,
-                message: Some("No matching branch".to_string()),
-                expected: None,
-                found: None,
-                involved: vec![],
-                ..Default::default()
-            })),
+            MorphismDispatchResult::NoMatch => BottomCause::NoMatchingBranch.into(),
         }
     }
 }

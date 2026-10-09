@@ -3159,14 +3159,19 @@ impl Ouroboros {
                 ));
 
                 if let Some(Value::Combo(rules_source)) = c.get_field("%rules") {
-                    let dispatch_result = self.dispatch_morphism(rules_source, &arg, ctx);
+                    let rules_for_dispatch = if dispatch::rules_have_pattern(rules_source) {
+                        self.rules_with_parent_data(rules_source, c, &arg, ctx)
+                    } else {
+                        rules_source.clone()
+                    };
+                    let dispatch_result = self.dispatch_morphism(&rules_for_dispatch, &arg, ctx);
                     return dispatch_result.to_value(f.effect());
                 }
 
-                // Pattern-key dispatch table (`{ @{ 4.. }: "A", ... }`): non-meta
-                // non-numeric keys + `%morphism`, no `%rules`/`%builtin`.
-                // Numeric keys alone are curry slots (partial apply of builtins) —
-                // must NOT be treated as patterns (would steal math.add partials).
+                // Old-engine table: `%morphism`, no `%rules` / `%builtin`, and
+                // at least one non-meta non-numeric key. Numeric keys alone
+                // are curry slots (partial apply of builtins). Do not guess
+                // a pattern back from the printed name (D99).
                 if c.get_field("%morphism").is_some()
                     && c.get_field("%rules").is_none()
                     && c.get_field("%builtin").is_none()
@@ -3175,8 +3180,7 @@ impl Ouroboros {
                         .all_fields_iter()
                         .any(|(k, _)| !k.starts_with('%') && k.parse::<usize>().is_err());
                     if has_pattern_fields {
-                        let dispatch_result = self.dispatch_morphism(c, &arg, ctx);
-                        return dispatch_result.to_value(f.effect());
+                        return BottomCause::PatternNotKept.into();
                     }
                 }
 
@@ -3272,15 +3276,21 @@ impl Ouroboros {
                     }));
                 }
 
-                let ks = arg.collapse().to_string_plain();
-                if let Some(v) = c
-                    .get_field(&ks)
-                    .or_else(|| c.get_field("it"))
-                    .or_else(|| c.get_field("_"))
-                {
+                // Lookup is only for an atom. A combo's printed form is
+                // `"{...}"` and is not a key (D97).
+                let lookup_key = match arg.collapse() {
+                    Value::Atom(_, _, _) => Some(arg.collapse().to_string_plain()),
+                    _ => None,
+                };
+                if let Some(ks) = lookup_key {
+                    if let Some(v) = c.get_field(&ks) {
+                        return v.clone();
+                    }
+                }
+                if let Some(v) = c.get_field("_") {
                     return v.clone();
                 }
-                BottomCause::Conflict.into()
+                BottomCause::NoMatchingBranch.into()
             }
             _ => BottomCause::Conflict.into(),
         }

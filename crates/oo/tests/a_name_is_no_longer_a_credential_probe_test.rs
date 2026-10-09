@@ -181,9 +181,11 @@ fn c3_the_forgery_still_exits_and_that_is_the_scope_line() {
 fn c4_no_builtin_key_is_still_a_conflict() {
     let d = scratch("c4");
     let got = oo(&d, &["eval", "{{ %kind: #x }} 7"]);
+    // AMENDED 2026-10-09 for Q-076 (D97): applying a Combo with no pattern
+    // key is a lookup; a miss is `#no_matching_branch`, not `#conflict`.
     assert!(
-        got.contains("#conflict"),
-        "control: applying a non-morphism cocoon is #conflict: {got:?}"
+        got.contains("#no_matching_branch"),
+        "control: applying a non-morphism cocoon is a lookup miss: {got:?}"
     );
 }
 

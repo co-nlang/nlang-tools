@@ -469,6 +469,12 @@ impl Ouroboros {
             Value::Combo(c) => c,
             other => return self.unify_internal(Value::Combo(a), other, ctx),
         };
+        // Two branches of one pattern meet when that branch is applied.
+        // Until then the bodies are a set keyed by content digest, so the
+        // meet does not run an unselected body and does not depend on order.
+        if crate::dispatch::is_rule_cocoon(&a) && crate::dispatch::is_rule_cocoon(&b) {
+            return crate::dispatch::join_rule_cocoons(a, b);
+        }
         let mut pending_spreads = a.pending_spreads.clone();
         pending_spreads.extend(b.pending_spreads.iter().cloned());
         // Phase 1b: phase-aware merge entry
