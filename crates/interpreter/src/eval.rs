@@ -158,6 +158,114 @@ fn free_bare_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
     out
 }
 
+/// Free names, with every key form of a Combo binding.
+fn spread_free_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
+    fn walk(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
+        match &expr.kind {
+            ExprKind::Path(p) if matches!(p.anchor, PathAnchor::Bare | PathAnchor::Parent(_)) => {
+                if let Some(name) = p.segments.first() {
+                    let name = name.trim();
+                    if !bound.contains(name) {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+            ExprKind::Morphism { param, body } => {
+                let mut nested = bound.clone();
+                nested.extend(morphism_parameter_names(param));
+                walk(body, &nested, out);
+            }
+            ExprKind::Combo { fields, .. } => {
+                let mut nested = bound.clone();
+                for field in fields {
+                    match &field.key {
+                        FieldKey::Named { name, .. } | FieldKey::Quoted(name) => {
+                            nested.insert(name.trim().to_string());
+                        }
+                        FieldKey::Path(p) => {
+                            if let Some(first) = p.segments.first() {
+                                nested.insert(first.trim().to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                for field in fields {
+                    walk(&field.value, &nested, out);
+                }
+            }
+            ExprKind::Apply(a, b)
+            | ExprKind::Pipe(a, b)
+            | ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b) => {
+                walk(a, bound, out);
+                walk(b, bound, out);
+            }
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                walk(cond, bound, out);
+                walk(then_branch, bound, out);
+                walk(else_branch, bound, out);
+            }
+            ExprKind::Unary { expr, .. }
+            | ExprKind::AnonSet(expr)
+            | ExprKind::Spread(expr)
+            | ExprKind::Structural(expr)
+            | ExprKind::Complement(expr) => walk(expr, bound, out),
+            ExprKind::List(items) | ExprKind::Tuple(items) => {
+                for item in items {
+                    walk(item, bound, out);
+                }
+            }
+            ExprKind::Interpolated(parts) => {
+                for part in parts {
+                    if let nlang_parser::ast::StringPart::Interpolated(expr) = part {
+                        walk(expr, bound, out);
+                    }
+                }
+            }
+            ExprKind::Range { start, end, step } => {
+                walk(start, bound, out);
+                walk(end, bound, out);
+                if let Some(step) = step {
+                    walk(step, bound, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = HashSet::new();
+    walk(expr, bound, &mut out);
+    out
+}
+
+/// A spread source needs the container it is written in only when it names
+/// something it does not define itself.
+fn spread_source_reads_outside(expr: &Expr) -> bool {
+    spread_free_names(expr, &HashSet::new())
+        .iter()
+        .any(|n| !n.starts_with("~%") && n != "_")
+}
+
 fn captures(free: &HashSet<String>, prefix: &str, name: &str) -> bool {
     free.contains(name) || free.contains(&format!("{prefix}{name}"))
 }
@@ -780,13 +888,164 @@ impl Ouroboros {
     /// observe-entry unify cannot silently consume forward spreads.
     /// Observation contexts (memo_enabled) treat Top as true no-op.
     pub(crate) fn expand_combo_pending(&self, c: ComboVal, ctx: &mut EvalContext) -> Value {
+        let literal: Option<std::collections::HashSet<String>> = if c.pending_spreads.is_empty() {
+            None
+        } else {
+            let mut k: std::collections::HashSet<String> = c.field_keys().into_iter().collect();
+            k.extend(c.local.keys().map(|x| format!("~{x}")));
+            Some(k)
+        };
         match self.expand_combo_pending_inner(c, ctx) {
-            Value::Combo(c) => Value::Combo(crate::dispatch::normalize_table(c)),
+            Value::Combo(mut c) => {
+                if let Some(lit) = literal {
+                    crate::value::reseal_after_spreads(&mut c, &lit);
+                }
+                Value::Combo(crate::dispatch::normalize_table(c))
+            }
             other => other,
         }
     }
 
-    fn expand_combo_pending_inner(&self, mut c: ComboVal, ctx: &mut EvalContext) -> Value {
+    /// A spread source is written inside its holder, so it resolves names
+    /// in the holder — including names other spreads bring in. Each source
+    /// is forced once with the holder as its innermost frame; a source that
+    /// finds nothing yet is retried against what has landed so far.
+    fn expand_combo_pending_inner(&self, c: ComboVal, ctx: &mut EvalContext) -> Value {
+        if c.pending_spreads.is_empty() {
+            return Value::Combo(c);
+        }
+        let spreads = c.pending_spreads.clone();
+        let holder = std::sync::Arc::new(c.clone());
+        let holder_id = std::sync::Arc::as_ptr(&holder) as usize;
+        let mut base = c;
+        base.pending_spreads = Vec::new();
+        let push = |s: &Value, f: &std::sync::Arc<ComboVal>| -> Value {
+            match s {
+                Value::Thunk {
+                    expr,
+                    closure,
+                    context,
+                    effect,
+                } => {
+                    let mut cl = closure.clone();
+                    cl.push(std::sync::Arc::clone(f));
+                    Value::Thunk {
+                        expr: expr.clone(),
+                        closure: cl,
+                        context: context.clone(),
+                        effect: *effect,
+                    }
+                }
+                other => other.clone(),
+            }
+        };
+        // Each waiting source travels with the source as written, so a
+        // re-queued source goes back unchanged.
+        let mut waiting: Vec<(Value, Value)> = spreads
+            .iter()
+            .map(|s| match s {
+                Value::Thunk { expr, .. } if !spread_source_reads_outside(expr) => {
+                    (s.clone(), s.clone())
+                }
+                _ => (push(s, &holder), s.clone()),
+            })
+            .collect();
+        let mut acc = Value::Combo(base);
+        crate::EXPANDING_FRAMES.with(|s| s.borrow_mut().push(holder_id));
+        loop {
+            let Value::Combo(cur) = acc.clone() else {
+                break;
+            };
+            let mut landed: Vec<Value> = Vec::new();
+            let mut still: Vec<(Value, Value)> = Vec::new();
+            for (src, orig) in waiting {
+                let forced = self.force_spread_source(src.clone(), ctx);
+                match forced {
+                    Value::Top | Value::TopCaused { .. } => still.push((src, orig)),
+                    v => landed.push(v),
+                }
+            }
+            if landed.is_empty() {
+                // Nothing new can land: the rest are Top no-ops (or, during
+                // evolve, re-queued by the expansion law — as written).
+                let mut work = cur;
+                work.pending_spreads = still.into_iter().map(|(_, o)| o).collect();
+                acc = self.expand_combo_pending_once(work, ctx);
+                break;
+            }
+            let mut work = cur;
+            work.pending_spreads = landed;
+            acc = self.expand_combo_pending_once(work, ctx);
+            if still.is_empty() {
+                break;
+            }
+            let Value::Combo(so_far) = &acc else {
+                break;
+            };
+            let mut f = so_far.clone();
+            f.pending_spreads = Vec::new();
+            let f = std::sync::Arc::new(f);
+            waiting = still
+                .iter()
+                .map(|(_, o)| match o {
+                    Value::Thunk { expr, .. } if !spread_source_reads_outside(expr) => {
+                        (o.clone(), o.clone())
+                    }
+                    _ => (push(o, &f), o.clone()),
+                })
+                .collect();
+        }
+        crate::EXPANDING_FRAMES.with(|s| {
+            let mut v = s.borrow_mut();
+            if let Some(p) = v.iter().rposition(|x| *x == holder_id) {
+                v.remove(p);
+            }
+        });
+        if let Value::Combo(ref mut rc) = acc {
+            crate::value::swap_frame(rc, holder_id);
+        }
+        acc
+    }
+
+    /// Force one spread source, carrying what a source built with spreads
+    /// brought in. A source met again while it is being spread is ⊥
+    /// #divergent.
+    fn force_spread_source(&self, src: Value, ctx: &mut EvalContext) -> Value {
+        let src_id = match &src {
+            Value::Thunk {
+                expr,
+                closure,
+                context,
+                effect,
+            } => Some(crate::thunk_cycle_id(expr, closure, context, *effect)),
+            _ => None,
+        };
+        if let Some(id) = &src_id {
+            if SPREADING.with(|s| s.borrow().contains(id)) {
+                return BottomCause::Divergent.into();
+            }
+            SPREADING.with(|s| s.borrow_mut().push(id.clone()));
+        }
+        let saved_taint = ctx.chain_transform_taint;
+        ctx.chain_transform_taint = true;
+        let mut val = self.force(src, ctx);
+        if let Value::Combo(sc) = val {
+            val = if sc.pending_spreads.is_empty() {
+                Value::Combo(sc)
+            } else {
+                self.expand_combo_pending(sc, ctx)
+            };
+        }
+        ctx.chain_transform_taint = saved_taint;
+        if src_id.is_some() {
+            SPREADING.with(|s| {
+                s.borrow_mut().pop();
+            });
+        }
+        val
+    }
+
+    fn expand_combo_pending_once(&self, mut c: ComboVal, ctx: &mut EvalContext) -> Value {
         if c.pending_spreads.is_empty() {
             return Value::Combo(c);
         }
@@ -2954,4 +3213,9 @@ impl Ouroboros {
             CmpOp::Eq | CmpOp::Ne => unreachable!(),
         })
     }
+}
+
+thread_local! {
+    static SPREADING: std::cell::RefCell<Vec<crate::value::ContentHash>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }

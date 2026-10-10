@@ -428,6 +428,10 @@ pub struct Universe {
     /// D49: the on-disk injection set jointly meets to ⊥. The files stay;
     /// this is the leaf the fold reported. Not a ComboVal — ⊥ is not a combo.
     pub workset_bottom: Option<crate::value::BottomDetail>,
+    /// Top-level spreads whose source is not defined yet in this session.
+    /// A source may be written later in the file (SPEC_03 §3.1).
+    deferred_spreads: Vec<Field>,
+    in_spread_retry: bool,
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
@@ -460,6 +464,8 @@ impl Universe {
             session_effect_tags: crate::value::EffectTag::Pure,
             legacy_pin_pending: false,
             workset_bottom: None,
+            deferred_spreads: Vec::new(),
+            in_spread_retry: false,
         }
     }
 
@@ -549,6 +555,37 @@ impl Universe {
     }
 
     pub fn evolve(
+        &mut self,
+        engine: &Ouroboros,
+        field: &Field,
+    ) -> std::result::Result<(), crate::value::BottomDetail> {
+        let r = self.evolve_field(engine, field);
+        if r.is_ok() && !self.in_spread_retry && !self.deferred_spreads.is_empty() {
+            self.in_spread_retry = true;
+            let out = self.retry_deferred_spreads(engine);
+            self.in_spread_retry = false;
+            out?;
+        }
+        r
+    }
+
+    fn retry_deferred_spreads(
+        &mut self,
+        engine: &Ouroboros,
+    ) -> std::result::Result<(), crate::value::BottomDetail> {
+        loop {
+            let waiting = std::mem::take(&mut self.deferred_spreads);
+            let before = waiting.len();
+            for f in &waiting {
+                self.evolve_field(engine, f)?;
+            }
+            if self.deferred_spreads.len() >= before {
+                return Ok(());
+            }
+        }
+    }
+
+    fn evolve_field(
         &mut self,
         engine: &Ouroboros,
         field: &Field,
@@ -988,6 +1025,15 @@ impl Universe {
             effect: te,
         });
         match engine.expand_combo_pending(holder, &mut ctx) {
+            Value::Combo(incoming)
+                if incoming.field_keys().is_empty()
+                    && incoming.local.is_empty()
+                    && incoming.pending_spreads.is_empty() =>
+            {
+                // Nothing landed: the source may be defined later.
+                self.deferred_spreads.push(field.clone());
+                Ok(())
+            }
             Value::Combo(incoming) => {
                 let evolved_coords: Vec<String> = incoming.field_keys();
                 if !evolved_coords.is_empty() {
@@ -1022,24 +1068,65 @@ impl Universe {
                 // a colliding key is the meet (⊥ when they disagree). Must not
                 // unify the whole staged combo — that path promotes a field
                 // clash to Evolution Conflict and drops every other member.
-                self.note_session_incoming(engine, &incoming);
+                // A spread at the top is its fields written there: a key
+                // that meets to ⊥ is refused like `j: 7` then `j: 5`, and
+                // nothing lands.
+                // Root coordinates evolve monotonically (G2-S), as for a
+                // field written at the top.
+                if !(self.pin_mode && engine.privilege.pin) {
+                    for (k, v) in incoming.fields() {
+                        if let Some(root_val) = self.root.get_field(&k).cloned() {
+                            if let Value::Bottom(mut d) = engine.unify(root_val, v.clone()) {
+                                let leaf = d.path.take().filter(|s| !s.is_empty());
+                                d.path = Some(match leaf {
+                                    Some(p) if p == k || p.starts_with(&format!("{k}.")) => p,
+                                    Some(p) => format!("{k}.{p}"),
+                                    None => k.clone(),
+                                });
+                                return Err(*d);
+                            }
+                        }
+                    }
+                }
+                let mut next = self.staged.clone();
+                let clash = |existing: &Value, v: &Value, merged: &Value| {
+                    matches!(merged, Value::Bottom(_))
+                        && !matches!(existing, Value::Bottom(_))
+                        && !matches!(v, Value::Bottom(_))
+                };
                 for (k, v) in incoming.fields() {
-                    if let Some(existing) = self.staged.get_field(&k).cloned() {
-                        let merged = engine.unify_internal(existing, v, &mut ctx);
-                        self.staged.insert_field(&k, merged);
+                    if let Some(existing) = next.get_field(&k).cloned() {
+                        let merged = engine.unify_internal(existing.clone(), v.clone(), &mut ctx);
+                        if clash(&existing, &v, &merged) {
+                            return Err(crate::value::BottomDetail {
+                                cause: BottomCause::Conflict,
+                                path: Some(k.clone()),
+                                ..Default::default()
+                            });
+                        }
+                        next.insert_field(&k, merged);
                     } else {
-                        self.staged.insert_field(&k, v);
+                        next.insert_field(&k, v);
                     }
                 }
                 for (k, v) in incoming.local_fields() {
                     let bare = k.trim().trim_start_matches('~').to_string();
-                    if let Some(existing) = self.staged.local.get(&bare).cloned() {
-                        let merged = engine.unify_internal(existing, v, &mut ctx);
-                        self.staged.local.insert(bare, merged);
+                    if let Some(existing) = next.local.get(&bare).cloned() {
+                        let merged = engine.unify_internal(existing.clone(), v.clone(), &mut ctx);
+                        if clash(&existing, &v, &merged) {
+                            return Err(crate::value::BottomDetail {
+                                cause: BottomCause::Conflict,
+                                path: Some(k.clone()),
+                                ..Default::default()
+                            });
+                        }
+                        next.local.insert(bare, merged);
                     } else {
-                        self.staged.local.insert(bare, v);
+                        next.local.insert(bare, v);
                     }
                 }
+                self.note_session_incoming(engine, &incoming);
+                self.staged = next;
                 if !self.staged.closed {
                     self.staged.effect = self.staged.effect.union(incoming.effect);
                 }

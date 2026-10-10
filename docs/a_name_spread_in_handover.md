@@ -83,24 +83,77 @@
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
 ### 8.1 射程逐項對照
-I1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+I1：展開落地後，字面欄位的作用域框換成落地後的容器，層數不變。裸名經 `scope_view`，框上還有未落地的展開就先展開再讀。r1、r2、r7 綠。
+I2：同一鍵的字面與展開在展開出口相交，兄弟讀到的是交集。r3 綠。
+I3：展開源若讀到自己沒定義的名字，強制時最內層框是所在容器，含別的展開帶進來的名字與遞迴呼叫。r4、r9 綠。
+I4：源本身還有展開時，先把那些展開落地再攤平。r5 綠。
+I5：同一顆源 thunk 正在展開時再遇到它，答 `#divergent`。頂層 `s: { ...s }` 仍走這條。r6、g4 綠。
+I6：頂層展開把欄位寫進 staged。與根或 staged 相交成 ⊥ 時整筆拒絕，不落地。源尚未定義則這次什麼都不寫，留在這次程序的佇列裡等同一個工作集稍後的欄位。r8、g4 綠。
+I7：只把容器交給讀到自己外面的源。展開進來的欄位留在它被寫下的框。`^` 不加層。g1、g2 綠。
+I8：展開進來的效應留在那個值上，被讀時才跑，誰讀都只跑一次。r10、g5 綠。
+I9：每一顆源在一輪裡只強制一次；還沒落地的用寫下的原樣再試。release 上 r9 的式子深度 40 花 0.07s、深度 200 花 0.49s，都答 `{ k: 1, z: 0 }`。CLI 不印燃料。
+I10：不把容器交給只讀自己的源。g3 七根與 Q-037 兩支身分測試綠。意義變了的根列在 Q3，讀出來的答案都變了。
+I11：重新排隊的是寫下的那顆 thunk。`forward_spread_probe_test` 12／12。
 
 ### 8.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+無。
 
 ### 8.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。
 
 ### 8.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+
+**Q1**
+
+1. `resolve_path` 的單段裸名，作用域迴圈改為 `scope_view`。框上有未落地展開、且這框不在展開中，就先展開再 `get_field`，然後 `force_lexical_name`。這是讀欄位。
+2. `resolve_path_internal` 的作用域迴圈同樣先 `scope_view`，再欄位，再表的分支（`read_branch`，讀存著的值）。
+3. 根與 staged 的 `get_field` 沒有套 `scope_view`。頂層展開在 `evolve_spread` 裡已經攤成 staged 的欄位。欄位的值若仍帶 `pending_spreads`，`force` 看到就展開。
+4. `^`／`^^` 是 `PathAnchor::Parent`，按框的層數上爬，不在這裡展開。落地後把字面欄位的最內層框換成落地後的容器，層數不變，所以 `^` 仍數容器。g1 綠。
+5. `predict_effect` 沒改。它用 `get_field` 讀存著的效應標籤，不展開未落地的展開。只存在於尚未落地的展開裡的名字預測為 Pure。它不回傳值。效應在展開落地時聯到容器上，見 Q6。
+6. `run --observe` 與 `oo eval` 走 `resolve_path`，所以是第 1、2 條。`status` 印 staged。注入與提交走 `evolve`／`evolve_spread`。提交存的是框已換過的值，見 Q2。
+
+**Q2** 存下的容器上，展開進來的欄位就是它的欄位。字面欄位的 thunk 閉包裡，原先指向「還帶 `pending_spreads` 的框」的那一層，換成 pending 已清掉的同一顆容器。之後讀名字是讀這個框上的欄位。
+
+**Q3** 基線是 `98f05c6` 的 release 二進位（與 v0.79.0 同一引擎）。交付的根在 debug 二進位上量；release 抽了 `t: { ...{ j: 5 }, q: j }` 與 `t: { ...{ j: 5 }, q: 1 }`，與 debug 相同。
+
+移動了，而且讀出來的答案變了：
+
+1. `t: { ...{ j: 5 }, q: j }`：`7a3631e68aa18f3dec7c61d0e64b73b6e4bb70714fa89069b45a5a941c23b016` → `c7f26b14a7c93543e0ed9df1a0080b49e8c426f0d4e1945f757cca6ee8a3234f`。`_.t.q` 由 `_` 變 `5`。
+2. `t: { ...{ j: 5 }, q: j + 1 }`：`4aaa900a7dec0fa7e6bf7fcd4939f5dd5defefd7e24939bbfc387bccc19d2f14` → `4487fc4a67410c38e03affb19933c90048e8c3399cdf6327cfd2143ee70a87c0`。`_.t.q` 由 `_` 變 `6`。
+3. `t: { s: { j: 5 }, ...s }`：`5b2ccd1c58f1bf13cb254ae420d95b8a1bf603159196e7ac0f286a3a6f4e09eb` → `bd7cad08e3a7134690449372d8cd43a214163c7e7dbd731812ca2571c16c2c6e`。`_.t.j` 由 `_` 變 `5`。
+4. `u: { ...~%Math, r: add (1, 2) }`：`ca0808aeac7669b7e7ad2c989841b1a3b0f5e0b35012684bc936301e1c1930ac` → `d59d36716f67e4780bce5a0fb624f2fa2df13f327fd21aa20656ef726fe6b4ef`。`_.u.r` 由 `_` 變 `3`。
+5. `w: { ...{ ...{ j: 5 } } }`：`c56a73b7cfa400e393672e83f16f3c13fab067543c6585129dd6a5724ccec960` → `6fc87b062b1bbe75ee3c91901cbb20887a1136509937d1ab0472fd16b49f8682`。`_.w.j` 由 `_` 變 `5`。
+6. `t: { n: 1, ...{ k: n } }`：`12b22d0887ad9d512d26a267c2d2a4c815e7e325b923aa9fc1d7dd9f7b0d29b4` → `e9746157138b1d6154307ba978a04b5de37fb1f739d27637e408fa96da8f7bc0`。`_.t.k` 由 `_` 變 `1`。
+
+沒有移動：`t: { ...{ j: 5 } }` 為 `4cdd1fd48a1672564b4b9d33d01a4c64194b2ee2113f212db4abe889c23db487`；`t: { ...{ j: 5 }, q: 1 }` 為 `8a60092ad7227919afeebc0a9c520a3909d5e10de58e3e6bb7befa1d50fd7683`；`t: { a: 1, ...{ b: 2 } }` 為 `cbae84692c1ed07da0af21770cea6cbf8e071a9d1ad06e4b719f0fc201f9968a`；`...{ j: 5 }` 加 `q: j` 為 `f03a7d869c4fad4909bf230faee612aeafd305144165f22efaaa79ecc7334cd3`；`s: { j: 5 }` 加 `...s` 為 `cb50248338128f5f460cc9dd0594239e799e39bd05c53ce47b779ede525f258b`；`t: { ...{ j: 5, k: j } }` 為 `065a2b711806d400167410c9f34f314a8b8a3dab82d7516608ee3a4528d97262`；`t: { k: 2, ...{ k: 1, q: k } }` 為 `6dfd21e6eb4ccb9bfb9742d20817304309081b6aeabf4b77d925d97ebfda7aff`；`j: 5` 加 `...{ j: 5, k: 1 }` 為 `f109f292af09a657778e51a559dce4ba40af5245190b302aa78f402f6b753e76`（兩邊 `_.k` 都是 `1`）。答案沒變而位址移動的，沒有。
+
+**Q4** 展開源的 `thunk_cycle_id` 已在這次展開的堆疊上，再遇到它就是 `#divergent`。r9 的本體展開的是 `g (n - 1)` 的結果，每一次呼叫是另一顆 thunk，內層展開返回後外層才繼續，不是容器展開自己。release：深度 40 為 0.07s，深度 200 為 0.49s，都印 `{ k: 1, z: 0 }`。
+
+**Q5** 基線與交付都是 `_`。`oo evolve a.n` 與 `oo evolve b.n` 是兩個程序。第一次的 `...s` 源尚未定義，什麼都不寫進倉；那份佇列留在該程序裡。第二次只看到 `s: { j: 1 }`，頂層沒有 `j`。
+
+**Q6** 基線與交付相同。提交前 `oo eval` 該字面：
+
+```
+{
+  q: 1
+  w: #true  ;; %effect: #io
+}  ;; %effect: #io
+```
+
+`.%effect`、`.w.%effect`、`.q.%effect` 都是 `#io`。提交後 `inspect` 該根，`t` 與 `w` 標 `#cached`。`_.t.%effect` 是 `#io  ;; %effect: #io`，`_.t.w.%effect` 是 `#io`，`_.t.q.%effect` 是 `#pure`。提交寫了一次 `log.txt`，內容 `a`。
 
 ### 8.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+無 `#[ignore]` 可拿。探針檔未改，未 rustfmt。
+
+全樹第三輪：本探針 15／15，4.00s。`forward_spread_probe_test` 12／12，0.75s。`a_field_outside_identity_probe_test` 8／8，0.25s。`a_field_outside_identity_crate_test` 3／3，0.04s。Q-077 原探針 12／12，2.19s；R-1 4／4，0.92s。Q-076 原探針 17／17，1.68s；R-1 6／6，0.41s；R-2 10／10，1.16s。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.84s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
 
 ### 8.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 266 行，2572 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3101 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`。`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`。`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.79.0。未推送。
 
 ### 8.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無。
