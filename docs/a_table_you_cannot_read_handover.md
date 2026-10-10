@@ -1,0 +1,297 @@
+# 工單：一張讀不到的表（Q-077）
+
+> 佇列 `nlang-spec/meta/WORK_QUEUE.md` Q-077／裁定 `meta/oo/STATUS.md` **D100–D102**（皆用戶 2026-10-10「都照推薦」）／依據 `SPEC_07` §1.1.1（`_:` 只有「分派的預設分支」一個意義）、§1.1.2（Q-076 新增：模式是值）、D97（表內鍵皆約束，鍵→約束對照）、`commit.md` §1.1.6（n/ 是 CvRDT：同一格元素一個位址）、`SYNTAX_03` §2 #3（頂層與 Combo 內相同）
+> 探針（已預先提交並校準）`crates/oo/tests/a_table_you_cannot_read_probe_test.rs`
+> 基線：dev `672c7ff`／`oo v0.78.0` ⟹ **5 綠 7 紅**，三輪一致；七支紅的都紅在一般斷言，零空洞讀數。
+
+## 1. 缺陷
+
+〔量，v0.78.0 對 v0.77.0〕Q-076（D97）把表的每個非 meta 鍵收進 `%rules` 成為約束；**施用**在每一條組法上都對了，另外四個觀測面沒有跟上：
+
+*   **導航**：字面表 `{ @{ "k" }: 1, j: 5 }` 的 `.j`、`{ 1: "a", @{ @int }: "n" }.1`、`.cfg.a`、`.k` 皆得 `_`（v0.77 為 5／`"a"`／1／1）；同一組鍵經 `&`（兩向）、`|>`、`...` 展開、或檔案頂層的根組成時仍讀得到——**九條組法、兩種答案**。
+*   **作用域**：分支本體看不到兄弟鍵——`{ @{ @int }: n + 1, n: 5 } 3` 得 `_`（v0.77：6）；`{ 0: zero, zero: "none", … } 0` 得 `_`。**靜默的錯答案。**
+*   **位元組**：`t: { @{ "k" }: 1, j: 5 }` 與 `t: { @{ "k" }: 1 } & { j: 5 }` 提交出兩個根，`=` 為 `#false`；同一分支多個本體時，字面與 `&` 亦兩個根。
+*   **印出**：字面表印出時資料鍵只剩摘要名（`"{2d70…}": 5`），v0.77 印 `j: 5`。
+
+前兩項與第四項是 v0.78.0 帶進來、`CHANGELOG` 漏記的變更。
+
+## 2. 裁定與依據
+
+*   **D100（甲）**：表上的導航 `t.k` 讀「鍵 `k` 所拼出的約束」那一個分支的本體——鍵→約束對照與 D97 同一張（`.j` 是字串 `"j"`、`.1` 是整數 1、`._` 是 Top 即 `_:` 那一支）；本體裡的 `$` 是那個約束值；同一約束的多個本體相交；**沒有該分支 ⟹ `_`，不落到 `_:` 預設分支**（`_:` 只有分派一個意義，`SPEC_07` §1.1.1；用戶查證）。**作用域面是同一條**：在一張表的作用域框裡以裸名 `n` 找到的，就是 `.n` 讀到的。
+*   **D101（甲）**：一張表只有一個正規形——有模式鍵的值，其資料鍵是分支、同一分支的本體是以位址為鍵的集合；字面建構、`unify`（`&`）、結構演化 `|>`、展開 `...`、根的演化，皆產生**同一組位元組**。代價：經 `&`／演化合成的表、頂層有模式鍵的根，位址再移一次（破壞性，驗收方記帳）。
+*   **D102（甲）**：表印出時，原子約束的分支以鍵的拼法印（`j: 5`、`1: "a"`、`_: 0`），其餘以 `@{ <模式的印出形> }:` 印；摘要名只在耐久形。拼法照 D64 不規範；照 D95 **永不讀回**。
+
+## 3. 射程＝不變式（不是機制）
+
+*   **I1（D100 導航）** 九條組法——字面、`&` 兩向、`|>`、`...`、頂層根（一次或兩次 `evolve`）、提交後讀回的欄位（字面或 `&`）——上，`.j`、`.k`、`.1`、`.cfg.a`、`._` 讀同一個答案（r1、r4）；`$` 是約束值、同約束多本體相交（r2）；沒有該分支 ⟹ `_`，**任何**情況都不讀 `_:` 預設分支（g2）。**導航只求值被點名的那一支**：別的分支的本體不求值、效應不執行（g4）。
+*   **I2（D100 作用域）** 分支本體與欄位本體以裸名看得到同一張表的兄弟鍵，含連鎖引用（`m: n * 2`）、含頂層根（r3、g5）。**凡是引擎以名字讀一張表的地方都在射程內**：〔量，驗收方參考實作〕頂層根一旦正規化，`oo eval` 內部把式子掛在 `__eval_result` 欄位再以裸名讀回——這條路會讀不到；請在 Q1 列出你找到的每一處「以 `get_field` 讀一個可能是表的 Combo」。
+*   **I3（D101 位元組）** 九條組法的值彼此 `=` 為 `#true`（r5）且提交出同一個根（r6，含非空洞檢查）；同一分支多個本體時，字面、`&`、`k: 2` 與 `@{ "k" }: 2`、重複併入，同一個根（r6 第二組）；頂層根一次與兩次 `evolve`、兩種順序，同一個根（g5）。**本體集合的鍵必須只依內容**：〔量，驗收方參考實作第一版〕若在相交當下以未強制的 thunk 算鍵，字面與 `&` 的根不同——thunk 的位元組帶著 context。Q-076 R-2 的 rb7 交換律／結合律／冪等（原探針與 R-1、R-2 探針）不得退。
+*   **I4（D102 印出）** `oo eval` 與 `run --observe` 印一張表時看不到摘要名，原子約束的分支以鍵印、型別模式印 `@{ @int }`、多本體可讀（r7）。**箭頭（`(@int -> 7)`）不在本條射程**——請在 Q4 陳述你怎麼處理。
+*   **I5** 沒有模式鍵的 Combo 不是表：位元組、欄位、導航皆不動（g3：`k: { a: 1, _: 9 }` 根 `24fe01b6…`）；施用在每條組法上照舊（g1）。
+*   **I6** 不改磁碟格式、不推進佈局或編碼；**值位址會動**——含表的值經非字面組法者、頂層有模式鍵的根（破壞性，驗收方記帳）；標準根 `7038e250…` 不含 `%rules`，不動。
+
+## 4. 紅線（今天綠，必須保持綠）
+
+*   g1–g5。Q-076 的三支探針（`a_table_that_forgot_its_patterns_probe_test.rs` 17、`…_r1_probe_test.rs` 6、`…_r2_probe_test.rs` 10）。conformance **162／162**。
+*   **交叉編譯** `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` **0 error**。
+*   `x: 0` 根 `31745ef0…`、`v: 1 + 1` 與 `1+1` 根 `f4f32e7b…`、標準根 `7038e250…`；Q-076 g4 四個只有綁定名的態射的根；`~%Math./add` (1, 2)=3、(1, 3)=4；新倉 `layout=9`／`encoding=5`。
+
+## 5. 必答（請在交付報告裡回答，逐題）
+
+*   **Q1** I2 的每一處「以名字讀一個可能是表的 Combo」——在哪裡、改了什麼或為什麼不必改（含 `__eval_result`、根的裸名解析、`run --observe`、`status`、注入與提交路徑）。
+*   **Q2** 你在哪些出口產生正規形（字面、`unify`、展開、根、其他），為什麼這些就是全部；本體集合的鍵在何時、依什麼算，為什麼只依內容。
+*   **Q3**〔量，陳述〕正規化之後，頂層根的資料鍵（例：`@{ 1 }: 42`、`x: 0`、`m: { a: 1 }` 同檔）在 `status`、`run --format`、`log`、`inspect` 各怎麼顯示。
+*   **Q4** 模式箭頭（`(@int -> 7)`、`(x @int -> x) & (x @str -> x)`）怎麼印、為什麼。
+*   **Q5**〔量，陳述，不要求改〕`{ @{ @int }: "int", @{ @str }: "str", name: "classifier" }` 的 `.name` 與施用於 `"name"` 各得什麼（D97 使元資料鍵成為分派分支；已列 Inbox）。
+
+## 6. 明文不在射程內
+
+*   `SPEC_07` §5.3 定義 2（態射加元資料，`#missing_key`）、§5.2 定義 1 寫出的等價形、態射聯集施用 ⊥、表 `&` 兩讀、`x @{ 4.. }` 剖析、未定義型別名匹配一切、`#a:` 與 `"#a":` 同座標——皆已在 Inbox。
+*   規格文字（`SPEC_07` §1.1.2、`SPEC_04`／`SYNTAX_07` 導航章若需補一句、`CHANGELOG`）：驗收方收尾。
+
+## 7. 探針完整性（沒有 `#[ignore]`：紅就是紅）
+
+*   紅探針 r1–r7 基線必須是紅的；**你可以讓它們變綠，不得改寫它們的宣稱。** `rustfmt` 不得掃探針檔。
+*   〔驗收方校準〕**兩極皆做**：
+    基線 v0.78.0：**5 綠 7 紅**（g1–g5 綠、r1–r7 紅，三輪一致；失敗訊息皆為一般斷言）。
+    一個參考實作 ⟹ 本探針 **12／12**（三輪一致）：`normalize_table` 在字面（**封作用域框之後**——之前則被搬走的 thunk 看不到兄弟鍵）、`unify_combo`、`expand_combo_pending` 三個出口把資料鍵併成分支；`install_dispatch_table` 同模式本體收成集合；提交時（`project_for_commit` 之後）依強制後的內容重算集合的鍵並去重；導航與裸名解析（作用域框、根）在找不到欄位時讀鍵所拼的分支；投影保留分支的模式、印表機依約束印。
+    同一參考實作跑全樹（不含本探針）：**263 target／2541 passed／0 failed，exit 0**——沒有任何既有測試撞到；含本探針：**264 target／2553 passed／0 failed，exit 0**（＝ v0.78.0 的 263／2541 加上本探針 12 支）；交叉編譯 0 error；conformance 162／162。
+    **守衛的變異**（每一個都只換一處；參考實作上量，每次限 8 GB 記憶體）：數字鍵當字串 ⟹ g1（r3）；導航找不到分支時落到 `_:` ⟹ g2；帶非 Top `_` 的 Combo 也當成表 ⟹ g3；導航前先強制每一支的本體 ⟹ g4；根那一層不讀表 ⟹ g5。還原後 12／12。
+    〔驗收方自陳〕第一次跑變異時「每個 Combo 都正規化」那一支讓 `%rules` 自己也被正規化、無限巢狀，記憶體耗盡使宿主重啟——**正規化必須只作用於帶模式鍵的值，且不得遞迴進 `%rules` 自身**，這也是一條射程。
+    **參考實作沒有做 I2 的修類別盤查**——它只修了作用域鏈與根兩處裸名解析，以及點導航。
+
+---
+
+## 8. 交付回報（交付方填；本行以上一字不得動）
+
+### 8.1 做了什麼
+
+裁定日沿工單 2026-10-10。有模式鍵的值收成一個正規形：普通資料鍵是該鍵所拼約束的分支，同一分支的多個本體是以內容為鍵的集合。
+
+三個出口呼叫 `normalize_table`。字面在 `seal_defining_scope` 之後。`unify_combo` 包住原相交，Combo 結果再正規化；`&` 與根的 `evolve` 走這裡。`expand_combo_pending` 同樣在 Combo 結果上正規化；`...` 與 `|>` 走這裡。`normalize_table` 只在這顆值自己的 `%rules` 帶模式、而且資料軸還有普通鍵時動手。它不走入巢狀 Combo，也不把 `%rules` 再送去正規化。
+
+`install_dispatch_table` 把同一模式的本體用 `join_rule_cocoons` 收成集合。資料鍵留到封框之後才搬走，本體裡的兄弟名仍看得到封框時的欄位。
+
+`.k` 與裸名在欄位落空時讀該鍵拼出的分支，不讀 `_:`。提交在 `project_for_commit` 之後用 `canonical_bodies` 依強制後的內容重算集合的鍵，單本體則把集合打開成那一個本體。
+
+印出：分支帶 `%val` 或 `%bodies` 的表以約束印。整數、字串、Top 印成鍵（`1:`、`j:`、`_:`）。型別模式印 `@{ @int }`。多本體以 ` & ` 接。只有 `%code` 的箭頭維持耐久形。
+
+套件留在 `oo` 0.78.0。磁碟 `layout=9`、`encoding=5`。
+
+### 8.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/dispatch.rs`：`is_plain_table_key`、`table_branch_for_name`、`canonical_bodies`、`normalize_table`。`branch_cocoon` 與 `apply_single_rule` 改為 `pub(crate)`。
+2. `crates/interpreter/src/eval.rs`：字面封框後正規化；展開出口正規化；`install_dispatch_table` 改走 `join_rule_cocoons`。刪掉因此沒人呼叫的 `is_plain_data_key`、`same_thunk_scope`、`meet_branch_bodies`、`quote_branch_body`、`acc_pattern_branch`，linux lib 警告數維持原先的 14。
+3. `crates/interpreter/src/unify.rs`：`unify_combo` 在內層相交之後正規化。兩個規則繭先 `join_rule_cocoons`、不強制的那條早退留在內層。
+4. `crates/interpreter/src/universe.rs`：提交觀察在 `project_for_commit` 之後呼叫 `canonical_bodies`。
+5. `crates/interpreter/src/lib.rs`：`resolve_path_internal` 的作用域與根、以及點導航，欄位落空時讀分支。
+6. `crates/interpreter/src/value.rs`：`table_display_rows`、`project_rule_cocoon`。表的 `%rules` 投影保留 `%pattern`，只投影本體。
+
+`storage.rs`、剖析器、探針、`Cargo.toml`、`Cargo.lock` 未改。這六個檔沒有跑 rustfmt。沒有 cargo-fix 那 14 則警告。
+
+### 8.3 工單哪裡是錯的
+
+工單預測的全樹（含本探針）是 264 target、2553 passed、0 failed。三輪的 `test result:` 與此相同。
+
+Q3 的 `run --format` 量的是 `oo run --format`：它演化檔案後把宇宙印成 n/。`oo fmt` 是來源排版，另外量了，見 Q3。
+
+### 8.4 工單指名要你回答的問題
+
+**Q1** 以名字讀一個可能是表的 Combo：
+
+1. 改了。`resolve_path_internal`（`lib.rs`，作用域迴圈與迴圈之後、`~%Config` 之前）。作用域的欄位落空時記下 `table_branch_for_name`；迴圈後若仍沒有欄位，對那個命中呼叫 `apply_single_rule`；再沒有則對 `ctx.root` 做同一讀。`oo eval` 把式子掛成 `__eval_result` 再 `observe`。`observe` 先把根與 staged `unify`（此處正規化），再以裸名解析。鍵已被收進分支時，快路徑的 `get_field` 落空，這條走法讀到該分支。根的裸名、以及多段路徑的第一段，同一條。
+2. 改了。點導航（`lib.rs`，`get_field`／`/seg`／`@seg` 之後）。落空改讀 `table_branch_for_name`。沒有該分支維持開放落空，不讀 `_:`。
+3. 快路徑沒改，理由如下。`resolve_path` 的單段裸名（約 4018 行）先回傳作用域、staged、根、標準根上的真實欄位。表本體的作用域框是封框時的快照，兄弟資料鍵還在，裸名 `n` 打中欄位。落空才落到第 1 條，正規化之後的根因此答得出 `__eval_result`。外層作用域若仍有同名欄位，而內層框只剩分支，快路徑先回外層欄位。參考實作也留著這條；探針綠，因為封框快照仍帶著兄弟鍵。
+4. `predict_effect` 沒改（`eval.rs`，第一段約 969 行，其後段約 1016 行）。它讀的是存著的效應標籤。只存在於分支的名字預測為 Pure。它不回傳使用者的值。
+5. `run --observe` 走 `universe.observe`，與 `oo eval` 同一條 `resolve_path`。`status` 印 staged 的 `to_nlang`，不按使用者的名字查。`oo run --format` 印一次演化後的 staged。`oo fmt` 印來源。`log` 印提交紀錄。`inspect` 對根印 `to_nlang`。演化經 `unify` 產生正規形。提交的 `get_field` 讀的是 `~%Config` 與投影，不是以資料名讀一張使用者的表。
+6. `oodp` 與內建的 `get_field("0")`、`%val`、`%cause` 讀的是線上記錄與元組槽。分派的 `get_field("%pattern")` 讀的是分支自己。
+
+**Q2** 產生正規形的出口是上面三個：字面封框之後、`unify_combo`、`expand_combo_pending`。九條組法都經過它們。字面走第一個。`&` 兩向走相交。`|>` 與 `...` 在展開時走第三個。根是舊根與 staged 的相交，一次或兩次 `evolve` 都是這一次相交。提交後的欄位是該根再經 `canonical_bodies`。
+
+`install_dispatch_table` 與兩個規則繭的早退把同一模式的本體收成集合，不在這裡搬走資料鍵。`canonical_bodies` 不建立正規形。它在 `project_for_commit` 之後走入 `%rules`，把 `%bodies` 的鍵改成該本體的 `content_digest`（`serialize_bn` 的 sha256），放進 `BTreeMap`，只剩一個本體時打開成那個本體。原子在投影時已強制，thunk 的 context 不進鍵，所以鍵只依內容。
+
+**Q3** 空目錄、release 二進位。檔案是 `@{ 1 }: 42`、`x: 0`、`m: { a: 1 }`。
+
+`oo run --format a.n`（提交前、提交後同一段）：
+
+```
+{
+  1: 42
+  m: {
+    a: 1
+  }
+  x: 0
+}
+```
+
+`oo fmt a.n` 印來源，`@{ 1 }:` 排成 `1:`：
+
+```
+1: 42
+m: {
+  a: 1
+}
+x: 0
+```
+
+`evolve` 之後、`commit` 之前，`status` 的 staged 是同一張可讀表，另有 `Total Logical Entropy: 3033 bits`，以及 `Standard root dependency: current (no committed root yet)`。提交之後 `status` 只寫標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)` 與 `Universe is static`。`log` 印 commit、`message: q3`、Date，不印欄位。`inspect` 該 commit 的 `kind` 是 commit，`root` 是 `d3a1d999febe0daf27e2465395e8ba4e461d96e89f8a47bea9a6ef78a2733883`（這份檔的根；含模式鍵的根工單允許再移）。`inspect` 該根印出上面的 `1`／`m`／`x`，並帶 `~%__nlang_system_digest` 為標準根。`_.x` 是 `0`，`_.m` 是 `{ a: 1 }`，`(_.) 1` 是 `42`。
+
+**Q4** `(@int -> 7)` 與 `(x @int -> x) & (x @str -> x)` 的 `oo eval` 仍印耐久形：`%rules` 下是 64 位十六進位分支名，分支裡是 `%code`、`%pattern`、`%closure`，後者另有 `%param: "x"`。`table_display_rows` 在分支只有 `%code` 時回 `None`。I4 排除箭頭，所以維持這張印出。
+
+**Q5** 空目錄、release 二進位，未改行為。`.name` 與施用於 `"name"` 都印 `"classifier"`。
+
+### 8.5 探針
+
+`crates/oo/tests/a_table_you_cannot_read_probe_test.rs` 未改，未 rustfmt。Q-076 三支探針未改。
+
+全樹第三輪：本探針 12／12，2.08s（g1–g5、r1–r7 皆 `ok`）。Q-076 原探針 17／17，1.63s。R-1 6／6，0.41s。R-2 10／10，1.14s。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.77s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
+
+### 8.6 數字
+
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 264 行，2553 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3078 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。g4 四個根：`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`；`g` 與 `h` 同倉為 `e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`；`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`；`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.78.0。未推送。
+
+### 8.7 你認為需要改規格之處
+
+規格檔這次沒有改。要補的句子就是工單第 2 節的 D100–D102，以及工單第 6 節點名、由驗收方收尾的導航章與 `CHANGELOG`。箭頭維持耐久印出，實測在 Q4。
+
+## 9. 驗收（驗收方填）
+
+### 9.1 第一輪驗收：**不受理，開修補回合 R-1（一項；起因在驗收方的參考實作與探針）**
+
+交付 `8142242` 的正規形、作用域、位元組、印出都做對了，§8 的每一個數字驗收方逐項重量相同：全樹 ×3 **264／2553／0**（rc 皆 0，`^error` 0，去掉耗時後排序測試行 md5 三輪相同）、本探針 12／12、交叉編譯 0 error、conformance 162／162、`x: 0`／`1+1`／`1 + 1`／`f`／`k`／`m` 根逐位元組相同、標準根 `7038e250…`、`~%Math./add` 3／4 且不建 `.oo/`、新倉 `layout=9`／`encoding=5`。差異純度：探針、Q-076 三支探針、`Cargo.toml`／`Cargo.lock`、版本、本檔 §8 以上皆未動。程式碼與驗收方的參考實作逐行相同，另刪掉五個因此無人呼叫的函式（警告數維持）。
+
+**不受理的理由：I1／I2 在「存著的值本身可以施用」時不成立。** 〔量，`8142242` release；對照 v0.77.0、v0.78.0〕表上一個鍵存的若是箭頭、部分施用的內建、或另一張表，導航讀到的不是它，而是**它被施用在約束上的結果**：
+
+| 式子 | 交付 | v0.78.0 | v0.77.0 |
+| :--- | :--- | :--- | :--- |
+| `{ @{ @int }: "n", f: (x -> x) }.f` | `"f"` | `_` | 那個箭頭 |
+| `{ @{ @int }: "n", f: (x -> x + 1) }.f 4`（`&` 兩向、`\|>`、`...` 同） | ⊥ `#conflict` | 字面 `_`；`&` **5** | 5 |
+| `{ @{ @int }: "n", f: ~%Math./add 1 }.f 2` | ⊥ | `_` | 3 |
+| `{ @{ @int }: "n", t: { @{ @str }: "s", a: 1 } }.t` | `"s"` | `_` | 那張表 |
+| 同上 `.t.a` | `_` | `_` | 1 |
+| 根 `@{ @int }: "n"`、`j: 5` 提交後 `oo eval '_.'`、`'(_.)'` | ⊥ `#no_matching_branch` | 整個根 | 整個根 |
+| 根另有 `f: (x -> x + j)`：`f 1`、`_.f 1` | ⊥ | 6 | 6 |
+| 再 `evolve` `g: (x -> f x + j)`：`_.g 1` | ⊥ | 11 | 11 |
+
+最後兩列與 `_.` 是 I2 那一處（`__eval_result`）的直接後果：式子的值被掛進一張表的根而成為一個分支，讀回時那個值——整張根、或一個箭頭——被施用在約束 `"__eval_result"` 上。**施用面沒有錯**：`{ @{ @int }: (x -> x + 1) } 5` 得 6 是既有的分派語義（選中的分支存著箭頭就把它施用在輸入上），v0.78.0 起即然，本回合不動。錯在導航與施用共用了同一個讀法；D100 說導航讀「分支的本體」，本體是箭頭就是箭頭。
+
+**驗收方的缺口（兩處）**：驗收方的參考實作有一模一樣的缺陷——交付方逐行做對了一個錯的參考；r1 只量了原子與普通 Combo 的本體（`.cfg.a` 的 `cfg` 沒有模式鍵），沒有一支量「本體本身可施用」。§3 I1「讀分支的本體」的字面涵蓋這條路，探針沒有。
+
+#### R-1 射程（不變式）
+
+*   **R1-1（I1＋I2）** 對任何值 `v`，表上的導航讀回的就是 `v`：`{ @{ @int }: "n", k: v }.k` 與 `{ k: v }.k` 是同一個值，`v` 是箭頭、部分施用的內建、另一張表、或求值成這些東西的式子時亦然；九條組法皆然（ra1、ra2）。唯一的差別是 `v` 裡的 `$` 為約束（r2）。作用域面與 `oo eval` 的讀回是同一條：根本身是表時，`_.`、`(_.)`、一個箭頭式子、根上箭頭的裸名、後續 `evolve` 引用它們、`run --observe` 皆讀得到（ra3）。
+*   **R1-2（施用不是導航）** 分派選中的分支若存著箭頭，仍把它施用在輸入上（ga1）；施用的其餘答案不動（g1、Q-076 三支探針）。
+*   **R1-3（修類別）** 盤點 §8.4 Q1 列出的每一處以名字讀表的地方，逐處陳述它是「讀存著的值」還是「施用」，以及為什麼（R1-Q1）。
+*   **R1-4** 其餘不變：r1–r7、g1–g5、I3–I6、§4 紅線。
+
+#### R-1 必答
+
+*   **R1-Q1** R1-3 的逐處判斷；含 §8.4 Q1 第 3 條保留的快路徑。
+*   **R1-Q2**〔量，陳述，不要求改〕帶模式的箭頭上的導航：`(x @str -> 7).f`、`("f" -> 7).f`、`((x @str -> 7) & { j: 5 }).j` 各得什麼。〔驗收方量，v0.78.0〕三者皆 ⊥ `#missing_key`（箭頭是封閉繭）。
+*   **R1-Q3**〔量，陳述〕一個存著箭頭的鍵，在 `oo eval` 印出整張表時怎麼顯示（字面與 `&` 各一）。
+
+#### 探針（新增；你不得改它）
+
+`crates/oo/tests/a_table_you_cannot_read_r1_probe_test.rs`：ra1（存著的箭頭與部分施用的內建，五種組法）、ra2（存著的表，五種組法）、ra3（根本身是表：整個根、箭頭式子、根上箭頭的裸名、後續 `evolve`、`run --observe`）、ga1（施用照舊施用存著的箭頭）。原探針與 Q-076 三支探針不動。
+〔驗收方校準〕交付 `8142242` **1 綠 3 紅**（ga1 綠；ra1–ra3 紅在一般斷言，三輪一致，零空洞讀數）。一個參考實作（兩個檔、41 行）⟹ 本探針 **4／4**、原探針 **12／12**，三輪一致。守衛變異：分派不再施用選中分支存著的箭頭 ⟹ ga1 紅；導航不把 `$` 綁成約束 ⟹ 原探針 r2 紅；還原後 16／16。每支變異限 8 GB 記憶體、一次一支。
+同一參考實作跑全樹（含兩支探針）：**265 target／2557 passed／0 failed，exit 0**（＝ 264／2553 加上本探針 4 支）；交叉編譯 0 error。
+
+---
+
+## 10. R-1 交付回報（交付方填；本行以上一字不得動）
+
+### 10.1 做了什麼
+
+導航與裸名改讀分支存著的值。`$` 仍是該鍵所拼的約束。存著的值若是箭頭、部分施用的內建、或另一張表，讀回的就是那個值。分派選中分支時仍走 `apply_single_rule`，存著的箭頭照舊施用在輸入上。分支帶 `%code` 時，導航仍把該本體交回施用。
+
+套件留在 `oo` 0.78.0。磁碟 `layout=9`、`encoding=5`。
+
+### 10.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/dispatch.rs`：新增 `read_branch`。有 `%bodies` 時逐本體讀回再相交。沒有 `%code` 而有 `%val` 時，把 thunk 的 context 設成約束再 `force`，不呼叫 `apply_morphism`。其餘交給 `apply_single_rule`。
+2. `crates/interpreter/src/lib.rs`：`resolve_path_internal` 的作用域命中與根、以及點導航，三處由 `apply_single_rule` 改為 `read_branch`。
+
+分派的兩處 `apply_single_rule` 未改。探針、`storage.rs`、`Cargo.toml`、`Cargo.lock` 未改。這兩個檔沒有跑 rustfmt。沒有 cargo-fix。linux lib 警告數仍是 14。
+
+### 10.3 工單哪裡是錯的
+
+工單預測的全樹（含兩支探針）是 265 target、2557 passed、0 failed。三輪的 `test result:` 與此相同。
+
+工單寫 v0.78.0 上 R1-Q2 三者皆 `#missing_key`。這次 release 上第一與第三仍是。`("f" -> 7).f` 是 `7`。Q-077 的導航已會讀到模式為字串 `"f"` 的 `%code` 分支並求值；R-1 對有 `%code` 的分支仍走那條施用。
+
+### 10.4 工單指名要你回答的問題
+
+**R1-Q1** 對照 §8.4 Q1。行號是這次改完之後的。
+
+1. `resolve_path_internal`（作用域迴圈之後、以及 `ctx.root`）：改為讀存著的值（`read_branch`）。`$` 是約束。存著的箭頭或表不被施用在約束上。該分支若是 `%code`，仍交給 `apply_single_rule`。`oo eval` 的 `__eval_result`、根的裸名、多段路徑的第一段，都是這條。
+2. 點導航（`get_field`／`/seg`／`@seg` 之後）：同樣改為讀存著的值。沒有該分支仍是開放落空，不讀 `_:`。
+3. 快路徑沒改，它讀的是存著的欄位。`resolve_path` 的單段裸名先回傳作用域、staged、根、標準根上的真實欄位，經 `force_lexical_name`，不施用。正規化之後資料鍵不在活的 Combo 上，這條落空才進第 1 條。封框快照仍帶兄弟鍵，本體裡的裸名打中的是那個快照裡的值。外層若仍有同名欄位，而內層只剩分支，快路徑先回外層那個欄位。
+4. `predict_effect` 沒改。它讀效應標籤，不回傳值，也不施用。只存在於分支的名字預測為 Pure。
+5. `run --observe` 與 `oo eval` 都走 `resolve_path`，所以讀回是第 1 條。`status`、`oo run --format`、`oo fmt`、`log`、`inspect` 不按名字查表。演化與提交產生正規形；提交裡的 `get_field` 讀的是 `~%Config` 與投影。
+6. `oodp` 與內建的 `get_field("0")`、`%val`、`%cause` 讀的是線上記錄與元組槽。分派的兩處 `apply_single_rule`（`dispatch.rs`）是施用：選中的分支若存著箭頭，就把它施用在輸入上（ga1）。
+
+**R1-Q2** 空目錄、release 二進位。
+
+1. `(x @str -> 7).f` 是 `_|_  ;; %cause: #missing_key  ;; Key 'f' missing in closed Cocoon`。
+2. `("f" -> 7).f` 是 `7`。
+3. `((x @str -> 7) & { j: 5 }).j` 是 `_|_  ;; %cause: #missing_key  ;; Key 'j' missing in closed Cocoon`。
+
+**R1-Q3** 空目錄、release 二進位。字面 `{ @{ @int }: "n", f: (x -> x + 1) }` 與 `({ @{ @int }: "n" } & { f: (x -> x + 1) })` 印出同一段：
+
+```
+{
+  @{ @int }: "n"
+  f: {{
+    %kind: #logic
+    %morphism: #true
+    %rules: {{
+      x: {{
+        %closure: {{
+          0: {}
+        }}
+        %code: x + 1
+      }}
+    }}
+  }}
+}
+```
+
+鍵 `f` 以鍵印。存著的箭頭印它自己的耐久形，綁定名是 `x`。
+
+### 10.5 探針
+
+`crates/oo/tests/a_table_you_cannot_read_r1_probe_test.rs` 未改，未 rustfmt。原探針與 Q-076 三支探針未改。
+
+全樹第三輪：R-1 探針 4／4，0.90s（`ra1_a_stored_arrow_is_read_not_applied`、`ra2_a_stored_table_is_read_not_applied`、`ra3_a_root_that_is_a_table_is_read`、`ga1_application_still_applies_a_stored_arrow` 皆 `ok`）。原探針 12／12，2.07s。Q-076 原探針 17／17，1.65s。R-1 6／6，0.41s。R-2 10／10，1.14s。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.58s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
+
+### 10.6 數字
+
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 265 行，2557 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3084 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。g4 四個根：`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`；`g` 與 `h` 同倉為 `e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`；`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`；`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.78.0。未推送。
+
+### 10.7 你認為需要改規格之處
+
+規格檔這次沒有改。要寫清楚的就是 D100 已有的那句：導航讀的是分支存著的本體，本體是箭頭就是箭頭。施用選中的分支時，存著的箭頭仍用在輸入上。文字由驗收方收尾。
+
+## 11. R-1 驗收（驗收方填）
+
+### 11.1 R-1 驗收：**受理**（一個修補回合；起因在驗收方的參考實作與探針）
+
+交付 `3263326` 與驗收方 R-1 參考實作逐行相同（排版與註解除外）。驗收方重量：全樹 ×3 **265／2557／0**（rc 皆 0，`^error` 0，去掉耗時後排序測試行 md5 三輪相同）；R-1 探針 4／4、原探針 12／12、Q-076 三支 17／6／10；交叉編譯（先 touch 全部源檔）0 error；conformance 162／162；`x: 0`／`1+1`／`1 + 1`／`f`／`k`／`m` 根逐位元組與 §10.6 相同、標準根 `7038e250…`、`~%Math./add` 3／4 且不建 `.oo/`、新倉 `layout=9`／`encoding=5`。差異純度：兩個源檔加本檔 §10；探針、`Cargo.toml`／`Cargo.lock`、版本未動。驗收方的四支對抗腳本（遮蔽、字串對整數鍵、印出貼回、存著的箭頭與表、本身是表的根、R1-Q2）在交付與參考實作上逐行相同。
+
+R1-Q1 第 3 條保留的快路徑「外層同名欄位先回」〔量〕可以構造出來，但與表無關：`{ j: 100, t: { ...{ j: 5 }, q: j } }.t.q` ⟹ `100`，把內層換成沒有模式鍵的 `{ ...{ j: 5 }, q: j }` 也是 `100`，v0.77.0 同。根因是 `...` 展開進 Combo 的名字兄弟鍵以裸名看不到（頂層看得到）——既有缺口，違反 `SYNTAX_03` §2 #3，已開 Inbox 列，不在本卡射程。
+
+R1-Q2 的 `("f" -> 7).f` ⟹ `7`（v0.78.0 `#missing_key`）：有模式鍵的箭頭依 D97 是表，D100 使它可導航；入 `CHANGELOG` 可觀察變更。§10.3 的更正成立（那一格驗收方寫的是 v0.78.0 的讀數）。
+
+**位址記帳**〔量，v0.78.0 對本交付〕：`t: { @{ "k" }: 1 } & { j: 5 }` `dd8c061c…` → `ac4cc0e6…`（＝字面，字面不動）；`t: { @{ "k" }: 1, @{ "k" }: 2, _: 0 }` `cbffaaee…` 與其 `&` 組法 `0d5c3b07…` → 同一個 `b794fa63…`；頂層 `@{ 1 }: 42`＋`k: 5`（同檔或兩次 `evolve`）`b79bc14e…` → `b0e71101…`。單一本體的字面表、模式箭頭、沒有資料鍵的表不動。
+
+**驗收方自陳**：第一輪的缺陷在驗收方的參考實作（導航借用分派的讀法）與探針（r1 只量資料本體）。R-1 工單只寫了不變式，沒有描述參考實作的機制。

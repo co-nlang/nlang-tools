@@ -4152,6 +4152,9 @@ impl Ouroboros {
                     ""
                 };
                 let mut found = None;
+                // A table frame answers a bare name from the branch its key
+                // spells — the same read as `.name` on that table.
+                let mut table_hit: Option<(Value, Value, String)> = None;
                 for scope in ctx.scopes.iter().rev() {
                     if let Some(val) = scope.get_field(name) {
                         found = Some(val.clone());
@@ -4159,6 +4162,10 @@ impl Ouroboros {
                     }
                     if let Some(val) = scope.get_local_field(name) {
                         found = Some(val.clone());
+                        break;
+                    }
+                    if let Some(hit) = dispatch::table_branch_for_name(scope, name) {
+                        table_hit = Some(hit);
                         break;
                     }
                     let prefixes = vec!["/", "@", "~", "~%"];
@@ -4179,6 +4186,18 @@ impl Ouroboros {
                     }
                     if found.is_some() {
                         break;
+                    }
+                }
+                if found.is_none() {
+                    if let Some((rule, pattern, bname)) = table_hit.take() {
+                        found = Some(self.read_branch(rule, pattern, bname, ctx));
+                    }
+                }
+                if found.is_none() {
+                    if let Some((rule, pattern, bname)) =
+                        dispatch::table_branch_for_name(&ctx.root, name)
+                    {
+                        found = Some(self.read_branch(rule, pattern, bname, ctx));
                     }
                 }
                 // SPEC_09 §6: never bind staged Config fragment as ~%Config;
@@ -4640,6 +4659,15 @@ impl Ouroboros {
                         .or_else(|| c.get_field(&format!("/{}", seg)))
                         .or_else(|| c.get_field(&format!("@{}", seg)))
                         .cloned();
+                    // On a table, `.k` reads the branch the key spells.
+                    // `$` in that body is the constraint. No branch stays a
+                    // miss: it does not read the `_:` default.
+                    let found = match found {
+                        Some(v) => Some(v),
+                        None => dispatch::table_branch_for_name(&c, seg).map(|(rule, pattern, name)| {
+                            self.read_branch(rule, pattern, name, ctx)
+                        }),
+                    };
                     if !path_so_far.is_empty() {
                         path_so_far = format!("{}.{}", path_so_far, seg);
                     } else {

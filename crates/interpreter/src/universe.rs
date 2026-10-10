@@ -1604,7 +1604,10 @@ impl Universe {
             Some(&parent_root),
             &mut commit_ctx,
         ) {
-            Value::Combo(root) => root,
+            Value::Combo(root) => match crate::dispatch::canonical_bodies(Value::Combo(root)) {
+                Value::Combo(root) => root,
+                _ => return Err(anyhow::anyhow!("Commit observation did not produce a root")),
+            },
             _ => return Err(anyhow::anyhow!("Commit observation did not produce a root")),
         };
         // S1 / D56: bottoms of `c: c + 1` exist only after this projection.

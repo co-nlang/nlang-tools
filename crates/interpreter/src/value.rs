@@ -542,6 +542,52 @@ pub fn strip_local_axis(v: Value) -> Value {
 /// Engine anti-peel scaffolding: data key `_` bound to Top (printed as `_`).
 /// Not user-visible (REAL_04 cocoon_shape law 3). User fields named `_` with
 /// any non-Top value still display.
+///
+/// `Some(rows)` when `c` is a dispatch table whose branches hold values
+/// (`%val` or `%bodies`). A branch that is only `%code` (an arrow) keeps
+/// the ordinary print.
+fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String)>> {
+    let rules = match c.meta.get("rules") {
+        Some(Value::Combo(r)) if crate::dispatch::rules_have_pattern(r) => r,
+        _ => return None,
+    };
+    let mut rows = Vec::new();
+    for (_, rule) in rules.data.iter() {
+        let rc = match rule {
+            Value::Combo(rc) => rc,
+            _ => return None,
+        };
+        let pattern = rc.get_field("%pattern")?;
+        let body = if let Some(Value::Combo(bs)) = rc.get_field("%bodies") {
+            let mut parts = Vec::new();
+            for (_, b) in bs.data.iter() {
+                match b {
+                    Value::Combo(bc) => parts.push(bc.get_field("%val")?.to_nlang(indent + 1)),
+                    _ => return None,
+                }
+            }
+            parts.join(" & ")
+        } else {
+            rc.get_field("%val")?.to_nlang(indent + 1)
+        };
+        let key = match pattern {
+            Value::Top | Value::Atom(AtomKind::Top, _, _) => "_".to_string(),
+            Value::Atom(AtomKind::Int(n), _, _) => n.to_string(),
+            Value::Atom(AtomKind::Str(s), _, _) => quote_nlang_field_key("", s),
+            Value::Atom(AtomKind::Tag(_), _, _) => pattern.to_nlang(0),
+            Value::Combo(pc) if crate::type_constraint::is_type_value_combo(pc) => {
+                match pc.get_field("%name") {
+                    Some(Value::Atom(AtomKind::Str(n), _, _)) => format!("@{{ @{n} }}"),
+                    _ => format!("@{{ {} }}", pattern.to_nlang(0)),
+                }
+            }
+            other => format!("@{{ {} }}", other.to_nlang(0)),
+        };
+        rows.push((key, body));
+    }
+    Some(rows)
+}
+
 fn is_engine_scaffold_field(key: &str, val: &Value) -> bool {
     key == "_" && matches!(val, Value::Top | Value::TopCaused { .. })
 }
@@ -589,6 +635,23 @@ fn quote_nlang_field_key(prefix: &str, name: &str) -> String {
 /// Peels hybrid/pure-wrapper `%val` for display; recurses into combo fields
 /// and list elements. Structural-view markers unwrap to the full node without
 /// peeling its hybrid shape. Strips local axis (#4). Does **not** alter `to_nlang`.
+fn project_rule_cocoon(v: Value) -> Value {
+    match v {
+        Value::Combo(mut rc) if rc.get_field("%pattern").is_some() => {
+            if let Some(Value::Combo(mut bs)) = rc.get_field("%bodies").cloned() {
+                for (_, b) in bs.data.iter_mut() {
+                    *b = project_rule_cocoon(b.clone());
+                }
+                rc.insert_field("%bodies", Value::Combo(bs));
+            } else if let Some(val) = rc.get_field("%val").cloned() {
+                rc.insert_field("%val", project_value_context(val));
+            }
+            Value::Combo(rc)
+        }
+        other => project_value_context(other),
+    }
+}
+
 pub fn project_value_context(v: Value) -> Value {
     match v {
         Value::Combo(c) => {
@@ -618,6 +681,20 @@ pub fn project_value_context(v: Value) -> Value {
                 new_c.rules.insert(k, project_value_context(fv));
             }
             for (k, fv) in c.meta {
+                // A table's branches keep their pattern. Only the bodies
+                // are projected; peeling `%val` here would drop the branch.
+                if k == "rules" {
+                    if let Value::Combo(ref r) = fv {
+                        if crate::dispatch::rules_have_pattern(r) {
+                            let mut nr = r.clone();
+                            for (_, bv) in nr.data.iter_mut() {
+                                *bv = project_rule_cocoon(bv.clone());
+                            }
+                            new_c.meta.insert(k, Value::Combo(nr));
+                            continue;
+                        }
+                    }
+                }
                 new_c.meta.insert(k, project_value_context(fv));
             }
             for (k, fv) in c.system {
@@ -3326,6 +3403,10 @@ impl Value {
                 let push = |rows: &mut Vec<(String, Value)>, prefix: &str, k: &str, v: &Value| {
                     rows.push((quote_nlang_field_key(prefix, k), v.clone()));
                 };
+                // A table prints branches by constraint: an atom constraint
+                // as its key, anything else as `@{ … }:`. Digest names stay
+                // in the stored rules.
+                let table_rows = table_display_rows(c, indent);
                 for (k, v) in &c.data {
                     push(&mut rows, "", k, v);
                 }
@@ -3336,6 +3417,9 @@ impl Value {
                     push(&mut rows, "/", k, v);
                 }
                 for (k, v) in &c.meta {
+                    if table_rows.is_some() && (k == "rules" || k == "morphism") {
+                        continue;
+                    }
                     push(&mut rows, "%", k, v);
                 }
                 for (k, v) in &c.system {
@@ -3344,12 +3428,19 @@ impl Value {
                 for (k, v) in &c.local {
                     push(&mut rows, "~", k, v);
                 }
-                rows.sort_by(|a, b| a.0.cmp(&b.0));
+                let mut lines: Vec<(String, String)> = Vec::new();
                 for (disp, v) in rows {
                     if is_engine_scaffold_field(&disp, &v) {
                         continue;
                     }
-                    s.push_str(&format!("{}  {}: {}\n", pad, disp, v.to_nlang(indent + 1)));
+                    lines.push((disp, v.to_nlang(indent + 1)));
+                }
+                if let Some(tr) = table_rows {
+                    lines.extend(tr);
+                }
+                lines.sort_by(|a, b| a.0.cmp(&b.0));
+                for (disp, body) in lines {
+                    s.push_str(&format!("{}  {}: {}\n", pad, disp, body));
                 }
                 s.push_str(&format!("{}}}", pad));
                 if c.closed {
