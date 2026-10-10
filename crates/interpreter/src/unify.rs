@@ -457,6 +457,13 @@ impl Ouroboros {
     }
 
     fn unify_combo(&self, a: ComboVal, b: ComboVal, ctx: &mut EvalContext) -> Value {
+        match self.unify_combo_inner(a, b, ctx) {
+            Value::Combo(c) => Value::Combo(crate::dispatch::normalize_table(c)),
+            other => other,
+        }
+    }
+
+    fn unify_combo_inner(&self, a: ComboVal, b: ComboVal, ctx: &mut EvalContext) -> Value {
         // forward_spread: expand deferred sources before field lattice merge
         // so `{...(1,2)} |> {s: …}` sees numeric keys from the unbox.
         // Engine-internal expand may re-queue unresolved Top (wrong root);

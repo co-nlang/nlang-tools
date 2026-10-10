@@ -66,14 +66,95 @@
 
 ### 8.1 做了什麼
 
+裁定日沿工單 2026-10-10。有模式鍵的值收成一個正規形：普通資料鍵是該鍵所拼約束的分支，同一分支的多個本體是以內容為鍵的集合。
+
+三個出口呼叫 `normalize_table`。字面在 `seal_defining_scope` 之後。`unify_combo` 包住原相交，Combo 結果再正規化；`&` 與根的 `evolve` 走這裡。`expand_combo_pending` 同樣在 Combo 結果上正規化；`...` 與 `|>` 走這裡。`normalize_table` 只在這顆值自己的 `%rules` 帶模式、而且資料軸還有普通鍵時動手。它不走入巢狀 Combo，也不把 `%rules` 再送去正規化。
+
+`install_dispatch_table` 把同一模式的本體用 `join_rule_cocoons` 收成集合。資料鍵留到封框之後才搬走，本體裡的兄弟名仍看得到封框時的欄位。
+
+`.k` 與裸名在欄位落空時讀該鍵拼出的分支，不讀 `_:`。提交在 `project_for_commit` 之後用 `canonical_bodies` 依強制後的內容重算集合的鍵，單本體則把集合打開成那一個本體。
+
+印出：分支帶 `%val` 或 `%bodies` 的表以約束印。整數、字串、Top 印成鍵（`1:`、`j:`、`_:`）。型別模式印 `@{ @int }`。多本體以 ` & ` 接。只有 `%code` 的箭頭維持耐久形。
+
+套件留在 `oo` 0.78.0。磁碟 `layout=9`、`encoding=5`。
+
 ### 8.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/dispatch.rs`：`is_plain_table_key`、`table_branch_for_name`、`canonical_bodies`、`normalize_table`。`branch_cocoon` 與 `apply_single_rule` 改為 `pub(crate)`。
+2. `crates/interpreter/src/eval.rs`：字面封框後正規化；展開出口正規化；`install_dispatch_table` 改走 `join_rule_cocoons`。刪掉因此沒人呼叫的 `is_plain_data_key`、`same_thunk_scope`、`meet_branch_bodies`、`quote_branch_body`、`acc_pattern_branch`，linux lib 警告數維持原先的 14。
+3. `crates/interpreter/src/unify.rs`：`unify_combo` 在內層相交之後正規化。兩個規則繭先 `join_rule_cocoons`、不強制的那條早退留在內層。
+4. `crates/interpreter/src/universe.rs`：提交觀察在 `project_for_commit` 之後呼叫 `canonical_bodies`。
+5. `crates/interpreter/src/lib.rs`：`resolve_path_internal` 的作用域與根、以及點導航，欄位落空時讀分支。
+6. `crates/interpreter/src/value.rs`：`table_display_rows`、`project_rule_cocoon`。表的 `%rules` 投影保留 `%pattern`，只投影本體。
+
+`storage.rs`、剖析器、探針、`Cargo.toml`、`Cargo.lock` 未改。這六個檔沒有跑 rustfmt。沒有 cargo-fix 那 14 則警告。
 
 ### 8.3 工單哪裡是錯的
 
+工單預測的全樹（含本探針）是 264 target、2553 passed、0 failed。三輪的 `test result:` 與此相同。
+
+Q3 的 `run --format` 量的是 `oo run --format`：它演化檔案後把宇宙印成 n/。`oo fmt` 是來源排版，另外量了，見 Q3。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1** 以名字讀一個可能是表的 Combo：
+
+1. 改了。`resolve_path_internal`（`lib.rs`，作用域迴圈與迴圈之後、`~%Config` 之前）。作用域的欄位落空時記下 `table_branch_for_name`；迴圈後若仍沒有欄位，對那個命中呼叫 `apply_single_rule`；再沒有則對 `ctx.root` 做同一讀。`oo eval` 把式子掛成 `__eval_result` 再 `observe`。`observe` 先把根與 staged `unify`（此處正規化），再以裸名解析。鍵已被收進分支時，快路徑的 `get_field` 落空，這條走法讀到該分支。根的裸名、以及多段路徑的第一段，同一條。
+2. 改了。點導航（`lib.rs`，`get_field`／`/seg`／`@seg` 之後）。落空改讀 `table_branch_for_name`。沒有該分支維持開放落空，不讀 `_:`。
+3. 快路徑沒改，理由如下。`resolve_path` 的單段裸名（約 4018 行）先回傳作用域、staged、根、標準根上的真實欄位。表本體的作用域框是封框時的快照，兄弟資料鍵還在，裸名 `n` 打中欄位。落空才落到第 1 條，正規化之後的根因此答得出 `__eval_result`。外層作用域若仍有同名欄位，而內層框只剩分支，快路徑先回外層欄位。參考實作也留著這條；探針綠，因為封框快照仍帶著兄弟鍵。
+4. `predict_effect` 沒改（`eval.rs`，第一段約 969 行，其後段約 1016 行）。它讀的是存著的效應標籤。只存在於分支的名字預測為 Pure。它不回傳使用者的值。
+5. `run --observe` 走 `universe.observe`，與 `oo eval` 同一條 `resolve_path`。`status` 印 staged 的 `to_nlang`，不按使用者的名字查。`oo run --format` 印一次演化後的 staged。`oo fmt` 印來源。`log` 印提交紀錄。`inspect` 對根印 `to_nlang`。演化經 `unify` 產生正規形。提交的 `get_field` 讀的是 `~%Config` 與投影，不是以資料名讀一張使用者的表。
+6. `oodp` 與內建的 `get_field("0")`、`%val`、`%cause` 讀的是線上記錄與元組槽。分派的 `get_field("%pattern")` 讀的是分支自己。
+
+**Q2** 產生正規形的出口是上面三個：字面封框之後、`unify_combo`、`expand_combo_pending`。九條組法都經過它們。字面走第一個。`&` 兩向走相交。`|>` 與 `...` 在展開時走第三個。根是舊根與 staged 的相交，一次或兩次 `evolve` 都是這一次相交。提交後的欄位是該根再經 `canonical_bodies`。
+
+`install_dispatch_table` 與兩個規則繭的早退把同一模式的本體收成集合，不在這裡搬走資料鍵。`canonical_bodies` 不建立正規形。它在 `project_for_commit` 之後走入 `%rules`，把 `%bodies` 的鍵改成該本體的 `content_digest`（`serialize_bn` 的 sha256），放進 `BTreeMap`，只剩一個本體時打開成那個本體。原子在投影時已強制，thunk 的 context 不進鍵，所以鍵只依內容。
+
+**Q3** 空目錄、release 二進位。檔案是 `@{ 1 }: 42`、`x: 0`、`m: { a: 1 }`。
+
+`oo run --format a.n`（提交前、提交後同一段）：
+
+```
+{
+  1: 42
+  m: {
+    a: 1
+  }
+  x: 0
+}
+```
+
+`oo fmt a.n` 印來源，`@{ 1 }:` 排成 `1:`：
+
+```
+1: 42
+m: {
+  a: 1
+}
+x: 0
+```
+
+`evolve` 之後、`commit` 之前，`status` 的 staged 是同一張可讀表，另有 `Total Logical Entropy: 3033 bits`，以及 `Standard root dependency: current (no committed root yet)`。提交之後 `status` 只寫標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)` 與 `Universe is static`。`log` 印 commit、`message: q3`、Date，不印欄位。`inspect` 該 commit 的 `kind` 是 commit，`root` 是 `d3a1d999febe0daf27e2465395e8ba4e461d96e89f8a47bea9a6ef78a2733883`（這份檔的根；含模式鍵的根工單允許再移）。`inspect` 該根印出上面的 `1`／`m`／`x`，並帶 `~%__nlang_system_digest` 為標準根。`_.x` 是 `0`，`_.m` 是 `{ a: 1 }`，`(_.) 1` 是 `42`。
+
+**Q4** `(@int -> 7)` 與 `(x @int -> x) & (x @str -> x)` 的 `oo eval` 仍印耐久形：`%rules` 下是 64 位十六進位分支名，分支裡是 `%code`、`%pattern`、`%closure`，後者另有 `%param: "x"`。`table_display_rows` 在分支只有 `%code` 時回 `None`。I4 排除箭頭，所以維持這張印出。
+
+**Q5** 空目錄、release 二進位，未改行為。`.name` 與施用於 `"name"` 都印 `"classifier"`。
 
 ### 8.5 探針
 
+`crates/oo/tests/a_table_you_cannot_read_probe_test.rs` 未改，未 rustfmt。Q-076 三支探針未改。
+
+全樹第三輪：本探針 12／12，2.08s（g1–g5、r1–r7 皆 `ok`）。Q-076 原探針 17／17，1.63s。R-1 6／6，0.41s。R-2 10／10，1.14s。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.77s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
+
 ### 8.6 數字
 
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 264 行，2553 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3078 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。g4 四個根：`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`；`g` 與 `h` 同倉為 `e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`；`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`；`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.78.0。未推送。
+
 ### 8.7 你認為需要改規格之處
+
+規格檔這次沒有改。要補的句子就是工單第 2 節的 D100–D102，以及工單第 6 節點名、由驗收方收尾的導航章與 `CHANGELOG`。箭頭維持耐久印出，實測在 Q4。

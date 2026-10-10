@@ -99,108 +99,6 @@ fn pattern_expr_of_param(param: &Expr) -> (Expr, Option<String>) {
     }
 }
 
-fn is_plain_data_key(key: &str) -> bool {
-    let key = key.trim();
-    !(key.starts_with('%')
-        || key.starts_with('/')
-        || key.starts_with('@')
-        || key.starts_with('~'))
-}
-
-fn same_thunk_scope(
-    a_closure: &[std::sync::Arc<ComboVal>],
-    a_context: &Option<Box<Value>>,
-    b_closure: &[std::sync::Arc<ComboVal>],
-    b_context: &Option<Box<Value>>,
-) -> bool {
-    if a_closure.len() != b_closure.len() {
-        return false;
-    }
-    if !a_closure
-        .iter()
-        .zip(b_closure.iter())
-        .all(|(x, y)| std::sync::Arc::ptr_eq(x, y))
-    {
-        return false;
-    }
-    match (a_context, b_context) {
-        (None, None) => true,
-        (Some(x), Some(y)) => x.content_hash() == y.content_hash(),
-        _ => false,
-    }
-}
-
-/// Same pattern twice is one branch: the bodies meet (SPEC_03 §3.1).
-/// Two thunks from the same defining scope keep one `Meet` and that
-/// scope, so `$` is still the argument at the call. Any other pair is
-/// forced in its own closure and then unified — the right body is not
-/// dropped, and it is not evaluated in the left body's scope.
-fn meet_branch_bodies(
-    oo: &Ouroboros,
-    left: Value,
-    right: Value,
-    ctx: &mut EvalContext,
-) -> Value {
-    let left = quote_branch_body(left);
-    let right = quote_branch_body(right);
-    match (left, right) {
-        (
-            Value::Thunk {
-                expr: a,
-                closure: ca,
-                context: xa,
-                effect: ea,
-            },
-            Value::Thunk {
-                expr: b,
-                closure: cb,
-                context: xb,
-                effect: eb,
-            },
-        ) if same_thunk_scope(&ca, &xa, &cb, &xb) => Value::Thunk {
-            expr: Box::new(Expr::new(
-                ExprKind::Meet(a, b),
-                nlang_parser::ast::Span::unknown(),
-            )),
-            closure: ca,
-            context: xa,
-            effect: ea.union(eb),
-        },
-        (left, right) => oo.unify_internal(left, right, ctx),
-    }
-}
-
-fn quote_branch_body(v: Value) -> Value {
-    match v {
-        Value::Thunk { .. } => v,
-        Value::Atom(kind, effect, _) => Value::Thunk {
-            expr: Box::new(Expr::new(
-                ExprKind::Atom(kind),
-                nlang_parser::ast::Span::unknown(),
-            )),
-            closure: Vec::new(),
-            context: None,
-            effect,
-        },
-        other => other,
-    }
-}
-
-fn acc_pattern_branch(
-    oo: &Ouroboros,
-    acc: &mut IndexMap<String, (Value, Value)>,
-    pattern: Value,
-    body: Value,
-    ctx: &mut EvalContext,
-) {
-    let name = crate::dispatch::pattern_branch_name(&pattern);
-    if let Some((_, prev)) = acc.get(&name).cloned() {
-        acc.insert(name, (pattern, meet_branch_bodies(oo, prev, body, ctx)));
-    } else {
-        acc.insert(name, (pattern, body));
-    }
-}
-
 /// Lexically free bare names in an expression. Combo fields form a
 /// simultaneous local scope, which preserves both self- and mutual recursion.
 fn free_bare_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
@@ -514,81 +412,35 @@ impl Ouroboros {
     /// SPEC_03 §3.1 / §1.1: collision-aware field write — key already present
     /// → force both sides and `unify_internal` (intersect `&`); absent → insert
     /// as-is (preserves Thunk laziness on non-colliding keys).
-    /// One `%rules` combo for the whole pattern batch, plus every plain
-    /// data key of this literal turned into a constraint. The holder is
-    /// open so a later pattern field can join another rule key.
+    /// Pattern keys become branch cocoons. Bodies of one pattern are a set.
+    /// Plain data keys stay on the literal until after the scope frame is
+    /// sealed, then `normalize_table` moves them — a moved thunk still sees
+    /// its siblings. The holder is open so a later field can join a rule.
     fn install_dispatch_table(
         &self,
         rf: &mut IndexMap<String, Value>,
-        quoted_data: &mut IndexMap<String, Value>,
+        _quoted_data: &mut IndexMap<String, Value>,
         pattern_rules: Vec<(Value, Value)>,
         ctx: &mut EvalContext,
     ) {
-        let mut acc: IndexMap<String, (Value, Value)> = IndexMap::new();
+        let mut acc: IndexMap<String, Value> = IndexMap::new();
         for (pattern, body) in pattern_rules {
-            acc_pattern_branch(self, &mut acc, pattern, body, ctx);
+            let name = crate::dispatch::pattern_branch_name(&pattern);
+            let coc = crate::dispatch::branch_cocoon(pattern, body);
+            let v = match (acc.shift_remove(&name), coc) {
+                (Some(Value::Combo(a)), Value::Combo(b)) => {
+                    crate::dispatch::join_rule_cocoons(a, b)
+                }
+                (_, c) => c,
+            };
+            acc.insert(name, v);
         }
-        let data_keys: Vec<String> = rf
-            .keys()
-            .filter(|k| is_plain_data_key(k))
-            .cloned()
-            .collect();
-        for key in data_keys {
-            if let Some(body) = rf.shift_remove(&key) {
-                acc_pattern_branch(
-                    self,
-                    &mut acc,
-                    crate::dispatch::constraint_from_data_key(&key),
-                    body,
-                    ctx,
-                );
-            }
-        }
-        let quoted: Vec<(String, Value)> = quoted_data.drain(..).collect();
-        for (key, body) in quoted {
-            acc_pattern_branch(
-                self,
-                &mut acc,
-                crate::dispatch::constraint_from_data_key(&key),
-                body,
-                ctx,
-            );
-        }
-        let mut rules_fields: IndexMap<String, Value> = IndexMap::new();
         let mut effect = EffectTag::Pure;
-        for (name, (pattern, body)) in acc {
-            let te = body.effect();
-            effect = effect.union(te);
-            let mut fields = IndexMap::new();
-            fields.insert("%pattern".to_string(), pattern);
-            fields.insert("%val".to_string(), body);
-            // Data-axis `_` keeps unify from peeling this cocoon down to
-            // `%val` (is_pure_wrapper). The pattern has to survive a meet.
-            fields.insert("_".to_string(), Value::Top);
-            rules_fields.insert(
-                name,
-                Value::Combo(ComboVal::new(
-                    fields,
-                    true,
-                    IndexMap::new(),
-                    te,
-                    vec![],
-                )),
-            );
+        for v in acc.values() {
+            effect = effect.union(v.effect());
         }
-        let rules = Value::Combo(ComboVal::new(
-            rules_fields,
-            false,
-            IndexMap::new(),
-            effect,
-            vec![],
-        ));
-        self.merge_field_into(
-            rf,
-            "%rules".to_string(),
-            rules,
-            ctx,
-        );
+        let rules = Value::Combo(ComboVal::new(acc, false, IndexMap::new(), effect, vec![]));
+        self.merge_field_into(rf, "%rules".to_string(), rules, ctx);
         self.merge_field_into(
             rf,
             "%morphism".to_string(),
@@ -927,7 +779,14 @@ impl Ouroboros {
     /// it is "binding not on this root". Re-queue those sources so evolve/
     /// observe-entry unify cannot silently consume forward spreads.
     /// Observation contexts (memo_enabled) treat Top as true no-op.
-    pub(crate) fn expand_combo_pending(&self, mut c: ComboVal, ctx: &mut EvalContext) -> Value {
+    pub(crate) fn expand_combo_pending(&self, c: ComboVal, ctx: &mut EvalContext) -> Value {
+        match self.expand_combo_pending_inner(c, ctx) {
+            Value::Combo(c) => Value::Combo(crate::dispatch::normalize_table(c)),
+            other => other,
+        }
+    }
+
+    fn expand_combo_pending_inner(&self, mut c: ComboVal, ctx: &mut EvalContext) -> Value {
         if c.pending_spreads.is_empty() {
             return Value::Combo(c);
         }
@@ -1758,6 +1617,9 @@ impl Ouroboros {
                 // SPEC_04 §2.1 / §3.1: bare names resolve through the defining
                 // combo as a scope frame (public + private).
                 crate::value::seal_defining_scope(&mut combo);
+                // After the frame is sealed, so a key moved into `%rules`
+                // still resolves as a sibling inside a branch body.
+                let combo = crate::dispatch::normalize_table(combo);
                 let mut res = Value::Combo(combo);
                 // GUIDE_03 §11.5: cocoon is a solidification boundary — force
                 // after seal so siblings see the holder frame (inner-first).

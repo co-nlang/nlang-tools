@@ -38,7 +38,7 @@ pub(crate) fn rules_have_pattern(rules: &ComboVal) -> bool {
     })
 }
 
-fn branch_cocoon(pattern: Value, body: Value) -> Value {
+pub(crate) fn branch_cocoon(pattern: Value, body: Value) -> Value {
     let te = body.effect();
     Value::Combo(ComboVal::new(
         IndexMap::from_iter([
@@ -104,6 +104,113 @@ pub(crate) fn join_rule_cocoons(a: ComboVal, b: ComboVal) -> Value {
         EffectTag::Pure,
         vec![],
     ))
+}
+
+pub(crate) fn is_plain_table_key(key: &str) -> bool {
+    !(key.starts_with('%') || key.starts_with('/') || key.starts_with('@') || key.starts_with('~'))
+}
+
+/// The branch a table key spells: the rule, the constraint, and its name.
+/// A key that spells no branch is absent — navigation does not use `_`.
+pub(crate) fn table_branch_for_name(c: &ComboVal, key: &str) -> Option<(Value, Value, String)> {
+    if !is_plain_table_key(key) || key.is_empty() {
+        return None;
+    }
+    match c.get_field("%rules") {
+        Some(Value::Combo(rules)) if rules_have_pattern(rules) => {
+            let pattern = constraint_from_data_key(key);
+            let name = pattern_branch_name(&pattern);
+            rules.get_field(&name).cloned().map(|r| (r, pattern, name))
+        }
+        _ => None,
+    }
+}
+
+/// After bodies are forced, re-key each branch's set by content and drop
+/// duplicates. One body is that body. The digest does not see a thunk's
+/// context, because the thunk has already been forced.
+pub(crate) fn canonical_bodies(v: Value) -> Value {
+    match v {
+        Value::Combo(mut c) => {
+            if let Some(Value::Combo(bs)) = c.get_field("%bodies").cloned() {
+                let mut set: std::collections::BTreeMap<String, Value> =
+                    std::collections::BTreeMap::new();
+                for (_, b) in bs.data.iter() {
+                    let b = canonical_bodies(b.clone());
+                    let key = format!(
+                        "{{{}}}",
+                        hex::encode(crate::bn_serial::content_digest(&b))
+                    );
+                    set.insert(key, b);
+                }
+                if set.len() == 1 {
+                    return set.into_values().next().unwrap();
+                }
+                let bodies = ComboVal::new(
+                    set.into_iter().collect(),
+                    true,
+                    IndexMap::new(),
+                    EffectTag::Pure,
+                    vec![],
+                );
+                c.insert_field("%bodies", Value::Combo(bodies));
+                return Value::Combo(c);
+            }
+            for axis in [
+                &mut c.data,
+                &mut c.types,
+                &mut c.rules,
+                &mut c.meta,
+                &mut c.system,
+                &mut c.local,
+            ] {
+                let keys: Vec<String> = axis.keys().cloned().collect();
+                for k in keys {
+                    if let Some(x) = axis.shift_remove(&k) {
+                        axis.insert(k, canonical_bodies(x));
+                    }
+                }
+            }
+            Value::Combo(c)
+        }
+        other => other,
+    }
+}
+
+/// A value with a pattern key has one shape: every plain data key is the
+/// branch its constraint names. Does not walk into `%rules` or into values
+/// that are not themselves tables — a rules combo is not normalized again.
+pub(crate) fn normalize_table(mut c: ComboVal) -> ComboVal {
+    let rules = match c.get_field("%rules") {
+        Some(Value::Combo(r)) if rules_have_pattern(r) => r.clone(),
+        _ => return c,
+    };
+    let moved: Vec<(String, Value)> = c
+        .data
+        .iter()
+        .filter(|(k, _)| is_plain_table_key(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if moved.is_empty() {
+        return c;
+    }
+    let mut out = rules.clone();
+    for (k, v) in moved {
+        c.data.shift_remove(&k);
+        let pattern = constraint_from_data_key(&k);
+        let name = pattern_branch_name(&pattern);
+        let arriving = branch_cocoon(pattern, v);
+        match (out.data.get(&name).cloned(), arriving) {
+            (Some(Value::Combo(e)), Value::Combo(r)) => {
+                out.data.insert(name, join_rule_cocoons(e, r));
+            }
+            (_, arriving) => {
+                out.data.insert(name, arriving);
+            }
+        }
+    }
+    c.insert_field("%rules", Value::Combo(out));
+    c
 }
 
 impl Ouroboros {
@@ -241,7 +348,7 @@ impl Ouroboros {
             .collect()
     }
 
-    fn apply_single_rule(
+    pub(crate) fn apply_single_rule(
         &self,
         rule: Value,
         arg: Value,
