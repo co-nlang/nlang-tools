@@ -348,6 +348,49 @@ impl Ouroboros {
             .collect()
     }
 
+    /// Navigation reads the value a branch stores. `$` in that body is the
+    /// constraint. A stored arrow or table is returned. Dispatch still
+    /// applies a selected branch through `apply_single_rule`.
+    pub(crate) fn read_branch(
+        &self,
+        rule: Value,
+        arg: Value,
+        pattern_key: String,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        let rule = self.force(rule, ctx);
+        if let Value::Combo(ref rc) = rule {
+            if let Some(Value::Combo(bs)) = rc.get_field("%bodies") {
+                let mut acc = Value::Top;
+                for (_, body) in bs.data.iter() {
+                    let r = self.read_branch(body.clone(), arg.clone(), pattern_key.clone(), ctx);
+                    acc = self.unify_internal(acc, r, ctx);
+                }
+                return acc;
+            }
+            if rc.get_field("%code").is_none() {
+                if let Some(val) = rc.get_field("%val") {
+                    let val = match val.clone() {
+                        Value::Thunk {
+                            expr,
+                            closure,
+                            effect,
+                            ..
+                        } => Value::Thunk {
+                            expr,
+                            closure,
+                            context: Some(Box::new(arg.clone())),
+                            effect,
+                        },
+                        other => other,
+                    };
+                    return self.force(val, ctx);
+                }
+            }
+        }
+        self.apply_single_rule(rule, arg, pattern_key, ctx)
+    }
+
     pub(crate) fn apply_single_rule(
         &self,
         rule: Value,

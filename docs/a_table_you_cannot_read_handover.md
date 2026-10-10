@@ -207,14 +207,77 @@ x: 0
 
 ### 10.1 做了什麼
 
+導航與裸名改讀分支存著的值。`$` 仍是該鍵所拼的約束。存著的值若是箭頭、部分施用的內建、或另一張表，讀回的就是那個值。分派選中分支時仍走 `apply_single_rule`，存著的箭頭照舊施用在輸入上。分支帶 `%code` 時，導航仍把該本體交回施用。
+
+套件留在 `oo` 0.78.0。磁碟 `layout=9`、`encoding=5`。
+
 ### 10.2 順手改動（逐項指名）
+
+1. `crates/interpreter/src/dispatch.rs`：新增 `read_branch`。有 `%bodies` 時逐本體讀回再相交。沒有 `%code` 而有 `%val` 時，把 thunk 的 context 設成約束再 `force`，不呼叫 `apply_morphism`。其餘交給 `apply_single_rule`。
+2. `crates/interpreter/src/lib.rs`：`resolve_path_internal` 的作用域命中與根、以及點導航，三處由 `apply_single_rule` 改為 `read_branch`。
+
+分派的兩處 `apply_single_rule` 未改。探針、`storage.rs`、`Cargo.toml`、`Cargo.lock` 未改。這兩個檔沒有跑 rustfmt。沒有 cargo-fix。linux lib 警告數仍是 14。
 
 ### 10.3 工單哪裡是錯的
 
+工單預測的全樹（含兩支探針）是 265 target、2557 passed、0 failed。三輪的 `test result:` 與此相同。
+
+工單寫 v0.78.0 上 R1-Q2 三者皆 `#missing_key`。這次 release 上第一與第三仍是。`("f" -> 7).f` 是 `7`。Q-077 的導航已會讀到模式為字串 `"f"` 的 `%code` 分支並求值；R-1 對有 `%code` 的分支仍走那條施用。
+
 ### 10.4 工單指名要你回答的問題
+
+**R1-Q1** 對照 §8.4 Q1。行號是這次改完之後的。
+
+1. `resolve_path_internal`（作用域迴圈之後、以及 `ctx.root`）：改為讀存著的值（`read_branch`）。`$` 是約束。存著的箭頭或表不被施用在約束上。該分支若是 `%code`，仍交給 `apply_single_rule`。`oo eval` 的 `__eval_result`、根的裸名、多段路徑的第一段，都是這條。
+2. 點導航（`get_field`／`/seg`／`@seg` 之後）：同樣改為讀存著的值。沒有該分支仍是開放落空，不讀 `_:`。
+3. 快路徑沒改，它讀的是存著的欄位。`resolve_path` 的單段裸名先回傳作用域、staged、根、標準根上的真實欄位，經 `force_lexical_name`，不施用。正規化之後資料鍵不在活的 Combo 上，這條落空才進第 1 條。封框快照仍帶兄弟鍵，本體裡的裸名打中的是那個快照裡的值。外層若仍有同名欄位，而內層只剩分支，快路徑先回外層那個欄位。
+4. `predict_effect` 沒改。它讀效應標籤，不回傳值，也不施用。只存在於分支的名字預測為 Pure。
+5. `run --observe` 與 `oo eval` 都走 `resolve_path`，所以讀回是第 1 條。`status`、`oo run --format`、`oo fmt`、`log`、`inspect` 不按名字查表。演化與提交產生正規形；提交裡的 `get_field` 讀的是 `~%Config` 與投影。
+6. `oodp` 與內建的 `get_field("0")`、`%val`、`%cause` 讀的是線上記錄與元組槽。分派的兩處 `apply_single_rule`（`dispatch.rs`）是施用：選中的分支若存著箭頭，就把它施用在輸入上（ga1）。
+
+**R1-Q2** 空目錄、release 二進位。
+
+1. `(x @str -> 7).f` 是 `_|_  ;; %cause: #missing_key  ;; Key 'f' missing in closed Cocoon`。
+2. `("f" -> 7).f` 是 `7`。
+3. `((x @str -> 7) & { j: 5 }).j` 是 `_|_  ;; %cause: #missing_key  ;; Key 'j' missing in closed Cocoon`。
+
+**R1-Q3** 空目錄、release 二進位。字面 `{ @{ @int }: "n", f: (x -> x + 1) }` 與 `({ @{ @int }: "n" } & { f: (x -> x + 1) })` 印出同一段：
+
+```
+{
+  @{ @int }: "n"
+  f: {{
+    %kind: #logic
+    %morphism: #true
+    %rules: {{
+      x: {{
+        %closure: {{
+          0: {}
+        }}
+        %code: x + 1
+      }}
+    }}
+  }}
+}
+```
+
+鍵 `f` 以鍵印。存著的箭頭印它自己的耐久形，綁定名是 `x`。
 
 ### 10.5 探針
 
+`crates/oo/tests/a_table_you_cannot_read_r1_probe_test.rs` 未改，未 rustfmt。原探針與 Q-076 三支探針未改。
+
+全樹第三輪：R-1 探針 4／4，0.90s（`ra1_a_stored_arrow_is_read_not_applied`、`ra2_a_stored_table_is_read_not_applied`、`ra3_a_root_that_is_a_table_is_read`、`ga1_application_still_applies_a_stored_arrow` 皆 `ok`）。原探針 12／12，2.07s。Q-076 原探針 17／17，1.65s。R-1 6／6，0.41s。R-2 10／10，1.14s。測試套件不印單支耗時。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.58s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
+
 ### 10.6 數字
 
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 265 行，2557 passed，0 failed。`Running`／`test `／`test result:` 三輪各 3084 行，去掉耗時後相同。原始日誌的警告順序不必相同。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。g4 四個根：`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`；`g` 與 `h` 同倉為 `e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27`；`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`；`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.78.0。未推送。
+
 ### 10.7 你認為需要改規格之處
+
+規格檔這次沒有改。要寫清楚的就是 D100 已有的那句：導航讀的是分支存著的本體，本體是箭頭就是箭頭。施用選中的分支時，存著的箭頭仍用在輸入上。文字由驗收方收尾。

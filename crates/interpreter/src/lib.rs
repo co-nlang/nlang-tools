@@ -4190,14 +4190,14 @@ impl Ouroboros {
                 }
                 if found.is_none() {
                     if let Some((rule, pattern, bname)) = table_hit.take() {
-                        found = Some(self.apply_single_rule(rule, pattern, bname, ctx));
+                        found = Some(self.read_branch(rule, pattern, bname, ctx));
                     }
                 }
                 if found.is_none() {
                     if let Some((rule, pattern, bname)) =
                         dispatch::table_branch_for_name(&ctx.root, name)
                     {
-                        found = Some(self.apply_single_rule(rule, pattern, bname, ctx));
+                        found = Some(self.read_branch(rule, pattern, bname, ctx));
                     }
                 }
                 // SPEC_09 §6: never bind staged Config fragment as ~%Config;
@@ -4665,7 +4665,7 @@ impl Ouroboros {
                     let found = match found {
                         Some(v) => Some(v),
                         None => dispatch::table_branch_for_name(&c, seg).map(|(rule, pattern, name)| {
-                            self.apply_single_rule(rule, pattern, name, ctx)
+                            self.read_branch(rule, pattern, name, ctx)
                         }),
                     };
                     if !path_so_far.is_empty() {
