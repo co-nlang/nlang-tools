@@ -473,7 +473,7 @@ fn frames_content_digest(closure: &[std::sync::Arc<ComboVal>]) -> ContentHash {
 /// Cycle / memo identity for a thunk under force. Frame component is content
 /// (M1), not `Arc::as_ptr` — pointer keys missed re-entry of equal frames in
 /// separate allocations (SPEC_01 §2.4.1).
-fn thunk_cycle_id(
+pub(crate) fn thunk_cycle_id(
     expr: &Expr,
     closure: &[std::sync::Arc<ComboVal>],
     context: &Option<Box<Value>>,
@@ -4016,7 +4016,7 @@ impl Ouroboros {
             // Iterate by index so we can call force_lexical without holding
             // a borrow on ctx.scopes.
             for i in (0..ctx.scopes.len()).rev() {
-                let scope = ctx.scopes[i].clone();
+                let scope = self.scope_view(ctx.scopes[i].clone(), ctx);
                 // Scope frames: lexical force (parameter rebinding is not a
                 // coordinate cycle — force_coord here false-triggers HOFs).
                 if let Some(val) = scope.get_field(name).cloned() {
@@ -4142,6 +4142,36 @@ impl Ouroboros {
         self.resolve_path_internal(path, ctx)
     }
 
+    /// A scope frame whose spreads have not landed yet answers from what
+    /// the spreads bring in. A frame being expanded answers from its
+    /// literal fields only.
+    fn scope_view(
+        &self,
+        frame: std::sync::Arc<ComboVal>,
+        ctx: &mut EvalContext,
+    ) -> std::sync::Arc<ComboVal> {
+        if frame.pending_spreads.is_empty() {
+            return frame;
+        }
+        let id = std::sync::Arc::as_ptr(&frame) as usize;
+        let busy = EXPANDING_FRAMES.with(|s| s.borrow().contains(&id));
+        if busy {
+            return frame;
+        }
+        EXPANDING_FRAMES.with(|s| s.borrow_mut().push(id));
+        let out = self.expand_combo_pending((*frame).clone(), ctx);
+        EXPANDING_FRAMES.with(|s| {
+            let mut v = s.borrow_mut();
+            if let Some(p) = v.iter().rposition(|x| *x == id) {
+                v.remove(p);
+            }
+        });
+        match out {
+            Value::Combo(c) => std::sync::Arc::new(c),
+            _ => frame,
+        }
+    }
+
     fn resolve_path_internal(&self, path: &Path, ctx: &mut EvalContext) -> Value {
         let start_val: Value = match path.anchor {
             PathAnchor::Root => Value::Combo((*ctx.root).clone()),
@@ -4155,7 +4185,12 @@ impl Ouroboros {
                 // A table frame answers a bare name from the branch its key
                 // spells — the same read as `.name` on that table.
                 let mut table_hit: Option<(Value, Value, String)> = None;
-                for scope in ctx.scopes.iter().rev() {
+                let views: Vec<std::sync::Arc<ComboVal>> = (0..ctx.scopes.len())
+                    .rev()
+                    .map(|i| ctx.scopes[i].clone())
+                    .collect();
+                for scope in views.into_iter().map(|f| self.scope_view(f, ctx)) {
+                    let scope = &scope;
                     if let Some(val) = scope.get_field(name) {
                         found = Some(val.clone());
                         break;
@@ -5009,4 +5044,9 @@ impl Ouroboros {
     pub fn tropical_weight(&self, val: &Value) -> u64 {
         val.tropical_weight()
     }
+}
+
+thread_local! {
+    pub(crate) static EXPANDING_FRAMES: std::cell::RefCell<Vec<usize>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }

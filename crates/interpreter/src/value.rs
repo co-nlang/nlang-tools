@@ -778,6 +778,92 @@ pub fn seal_defining_scope(c: &mut ComboVal) {
     }
 }
 
+/// After a container's spreads land, its own fields resolve bare names in
+/// the container as it now is. `literal` names the fields written in the
+/// container (axis-prefixed as `field_keys` spells them, `~k` for local).
+pub fn reseal_after_spreads(c: &mut ComboVal, literal: &std::collections::HashSet<String>) {
+    // The frame the container sealed into its own fields is the innermost
+    // frame of each literal field thunk; swap it for the container as it is
+    // now (same depth, so `^` counts are unchanged).
+    let mut old: Option<usize> = None;
+    let mut find = |v: &Value| {
+        if old.is_none() {
+            if let Value::Thunk { closure, .. } = v {
+                if let Some(f) = closure.last() {
+                    if !f.pending_spreads.is_empty() {
+                        old = Some(std::sync::Arc::as_ptr(f) as usize);
+                    }
+                }
+            }
+        }
+    };
+    for (k, v) in c.data.iter() {
+        if literal.contains(k) {
+            find(v);
+        }
+    }
+    for (k, v) in c.local.iter() {
+        if literal.contains(&format!("~{k}")) {
+            find(v);
+        }
+    }
+    let Some(old) = old else {
+        return;
+    };
+    swap_frame(c, old);
+}
+
+/// Swap the frame `old` (by pointer) for the container as it now is, in
+/// every field — what spreads brought in included.
+pub fn swap_frame(c: &mut ComboVal, old: usize) {
+    let mut frame_src = c.clone();
+    frame_src.pending_spreads = Vec::new();
+    let frame = std::sync::Arc::new(frame_src);
+    for fv in c
+        .data
+        .values_mut()
+        .chain(c.local.values_mut())
+        .chain(c.rules.values_mut())
+        .chain(c.types.values_mut())
+        .chain(c.meta.values_mut())
+        .chain(c.system.values_mut())
+    {
+        swap_frame_in(fv, old, &frame);
+    }
+}
+
+fn swap_frame_in(v: &mut Value, old: usize, frame: &std::sync::Arc<ComboVal>) {
+    match v {
+        Value::Thunk { closure, .. } => {
+            for f in closure.iter_mut() {
+                if std::sync::Arc::as_ptr(f) as usize == old {
+                    *f = std::sync::Arc::clone(frame);
+                }
+            }
+        }
+        Value::Combo(inner) => {
+            for fv in inner
+                .data
+                .values_mut()
+                .chain(inner.local.values_mut())
+                .chain(inner.rules.values_mut())
+                .chain(inner.types.values_mut())
+                .chain(inner.meta.values_mut())
+                .chain(inner.system.values_mut())
+                .chain(inner.pending_spreads.iter_mut())
+            {
+                swap_frame_in(fv, old, frame);
+            }
+        }
+        Value::Union(bs) => {
+            for b in bs.iter_mut() {
+                swap_frame_in(b, old, frame);
+            }
+        }
+        _ => {}
+    }
+}
+
 // ── SPEC_01 §2.4.1 canonical display order (display layer only) ──
 
 /// Type-family rank for union display (lower first).
