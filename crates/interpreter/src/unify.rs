@@ -482,6 +482,10 @@ impl Ouroboros {
         if crate::dispatch::is_rule_cocoon(&a) && crate::dispatch::is_rule_cocoon(&b) {
             return crate::dispatch::join_rule_cocoons(a, b);
         }
+        // D105: two morphisms meet as one table (definition merge).
+        if let Some(v) = self.meet_as_tables(&a, &b, ctx) {
+            return v;
+        }
         let mut pending_spreads = a.pending_spreads.clone();
         pending_spreads.extend(b.pending_spreads.iter().cloned());
         // Phase 1b: phase-aware merge entry

@@ -106,6 +106,114 @@ pub(crate) fn join_rule_cocoons(a: ComboVal, b: ComboVal) -> Value {
     ))
 }
 
+/// D105: a morphism's rows as table branches. A binder-only rule is the
+/// Top row and keeps its binder in `%param`. A morphism with no rules (a
+/// builtin, a partial application) is the Top row whose body applies it.
+/// `None` when the value is not a morphism, or every row already has a pattern.
+pub(crate) fn as_table_morphism(c: &ComboVal) -> Option<ComboVal> {
+    let top_name = pattern_branch_name(&Value::Top);
+    let mut acc: IndexMap<String, Value> = IndexMap::new();
+    let mut converted = false;
+    let join = |acc: &mut IndexMap<String, Value>, name: String, v: Value| {
+        let v = match (acc.shift_remove(&name), v) {
+            (Some(Value::Combo(e)), Value::Combo(r)) => join_rule_cocoons(e, r),
+            (_, v) => v,
+        };
+        acc.insert(name, v);
+    };
+    match c.get_field("%rules") {
+        Some(Value::Combo(rules)) => {
+            for (k, v) in rules.all_fields_iter() {
+                if k.starts_with('%') {
+                    continue;
+                }
+                match v {
+                    Value::Combo(rc) if rc.get_field("%pattern").is_some() => {
+                        join(&mut acc, k.clone(), Value::Combo(rc.clone()));
+                    }
+                    Value::Combo(rc) => {
+                        let mut fields: IndexMap<String, Value> = rc
+                            .all_fields_iter()
+                            .map(|(fk, fv)| (fk.clone(), fv.clone()))
+                            .collect();
+                        fields.insert("%pattern".to_string(), Value::Top);
+                        if rc.get_field("%param").is_none() && rc.get_field("%params").is_none() {
+                            fields.insert(
+                                "%param".to_string(),
+                                Value::Atom(
+                                    AtomKind::Str(k.trim().to_string()),
+                                    EffectTag::Pure,
+                                    None,
+                                ),
+                            );
+                        }
+                        let row = ComboVal::new(fields, true, IndexMap::new(), rc.effect, vec![]);
+                        join(&mut acc, top_name.clone(), Value::Combo(row));
+                        converted = true;
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        _ if c.get_field("%builtin").is_some() => {
+            acc.insert(top_name, branch_cocoon(Value::Top, Value::Combo(c.clone())));
+            converted = true;
+        }
+        _ => return None,
+    }
+    if !converted {
+        return None;
+    }
+    let mut effect = EffectTag::Pure;
+    for v in acc.values() {
+        effect = effect.union(v.effect());
+    }
+    let mut fields = IndexMap::new();
+    fields.insert(
+        "%morphism".to_string(),
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%kind".to_string(),
+        Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None),
+    );
+    fields.insert(
+        "%rules".to_string(),
+        Value::Combo(ComboVal::new(acc, false, IndexMap::new(), effect, vec![])),
+    );
+    Some(ComboVal::new(fields, true, IndexMap::new(), effect, vec![]))
+}
+
+pub(crate) fn is_morphism_combo(c: &ComboVal) -> bool {
+    c.get_field("%morphism").is_some()
+        || c.get_field("%builtin").is_some()
+        || matches!(c.get_field("%rules"), Some(Value::Combo(_)))
+}
+
+impl Ouroboros {
+    /// D105: `f & g` of two morphisms is one table. Fires only when a side
+    /// has a row without a pattern; two tables already meet. Two equal
+    /// morphisms never get here (`unify_internal` returns the one).
+    pub(crate) fn meet_as_tables(
+        &self,
+        a: &ComboVal,
+        b: &ComboVal,
+        ctx: &mut EvalContext,
+    ) -> Option<Value> {
+        if !(is_morphism_combo(a) && is_morphism_combo(b)) {
+            return None;
+        }
+        let ta = as_table_morphism(a);
+        let tb = as_table_morphism(b);
+        if ta.is_none() && tb.is_none() {
+            return None;
+        }
+        let ta = Value::Combo(ta.unwrap_or_else(|| a.clone()));
+        let tb = Value::Combo(tb.unwrap_or_else(|| b.clone()));
+        Some(self.unify_internal(ta, tb, ctx))
+    }
+}
+
 pub(crate) fn is_plain_table_key(key: &str) -> bool {
     !(key.starts_with('%') || key.starts_with('/') || key.starts_with('@') || key.starts_with('~'))
 }

@@ -347,13 +347,17 @@ fn g5_applied_to_union_runs_each_branch_once() {
 
 /// The meet of morphisms is not this card (SPEC_07 §5.3 定義 1 awaits a
 /// ruling): it answers exactly as before.
+// [PROBE AMENDMENT, acceptor, 2026-10-12, Q-081] D105 ruled the meet: two
+// binder-only arrows are one Top row whose bodies meet when applied, so
+// the last two cells are now the conflict of their outputs, not
+// #missing_key. The first two cells (tables, patterned arrows) stand.
 #[test]
 fn g6_the_meet_of_morphisms_is_untouched() {
     let w = Ws::new("g6");
     table(&w, &[
         (r#"({ @{ @int }: "A" } & { @{ @str }: "B" }) 4"#, is, r#""A""#),
         ("((x @int -> x) & (x @str -> x)) 4", is, "4"),
-        ("((x -> 1) & (y -> 2)) 4", bot, "#missing_key"),
-        ("(((x -> x + 1) | (y -> y * 10)) & (z -> z)) 4", bot, "#missing_key"),
+        ("((x -> 1) & (y -> 2)) 4", bot, "#conflict"),
+        ("(((x -> x + 1) | (y -> y * 10)) & (z -> z)) 4", bot, "#conflict"),
     ]);
 }
