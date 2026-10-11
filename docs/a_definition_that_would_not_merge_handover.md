@@ -66,24 +66,83 @@
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
 ### 8.1 射程逐項對照
-I1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+I1：只有綁定名的箭頭在相交時收成約束為 Top 的一列，綁定名留在 `%param`。同名、不同名、元組綁定、柯里化的每一步、部分施用的箭頭，與箭頭、表、內建相交，結果是一張表。`((x -> 1) & (y -> 1)) 4` 是 `1`。`(((x, y) -> x + y) & ((a, b) -> a + b)) (1, 2)` 是 `3`。r2、r3、r4、r6 綠。
+I2：同一分支的本體在被選中時各求值一次，輸出再相交。`((x -> x) & (x -> 5)) 5` 是 `5`，`6` 是 `#conflict`。沒被選中的本體不跑。r2、r10、g4 綠。
+I3：沒有列的態射是 Top 列，本體是施用它。`(~%Math./add 1 & (x -> x + 1)) 5` 是 `6`。`(~%Math./add 1 & { @{ 5 }: 99 }) 5` 是 `99`，`6` 是 `7`。r5 綠。
+I4：`a & b`、`b & a`、`(a & b) & a` 同一個根，`_.t 1` 是 `2`。同一個本體不重複。r7、g1 綠。
+I5：運算子 `&`、字面同名欄位、evolve、提交後、`run --observe` 走同一條相交。已提交的 `f: (x -> x)` 再 evolve `f: (x -> 5)` 收下；`_.f 5` 是 `5`，`_.f 6` 是 `#conflict`。r1、r8、r9 綠。
+I6：單獨一個態射、與自己相交，位址不動（g1 六根）。兩張表、兩支帶模式的箭頭照舊（g2）。態射與資料、與原子、態射的聯集照舊（g3）。
+I7：磁碟格式未改。新倉 `layout=9`、`encoding=5`。位址移動的只有存了一次相交、而那次相交在 v0.82.0 是 ⊥ 的三份，讀出來的答案都變了。見 Q3。
 
 ### 8.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+無。
 
 ### 8.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。
 
 ### 8.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+
+**Q1**
+
+1. 運算子 `&`。`ExprKind::Meet` 進 `unify_internal`。兩個 Combo 在 `unify_combo_inner`：兩邊都是規則繭時仍先 `join_rule_cocoons`。其後 `meet_as_tables`。兩邊都是態射，且至少一邊有沒有 `%pattern` 的列，或是沒有 `%rules` 的內建時，把那一邊收成表，再交回 `unify_internal`。只有綁定名的列改成約束 Top，綁定名寫進 `%param`（已有 `%param` 或 `%params` 的留著）。內建與部分施用收成 Top 列，本體是那個態射本身，選中時施用它。兩張列都已有模式的表回傳 `None`，走原來的欄位相交。內容相同的兩個值在 `unify_internal` 開頭就回傳那一個。
+2. 同一個字面裡同名欄位。`merge_field_into` 對已有的鍵做 `unify_internal`。同一條。
+3. evolve 併入已提交的根。沒有 pin 時，先把根上同名欄位與進來的值 `unify`，結果是 ⊥ 才拒絕；staged 再與進來的值 `unify`。相交得到表就收下，定義時不再因為本體不同而拒絕。`--pin` 且 `--grant pin` 時跳過這次相交，`replace_merge` 覆寫該座標。見 Q4。
+4. 展開 `...`。`evolve_spread` 展開後，同名欄位與 staged 做 `unify_internal`。`unify_combo_inner` 也先 `expand_combo_pending`。同名的態射走同一條。
+5. 表的同一分支收本體。`install_dispatch_table` 與 `join_rule_cocoons` 沒改。本體仍是以內容摘要為鍵的集合，選中時才逐個求值再相交。
+
+**Q2** v0.82.0 與交付印出來一樣：
+
+1. `(x -> 1) = ((x -> 1) & (y -> 1))` 是 `#false`。
+2. `(x -> 1) = (y -> 1)` 是 `#false`。
+3. `((x -> 1) & (y -> 1)) = ((y -> 1) & (x -> 1))` 是 `#true`。
+
+v0.82.0 上第 1 式的右邊是 `#missing_key`，兩種順序是同一顆 ⊥，所以第 3 式也是 `#true`。交付上右邊是一張新的表：Top 列有兩個本體，`%code` 都是 `1`，`%param` 一個是 `"x"`、一個是 `"y"`。本體的內容摘要含綁定名，所以兩個本體都留下。這是新的值。`(x -> 1) & (x -> 1)` 與 `(x -> 1)` 相等，是 `#true`，集合裡只有一個本體。α 等價沒有改。
+
+**Q3** 根是 `oo inspect <HEAD>` 的 `root:` 後 64 字。v0.82.0 在前，交付在後。
+
+移動了，讀出來的答案也變了：
+
+1. `t: (x -> x + 1) & (y -> y * 2)`：`c122820bc351af91f0ee5a3d696bdd158000e9083e90ed02d2b473b8d2012eae` → `17224a248a8722b504f884d2d965aeb0aa5ee627297f1612d028bc7a27ddc818`。`_.t 1` 由 `#missing_key` 變 `2`。
+2. `g: (x -> x + 1)` 加 `h: g & (y -> y * 2)`：`923bfb2031ed2b825a54d0c3e4d5ad5347de69797d1c17af7c134bc3c62a916c` → `8f364640530e717b775f344168103441c81cb76f91aa1d8988c1b095b8cd274a`。`_.h 1` 由 `#missing_key` 變 `2`。
+3. 案例 B 三行加 `r: /is_pos_int 5`：`bddb43a8797b5c5b4ba5da2050805204bee7327cbee6ca621b1854752fcae3fe` → `159be7c0db18f5ed701aa94f01ea4ae32f5094d1b0b645c7bd7aa7bd43aac87a`。`_.r` 由 `#conflict` 變 `5`。
+
+沒有移動：
+
+1. `f: (x -> x + 1)`：`039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`。`_.f 3` 是 `4`。
+2. `f: (x -> x + 1) & (x -> x + 1)`：同一個 `039d0735…`。`_.f 3` 是 `4`。
+3. `t: { @{ @int }: "A" } & { @{ @str }: "B" }`：`bf22771bb06b2da1c435a2aa2331676f26b384289facd8129d300e25498ec29a`。`_.t 4` 是 `"A"`。
+4. `b: ~%Math./add 1`：`aebe4b5d40bd461403c00c7d0c5c3a016fb1a77ac6655db7361001dbc1901088`。`_.b 5` 是 `6`。
+5. `k: 1`：`ced4d79f3c4ae4d6cbf797089541b9b751e0fd6f6d61286624dde71be96a47d9`。`_.k` 是 `1`。
+
+答案沒變而位址移動的，沒有。
+
+**Q4** 先提交 `f: (x -> x + 1)`，根 `039d0735…`，`_.f 3` 是 `4`。
+
+1. evolve `f: (x -> x * 2)`。v0.82.0 拒絕：`#conflict at f.%rules.x.%code`，rc=1，根不動，`_.f 3` 仍是 `4`。交付 rc=0，提交後根 `c97c17bba45c649689074a2c94208381c68d0953b29e073143caf1aedd49f170`，`_.f 3` 是 `#conflict`，訊息 `Incompatible types: 4 vs 6`。
+2. evolve `f: (y -> y + 1)`。v0.82.0 拒絕：`#missing_key at f.%rules.x`，根不動。交付 rc=0，根 `aaf2269cd67acf0590035f8c1b2f84e183e60b3a424c6b5c17a59d02df1cf890`，`_.f 3` 是 `4`。
+3. evolve `f: (x @int -> 0)`。v0.82.0 拒絕：`#missing_key at f.%rules.{88d2c99c…}`，根不動。交付 rc=0，根 `1872c1c51bec6885840151b71e3d972caf25c7a9177c30babf7358eca40ababe`，`_.f 3` 是 `0`。
+4. `--pin --grant pin` 的 `f: (x -> x * 2)`。兩邊 evolve rc=0。`commit` 不帶 `--grant pin` 時拒絕：`#privileged_required`，根仍是 `039d0735…`。`commit --grant pin` 之後兩邊的根都是 `201a2f5834e05a9ef085a32465209c63daa7847eeface12a148fd10d559b841d`，`_.f` 只剩 `x * 2`，`_.f 3` 是 `6`。這與第 1 條的合併根不同。覆寫照舊是覆寫。
+
+**Q5** 綁定名用 `x0`…`x{N-1}`。輸出相同是本體都為 `1`；輸出兩兩不同是本體為 `0`…`N-1`。本體數是印出的表裡 `%param` 的個數。時間是交付二進位單次 `oo eval`。沒有燃料上限介入。
+
+v0.82.0 這八次建構與施用都是 `#missing_key`，訊息 `Key 'x0' missing in incoming closed Cocoon`，約 0.018–0.020s。
+
+交付，輸出相同：N=2 建構 0.019s、施用 0.019s 得 `1`；N=4 建構 0.021s、施用 0.020s 得 `1`；N=8 建構 0.022s、施用 0.023s 得 `1`；N=16 建構 0.037s、施用 0.034s 得 `1`。本體數是 2、4、8、16。
+
+交付，輸出兩兩不同：N=2 建構 0.021s、施用 0.019s，`#conflict`，`1 vs 0`；N=4 建構 0.019s、施用 0.020s，`#conflict`，`1 vs 0`；N=8 建構 0.023s、施用 0.023s，`#conflict`，`4 vs 1`；N=16 建構 0.034s、施用 0.033s，`#conflict`，`4 vs 1`。本體數是 2、4、8、16。衝突訊息是相交當下對上的那兩個輸出。
 
 ### 8.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+無 `#[ignore]` 可拿。本探針未改，未 rustfmt。Q-080 探針的 g6 是驗收方在本卡之前改的，這次沒有再動。
+
+全樹第三輪：本探針 15／15，2.38s。Q-080 探針 16／16，2.27s。Q-079 探針 10／10，2.82s；R-1 3／3，0.33s。Q-078 探針 15／15，3.92s。Q-077 原探針 12／12，2.03s；R-1 4／4，0.89s。Q-076 原探針 17／17，1.62s；R-1 6／6，0.40s；R-2 10／10，1.13s。`forward_spread_probe_test` 12／12，0.72s。`a_field_outside_identity_probe_test` 8／8，0.22s。`a_field_outside_identity_crate_test` 3／3，0.03s。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.55s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
 
 ### 8.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 270 行，2616 passed，0 failed。`Running`／`running`／`test `／`test result:` 三輪各 3423 行，去掉耗時後相同。原始日誌不必逐位元組相同。linux 上該 lib 14 則警告，未 cargo-fix。
+2. conformance 162／162，rc=0。跑者印 `162 vectors, 162 pass, 0 fail`。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`。`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`。`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。`p: (x @int -> x)` 為 `8b3111a414e8b72b013abaf1da291b995497ce47bce8a796016c7f1fc2099c6b`。`b: ~%Math./add 1` 為 `aebe4b5d40bd461403c00c7d0c5c3a016fb1a77ac6655db7361001dbc1901088`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.82.0。未推送。
 
 ### 8.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無。
