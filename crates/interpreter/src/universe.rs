@@ -1150,6 +1150,41 @@ impl Universe {
         }
     }
 
+    /// Spreads written inside staged fields land while every field of this
+    /// session is staged. Pending spreads are not stored on a member, and a
+    /// source may be written after the field that spreads it.
+    fn land_staged_spreads(&mut self, engine: &Ouroboros) {
+        let pending = |v: &Value| matches!(v, Value::Combo(c) if !c.pending_spreads.is_empty());
+        if !self.staged.all_fields_iter().any(|(_, v)| pending(&v))
+            && !self.staged.local.values().any(pending)
+        {
+            return;
+        }
+        let mut ctx = crate::EvalContext::new(self.root.clone())
+            .with_standard_root(self.standard_root.clone());
+        ctx.staged = Some(self.staged.clone());
+        ctx.memo_enabled = false;
+        let mut next = self.staged.clone();
+        for (k, v) in self.staged.all_fields_iter() {
+            if let Value::Combo(c) = v {
+                if !c.pending_spreads.is_empty() {
+                    let landed = engine.expand_combo_pending(c, &mut ctx);
+                    next.insert_field(&k, landed);
+                }
+            }
+        }
+        for (k, v) in self.staged.local.clone() {
+            if let Value::Combo(c) = v {
+                if !c.pending_spreads.is_empty() {
+                    let landed = engine.expand_combo_pending(c, &mut ctx);
+                    next.local.insert(k, landed);
+                }
+            }
+        }
+        self.staged = next;
+        self.restamp_thunk_effects(engine);
+    }
+
     fn restamp_thunk_effects(&mut self, engine: &Ouroboros) {
         let mut ctx = crate::EvalContext::new(self.root.clone())
             .with_standard_root(self.standard_root.clone());
@@ -1163,6 +1198,12 @@ impl Universe {
                     next.insert_field(&k, v);
                 } else if let Some(v) = self.staged.get_local_field(&k).cloned() {
                     next.local.insert(k, v);
+                }
+            }
+            // The local axis is a field axis too (REAL_03 §6).
+            for k in self.session_delta.local.keys() {
+                if let Some(v) = self.staged.local.get(k).cloned() {
+                    next.local.insert(k.clone(), v);
                 }
             }
             self.session_delta = next;
@@ -1400,6 +1441,9 @@ impl Universe {
         // injection drops them (partial is CAID-only on disk). Uncommitted
         // bodies are unreachable after the next commit of a different root
         // and are local-GC fodder — same class as auto-cleared adverts.
+        // Land spreads before the member is written: pending spreads do not
+        // travel in the working set.
+        self.land_staged_spreads(engine);
         Value::Combo(self.staged.clone()).persist_blur_partials(&engine.store)?;
         let mut written_id: Option<String> = None;
         if self.session_has_delta {
@@ -2401,8 +2445,19 @@ impl Universe {
                         }
                     },
                 };
+                // ACCEPTANCE REPAIR (Q-079). This walked the public axis only.
+                // From this arc a root `~` field reaches the root, and a commit
+                // whose root holds the source there was not listed. Measured on
+                // the delivery: `p: { z: 7 }` → `Shadow: 1 historical
+                // commit(s)`; `~p: { z: 7 }` → no shadow. The local axis is an
+                // axis of the root (REAL_03 §6); no root held one before this
+                // arc, so no recorded `shadow` list moves.
                 if let Value::Combo(ref cv) = root_val {
-                    'field_scan: for (_, fv) in cv.all_fields_iter() {
+                    let fields = cv
+                        .all_fields_iter()
+                        .map(|(_, v)| v)
+                        .chain(cv.local.values().cloned());
+                    'field_scan: for fv in fields {
                         let fh = fv.content_hash();
                         for src in &source_caids {
                             if &fh == src {
