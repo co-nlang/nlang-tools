@@ -66,24 +66,79 @@
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
 ### 8.1 射程逐項對照
-I1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+I1：工作集成員重建時把 local 軸一併留下。只有 `~h: 3` 的檔會建出 `.oo/` 並提交；下一次 `k2: h + 1` 讀到 4。r1 綠。
+I2：提交後的根帶著這個 `~` 欄位，子容器、更深的子孫、根上與子容器裡的態射用 `h` 讀得到。r2 綠。
+I3：`~h: 3; k: 1`、`~h: 4; k: 1`、`k: 1` 三個根。r3 綠。三個摘要在 Q3。
+I4：一次性求值的裸名走根的 local 軸。`h`、`h + k`、`{ q: h }.q` 得 3、4、3。`_.~h` 仍是 `#private_access_violation`，`_.` 不印 `h`。r4、g1 綠。
+I5：已提交的 `~h: 3` 再 evolve `~h: 4` 以 `#conflict` 拒絕，`h` 仍是 3。r5 綠。`--pin --grant pin` 覆寫後 `h` 是 4。
+I6：寫成員前，staged 裡還帶未落地展開的欄位先展開；當時整份 staged 都在，所以同一個檔裡源在前或在後是同一個值。r6 綠。兩次 `oo evolve` 見 Q4。從未定義的源仍落地成沒有那個欄位。g4 綠。
+I7：只把容器交給讀到自己外面的源這條沒動。g2 四根與 g3 綠。根上沒有 `~` 欄位、展開也不會多帶出源的 `~` 欄位。
+I8：`w: ~%Io./append_file ("log.txt", "a")` 再 `r: { ...{ q: w } }`，v0.80.0 與交付都是 evolve 後 `log.txt` 為 `a`、提交後仍是 `a`。
+I9：佈局與編碼沒改，沒有新的列形。`pending_spreads` 仍不進成員。意義變了的根在 Q3，讀出來的答案都變了。
 
 ### 8.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+無。
 
 ### 8.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+I6 寫「分兩次 evolve、兩種順序同一個答案」。量到的是：源先寫、展開後寫，提交後 `_.r` 是 `{ a: 1, b: 2 }`，根 `e2ea63e3…`；展開先寫、源後寫，`_.r` 是 `{ a: 1 }`，根仍是 v0.80.0 的 `2f88a514…`。Q4 寫明不要求改，展開先寫的那次就維持這樣。
 
 ### 8.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+
+**Q1**
+
+1. 工作集成員的建立。`note_session_incoming` 第一次整份複製，之後的 unify 本來就合併 local。緊接著 `restamp_thunk_effects` 只按 `all_fields_iter` 重建，local 被丟掉，只有 `~` 欄位的檔因此不算一筆提議，`.oo/` 不會出現。改了：重建時把 `session_delta.local` 裡的鍵從 `staged.local` 抄回去。
+2. 工作集的重建。`load_staged` 用注入的 `fold`。unify 已經走 local 軸。成員裡有，載回來就有。沒另改。
+3. 注入的折疊。同上，`fold` 的 unify 含 local。沒改。
+4. 提交。`unify(root, staged)` 含 local。寫成員之前多了 `land_staged_spreads`：公開軸與 local 上還帶 `pending_spreads` 的欄位，在這次程序的整份 staged 都在時展開，展開結果再寫進成員。
+5. `replace_merge`。公開軸之後已經把 `incoming.local` 覆上。pin 走這條。沒改。
+6. `pin_commit_merge`。釘住的座標若在 local，已經寫回 `out.local`。沒改。
+7. squash／rollback 不掃欄位。rollback 用 `get_root` 載整顆根，local 在裡面。工單點名的那處 `all_fields_iter` 在 `refine` 的 shadow 掃描，只走公開軸。只活在 local 軸上的來源不會被標成 shadow。沒改：`shadow_affected` 進 refine 提交的摘要，這張卡沒有要動那些位址。
+8. 顯示。`observe` 走顯示投影，剝掉 local。`status` 有 staged 時印 `to_nlang`，`to_nlang` 含 `~` 欄位。`inspect` 一個物件也是 `to_nlang`。`inspect` HEAD 與 `log` 只印提交。見 Q5。
+
+**Q2** 同一個 `oo evolve` 在 `save_staged` 寫成員之前展開。查找用的 staged 是當時整份工作集，裸名也查 local，所以源寫在前或後、帶 `~` 或不帶，都看得到。展開後 `pending_spreads` 清空才寫進成員，成員編碼沒有新列。`c: { b: 2 }` 與 `r: { a: 1, ...c }` 兩種文字順序提交後都是 `_.r` = `{ a: 1, b: 2 }`，根都是 `e2ea63e33f5ca3b81afced21d66d04c163019093c10338f020b179522c0d7ff7`。
+
+**Q3** 基線是 `82d19de` 的 release 二進位。交付的根是這次 release 二進位。
+
+移動了，而且讀出來的答案變了：
+
+1. `~h: 3` 加 `k: 1`：`ced4d79f3c4ae4d6cbf797089541b9b751e0fd6f6d61286624dde71be96a47d9` → `645e1938328e23840554d1bf52952ad83e41fabf76cee7fb88d1ae92b97a34e2`。`h` 由 `_` 變 `3`。
+2. `~h: 4` 加 `k: 1`：`ced4d79f3c4ae4d6cbf797089541b9b751e0fd6f6d61286624dde71be96a47d9` → `02c18f3b22589ee18a3422f94d7f86e8f024d1927d1f17607424907cb1ee35c6`。`h` 由 `_` 變 `4`。
+3. 只有 `~h: 3`：v0.80.0 的 evolve 成功但沒有 `.oo/`，commit rc=1，沒有根。交付的根是 `1154db1cdabe1153a146560a045fb2caef8f9bacf5597a8cdd854d412638a4e8`。`h` 由 `_` 變 `3`。
+4. `~h: 3` 加 `t: { k: h }`：`9b8e626df4d0d0617c21bcbee18e1e50110064511899ae047edab2dae77bb79a` → `7cc380fd4c9bb40e1e926f6fa11ab6c65f8763bf3319ce3a3c70a4ecc708b277`。`_.t.k` 由 `_` 變 `3`。
+5. `c: { b: 2 }` 加 `r: { a: 1, ...c }`：`2f88a514c4ca23fb818d26375e9360e868241cb560f143cb4bcdbe9f34d41cba` → `e2ea63e33f5ca3b81afced21d66d04c163019093c10338f020b179522c0d7ff7`。`_.r` 由 `{ a: 1 }` 變 `{ a: 1, b: 2 }`。
+6. `r: { a: 1, ...c }` 加 `c: { b: 2 }`：與第 5 條同一個基線根、同一個交付根、同一個答案。
+
+沒有移動：`k: 1` 為 `ced4d79f3c4ae4d6cbf797089541b9b751e0fd6f6d61286624dde71be96a47d9`（`_.k` 是 `1`）；`t: { ~h: 3, k: 1 }` 為 `05dc9846f0de0fa238ae44c23d1cc8c4545d275aaa2583afa1b12dc9d6dba051`（`_.t.k` 是 `1`）；`c: { b: 2 }` 加 `r: { q: c.b }` 為 `94d96d72d96b6c944f6bce50156fa5941f5b0feda16b283a8df29523b8f28cbf`（`_.r.q` 是 `2`）；`r: { a: 1, ...nothing }` 為 `5165149dffaf7d145ac33c6e6561dba5379f0fd707998709e363168710a1b9e5`（`_.r` 是 `{ a: 1 }`）。答案沒變而位址移動的，沒有。
+
+**Q4** 基線與交付相同。`r: { a: 1, ...c }` 這次 `oo evolve`、`c: { b: 2 }` 下次 `oo evolve`，提交後 `_.r` 是 `{ a: 1 }`，`_.r.b` 是 `_`，根是 `2f88a514c4ca23fb818d26375e9360e868241cb560f143cb4bcdbe9f34d41cba`。第一次寫成員時 `c` 還不在工作集，展開留在 `pending_spreads`，而它不進成員；第二次載入的 `r` 已經沒有那個展開。反過來先寫 `c` 再寫 `r`，交付提交後 `_.r` 是 `{ a: 1, b: 2 }`，根是 `e2ea63e3…`。見 8.3。
+
+**Q5** 只有 `~h: 3`、已經提交的宇宙：
+
+`oo status` 印標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`available`），然後 `Universe is static (no staged changes).` 沒有欄位。
+
+`oo inspect <HEAD>` 印提交的 CAID、`kind: commit`、`root:` 那一行。沒有欄位本體。
+
+`oo log` 印 `commit`、`message: a`、`Date:`。沒有欄位。
+
+`_.` 是只有 `~%__nlang_system_digest` 的投影，沒有 `~h`。裸名 `h` 是 `3`。
+
+提交前的 `oo status` 印 staged 的 `to_nlang`，那裡有 `~h: 3`。`inspect` 根物件（不是 HEAD）的 `to_nlang` 也有 `~h: 3`。
+
+操作者看 `_.` 時算外部：顯示投影不呈現 local 軸。看 staged／根物件的 `to_nlang` 時看到的是物件原文，local 軸還在。#4 剝的是顯示投影，不是倉裡的物件。
 
 ### 8.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+無 `#[ignore]` 可拿。探針檔未改，未 rustfmt。
+
+全樹第三輪：本探針 10／10，2.80s。Q-078 探針 15／15，3.80s。`forward_spread_probe_test` 12／12，0.72s。`a_field_outside_identity_probe_test` 8／8，0.22s。`a_field_outside_identity_crate_test` 3／3，0.03s。Q-077 原探針 12／12，2.09s；R-1 4／4，0.89s。Q-076 原探針 17／17，1.64s；R-1 6／6，0.41s；R-2 10／10，1.14s。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.64s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
 
 ### 8.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 267 行，2582 passed，0 failed。`Running`／`running`／`test `／`test result:` 三輪各 3380 行，去掉耗時後相同。原始日誌的警告順序不必相同。linux 上該 lib 14 則警告，未 cargo-fix。
+2. conformance 162／162，rc=0。跑者只印這一行總結。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`。`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`。`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.80.0。未推送。
 
 ### 8.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無。
+
