@@ -3041,6 +3041,29 @@ impl Ouroboros {
         res.with_effect(observed)
     }
 
+    /// Branchwise results of one application: ⊥ branches prune; all ⊥ keeps
+    /// the primary cause, as it arrived (REAL_04 §4).
+    pub(crate) fn union_of_results(&self, results: Vec<Value>, ctx: &mut EvalContext) -> Value {
+        let mut out = Vec::new();
+        let mut culled = Vec::new();
+        for res in results {
+            match res {
+                Value::Bottom(d) => culled.push(*d),
+                Value::Atom(nlang_parser::ast::AtomKind::Bottom, _, _) => {
+                    culled.push(crate::value::BottomDetail {
+                        cause: BottomCause::Conflict,
+                        ..Default::default()
+                    })
+                }
+                other => out.push(other),
+            }
+        }
+        if out.is_empty() {
+            return crate::value::primary_bottom_from_culled(culled);
+        }
+        self.normalize_union_absorbing(out, ctx)
+    }
+
     fn apply_morphism_dispatch(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
         let f = self.force(f, ctx);
         if let Value::Bottom(_) = f {
@@ -3064,16 +3087,21 @@ impl Ouroboros {
         // bind additivity (SPEC_07 §4, ENGINE_SYNC #18): a superposed argument
         // evolves branchwise — f(A|B) = f(A) | f(B); ⊥ branches prune (| identity)
         if let Value::Union(branches) = arg {
-            let mut out = Vec::new();
-            for b in branches {
-                let res = self.apply_morphism(f.clone(), b, ctx);
-                if !matches!(res, Value::Bottom(_))
-                    && !matches!(res, Value::Atom(nlang_parser::ast::AtomKind::Bottom, _, _))
-                {
-                    out.push(res);
-                }
-            }
-            return self.normalize_union_absorbing(out, ctx);
+            let results = branches
+                .into_iter()
+                .map(|b| self.apply_morphism(f.clone(), b, ctx))
+                .collect::<Vec<_>>();
+            return self.union_of_results(results, ctx);
+        }
+        // D104: a union of morphisms is a union of combos. Applying it
+        // distributes — (A|B) x = A x | B x. Specificity is compared
+        // inside one member only.
+        if let Value::Union(members) = f {
+            let results = members
+                .into_iter()
+                .map(|m| self.apply_morphism(m, arg.clone(), ctx))
+                .collect::<Vec<_>>();
+            return self.union_of_results(results, ctx);
         }
         if !f.is_morphism() {
             if arg.is_morphism() {

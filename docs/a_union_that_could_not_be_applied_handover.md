@@ -63,24 +63,91 @@
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
 ### 8.1 射程逐項對照
-I1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+I1：施用一個聯集就是逐支施用。直接施用、管道（寫出來的聯集、經路徑、經欄位）、柯里化的每一步、在 Combo 裡、具名、提交後、`run --observe`，結果都是 `A x | B x`。規格例 `((x @int -> x + 1) | (x @str -> x + "!")) 5` 是 `6`，`"hi"` 是 `"hi!"`。該聯集提交後 `/fmt 5` 是 `6`，`/fmt "a"` 是 `"a!"`。r1、r2、r6、r7、r8 綠。
+I2：成員之間不比特定性。`((@int -> "int") | (5 -> "five")) 5` 是 `"int" | "five"`。表 `{ @{ @int }: "int", 5: "five" } 5` 仍是 `"five"`。g1、r2 綠。
+I3：表、箭頭、內建、部分施用、依鍵查找的 Combo 各以自己被施用。`(~%Math./add 1 | (x @int -> x * 10)) 4` 是 `5 | 40`。原子成員剪掉：`((x -> x + 1) | 5) 4` 是 `5`。`(1 | 2) 3` 與 `5 4` 仍是 `#conflict`。r3、g4 綠。
+I4：⊥ 支剪掉；全 ⊥ 取主因果、原樣傳出，被施用側與被套用側同一條。`((x -> 1 & 2) | (y -> 3)) 4` 是 `3`。兩支都不中是 `#no_matching_branch`。兩支都衝突是 `#conflict`。`(x @int -> x) ("a" | "b")`、`{ a: 1 } ("b" | "c")`、`("a" | "b") |> (x @int -> x)` 是 `#no_matching_branch`。r4、r5 綠。成因不同的量測在 Q2。
+I5：兩側都是聯集時每一對都在。`(((x -> x + 1) | (y -> y * 10)) (1 | 2))` 是 `2 | 3 | 10 | 20`。r9 綠。
+I6：每個成員、每個分支只施用一次。r10 的效應 `b` 與 `c` 各一次。g5 的 `(1 | 2) |> append "d"` 寫出 `dd`。
+I7：被套用的聯集有倖存支時照舊（g2）。管道接一般值的聯集仍是逐支相交（g3）。g4 四根不動。態射的 `&` 讀數不動（g6）。
+I8：磁碟格式未改。新倉 `layout=9`、`encoding=5`。位址移動的只有存了一次聯集施用結果的兩份，讀出來的答案都變了。見 Q3。
 
 ### 8.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+無。
 
 ### 8.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。
 
 ### 8.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+
+**Q1**
+
+1. `apply_morphism` 先記效應框，再進 `apply_morphism_dispatch`。強制之後的順序是：引數若是聯集，逐支再呼叫 `apply_morphism`；函數若是聯集，逐支再呼叫。兩邊的結果都進 `union_of_results`：非 ⊥ 留下並做原有的聯集正規化，全 ⊥ 則 `primary_bottom_from_culled`，同位階留相遇序最左，`BottomDetail` 原樣傳出。此前函數是聯集時不當態射，落到非態射臂，整次 `#conflict`；引數是聯集時逐支做了，但 ⊥ 被丟掉，空的倖存清單變成一顆新的 `#conflict`。單一成員裡面的極小元素分派沒動。
+2. 管道。`ExprKind::Pipe` 先看左手邊：是聯集就每支 `pipe_apply`，結果進 `union_of_results`。`pipe_apply` 求值右手邊，Thunk 會強制，Ref 不強制。右手邊的值若是聯集，每個成員走 `pipe_apply_value`：態射照 `apply_morphism`，得到 ⊥ 或 Top 且左手邊是清單時仍走原來的清單升寫；Combo 仍是相交；其餘仍是原子塌縮。路徑或欄位到達的聯集是同一個求值結果，所以同一條拆法。見 Q4。
+3. 內建回呼。`/map` 以及 `list.rs`、`query.rs`、`cond.rs`、`engine.rs` 裡回呼使用者態射的地方都呼叫 `apply_morphism`。聯集回呼從那一個入口分配，這些檔沒有另改。
+4. `%val` 剝殼在聯集拆開之後的 Combo 臂。每個成員剝自己的殼。
+
+**Q2** 基線是 `/tmp/q080-base-target` 的 v0.81.0 release。交付是第一輪 `Finished` 之後複製的 `target/release/oo`。
+
+被施用側，一支 `#no_matching_branch`、一支 `#conflict`：
+
+1. `(((@int -> "int") | (x -> 1 & 2)) #a)`：交付是 `#no_matching_branch`，沒有附加訊息。v0.81.0 是 `#conflict`，沒有附加訊息。
+2. 成員對調：交付是 `#conflict`，訊息 `Incompatible types: 1 vs 2`，與單獨的 `1 & 2` 相同。v0.81.0 仍是沒有訊息的 `#conflict`。
+
+兩支都是位階 2，留下相遇序最左的那顆，細節原樣。
+
+工單例裡的 `(f -> f f) (f -> f f)` 印出來是 `#blur { %cause: #max_depth_exceeded, %caid: "hash:sha256:v1:bc75326af82f5a8a48ca6746a3fb576f1310b92bdb14c3a10c606aa8654b8f75" }`，不是 `#divergent`。把它和 `(y -> 1 & 2)` 組成聯集再施於 `(f -> f f)`，兩種成員順序、v0.81.0 與交付，都是同一顆 blur，同一個 caid。blur 不是 ⊥，衝突支被剪掉，主因果位階沒有被用到。被套用側 `(z -> z)` 施於這顆 blur 與 `(1 & 2)` 的聯集，兩種順序同樣是這顆 blur：`(1 & 2)` 在聯集值建成時已經是 ⊥ 並被剪掉。
+
+被套用側，工單例 `(x @int -> x) ("a" | (1 & 2))` 與成員對調，v0.81.0 與交付都是 `#no_matching_branch`。`("a" | (1 & 2))` 與對調單獨求值都是 `"a"`，⊥ 在建成聯集時剪掉，施用時只看到 `"a"`。
+
+兩支都活著、施用之後才各自成為不同的 ⊥ 時：`(x @int -> 1 & 2) (5 | "a")` 是 `#conflict`，訊息 `Incompatible types: 1 vs 2`。`("a" | 5)` 是 `#no_matching_branch`。同位階留左支，訊息原樣。
+
+**Q3** 根是 `oo inspect <HEAD>` 的 `root:` 後 64 字。v0.81.0 在前，交付在後。
+
+移動了，讀出來的答案也變了：
+
+1. `h: (x -> x + 1) | (x -> x * 10)` 加 `r: h 4`：`aeec8aaf270d3b59eebf9d570c8d29f4fc3429154c594261be7f6d19fd8f6121` → `f038035cf1d2f1ef8cf537aa38b4576153c1a4f267fc7271556b5b7b2966471b`。`_.r` 由 `#conflict` 變 `5 | 40`。
+2. `/fmt: (x @int -> x + 1) | (x @str -> x + "!")` 加 `u: /fmt 5`：`0797f31bfb3b5402d00bdb169549a65ffd3dd20cdcaa0b14cb31c467d5d1b41f` → `a62bfafdf95725f59539efb6bb7053f08b1629bbda0223efd93471300e4a3a5d`。`_.u` 由 `#conflict` 變 `6`。
+
+沒有移動：
+
+1. 只有 `h`：`0ca12aa4a3b1fc955657cfaf1892c4ba607ff7bdb4f4f87a75eb6523bdb617f7`。
+2. 只有 `/fmt`：`0e38286c2c4eff41a3a8314e50cad25685b388cc899f2c7b3d65a2e5f57b7fc1`。
+3. `t: { @{ @int }: "int", 5: "five" }`：`9d82851119c87c41b283e56f1e26cd14e5669050f20eff411f74a6d580a4da33`。`_.t 5` 是 `"five"`。
+4. `u: ({ a: 1 } | { a: 2 }).a`：`db62a6b124d87ddcf634275ca7cca543cb4fc0300cae6146982eb41094351499`。`_.u` 是 `1 | 2`。
+5. `w: 5 |> ({ b: 2 } | { c: 3 })`：`73e094045d321540d8b62f4f0daf7583669dd6699a3c271de80f6d9a38e498fb`。`_.w` 是 `5`。
+6. `k: 1`：`ced4d79f3c4ae4d6cbf797089541b9b751e0fd6f6d61286624dde71be96a47d9`。`_.k` 是 `1`。
+
+答案沒變而位址移動的，沒有。
+
+**Q4** 沒有改清單升寫。
+
+1. `[1, 2] |> ((x -> x + 1) | (y -> y * 10))`：交付是 `[10, 20] | [2, 3]`。v0.81.0 是 `#missing_key`，訊息 `Key '0' missing in closed Cocoon`。成員對調，交付印出來同一行。
+2. `[1, 2] |> (x -> x + 1)`：兩邊都是 `[2, 3]`。
+3. `(1 | 2) |> ((x -> x + 1) | (y -> y * 10))`：交付是 `2 | 3 | 10 | 20`。v0.81.0 是 `#conflict`。成員對調，以及改成直接施用 `((y -> y * 10) | (x -> x + 1)) (1 | 2)`，交付都印 `2 | 3 | 10 | 20`。數字聯集的印出序是顯示序。
+
+管道先拆左手邊的聯集，每個分支再看右手邊；右手邊是聯集時再按成員拆。清單不是聯集，整張清單進入每一個成員；該成員施用得到 ⊥ 之後，原有的清單升寫才逐元素做。所以第一條是兩張清單。若先把清單拆成元素再送進聯集，得到的會是四個數。
+
+**Q5** 施用用 `(x -> x * 100 + i)`，結果彼此不同，支數不會被去重吃掉。時間是交付二進位單次 `oo eval`。
+
+施用 N 支於一個引數：N=1 為 `300`，0.018s，1 支；N=4 為 `300 | 301 | 302 | 303`，0.021s，4 支；N=8 為八個數 `300` 到 `307`，0.044s，8 支。v0.81.0 的 N=4 與 N=8 是 `#conflict`。
+
+N 支施於 M 支：1×1 為 `0`，0.018s；1×4 四支，0.019s；1×8 八支，0.020s；4×1 四支，0.022s；4×4 十六支，0.023s；4×8 三十二支，0.026s；8×1 八支，0.044s；8×4 三十二支，0.047s；8×8 六十四支，0.051s。支數是 N×M。這九次沒有燃料或分支數上限介入。v0.81.0 在 N>1 時整次 `#conflict`。
+
+建構，與施用分開。12 支箭頭的聯集、16 個 Combo 的聯集、`(f8) = (f8)`，v0.81.0 與交付都是 `#blur { %cause: #fuel_exhausted }`。caid 分別是 `hash:sha256:v1:4c5978a4…1b122406`、`hash:sha256:v1:eb035c17…804c5b2f`、`hash:sha256:v1:85d9a38f…3f80d725`，兩邊相同。交付耗時 0.068s、0.085s、0.071s。
 
 ### 8.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+無 `#[ignore]` 可拿。探針檔未改，未 rustfmt。
+
+全樹第三輪：本探針 16／16，2.27s。Q-079 探針 10／10，2.84s；R-1 3／3，0.32s。Q-078 探針 15／15，3.84s。Q-077 原探針 12／12，2.04s；R-1 4／4，0.89s。Q-076 原探針 17／17，1.64s；R-1 6／6，0.41s；R-2 10／10，1.13s。`forward_spread_probe_test` 12／12，0.68s。`a_field_outside_identity_probe_test` 8／8，0.22s。`a_field_outside_identity_crate_test` 3／3，0.04s。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 4.54s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
 
 ### 8.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 269 行，2601 passed，0 failed。`Running`／`running`／`test `／`test result:` 三輪各 3405 行，去掉耗時後相同。原始日誌不必逐位元組相同。linux 上該 lib 14 則警告，未 cargo-fix。
+2. conformance 162／162，rc=0。跑者印 `162 vectors, 162 pass, 0 fail`。cwd 是 `/home/gali/nlang`。引擎是 `nlang-tools/target/release/oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect <HEAD>` 的 `root:`：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`。`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`。`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.81.0。未推送。
 
 ### 8.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無。

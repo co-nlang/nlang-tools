@@ -1500,6 +1500,25 @@ impl Ouroboros {
             rv = self.force(rv, &mut call_ctx);
         }
         ctx.fuel = call_ctx.fuel;
+        // D104: a union on the right distributes like application —
+        // x |> (A|B) = (x|>A) | (x|>B).
+        if let Value::Union(members) = rv {
+            let results = members
+                .into_iter()
+                .map(|m| self.pipe_apply_value(lv.clone(), m, &mut call_ctx, ctx))
+                .collect::<Vec<_>>();
+            return self.union_of_results(results, ctx);
+        }
+        self.pipe_apply_value(lv, rv, &mut call_ctx, ctx)
+    }
+
+    fn pipe_apply_value(
+        &self,
+        lv: Value,
+        rv: Value,
+        call_ctx: &mut EvalContext,
+        ctx: &mut EvalContext,
+    ) -> Value {
         if rv.is_morphism() {
             let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
             if matches!(res, Value::Bottom(_) | Value::Top) {
@@ -1572,7 +1591,8 @@ impl Ouroboros {
             // thunks forced mid-merge must bind `$` to the pipe input (P3: nearest
             // enclosing evolution), not the observer's context. call_ctx.context_value
             // was set to lv above (line 164).
-            let res = self.unify_internal(lv, Value::Combo(rc), &mut call_ctx);
+            call_ctx.fuel = ctx.fuel;
+            let res = self.unify_internal(lv, Value::Combo(rc), call_ctx);
             ctx.fuel = call_ctx.fuel;
             res
         } else {
@@ -1974,16 +1994,11 @@ impl Ouroboros {
                 // a superposed input evolves branchwise with its OWN $ binding —
                 // (A|B) |> f ≡ (A|>f) | (B|>f); ⊥ branches prune (| identity)
                 if let Value::Union(branches) = lv {
-                    let mut out = Vec::new();
-                    for b in branches {
-                        let res = self.pipe_apply(b, r, ctx);
-                        if !matches!(res, Value::Bottom(_))
-                            && !matches!(res, Value::Atom(AtomKind::Bottom, _, _))
-                        {
-                            out.push(res);
-                        }
-                    }
-                    return self.normalize_union_absorbing(out, ctx);
+                    let results = branches
+                        .into_iter()
+                        .map(|b| self.pipe_apply(b, r, ctx))
+                        .collect::<Vec<_>>();
+                    return self.union_of_results(results, ctx);
                 }
                 self.pipe_apply(lv, r, ctx)
             }
