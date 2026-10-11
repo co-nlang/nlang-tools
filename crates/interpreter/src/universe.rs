@@ -2445,8 +2445,19 @@ impl Universe {
                         }
                     },
                 };
+                // ACCEPTANCE REPAIR (Q-079). This walked the public axis only.
+                // From this arc a root `~` field reaches the root, and a commit
+                // whose root holds the source there was not listed. Measured on
+                // the delivery: `p: { z: 7 }` → `Shadow: 1 historical
+                // commit(s)`; `~p: { z: 7 }` → no shadow. The local axis is an
+                // axis of the root (REAL_03 §6); no root held one before this
+                // arc, so no recorded `shadow` list moves.
                 if let Value::Combo(ref cv) = root_val {
-                    'field_scan: for (_, fv) in cv.all_fields_iter() {
+                    let fields = cv
+                        .all_fields_iter()
+                        .map(|(_, v)| v)
+                        .chain(cv.local.values().cloned());
+                    'field_scan: for fv in fields {
                         let fh = fv.content_hash();
                         for src in &source_caids {
                             if &fh == src {
