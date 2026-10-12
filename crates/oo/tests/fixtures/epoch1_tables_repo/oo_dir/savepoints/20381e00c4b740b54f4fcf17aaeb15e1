@@ -1,0 +1,19 @@
+#nlang/store savepoint
+parents:
+{ b: { %morphism: #true %rules: { "{a8100ae6aa1940d0b663bb31cd466142ebbdbd5187131b92d93818987832eb89}": {{ %pattern: _ %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 0 ~%__nlang_closure: [{ %morphism: #true %rules: { "{c8088c4bdbea7ce31acdd57acadf2f983a9864defa4aeb91cbe976be71fcec5f}": {{ %bodies: {{ "{81c601d1a16882af831d5b049ab528df543a4fef8b7f9bed492faf14f84cbe33}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  a: 1
+} ~%__nlang_closure: [] } _: _ }} "{f239bf87b9104c10fe0483d65a0676adf49d2e120b5c1bbc53b78ffc7a94c819}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  b: 2
+} ~%__nlang_closure: [] } _: _ }} }} %pattern: "k" }} } _: { ~%__nlang_thunk: #true ~%__nlang_expr: 0 ~%__nlang_closure: [] } }] } _: _ }} "{c8088c4bdbea7ce31acdd57acadf2f983a9864defa4aeb91cbe976be71fcec5f}": {{ %bodies: {{ "{81c601d1a16882af831d5b049ab528df543a4fef8b7f9bed492faf14f84cbe33}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  a: 1
+} ~%__nlang_closure: [{ %morphism: #true %rules: { "{c8088c4bdbea7ce31acdd57acadf2f983a9864defa4aeb91cbe976be71fcec5f}": {{ %bodies: {{ "{81c601d1a16882af831d5b049ab528df543a4fef8b7f9bed492faf14f84cbe33}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  a: 1
+} ~%__nlang_closure: [] } _: _ }} "{f239bf87b9104c10fe0483d65a0676adf49d2e120b5c1bbc53b78ffc7a94c819}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  b: 2
+} ~%__nlang_closure: [] } _: _ }} }} %pattern: "k" }} } _: { ~%__nlang_thunk: #true ~%__nlang_expr: 0 ~%__nlang_closure: [] } }] } _: _ }} "{f239bf87b9104c10fe0483d65a0676adf49d2e120b5c1bbc53b78ffc7a94c819}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  b: 2
+} ~%__nlang_closure: [{ %morphism: #true %rules: { "{c8088c4bdbea7ce31acdd57acadf2f983a9864defa4aeb91cbe976be71fcec5f}": {{ %bodies: {{ "{81c601d1a16882af831d5b049ab528df543a4fef8b7f9bed492faf14f84cbe33}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  a: 1
+} ~%__nlang_closure: [] } _: _ }} "{f239bf87b9104c10fe0483d65a0676adf49d2e120b5c1bbc53b78ffc7a94c819}": {{ %pattern: "k" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  b: 2
+} ~%__nlang_closure: [] } _: _ }} }} %pattern: "k" }} } _: { ~%__nlang_thunk: #true ~%__nlang_expr: 0 ~%__nlang_closure: [] } }] } _: _ }} }} %pattern: "k" }} } } k: { %morphism: #true %rules: { "{88d2c99cfaaea4df5f1c5d5c43314b9b1361e87f83d522825ff3122bbb490c44}": {{ %pattern: {{ %kind: #type %name: "int" }} %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 1 ~%__nlang_closure: [{ %morphism: #true %rules: { "{88d2c99cfaaea4df5f1c5d5c43314b9b1361e87f83d522825ff3122bbb490c44}": {{ %pattern: {{ %kind: #type %name: "int" }} %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 1 ~%__nlang_closure: [] } _: _ }} "{e935c5cea0c20553e6c7d7fdff175ec0611ef6242816e67ab9991b534e764a13}": {{ %pattern: {{ %kind: #type %name: "str" }} %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 9 ~%__nlang_closure: [] } _: _ }} } }] } _: _ }} "{e935c5cea0c20553e6c7d7fdff175ec0611ef6242816e67ab9991b534e764a13}": {{ %pattern: {{ %kind: #type %name: "str" }} %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 9 ~%__nlang_closure: [{ %morphism: #true %rules: { "{88d2c99cfaaea4df5f1c5d5c43314b9b1361e87f83d522825ff3122bbb490c44}": {{ %pattern: {{ %kind: #type %name: "int" }} %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 1 ~%__nlang_closure: [] } _: _ }} "{e935c5cea0c20553e6c7d7fdff175ec0611ef6242816e67ab9991b534e764a13}": {{ %pattern: {{ %kind: #type %name: "str" }} %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 9 ~%__nlang_closure: [] } _: _ }} } }] } _: _ }} } } }

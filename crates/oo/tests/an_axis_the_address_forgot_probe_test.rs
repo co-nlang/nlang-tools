@@ -25,7 +25,16 @@
 // store this engine creates — and a store an epoch-1 engine wrote still opens,
 // answers, keeps its history, and catches tampering.
 //
-// The epoch-1 store is `tests/fixtures/epoch1_repo` (real `oo v0.84.0`).
+// The epoch-1 stores are `tests/fixtures/epoch1_repo` and
+// `tests/fixtures/epoch1_tables_repo` (real `oo v0.84.0`).
+//
+// ACCEPTOR (Q-083 R-1, 2026-10-12): r5 as first shipped pinned the work
+// order's calibration point 3 — "an encoding=5 store is redeclared
+// encoding=6 before the first epoch-2 write". That point broke REAL_02
+// §5.1.1 (a write must not change the declarations it finds; advancing one
+// is an explicit, priced act; a store declaring the older form receives
+// that form). The acceptor's error, not the delivery's. r5 is narrowed to
+// the store this engine creates; g6, g7, r7, r9, r10 pin the corrected rule; g7 (first written as r8) is green on v0.84.0, so it is a guard.
 //
 // The delivery may NOT edit this file or the fixture. `rustfmt` must not
 // touch it.
@@ -133,6 +142,15 @@ impl Ws {
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/epoch1_repo/oo_dir")
 }
+
+fn tables_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/epoch1_tables_repo/oo_dir")
+}
+
+fn read_decl(w: &Ws, name: &str) -> String {
+    fs::read_to_string(w.ws.join(".oo").join(name)).unwrap_or_default().trim().to_string()
+}
+
 
 fn copy_dir(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
@@ -250,21 +268,10 @@ fn r4_patterns_that_differ_by_axis_are_two_branches() {
     }
 }
 
-/// The first object this engine writes into an epoch-1 store is addressed
-/// by the new encoding, so the store says so first: an epoch-1 engine must
-/// refuse it at the gate (it understands encoding 1 through 5), not call its
-/// objects corrupt. A store this engine creates says the same.
+/// A store this engine creates declares the new encoding.
 #[test]
-fn r5_a_store_holding_epoch_2_objects_declares_it() {
-    let w = Ws::epoch1("r5a");
-    assert_eq!(w.objects_format(), "encoding=5", "fixture");
-    let (o, rc) = w.oo(&["status"]);
-    assert_eq!(rc, 0, "status: {o}");
-    assert_eq!(w.objects_format(), "encoding=5", "a read must not redeclare the store");
-    w.commit("y: 1\n");
-    assert_eq!(w.objects_format(), "encoding=6", "written by epoch 2, still declared 5");
-
-    let fresh = Ws::new("r5b");
+fn r5_a_store_this_engine_creates_declares_encoding_6() {
+    let fresh = Ws::new("r5");
     fresh.commit("x: 0\n");
     assert_eq!(fresh.objects_format(), "encoding=6");
 }
@@ -390,4 +397,87 @@ fn g5_the_fixture_is_the_real_one() {
     for d in [EPOCH1_HEAD, EPOCH1_FIRST, EPOCH1_STANDARD] {
         assert!(f.join("objects/sha256").join(&d[..2]).join(&d[2..]).exists(), "{d}");
     }
+}
+
+// ── R-1 (acceptor, 2026-10-12): an epoch-1 store stays an epoch-1 store ──
+
+/// REAL_02 §5.1.1: a write does not change the declarations it finds.
+/// v0.84.0 green; the first delivery redeclared encoding=6 on this commit,
+/// and v0.84.0 then refused a store nobody had asked to migrate.
+#[test]
+fn g6_an_ordinary_write_moves_no_declaration() {
+    let w = Ws::epoch1("g6");
+    w.commit("y: 1\n");
+    assert_eq!(read_decl(&w, "format"), "layout=9");
+    assert_eq!(read_decl(&w, "objects.format"), "encoding=5", "an ordinary commit advanced the encoding");
+}
+
+/// Where the epoch-1 address cannot tell two values apart, the write is
+/// refused before anything is written, and the refusal names the way out.
+/// After that explicit migrate the same pin lands.
+#[test]
+fn r7_a_pin_an_epoch_1_store_cannot_hold_is_refused_by_name() {
+    let w = Ws::epoch1("r7");
+    let head = w.head();
+    fs::write(w.ws.join("b.n"), "t: { @int: 1 }\n").unwrap();
+    let (e, erc) = w.oo(&["evolve", "--pin", "--grant", "pin", "b.n"]);
+    let (c, crc) = if erc == 0 { w.oo(&["commit", "--grant", "pin", "-m", "b"]) } else { (e.clone(), erc) };
+    assert_ne!(crc, 0, "the pin was accepted into an epoch-1 store: {c}");
+    assert!(c.contains("migrate"), "the refusal must name the migrate: {c}");
+    assert_eq!(w.head(), head, "HEAD moved");
+    assert_eq!(w.eval("_.t"), "{ int: 1 }");
+    assert_eq!(read_decl(&w, "objects.format"), "encoding=5");
+
+    let (m, rc) = w.oo(&["migrate", "--grant", "migrate"]);
+    assert_eq!(rc, 0, "migrate: {m}");
+    assert_eq!(read_decl(&w, "objects.format"), "encoding=6");
+    if erc != 0 {
+        let (o, rc) = w.oo(&["evolve", "--pin", "--grant", "pin", "b.n"]);
+        assert_eq!(rc, 0, "pin evolve after migrate: {o}");
+    }
+    let (o, rc) = w.oo(&["commit", "--grant", "pin", "-m", "b"]);
+    assert_eq!(rc, 0, "pin commit after migrate: {o}");
+    assert_eq!(w.eval("_.t"), "{ @int: 1 }");
+    let (log, _) = w.oo(&["log"]);
+    assert!(log.contains(EPOCH1_HEAD) && log.contains(EPOCH1_FIRST), "history after migrate: {log}");
+}
+
+/// Tables `oo v0.84.0` stored answer as they did there (fixture README).
+#[test]
+fn g7_epoch_1_tables_are_the_same_tables() {
+    let w = Ws::new("r8");
+    copy_dir(&tables_fixture(), &w.ws.join(".oo"));
+    let cases = [
+        ("_.k \"s\"", "9"),
+        ("_.k 5", "1"),
+        ("_.b \"k\"", "{ a: 1 b: 2 }"),
+        ("_.b \"z\"", "0"),
+        ("_.k = { @{ @str }: 9, @{ @int }: 1 }", "#true"),
+        ("(_.b & { @{ \"k\" }: { c: 3 } }) \"k\"", "{ a: 1 b: 2 c: 3 }"),
+    ];
+    let mut wrong = Vec::new();
+    for (e, want) in cases {
+        let got = w.eval(e);
+        if got != want {
+            wrong.push(format!("  {e}\n      want {want}\n      got  {got}"));
+        }
+    }
+    for e in ["(_.k & { @{ @str }: 10 }) \"s\"", "(_.b & { @{ \"k\" }: { a: 5 } }) \"k\""] {
+        let got = w.eval(e);
+        if !got.contains("#conflict") {
+            wrong.push(format!("  {e}\n      want ⊥ #conflict\n      got  {got}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The migrate is now the only way to encoding=6, so its price is the only
+/// warning: it must name the engines it locks out (v0.84.0 opens this store
+/// today and will not after).
+#[test]
+fn r9_the_migrate_names_what_it_locks_out() {
+    let w = Ws::epoch1("r9");
+    let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
+    assert_eq!(rc, 0, "migrate: {o}");
+    assert!(o.contains("v0.84.0") && !o.contains("locks out no engine"), "migrate cost: {o}");
 }
