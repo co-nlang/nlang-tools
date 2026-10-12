@@ -305,3 +305,77 @@ Migrated object encoding to encoding=6.
 **R-1 回報**：寫在下面 9.2（交付方填），格式同 §8；三輪全樹、交叉、conformance、身分紅線重報；**Q2、Q5 依 F1／F3 重量重答**；並答 **Q7**：(a) 你找到幾處「寫進值裡、由位址導出的名字」，各在哪；(b) 宣告 `encoding=5` 的倉被本引擎寫過之後，用 v0.84.0 開它——`log`、`eval _.k "s"`、`(_.k & { @{ @str }: 10 }) "s"` 各得什麼（`epoch1_tables_repo` 的複本上，本引擎先提交 `y: 1`）。
 
 ### 9.2 R-1 交付回報（交付方填）
+
+### 9.2.1 射程逐項對照
+
+1. **F1。** 宣告 `encoding≤5` 的倉，值、根、標準根、提交都在凍結編碼下定址，寫進值裡的名字也在凍結編碼下算。普通寫入不改 `format`、不改 `objects.format`。凍結編碼分不開的寫入，在 `write_object` 之前以 `#identity_collision` 拒絕，句中有 `oo migrate --grant migrate`。宣告只由 `migrate` 推進。本引擎新建的倉仍是 `encoding=6`。宣告 `encoding=6` 的倉寫新編碼，讀先新後舊。
+2. **F2。** 讀到的物件若只在凍結編碼下對上它的位址，`%rules` 與 `%bodies` 的鍵換到當下紀元。寫進宣告 `encoding≤5` 的倉時，先進入凍結編碼再換回紀元一的名字。g7 與 r10 綠。
+3. **F3。** 推進到 `encoding=6` 時，代價句的上界是 v0.84.0。`layout=9`／`encoding=5` 不再說「locks out no engine」。layout=5 那一子句只把「開不了 layout=9」說到 v0.74.0，並另寫 v0.75.0 到 v0.84.0 開得了 layout=9、開不了 encoding=6。
+
+### 9.2.2 順手改動（逐項指名）
+
+1. `dispatch.rs`：`rekey_identity_names`。換的是 `%rules` 的鍵與 `%bodies` 的鍵，並走入 Combo、Union、Thunk 的閉包與 context、Range。
+2. `storage.rs`：拿掉寫入時把 `encoding=5` 改成 `encoding=6`。`put_value`、`put_root`、`put_commit` 在宣告 `encoding≤5` 時走凍結編碼。`put_value` 與 `put_root` 先換名。撞址在寫入前拒絕。`get_value` 與 `get_root` 在凍結位址對上、當前位址不對上時換名。
+3. `main.rs`：`migrate_cost`。layout=9 的最舊開啟者記為 v0.75.0。上界隨是否推進到 encoding=6 取 v0.84.0 或 v0.74.0。
+4. 代價句上界，工單點名的四支：`a_refusal_written_as_an_answer_probe_test` r11（encoding=3 仍是 v0.74.0；encoding=4 與 encoding=5 改到 v0.84.0）、`a_savepoint_that_knows_where_it_stood_probe_test` r6、`a_commit_that_is_a_value_probe_test` r6、`a_signature_that_signs_the_commit_probe_test` r8。
+5. `a_commit_that_closes_the_door_probe_test` g4。這支釘的是 encoding=3 的倉寫下之後，根所點名的標準根。第一輪交付把那個倉寫成紀元二，字面改成 `c96c2937…`。R-1 之後這個倉收到凍結編碼，狀態列回 `7038e250…`（available）。只改了這個斷言。
+6. 未改：三支原探針與 bytes 探針、`epoch1_repo`、`epoch1_tables_repo`、`pin_probe_test`、版本（仍 `0.84.0`）、`Cargo.lock`、`spec/`、`meta/`、`conformance/`、`CHANGELOG`、`REAL_03`。linux 上 lib 的 14 條舊警告、windows 上的 15 條，都沒有 cargo fix。
+
+### 9.2.3 工單哪裡是錯的
+
+無。
+
+### 9.2.4 工單指名要你回答的問題
+
+**Q2**（釋出 `oo`，對 v0.84.0 的釋出二進位）
+
+（a）`epoch1_repo` 的複本，本引擎與 v0.84.0 的唯讀都是 rc 0。宣告停在 `layout=9`／`encoding=5`。`status`：`Standard root dependency: 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)`，`Universe is static (no staged changes).`。`log` 兩筆：HEAD `f8e94c47…`（`epoch one, second`，`2026-10-12T13:32:34.889Z`），第一筆 `2858af65…`（`epoch one`，`2026-10-12T13:32:34.685Z`）。`eval _.t` 印 `{ int: 1 }`。
+
+（b）同一夾具，本引擎 `evolve`＋`commit` `y: 1`，rc 0。宣告仍是 `layout=9`／`encoding=5`。本引擎 `_.y` 是 1，`_.t` 是 `{ int: 1 }`。v0.84.0 的 `status`、`log`、`eval _.t`、`eval _.y` 都是 rc 0：標準根仍是 `7038e250…`，`log` 三筆（新的在最上，摘要 `33fde388…`，訊息 `y`），`_.t` 是 `{ int: 1 }`，`_.y` 是 1。
+
+（c）新鮮的 `x: 0` 提交，`layout=9`／`encoding=6`，根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。v0.84.0 的 `status` 與 `log` 都是 rc 1，stderr：`Error: object encoding version 6 is not supported by this engine (understands encoding 1 through 5); refusing to open`。
+
+**Q5**（同一支釋出 `oo`）
+
+`encoding4_repo` 的複本，之前 `layout=2`／`encoding=4`，HEAD `hash:sha256:v1:3ced204289895c8656b7d33ffb0a414d604841a865c411a26205ea3e082d36d3`，3 個物件路徑。`migrate --grant migrate` rc 0。之後 `layout=9`／`encoding=6`，HEAD 不變，路徑不變。印出：
+
+```
+Migrating this store from layout=2 to layout=9 will make it unopenable by oo v0.26.0 through v0.84.0. That includes every engine that opens layout=5 (oo v0.44.0 through v0.74.0); none of them open layout=9. oo v0.75.0 through v0.84.0 open layout=9 and do not open encoding=6. Object encoding advances from encoding=4 to encoding=6.
+Migrated store layout to layout=9 and object encoding to encoding=6.
+```
+
+`epoch1_repo` 的複本，之前 `layout=9`／`encoding=5`，HEAD 是上面的 `f8e94c47…`，5 個物件。之後 `layout=9`／`encoding=6`，HEAD 不變，路徑不變。印出：
+
+```
+Migrating this store from layout=9 to layout=9 will make it unopenable by oo v0.75.0 through v0.84.0. Object encoding advances from encoding=5 to encoding=6.
+Migrated object encoding to encoding=6.
+```
+
+**Q7**
+
+（a）三處。
+
+1. `%rules` 的鍵，`{content_digest(模式)}`，函式 `pattern_branch_name`。寫入點：`eval.rs` 的 `install_dispatch_table`、`eval_pattern_morphism`；`dispatch.rs` 的 `as_table_morphism`、`normalize_table`、`rules_with_parent_data`。
+2. `%bodies` 的鍵，`{content_digest(本體)}`。寫入點：`dispatch.rs` 的 `join_rule_cocoons`、`canonical_bodies`。
+3. 根的 `__nlang_system_digest`。`project_standard_root` 把標準表的 `content_hash` 寫進根。宣告 `encoding≤5` 時，`put_root` 整段在凍結編碼下跑，寫進去的是紀元一的標準根。
+
+`frames_content_digest` 與 force memo 只活在記憶體，沒有寫進值。`Blur` 的 `partial` 是位址欄位，本體不入庫。`Code` 與 thunk 的 expr 是原始碼，不是摘要名字。
+
+（b）`epoch1_tables_repo` 的複本，本引擎先提交 `y: 1`，rc 0，宣告仍是 `layout=9`／`encoding=5`。v0.84.0：`log` rc 0，最上是這筆提交（摘要 `9fa9ee7d…`，訊息 `y`），其下是夾具原提交 `cba0ba9f…`（`epoch one tables`）。`eval _.k "s"` rc 0，印 `9`。`eval '(_.k & { @{ @str }: 10 }) "s"'` rc 0，印 `_|_  ;; %cause: #conflict  ;; Incompatible types: 9 vs 10`。
+
+### 9.2.5 探針
+
+探針與夾具未改。釋出閘裡：CLI 15／15（6.07s），bytes 1／1（0.23s），union 2／2，epochs 4／4（0.35s），`pin_probe_test` 15／15（2.25s）。r6 的五條根與標準根 `c96c2937…` 在這輪釋出閘裡綠。新鮮 `x: 0` 的根在 Q2（c）又對過，是 `b74d7758…`。
+
+### 9.2.6 數字
+
+1. 版本仍是 `oo` 0.84.0。新倉是 `layout=9`／`encoding=6`。宣告 `encoding=5` 的倉在普通寫入之後仍是 `encoding=5`。
+2. 釋出全樹三輪，`--jobs 1`，`--test-threads=1`。每輪 `test result:` 275 行，`Running` 272，passed 2648，failed 0，`^error` 0，exit 0。去掉 `finished in …s` 之後，以 `test result:`、`test `、`Running `、`running ` 開頭的行三輪相同（3470 行）。
+3. conformance 162／162，exit 0。
+4. 新鮮目錄裡 `~%Math./add (1, 2)` 是 3，`(1, 3)` 是 4，rc 0，該目錄沒有 `.oo`。euid 1000。
+5. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+6. 未 push。
+
+### 9.2.7 你認為需要改規格之處
+
+`REAL_03` 的紀元改寫仍歸驗收方。代價句已照 F3 改成真的，留在引擎裡。規格文字未動。

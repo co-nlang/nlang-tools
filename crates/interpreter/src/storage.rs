@@ -145,7 +145,8 @@ pub fn value_address_matches(requested: &ContentHash, recomputed: &ContentHash) 
 }
 
 /// A stored address matches the current encoding, or, if that misses, the
-/// frozen v0.84.0 encoding (Q-083 / D106). Writes never use the frozen one.
+/// frozen v0.84.0 encoding (Q-083 / D106). A store declaring encoding ≤5
+/// writes the frozen encoding; encoding=6 writes the current one.
 pub fn value_matches_stored_address(requested: &ContentHash, value: &Value) -> bool {
     if value_address_matches(requested, &value.content_hash()) {
         return true;
@@ -163,6 +164,18 @@ fn reject_unless_stored_address(requested: &ContentHash, value: &Value) -> Resul
             recomputed: value.content_hash(),
         }
         .into())
+    }
+}
+
+/// An object that verified only under the frozen encoding still carries that
+/// epoch's branch names. Re-key them to the epoch now in force. An object
+/// that matches the encoding already in force is left alone, so a write that
+/// is itself inside `with_legacy_identity` does not rename epoch-1 bytes.
+fn adopt_stored_epoch(hash: &ContentHash, value: Value) -> Value {
+    if value_address_matches(hash, &value.content_hash()) {
+        value
+    } else {
+        crate::dispatch::rekey_identity_names(value)
     }
 }
 
@@ -590,12 +603,20 @@ impl ObjectStore {
     }
 
     pub fn put_value(&self, value: &Value) -> Result<ContentHash> {
+        // REAL_02 §5.1.1: a store declaring encoding ≤5 receives epoch-1 bytes,
+        // including the names written into the value.
+        if self.encoding <= 5 && !crate::bn_serial::identity_is_legacy() {
+            return crate::bn_serial::with_legacy_identity(|| {
+                self.put_value(&crate::dispatch::rekey_identity_names(value.clone()))
+            });
+        }
         let durable = if self.encoding < 4 {
             value.for_legacy_cas_storage()
         } else {
             value.for_cas_storage()
         };
         let hash = durable.content_hash();
+        self.refuse_collision(&hash, &durable)?;
         let content = self.encode_cas_value(&durable)?;
         self.write_object(&hash, content)?;
         Ok(hash)
@@ -605,6 +626,16 @@ impl ObjectStore {
     /// immutable for one engine build, so history names that table by content
     /// digest rather than copying its body into every root.
     pub fn put_root(&self, root: &ComboVal, standard: &ComboVal) -> Result<ContentHash> {
+        if self.encoding <= 5 && !crate::bn_serial::identity_is_legacy() {
+            return crate::bn_serial::with_legacy_identity(|| {
+                let Value::Combo(r) =
+                    crate::dispatch::rekey_identity_names(Value::Combo(root.clone()))
+                else {
+                    unreachable!()
+                };
+                self.put_root(&r, standard)
+            });
+        }
         if self.encoding < 4 {
             // O73 ② is about pre-sentinel stores, not "encoding < 4". The
             // read path already tells them apart with `has_standard`
@@ -621,6 +652,7 @@ impl ObjectStore {
                 let value = Value::Combo(root.clone());
                 let durable = value.for_legacy_cas_storage();
                 let hash = durable.content_hash();
+                self.refuse_collision(&hash, &durable)?;
                 self.write_object(&hash, encode_readable_cas_json(&durable)?)?;
                 return Ok(hash);
             }
@@ -631,6 +663,7 @@ impl ObjectStore {
             let mut durable = value.for_legacy_cas_storage();
             let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
             project_standard_root(durable_root, standard);
+            self.refuse_collision(&hash, &durable)?;
             self.write_object(&hash, encode_readable_cas_json(&durable)?)?;
             return Ok(hash);
         }
@@ -642,6 +675,7 @@ impl ObjectStore {
         // `get_value` accepts this representation under the same CAID.
         let Value::Combo(standard_combo) = &standard else { unreachable!() };
         if self.encoding >= 5 {
+            self.refuse_collision(&standard_hash, &standard)?;
             self.write_object(&standard_hash, self.encode_cas_value(&standard)?)?;
         } else {
             let raw_combo = canonical_cas_json(standard_combo)?;
@@ -654,6 +688,7 @@ impl ObjectStore {
         let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
         project_standard_root(durable_root, match &standard { Value::Combo(root) => root, _ => unreachable!() });
         let hash = durable.content_hash();
+        self.refuse_collision(&hash, &durable)?;
         let content = self.encode_readable_cas_value(&durable)?;
         self.write_object(&hash, content)?;
         Ok(hash)
@@ -688,11 +723,11 @@ impl ObjectStore {
             hydrate_system_table(hydrated_root, standards, hash)?;
             hydrate_standard_root(hydrated_root, &standard);
             reject_unless_stored_address(hash, &hydrated)?;
-            let Value::Combo(root) = hydrated else { unreachable!() };
+            let Value::Combo(root) = adopt_stored_epoch(hash, hydrated) else { unreachable!() };
             return Ok(root);
         }
         reject_unless_stored_address(hash, &value)?;
-        let Value::Combo(root) = value else { unreachable!() };
+        let Value::Combo(root) = adopt_stored_epoch(hash, value) else { unreachable!() };
         Ok(root)
     }
 
@@ -722,12 +757,12 @@ impl ObjectStore {
                     hydrate_system_table(root, &engine.standard_roots, hash)?;
                     hydrate_standard_root(root, &standard);
                     reject_unless_stored_address(hash, &value)?;
-                    return Ok(value);
+                    return Ok(adopt_stored_epoch(hash, value));
                 }
             }
         }
         reject_unless_stored_address(hash, &value)?;
-        Ok(value)
+        Ok(adopt_stored_epoch(hash, value))
     }
 
     /// Read the root's declared standard-library dependency without resolving
@@ -745,6 +780,9 @@ impl ObjectStore {
     }
 
     pub fn put_commit(&self, commit: &Commit) -> Result<ContentHash> {
+        if self.encoding <= 5 && !crate::bn_serial::identity_is_legacy() {
+            return crate::bn_serial::with_legacy_identity(|| self.put_commit(commit));
+        }
         let content;
         let hash;
         if self.encoding >= 5 {
@@ -871,6 +909,31 @@ impl ObjectStore {
 
     // O42 R-1: get_horizon_salt removed — clock salt is forbidden in blur CAID.
 
+    /// Epoch-1 addresses cannot tell some values apart (D106). A value whose
+    /// frozen address already holds a different value is refused before it
+    /// is written. The way out is the explicit migrate.
+    fn refuse_collision(&self, hash: &ContentHash, value: &Value) -> Result<()> {
+        if self.encoding > 5 || !self.hash_to_path(hash).exists() {
+            return Ok(());
+        }
+        let content = self.read_object_raw(hash)?;
+        let Ok(existing) = self.decode_cas_value(&content) else {
+            return Ok(());
+        };
+        if crate::dispatch::rekey_identity_names(existing)
+            == crate::dispatch::rekey_identity_names(value.clone())
+        {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "#identity_collision: this store declares encoding={} and its addresses cannot tell \
+             this value apart from the one already at {}; run `oo migrate --grant migrate` \
+             (encoding=6) to write it",
+            self.encoding,
+            hex::encode(&hash.digest)
+        )
+    }
+
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
         let path = self.hash_to_path(hash);
         // Content-addressed: same bytes → same path. Skip when already present
@@ -880,9 +943,6 @@ impl ObjectStore {
         if path.exists() {
             return Ok(());
         }
-        // Q-083 / D106. The declaration moves before the first new object,
-        // so an epoch-1 engine refuses the store at the gate.
-        self.declare_epoch2_before_new_object()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| cannot_write(parent.display(), &e))?;
         }
@@ -973,23 +1033,6 @@ impl ObjectStore {
             anyhow::anyhow!("cannot parse .oo/architects.json: {e}")
         })?;
         Ok(list.into_iter().collect())
-    }
-
-    fn declare_epoch2_before_new_object(&self) -> Result<()> {
-        if self.encoding != 5 {
-            return Ok(());
-        }
-        let Some(oo) = self.root.parent() else {
-            return Ok(());
-        };
-        let path = oo.join("objects.format");
-        match fs::read_to_string(&path) {
-            Ok(s) if s.trim() == "encoding=6" => Ok(()),
-            Ok(s) if s.trim() == "encoding=5" => atomic_write(&path, "encoding=6\n"),
-            Ok(_) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(cannot_read(".oo/objects.format", &e)),
-        }
     }
 
     fn hash_to_path(&self, hash: &ContentHash) -> PathBuf {
