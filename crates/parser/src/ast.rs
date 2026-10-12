@@ -1048,7 +1048,10 @@ impl FieldKey {
                     format!("\"{}\"", s)
                 }
             }
-            FieldKey::Pattern(e) => e.to_nlang(0),
+            // `@{ … }:` is the pattern key. The braces are the key: `#a:` is a
+            // path key, `4:` and `_:` and `@int:` are named keys, and a compound
+            // pattern does not parse once they are gone.
+            FieldKey::Pattern(e) => format!("@{{ {} }}", e.to_nlang(0)),
             FieldKey::Path(p) => format!("{}", p),
         }
     }

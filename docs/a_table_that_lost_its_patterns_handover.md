@@ -70,24 +70,67 @@
 ## 8. 交付回報（交付方填；本行以上一字不得動）
 
 ### 8.1 射程逐項對照
-I1 …：做了什麼／怎麼驗的（一行一項，工單有幾項就有幾行）
+I1：模式鍵印出時留在 `@{ … }` 裡。頂層、欄位、欄位的欄位、私有欄位、箭頭本體、與箭頭相交後放在欄位裡，提交後與就地答案相同。r1–r4、r6、r7 綠。
+I2：型別、字面、Top、標籤、聯集、區間、`&`、Combo、清單都存得下、讀得回。evolve 與 commit 皆 rc=0。`nlang-spec` 與 `nlang-tools` 能剖析的 226 個 `.n` 往返 AST 相同；3 個本來就剖析不了。模式鍵以外沒有再找到讀不回的構造。r4、r5、r7 綠。
+I3：`oo fmt --write` 留下 `@{ … }`，再 fmt 一次不變，提交後答案與原檔相同。r8 綠。
+I4：沒有模式鍵的值位址不動，見 8.6。非模式鍵在 fmt 下仍裸印。g1、g2 綠。
+I5：磁碟格式未改。新倉 `layout=9`、`encoding=5`。
 
 ### 8.2 順手改動（逐項指名）
-含你認為明顯是改善的、以及 `cargo fmt` 的重排。**沒有就寫「無」。**
+無。
 
 ### 8.3 工單哪裡是錯的
-驗收方的量測、定位或校準若有錯，寫在這裡。**沒有就寫「無」。**
+無。
 
 ### 8.4 工單指名要你回答的問題
-工單正文裡凡標了「請在交付報告裡回答」者，逐題作答，**答案不利也照寫**。
+
+**Q1** 模式鍵的印出只有 `FieldKey::to_string_canonical`。`Expr::to_nlang` 印欄位時走它。讀回是再剖析這段 n/。
+
+1. 工作集注入。`encode_injection` 把巢狀欄位寫成 thunk，`~%__nlang_expr` 是 `expr.to_nlang(0)`。讀時 `parse_expr_only`。v0.83.0 的注入逐字是 `@str: 9`、`@int: 1`。交付是 `@{ @str }: 9`、`@{ @int }: 1`。
+2. 提交物件裡的 thunk。同一條 `write_thunk`／`parse_body`（失敗時訊息是 `store n/ parse`）。
+3. `Code`。箭頭本體以 `expr.to_nlang(0)` 寫進 `~%__nlang_expr`，讀時同一條 `parse_body`。
+4. 存檔點。觀察記錄把 `value.to_nlang(0)` 當答案文字存下來，讀回是比對這段文字，不再剖析成值。thunk 的這段文字就是上面的表達式印出。
+5. `oo fmt`。`program.to_nlang()`。使用者的檔就是讀回端。
+6. `oo status`。staged 是 `Value::to_nlang`。欄位還是 thunk 時，印的是同一段表達式；交付印出 `@{ @str }: 9`。已求成值的表另走 `table_display_rows`（見下）。
+
+不經過 `to_nlang` 的：位址。thunk 與 `Code` 的位址是 `bn_serial` 的節點表。`thunk_cycle_id` 與 force memo 仍雜湊 `to_nlang`，那不是倉的位址。
+
+另一個印出端：已求值的表用 `table_display_rows` 印約束，不經過 `FieldKey`。型別約束本來就是 `@{ @T }`。整數、Top、標籤在這條顯示上仍是 `4`、`_`、`#a`。頂層的表提交前已求成 `%rules`，不靠這段顯示文字回存。這條沒改。`repl_unobserved` 以前自己包一層 `@{ }`；現在改走 `to_string_canonical`，避免套兩層。
+
+**Q2** 根是 `oo inspect` 的 `root:` 最後一個 `:` 之後的 64 字。v0.83.0 在前。
+
+移動了，讀出來的答案也變了：
+
+1. `k: { t: { @{ @str }: 9, @{ @int }: 1 } }`：`8b764de4d45595437eeca7feea44b3757ec11a957b026929660bef03d723984c` → `c301e52499c4230ddd4461fe0ed8411f1afd5b12a57ad16d9d3f7c3b25651ec0`。`_.k.t "s"`、`_.k.t 5` 由 `#no_matching_branch` 變 `9`、`1`。
+2. `k: { t: { @{ 4 }: "four", @{ @int }: "int" } }`：`e5bd8a1d3ed8d16a1f394e3f3185bd50b2e3f0ef98f83819c66efb97aa10a2e0` → `d8b894d93a2baa70647ae13c9eed0364fbb7897980c36356c0e4e0b63e0ce00d`。`_.k.t 4` 仍是 `"four"`。`_.k.t 5` 由 `#no_matching_branch` 變 `"int"`。
+3. `f: (x -> { @{ @str }: 9, @{ @int }: 1 } x)`：`b8c160aeab750b41dab37a7573ba5f44ed6d20711ad4ec10c825f6660df588b6` → `59cadeb2c58e619e6eff89ea6ebd0cba295e65a9e04660540e83e2cba1b856c0`。`_.f "s"`、`_.f 5` 由 `#no_matching_branch` 變 `9`、`1`。
+
+移動了，這兩個輸入的答案沒變，兩個值本來就分得開：
+
+4. `k: { t: { @{ #a }: 1, @{ #b }: 2 } }`：`1b8ee686139cce7f5de7625cb280d5332c72a8e057268169f4c1b1e16e0cf4ad` → `528448f835056ac7e42c24ef1a72f159d38f76612cc9baa68c212bff73745463`。`_.k.t #a` 仍是 `1`，`_.k.t #b` 仍是 `2`。v0.83.0 的根與 `k: { t: { #a: 1, #b: 2 } }` 是同一個。`{ t: { @{ #a }: 1, @{ #b }: 2 } } = { t: { #a: 1, #b: 2 } }` 是 `#false`。`{ @{ #a }: 1 } = { #a: 1 }` 也是 `#false`。
+
+沒有移動：
+
+5. `k: { t: { #a: 1, #b: 2 } }`：`1b8ee686139cce7f5de7625cb280d5332c72a8e057268169f4c1b1e16e0cf4ad`。`_.k.t #a` 是 `1`，`_.k.t #b` 是 `2`。
+6. `k: { t: { a: 4.., b: ..0 } }`：`03ec07a3c2b6bb23dc31b0d9c498371941263b5b361534eb586cef1e87b1e624`。`_.k.t.a` 是 `4..#_`，`_.k.t.b` 是 `#_|_..0`。
+7. `k: { @{ @str }: 9, @{ @int }: 1 }`：`02f77def6ce886af0293a3fc0b2425b0adc82177025f3c4f9dbcfeeb95e693ec`。`_.k "s"` 是 `9`，`_.k 5` 是 `1`。
+
+**Q3** 用 v0.83.0 提交 `k: { t: { @{ @str }: 9, @{ @int }: 1 } }`，根 `8b764de4d45595437eeca7feea44b3757ec11a957b026929660bef03d723984c`。交付開同一個倉：`_.k.t "s"` 仍是 `#no_matching_branch`。`oo status` 印標準根 `7038e250… (available)`，`Universe is static`。`oo log` 印出那一筆提交。再 evolve 同一個檔 rc=0，staged 印的是 `@{ @str }: 9`、`@{ @int }: 1`。`commit` rc=0，新根 `090ea84954152b26af9b60403a0d88112c07e2046ba7f0e8bb7194be572f72c2`，`_.k.t "s"` 是 `9`。這個根與在空倉直接提交的 `c301e524…` 不同：它是併到已經寫壞的值上。新的提交不再把模式鍵寫成裸鍵。
+
+**Q4** `oo fmt` 把 `k: { a: 4.., b: ..0 }` 印成 `a: 4..#_`、`b: #_|_..0`，把 `@{ 4.. }:`、`@{ ..0 }:` 印成 `@{ 4..#_ }:`、`@{ #_|_..0 }:`。`(4..) = (4..#_)` 是 `#true`。`(..0) = (#_|_..0)` 是 `#true`。`{ @{ 4.. }: "A", _: "Z" } 5` 與 `{ @{ 4..#_ }: "A", _: "Z" } 5` 都是 `"A"`。`{ @{ ..0 }: "N", _: "Z" } (0 - 1)` 與錨點寫法都是 `"N"`。讀得回同一個值。這是省略端點時印出的序位錨點。不改。
 
 ### 8.5 探針
-拿掉了哪幾條 `#[ignore]`；除此之外**動了什麼**（應為「無」）。
-認為某支校準錯了：寫在這裡，**不要改**。
+無 `#[ignore]` 可拿。本探針未改，未 rustfmt。
+
+全樹第三輪：本探針 10／10，6.80s。Q-081 探針 15／15，3.00s。Q-080 探針 16／16，2.45s。Q-079 探針 10／10，2.94s；R-1 3／3，0.33s。Q-078 探針 15／15，4.12s。Q-077 原探針 12／12，2.10s；R-1 4／4，0.91s。Q-076 原探針 17／17，1.68s；R-1 6／6，0.42s；R-2 10／10，1.17s。`forward_spread_probe_test` 12／12，0.73s。`roundtrip` 3／3，0.04s。`fuzz_roundtrip` 5／5，0.20s。
+
+交叉編譯 `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`：`Finished` 5.22s，`^error` 0。該 lib 15 則警告，含既有的 `unused variable: pre_existing`，未 cargo-fix。
 
 ### 8.6 數字
-全跑（`--no-fail-fast`、**逐 target 聚合**、exit code）／conformance ／
-身分紅線的實測值。
+1. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：每輪 rc=0，`^error` 0，`test result:` 271 行，2626 passed，0 failed。`Running`／`running`／`test `／`test result:` 三輪各 3168 行，去掉耗時後相同。原始日誌不必逐位元組相同。linux 上該 lib 14 則警告，未 cargo-fix。
+2. conformance 162／162，rc=0。跑者印 `162 vectors, 162 pass, 0 fail`。cwd 是 `/home/gali/nlang`。引擎是本交付的 release `oo`。
+3. 空目錄：`~%Math./add (1, 2)` → 3，`(1, 3)` → 4，rc=0。這兩次 `eval` 沒有建立 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 為 0。
+4. `oo inspect` 的 `root:` 末段：`x: 0` 為 `31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a`。`v: 1 + 1` 與 `v: 1+1` 為 `f4f32e7bc4ebcdd3ae23b10128e99a4b7d71996d236a161cb00849e6451c04d1`。`f: (x -> x + 1)` 為 `039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4`。`k: { a: 1, _: 9 }` 為 `24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a`。`m: (_ -> 1)` 為 `c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85`。頂層的表 `k: { @{ @str }: 9, @{ @int }: 1 }` 為 `02f77def6ce886af0293a3fc0b2425b0adc82177025f3c4f9dbcfeeb95e693ec`。標準根 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`（`status` 該行帶 `(available)`）。新倉 `.oo/format` 為 `layout=9`，`.oo/objects.format` 為 `encoding=5`。套件仍是 `oo` 0.83.0。未推送。
 
 ### 8.7 你認為需要改規格之處
-**先回報再動**——規格收尾是驗收方的事。**沒有就寫「無」。**
+無。

@@ -2085,10 +2085,7 @@ fn during_answer<T>(f: impl FnOnce() -> T) -> (T, std::sync::Arc<nlang_interpret
 }
 
 fn repl_unobserved(key: &FieldKey) -> String {
-    match key {
-        FieldKey::Pattern(e) => format!("@{{{}}}", e.to_nlang(0)),
-        other => other.to_string_canonical(),
-    }
+    key.to_string_canonical()
 }
 
 fn staged_coord_names(universe: &Universe) -> Vec<String> {
