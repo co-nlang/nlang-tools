@@ -455,13 +455,13 @@ fn g3_the_identity_of_a_current_repo_does_not_move() {
 
     let ins = oo(d.path(), &["inspect", &caid]);
     assert!(
-        ins.contains("932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb"),
+        ins.contains("394921b382efcd56b72b532131934ba1ba046735ddaf716baa1e0ca838a0459d"), // Q-083／D106 紀元
         "the root of `app: {{ k1: 1 }}` must not move; got {ins:?}"
     );
 
     let st = oo(d.path(), &["status"]);
     assert!(
-        st.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        st.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "the standard root digest must not move; got {st:?}"
     );
 }
@@ -508,7 +508,7 @@ fn g4_an_encoding_3_store_keeps_its_sentinel() {
          standard root. got {st:?}"
     );
     assert!(
-        st.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        st.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "the root must name THIS engine's standard root by digest \
          (REAL_03 §6.8, first two MUSTs). got {st:?}"
     );

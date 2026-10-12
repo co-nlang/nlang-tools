@@ -161,7 +161,7 @@ fn g3_the_standard_root_does_not_move() {
     assert_eq!(rc, 0, "REACH: commit: {out}");
     let (status, _) = run(d, &["status"]);
     assert!(
-        status.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        status.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "the standard root moved: {status}"
     );
 }
@@ -177,10 +177,10 @@ fn g4_the_values_this_arc_does_not_touch_keep_their_addresses() {
     let s = scratch("g4");
     let d = s.path();
     for (expr, want) in [
-        ("\"a\"", "cdf2d551ff168267"),
-        ("0", "08da7c45cb204377"),
-        ("1.5", "cb3bcb5020bd1356"),
-        ("#true", "1bc573f2ac349356"),
+        ("\"a\"", "ba1a6dd03186fd2e"), // Q-083／D106 紀元
+        ("0", "3865e1f406553238"), // Q-083／D106 紀元
+        ("1.5", "fb5942d1e915b1f5"), // Q-083／D106 紀元
+        ("#true", "2006034a4ce9acb9"), // Q-083／D106 紀元
     ] {
         let got = stored(d, expr);
         assert!(

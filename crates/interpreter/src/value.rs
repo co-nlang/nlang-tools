@@ -3872,9 +3872,14 @@ impl ComboVal {
     /// In-place content hash with `cache_id` memo. Do not clone first —
     /// Clone resets the cache (see `impl Clone for ComboVal`).
     pub fn content_hash(&self) -> ContentHash {
-        if let Ok(guard) = self.cache_id.read() {
-            if let Some(ref h) = *guard {
-                return h.clone();
+        // Q-083 / D106. The memo is the current epoch only. A frozen
+        // recompute must not read it or replace it.
+        let legacy = crate::bn_serial::identity_is_legacy();
+        if !legacy {
+            if let Ok(guard) = self.cache_id.read() {
+                if let Some(ref h) = *guard {
+                    return h.clone();
+                }
             }
         }
         let digest = crate::bn_serial::content_digest_combo(self);
@@ -3903,8 +3908,10 @@ impl ComboVal {
             lattice_sketch: sketch,
             digest: digest.to_vec(),
         };
-        if let Ok(mut guard) = self.cache_id.write() {
-            *guard = Some(h.clone());
+        if !legacy {
+            if let Ok(mut guard) = self.cache_id.write() {
+                *guard = Some(h.clone());
+            }
         }
         h
     }

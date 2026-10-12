@@ -134,16 +134,142 @@
 
 ### 8.1 射程逐項對照
 
+1. **I1。** Combo 每個條目在鍵前面寫一個軸位元組。優先序沿 REAL_03 §6.2：系統 1、元 2、型別 3、邏輯 4、資料 5、私有 6。7（`~@`）與 8（`~/`）引擎不產生。排序是軸位元組，然後鍵的 UTF-8。`legacy_fields` 仍是 5，`legacy_local` 仍是 6。
+2. **I1。** Union 是 `0x05`、LEB128 個數、成員依自己的 V 位元組排序並去重。凍結路徑仍是成員串接、排序、去重，沒有標記、沒有個數。
+3. **I1，找到並留下。** `Value::Bottom` 只寫 `0xFE`，原因、路徑、訊息不進位元組，而 `PartialEq` 比較 `BottomDetail`。工單說其餘 V 與 v0.84.0 相同，r6 釘的就是那張表，所以這一處沒有改編碼。原子的 effect／rank、`hash_recursive_with_salt`、`Commit::content_hash` 都維持原樣。Expr／`EX_COMBO` 沒有軸位元組；軸只在值的 Combo 上。
+4. **I2。** 跨軸 `--pin` 落地（r3）。
+5. **I3。** 紀元一的倉照開，答案與 v0.84.0 相同；寫過一次之後舊物件還在；凍結編碼對得上的竄改仍讀得出（Q3）；gc 不刪可達物件。`encoding4_repo`、`layout2_framed_repo`、`layout5*`、`layout6_signed_repo`、`layout7_repo`、`pre_sentinel_repo` 維持綠。
+6. **I4。** 新摘要是 SHA-256(`0x80 ‖ V`)。巢狀值不加 `0x80`。凍結路徑是 v0.84.0 的 `serialize_bn`／`content_digest`，e1 的十個摘要對得上。`0x80` 不是紀元一任何合法值的首位元組，所以兩套位址空間不相交。
+7. **I5。** `encoding=5` 的倉在寫下第一個新物件之前，把 `objects.format` 改成 `encoding=6`。新倉宣告 `encoding=6`。唯讀不改宣告。路徑已存在的重寫不抬。`encoding=4` 的普通寫入不抬；`migrate` 把已宣告 ≥4 的編碼抬到 6，更舊的編碼留在原處。記憶體裡的 `encoding` 欄位在檔案抬到 6 之後仍是 5；編解碼對 5 與 6 走同一支。
+8. **I6。** §2 的新紅線由 r6 釘住。附錄裡的摘要字面，以及本引擎寫出或 migrate 之後的 `encoding=5` 字面，改成這支引擎算出的值。
+
 ### 8.2 順手改動（逐項指名）
+
+1. `bn_serial.rs`：軸位元組、Union 的 `0x05` 與個數、外層 `0x80`、`with_legacy_identity`（執行緒局部深度，含 unwind）。
+2. `value.rs`：`cache_id` 只在當前紀元讀寫。
+3. `storage.rs`：`OBJECT_ENCODING_VERSION = 6`；讀取先當前再凍結；`encoding=5` 的倉在第一個新物件之前改宣告。
+4. `store_codec.rs`：提交本文的位址走值的 `content_hash`。
+5. `gc.rs`：未加框的值走雙紀元。未加框的提交仍用 `Commit::content_hash`。
+6. `oodp.rs`：客戶端兩處改走 `value_matches_stored_address`。伺服器的 fetch 仍是 `get_value`。
+7. `lib.rs`：`StandardRootSet::from_roots` 先收當前摘要，再在凍結旗標下收同一組形狀。
+8. `genesis.rs`：`SEED_*`。`seed_caids_are_stable` 比的就是這些常數；`all_seeds` 沒有別的呼叫點。註 `Q-083／D106 紀元`。
+9. 附錄測試：只改摘要字面，以及本引擎寫出或 migrate 之後預期的 `encoding=5` → `encoding=6`。行尾註 `Q-083／D106 紀元`。`a_refusal` r11 的輸入表仍是 `encoding=5`。
+10. `a_store_written_in_another_language_probe_test` 的 g6 讀的是 `encoding=4` 夾具上的舊物件。新鮮倉的 `ROOT_CAID`／`STANDARD_ROOT` 改到新摘要；夾具名留在 `FIXTURE_ROOT_CAID`（`932a9f9d…`）與 `FIXTURE_STANDARD_ROOT`（`7038e250…`）。
+11. `an_identity_only_one_compiler_can_compute_probe_test` g4 的標準根路徑從 `sha256/70/38e250…` 改到 `sha256/c9/6c2937…`。
+12. `evidence_that_needs_a_binary_probe_test` e5：重算摘要由 `cef5e484` 改為 `7c147a6beb9ee793dcfb2cbbb411c16cfcda89f551376120f4d294a1f97853e8`。
+13. `a_commit_that_is_a_value_probe_test` g5 的對照 `{ a: 1 b: "x" }`（沒有逗號）是 `a379a89dcb55a6653a1f867883e52e72f059829745df7b83fabbe104c213c65d`。
+14. 未改：三支新探針、`epoch1_repo`、`what_the_top_dropped_probe_test` 的 `STD_HEX`、`main.rs`、`pin_probe_test`、版本（仍 `0.84.0`）、`Cargo.lock`、`spec/`、`meta/`、`conformance/`、`CHANGELOG`、`REAL_03`。linux 上 lib 的 14 條舊警告、windows 上的 15 條，都沒有 cargo fix。
 
 ### 8.3 工單哪裡是錯的
 
+無。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1**
+
+倉的位址：
+
+1. 寫入（`put_value`、`put_root`、`put_commit`、`commit_body_address`）只用當前紀元。
+2. 讀取驗證（`get_value`、`get_root`、加框 `get_commit` 的 V2、`open_commit` 在 v1 對不上時的回退）先算當前摘要，不中再在 `with_legacy_identity` 下重算。對不上的錯誤帶的是當前摘要。
+3. gc 未加框的值用同一套雙紀元。未加框的提交與 `Commit::content_hash` 是父提交加根的另一套演算法，不包 `0x80`。
+4. oodp 伺服器的 fetch 走 `get_value`。客戶端兩處走 `value_matches_stored_address`。裸的 64 hex 是 `#unparseable_caid`。
+5. 標準根架對每個已出貨形狀收當前摘要，再收凍結摘要。
+6. `cache_id` 只在旗標關閉時讀寫。凍結重算不讀、不寫它。
+7. 載入的紀元一值，在旗標外面的 `content_hash()` 是新位址。HEAD 與父提交仍保存舊位址，當作指標。把紀元一的宇宙再提交，會寫一個新根物件，舊物件留在原位（g2）。那是新的身分。
+
+記憶體裡的身分：合一早退、`pattern_branch_name`、`disc.identify`、force／cycle memo、活值的 lattice sketch，都走當前編碼。凍結旗標只在核對紀元一已經寫下的摘要，以及索引歷史標準根時打開。lattice 的欄位振幅雜湊 V，不加 `0x80`。`{ hello: "world" }` 的 sketch 前綴因此沒動，摘要動了。
+
+**Q2** 對照引擎是 `/home/gali/nlang-baselines/v0.84.0-verify/target/release/oo`。本引擎是這次釋出的 `oo`。
+
+（a）`epoch1_repo` 的複本，本引擎只讀過。`layout=9`，`encoding=5`。本引擎與 v0.84.0 的 `status` 都是 rc 0：
+
+```
+Standard root dependency: 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911 (available)
+Universe is static (no staged changes).
+```
+
+`log` rc 0，兩筆：HEAD `f8e94c4719238893d5662b01365f8c3dd0300c2e449ea01504f2b95ca495e7fd`，`epoch one, second`，`2026-10-12T13:32:34.889Z`；第一筆 `2858af651809a9aa86cddd06558846d326fbb15a196d874a21ca7559c06f93a3`，`epoch one`，`2026-10-12T13:32:34.685Z`。`eval _.t` rc 0，印 `{ int: 1 }`。
+
+（b）同一夾具，本引擎 `evolve`＋`commit` `y: 1`，rc 0。之後 `layout=9`，`encoding=6`。v0.84.0 的 `status`、`log`、`eval _.t` 都是 rc 1，stderr：
+
+```
+Error: object encoding version 6 is not supported by this engine (understands encoding 1 through 5); refusing to open
+```
+
+（c）新鮮的 `x: 0` 提交，同樣 `layout=9`／`encoding=6`。v0.84.0 的 `status` 與 `log` 都是 rc 1，同一句。
+
+**Q3** 紀元一複本，竄改前 `eval _.t` 是 `{ int: 1 }`，rc 0，`encoding=5`。根物件 `99c28198decc1052fcc65212ab15aac6d9a30586546835ac660a38bc744ae47c` 裡的第一處 `int: 1` 改成 `@int: 1` 之後，`eval _.t` 是 `{ @int: 1 }`，rc 0，宣告仍是 `encoding=5`。沒有 `#caid_mismatch`。凍結編碼仍對得上，這就是留下的那個弱點。
+
+對等點是這份原始碼上 `Ouroboros::init` 加 `oodp::serve_request` 量的（釋出閘之前；之後這條路徑沒有再改）。裸 64 hex 是 `#unparseable_caid`。`hash:sha256:v1:99c28198…` 與倉裡那條 v2 位址，竄改前後都是 `OODP Served`、成功。竄改後 `get_value` 的欄位 `t` 印 `{ @int: 1 }`。線上的 JSON 本文沒有拿來對 `int: 1` 這幾個字。
+
+**Q4** 釋出 `oo` 上量的。沒有一個留在舊位址。
+
+| 值 | 新位址 |
+| :-- | :-- |
+| `x: 0` | `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f` |
+| `v: 1 + 1` | `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199` |
+| `f: (x -> x + 1)` | `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f` |
+| `k: { a: 1, _: 9 }` | `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e` |
+| `m: (_ -> 1)` | `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6` |
+| 標準根 | `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` |
+| `0` | `3865e1f4065532383839cf2bb9a68cc810c8d2eb25a80d14d376cf07e3865f49` |
+| `"a"` | `ba1a6dd03186fd2e05d1b1c27b13ab52ca1deabbf91f59dbde87eb093267e7ed` |
+| `{}` | `0a635ac8c2ad27f595e9687005e35896de952f3df549b892e66fabaf1c724c3e` |
+| `{ a: 1 }` | `cd254f289505a7e84c4e0bb780f27f3e9028c0b4489a8e0f1a1342a7af755d1d` |
+| `f: (x -> x)` | `2a19b65733d0e1c57cc421df82645413a3a7fb6e6bfb341d8a0e21d7d96fae25` |
+| `#blur`（`identify_and_store`） | `96520487af465c8591d4778485116f9db5489f14e2fc40de49bd9251a61e2602` |
+
+`app: { k1: 1 }` 的根是 `394921b382efcd56b72b532131934ba1ba046735ddaf716baa1e0ca838a0459d`（舊 `932a9f9d…`）。`name_points` 那個 fuel 耗盡的 `#blur` 是 `4069c7cb91f8ae8a84b955127a7e599d99e7d5f696467077b808c1ed84b7143d`，與上面這個字面 `#blur` 不同。
+
+**Q5** `migrate --grant migrate` 不搬位址。`main.rs` 的鎖出句子沒有改。
+
+`encoding4_repo` 複本：之前 `layout=2`／`encoding=4`，HEAD `hash:sha256:v1:3ced204289895c8656b7d33ffb0a414d604841a865c411a26205ea3e082d36d3`，物件 3 個。rc 0。之後 `layout=9`／`encoding=6`，HEAD 與物件路徑不變。印出：
+
+```
+Migrating this store from layout=2 to layout=9 will make it unopenable by oo v0.26.0 through v0.74.0. That includes every engine that opens layout=5 (oo v0.44.0 through v0.74.0); none of them open layout=9. Object encoding advances from encoding=4 to encoding=6.
+Migrated store layout to layout=9 and object encoding to encoding=6.
+```
+
+這句停在 v0.74.0。開得了 `layout=9`、開不了 `encoding=6` 的引擎（v0.75.0 到 v0.84.0）沒有被點名。
+
+`epoch1_repo` 複本：之前 `layout=9`／`encoding=5`，HEAD 是上面的 `f8e94c47…`，物件 5 個。rc 0。之後 `layout=9`／`encoding=6`，HEAD 與物件路徑不變。印出：
+
+```
+Advancing object encoding from encoding=5 to encoding=6 locks out no engine.
+Migrated object encoding to encoding=6.
+```
+
+這句與 Q2（b）不合：v0.84.0 拒絕 `encoding=6`。
+
+**Q6** `shipped_standard_roots` 依序送四個形狀：`root_with_system()`、`as_shipped(quoted_names)`、`as_shipped(v0_22)`、未投影的 `v0_22`。`from_roots` 先插入這四個的當前摘要，再在凍結旗標下插入同一順序。架上八個：
+
+1. 現行形狀，紀元二 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`
+2. 引號名，紀元二 `a201cea32fc8e7a159cfc822c58c06edfec3d031d1703ef1cc9b4fb7890e9246`
+3. v0.26 `as_shipped(v0_22)`，紀元二 `182d17736188643bffd0cde7176f76f1be3a990e35463a3c4c97f3864c538032`
+4. pre-cas `v0_22_standard_root()`，紀元二 `372ffae835141a3317f5b9282456f7abddb836459a6f416b4c4bd7a9b5a7a1a9`
+5. 現行形狀，紀元一 `7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911`
+6. 引號名，紀元一 `229be911057aaff665b13691115e5ee271d2007b649ebbfaef40cf70b6802c24`
+7. v0.26，紀元一 `2da5b71371649291cfa5dc5d0cd019464d248e98645b3901938e1c08d2172c2c`
+8. pre-cas，紀元一 `65f52e2da48baa550d7340c0fdc214fd1f9925577a96ffec59bc34f8b2bcbe72`
+
+1 與 5 在釋出 `oo` 的 `status` 上又對過。2–4 與 6–8 是同一份原始碼的標準根架走出來的；6–8 的舊測試仍綠。
 
 ### 8.5 探針
 
+探針與夾具未改。釋出閘裡：CLI 探針 11／11（5.31s），union 2／2，epochs 4／4（0.34s），`pin_probe_test` 15／15（2.26s）。
+
 ### 8.6 數字
 
+1. 版本仍是 `oo` 0.84.0。新倉是 `layout=9`／`encoding=6`。
+2. 釋出全樹三輪，`--jobs 1`，`--test-threads=1`。每輪 `test result:` 274 行，`Running` 271，passed 2643，failed 0，`^error` 0，exit 0。去掉 `finished in …s` 之後，以 `test result:`、`test `、`Running `、`running ` 開頭的行三輪相同。
+3. conformance 162／162，exit 0。
+4. 新鮮目錄裡 `~%Math./add (1, 2)` 是 3，`(1, 3)` 是 4，rc 0，該目錄沒有 `.oo`。euid 1000。`oo-ephemeral-*` 為 0。
+5. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+6. 未 push。
+
 ### 8.7 你認為需要改規格之處
+
+`REAL_03` 的改寫歸驗收方。Q5 那兩句鎖出文字是引擎印的，留在引擎裡。開放範圍的寫法未動。
 
 ## 9. 驗收（驗收方填）

@@ -193,8 +193,11 @@ fn verify_reachable_object(
     }
 
     if let Ok(val) = serde_json::from_slice::<Value>(&bytes) {
-        let recomputed = val.content_hash();
-        if hex::encode(&recomputed.digest) == want {
+        // Q-083 / D106. An unframed object may be an epoch-1 address.
+        let matches = hex::decode(&want).is_ok_and(|d| {
+            crate::storage::value_matches_stored_address(&ContentHash::v1(d), &val)
+        });
+        if matches {
             if let Ok(json) = serde_json::from_slice::<JsonValue>(&bytes) {
                 return VerifiedObject::Ok(json_refs(&json, follow_abandoned));
             }

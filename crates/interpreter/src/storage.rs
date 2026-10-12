@@ -144,6 +144,28 @@ pub fn value_address_matches(requested: &ContentHash, recomputed: &ContentHash) 
     }
 }
 
+/// A stored address matches the current encoding, or, if that misses, the
+/// frozen v0.84.0 encoding (Q-083 / D106). Writes never use the frozen one.
+pub fn value_matches_stored_address(requested: &ContentHash, value: &Value) -> bool {
+    if value_address_matches(requested, &value.content_hash()) {
+        return true;
+    }
+    let legacy = crate::bn_serial::with_legacy_identity(|| value.content_hash());
+    value_address_matches(requested, &legacy)
+}
+
+fn reject_unless_stored_address(requested: &ContentHash, value: &Value) -> Result<()> {
+    if value_matches_stored_address(requested, value) {
+        Ok(())
+    } else {
+        Err(StoreReadError::CaidMismatch {
+            requested: requested.clone(),
+            recomputed: value.content_hash(),
+        }
+        .into())
+    }
+}
+
 fn is_caid_mismatch(err: &anyhow::Error) -> bool {
     matches!(
         err.downcast_ref::<StoreReadError>(),
@@ -168,7 +190,7 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// — including every future N (`layout=10`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
 pub const STORE_LAYOUT_VERSION: u32 = 9;
-pub const OBJECT_ENCODING_VERSION: u32 = 5;
+pub const OBJECT_ENCODING_VERSION: u32 = 6;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// First layout whose `refine --sign` signs the whole commit (D76).
@@ -665,17 +687,11 @@ impl ObjectStore {
             // top-level standard coordinates is not the historical rule.
             hydrate_system_table(hydrated_root, standards, hash)?;
             hydrate_standard_root(hydrated_root, &standard);
-            let recomputed = hydrated.content_hash();
-            if !value_address_matches(hash, &recomputed) {
-                return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
-            }
+            reject_unless_stored_address(hash, &hydrated)?;
             let Value::Combo(root) = hydrated else { unreachable!() };
             return Ok(root);
         }
-        let recomputed = value.content_hash();
-        if !value_address_matches(hash, &recomputed) {
-            return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
-        }
+        reject_unless_stored_address(hash, &value)?;
         let Value::Combo(root) = value else { unreachable!() };
         Ok(root)
     }
@@ -705,22 +721,12 @@ impl ObjectStore {
                         resolve_standard_root(root, &engine.standard_roots, hash)?.clone();
                     hydrate_system_table(root, &engine.standard_roots, hash)?;
                     hydrate_standard_root(root, &standard);
-                    let recomputed = value.content_hash();
-                    if !value_address_matches(hash, &recomputed) {
-                        return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
-                    }
+                    reject_unless_stored_address(hash, &value)?;
                     return Ok(value);
                 }
             }
         }
-        let recomputed = value.content_hash();
-        if !value_address_matches(hash, &recomputed) {
-            return Err(StoreReadError::CaidMismatch {
-                requested: hash.clone(),
-                recomputed,
-            }
-            .into());
-        }
+        reject_unless_stored_address(hash, &value)?;
         Ok(value)
     }
 
@@ -784,23 +790,27 @@ impl ObjectStore {
             }
             return Ok(commit);
         }
-        let recomputed = match hash.version {
-            CaidVersion::V1 => commit.content_hash(),
+        match hash.version {
+            CaidVersion::V1 => {
+                let recomputed = commit.content_hash();
+                if !commit_address_matches(hash, &recomputed) {
+                    return Err(StoreReadError::CaidMismatch {
+                        requested: hash.clone(),
+                        recomputed,
+                    }
+                    .into());
+                }
+            }
             CaidVersion::V2 => {
-                crate::store_codec::commit_document_address(&content).map_err(|e| {
+                let body = content.split_once('\n').map(|(_, b)| b).unwrap_or(&content);
+                let value = crate::store_codec::commit_body_as_value(body).map_err(|e| {
                     StoreReadError::ObjectUndecodable {
                         requested: hash.clone(),
                         detail: e.to_string(),
                     }
-                })?
+                })?;
+                reject_unless_stored_address(hash, &value)?;
             }
-        };
-        if !commit_address_matches(hash, &recomputed) {
-            return Err(StoreReadError::CaidMismatch {
-                requested: hash.clone(),
-                recomputed,
-            }
-            .into());
         }
         Ok(commit)
     }
@@ -816,12 +826,20 @@ impl ObjectStore {
             Ok(commit) => Ok((hash.clone(), commit)),
             Err(err) if hash.version == CaidVersion::V1 && is_caid_mismatch(&err) => {
                 let content = self.read_object_raw(hash)?;
-                let Ok(addr) = crate::store_codec::commit_document_address(&content) else {
+                let body = content.split_once('\n').map(|(_, b)| b).unwrap_or(&content);
+                let Ok(value) = crate::store_codec::commit_body_as_value(body) else {
                     return Err(err);
                 };
-                if addr.digest != hash.digest {
-                    return Err(err);
-                }
+                let current = value.content_hash();
+                let addr = if current.digest == hash.digest {
+                    current
+                } else {
+                    let legacy = crate::bn_serial::with_legacy_identity(|| value.content_hash());
+                    if legacy.digest != hash.digest {
+                        return Err(err);
+                    }
+                    legacy
+                };
                 let commit = self.get_commit(&addr)?;
                 Ok((addr, commit))
             }
@@ -862,6 +880,9 @@ impl ObjectStore {
         if path.exists() {
             return Ok(());
         }
+        // Q-083 / D106. The declaration moves before the first new object,
+        // so an epoch-1 engine refuses the store at the gate.
+        self.declare_epoch2_before_new_object()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| cannot_write(parent.display(), &e))?;
         }
@@ -952,6 +973,23 @@ impl ObjectStore {
             anyhow::anyhow!("cannot parse .oo/architects.json: {e}")
         })?;
         Ok(list.into_iter().collect())
+    }
+
+    fn declare_epoch2_before_new_object(&self) -> Result<()> {
+        if self.encoding != 5 {
+            return Ok(());
+        }
+        let Some(oo) = self.root.parent() else {
+            return Ok(());
+        };
+        let path = oo.join("objects.format");
+        match fs::read_to_string(&path) {
+            Ok(s) if s.trim() == "encoding=6" => Ok(()),
+            Ok(s) if s.trim() == "encoding=5" => atomic_write(&path, "encoding=6\n"),
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(cannot_read(".oo/objects.format", &e)),
+        }
     }
 
     fn hash_to_path(&self, hash: &ContentHash) -> PathBuf {

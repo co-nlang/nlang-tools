@@ -100,7 +100,7 @@ const SRC: &str = "v: { hello: \"world\" }\n";
 
 /// Golden CAID of `{ hello: "world" }` — measured stable across every process
 /// and both binaries. Ordinary values must NOT move in this arc.
-const GOLDEN_VALUE_CAID: &str = "hash:sha256:v2:_:gICS1LCf09bLAQD//5HUsJ/T1ssBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:681781ef857ac859326d707bdfcd04fc939b78e7c9060dd674d9a8be536f2ae4";
+const GOLDEN_VALUE_CAID: &str = "hash:sha256:v2:_:gICS1LCf09bLAQD//5HUsJ/T1ssBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:56d5200a7dfa0e594fc69fe60ec955c1101aec1c1defcec6b678d345970d6311"; // Q-083／D106 紀元
 
 // ── harness ─────────────────────────────────────────────────────────────
 

@@ -394,13 +394,13 @@ fn g2_lexical_scope_stays_lexical() {
 fn g3_unchanged_values_keep_their_root() {
     let mut wrong = Vec::new();
     for (i, (src, want)) in [
-        ("t: { j: 5, q: j }\n", "f13c087abd2c252692689bc8fb710ee2e1c49f6f520188a1dabe3e422f3912c3"),
-        ("t: { ...{ j: 5 }, q: 1 }\n", "8a60092ad7227919afeebc0a9c520a3909d5e10de58e3e6bb7befa1d50fd7683"),
-        ("t: { a: 1, ...{ b: 2 } }\n", "cbae84692c1ed07da0af21770cea6cbf8e071a9d1ad06e4b719f0fc201f9968a"),
-        ("...{ j: 5 }\nq: j\n", "f03a7d869c4fad4909bf230faee612aeafd305144165f22efaaa79ecc7334cd3"),
-        ("s: { j: 5 }\n...s\n", "cb50248338128f5f460cc9dd0594239e799e39bd05c53ce47b779ede525f258b"),
-        ("t: { ...{ j: 5, k: j } }\n", "065a2b711806d400167410c9f34f314a8b8a3dab82d7516608ee3a4528d97262"),
-        ("t: { k: 2, ...{ k: 1, q: k } }\n", "6dfd21e6eb4ccb9bfb9742d20817304309081b6aeabf4b77d925d97ebfda7aff"),
+        ("t: { j: 5, q: j }\n", "0a497aa11a795667d3410e900d1a9d94e661e0ad8fd3fe261f532e97338dda3b"), // Q-083／D106 紀元
+        ("t: { ...{ j: 5 }, q: 1 }\n", "b34efdb693f17773f38e924e7ea0d53112323026d4a4938b23e8064ccd2e4c32"), // Q-083／D106 紀元
+        ("t: { a: 1, ...{ b: 2 } }\n", "ee2c382ff3a0337e3b515e41d5c0891010ef8cf62c3323486fcf933bb2b02fea"), // Q-083／D106 紀元
+        ("...{ j: 5 }\nq: j\n", "40dfda24a4cd86b5a49ddb054d3097cf15c40ff7e442ed79cf636300b762b64b"), // Q-083／D106 紀元
+        ("s: { j: 5 }\n...s\n", "2355e7e85357191262bea67cf0a3e83a6aacd11490c292ee49f9c893e7ea68cb"), // Q-083／D106 紀元
+        ("t: { ...{ j: 5, k: j } }\n", "4fe83f4335a89b7d930731c4f62525e4d492337c838c58a3925730702c28c8c4"), // Q-083／D106 紀元
+        ("t: { k: 2, ...{ k: 1, q: k } }\n", "cac4a2994d66033de214195d5ac85a970b3d6bba4d58248b7fcd7237cfbd8f2f"), // Q-083／D106 紀元
     ]
     .iter()
     .enumerate()

@@ -278,7 +278,7 @@ fn g5_identity_does_not_move() {
     assert!(commit.contains("Commit successful"), "REACH: {commit}");
     let status = oo(&d, &["status"]);
     assert!(
-        status.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        status.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "standard root digest is a red line. {status}"
     );
 }

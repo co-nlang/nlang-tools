@@ -750,11 +750,20 @@ pub struct StandardRootSet {
 
 impl StandardRootSet {
     pub fn from_roots(roots: impl IntoIterator<Item = ComboVal>) -> Self {
+        let roots: Vec<ComboVal> = roots.into_iter().collect();
         let mut by_digest = IndexMap::new();
-        for root in roots {
+        for root in &roots {
             let digest = hex::encode(Value::Combo(root.clone()).content_hash().digest);
-            by_digest.insert(digest, root);
+            by_digest.insert(digest, root.clone());
         }
+        // Q-083 / D106. The same shape under the frozen v0.84.0 encoding,
+        // so an epoch-1 store can still name its standard root.
+        crate::bn_serial::with_legacy_identity(|| {
+            for root in &roots {
+                let digest = hex::encode(Value::Combo(root.clone()).content_hash().digest);
+                by_digest.insert(digest, root.clone());
+            }
+        });
         Self { by_digest }
     }
 

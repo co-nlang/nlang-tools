@@ -319,10 +319,10 @@ fn g4_union_values_and_atoms() {
         ("5 4", bot, "#conflict"),
     ]);
     let roots = [
-        ("h: (x -> x + 1) | (x -> x * 10)\n", "0ca12aa4a3b1fc955657cfaf1892c4ba607ff7bdb4f4f87a75eb6523bdb617f7"),
-        ("/fmt: (x @int -> x + 1) | (x @str -> x + \"!\")\n", "0e38286c2c4eff41a3a8314e50cad25685b388cc899f2c7b3d65a2e5f57b7fc1"),
-        ("t: { @{ @int }: \"int\", 5: \"five\" }\n", "9d82851119c87c41b283e56f1e26cd14e5669050f20eff411f74a6d580a4da33"),
-        ("u: ({ a: 1 } | { a: 2 }).a\n", "db62a6b124d87ddcf634275ca7cca543cb4fc0300cae6146982eb41094351499"),
+        ("h: (x -> x + 1) | (x -> x * 10)\n", "1c66a07b09dff3e2c3ee108ff32b134d4286292f9d00aa8760544a4dc44c9740"), // Q-083／D106 紀元
+        ("/fmt: (x @int -> x + 1) | (x @str -> x + \"!\")\n", "a624c64f4000e23dc50bc39cbe3c81bbe23cc242b5e7c202bc71216274fe9a65"), // Q-083／D106 紀元
+        ("t: { @{ @int }: \"int\", 5: \"five\" }\n", "13f4371d34afff6392f410631ad1804976354cb4765a3356f18bd24cc4eb438d"), // Q-083／D106 紀元
+        ("u: ({ a: 1 } | { a: 2 }).a\n", "e27d71bd0701945f240974f803c84b9f0868939a866cb5449dfd044a65e3678a"), // Q-083／D106 紀元
     ];
     let mut wrong = Vec::new();
     for (i, (src, want)) in roots.iter().enumerate() {

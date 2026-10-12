@@ -249,10 +249,10 @@ fn g3_a_legacy_store_keeps_writing_legacy_commits() {
 fn g4_value_addresses_do_not_move() {
     let w = Ws::new("g4");
     let h = w.commit("x: 0\n", "v");
-    assert!(w.root_of(&h).ends_with("31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a"), "x: 0 root moved");
+    assert!(w.root_of(&h).ends_with("b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"), "x: 0 root moved"); // Q-083／D106 紀元
     let w = Ws::new("g4b");
     let h = w.commit("v: 1 + 1\n", "v");
-    assert!(w.root_of(&h).contains(":f4f32e7bc4ebcdd3"), "v: 1 + 1 root moved: {}", w.root_of(&h));
+    assert!(w.root_of(&h).contains(":df91a8ad239ea872"), "v: 1 + 1 root moved: {}", w.root_of(&h)); // Q-083／D106 紀元
 }
 
 // ── Reds (red at baseline; the delivery makes them green) ────────────────
@@ -407,12 +407,12 @@ fn g5_identify_is_not_changed_by_this_arc() {
     let body = text.splitn(2, '\n').nth(1).unwrap().trim().to_string();
     let o = w.ok(&["eval", &format!("~%Discovery./identify ({body})")]);
     assert!(
-        o.contains(":9ceb1d51dccedc65dde9aaebf90d4302e1b00d579b5946aec90389f66eddb54d"),
+        o.contains(":006efe31fc84eab4b89ee5b4f36cc30430e98f75019d4a1dded2f508f9c5dcdf"), // Q-083／D106 紀元
         "identify of a commit-shaped value moved: {o}"
     );
     let o = w.ok(&["eval", "~%Discovery./identify ({ a: 1 b: \"x\" })"]);
     assert!(
-        o.contains(":77644e5827252a3165d8f3424938935d702729201e95e9ddda102c690c4cf56a"),
+        o.contains(":a379a89dcb55a6653a1f867883e52e72f059829745df7b83fabbe104c213c65d"), // Q-083／D106 紀元
         "control: identify of an ordinary value moved: {o}"
     );
 }

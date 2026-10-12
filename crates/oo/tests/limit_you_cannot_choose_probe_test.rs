@@ -338,7 +338,7 @@ fn p1_plain_commit_root_is_unchanged() {
     // lives on the SYSTEM axis; `serialize_combo` folds `cv.system` into the
     // CAID (W8′ M2). So changing one genesis default moves EVERY root.
     // Breaking entry #10.
-    const KNOWN: &str = "ca0986d5f6331359f34dd1d24a42a33e9a8a375605b78d444ba82e281bcde33c";
+    const KNOWN: &str = "c9889219c55cccc569f22c0521d5954b54063702a288cf3e7452677e65749aff"; // Q-083／D106 紀元
     let d = fresh("p1");
     fs::write(d.join("u.n"), "x: 1\n").unwrap();
     oo(&d, &["evolve", "u.n"]);

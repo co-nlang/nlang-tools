@@ -5,7 +5,33 @@ use nlang_parser::ast::{
 };
 use num_traits::ToPrimitive;
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::collections::HashSet;
+
+// Q-083 / D106. Epoch 2 prepends 0x80 to the hashed bytes and writes an axis
+// byte on every combo entry. `with_legacy_identity` recomputes the frozen
+// v0.84.0 encoding (no 0x80, no axis byte, union with no tag and no count).
+thread_local! {
+    static LEGACY_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+pub fn identity_is_legacy() -> bool {
+    LEGACY_DEPTH.with(|d| d.get() > 0)
+}
+
+/// Run `f` with the frozen v0.84.0 identity encoding. Restores the current
+/// encoding on return, including unwind.
+pub fn with_legacy_identity<R>(f: impl FnOnce() -> R) -> R {
+    LEGACY_DEPTH.with(|d| d.set(d.get().saturating_add(1)));
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LEGACY_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+    let _restore = Restore;
+    f()
+}
 
 // ── Type tags (REAL_03 §6.2) ──────────────────────────────────
 // Unused in Phase 1a; reserved for future use (List, Tuple, Bool, Ref)
@@ -17,6 +43,9 @@ const TAG_COCOON: u8 = 0x02;
 const TAG_LIST: u8 = 0x03;
 #[allow(dead_code)]
 const TAG_TUPLE: u8 = 0x04;
+// Q-083 / D106. A union is `0x05`, then a count, then members. Epoch 1 wrote
+// the members back to back and left this byte unused.
+const TAG_UNION: u8 = 0x05;
 #[allow(dead_code)]
 const TAG_ATOM: u8 = 0x10;
 #[allow(dead_code)]
@@ -110,8 +139,7 @@ pub fn serialize_bn(value: &Value) -> Vec<u8> {
 }
 
 pub fn content_digest(value: &Value) -> [u8; 32] {
-    let bytes = serialize_bn(value);
-    Sha256::digest(&bytes).into()
+    digest_identity(&serialize_bn(value))
 }
 
 /// Content digest of a combo without wrapping as `Value::Combo` (avoids
@@ -119,7 +147,20 @@ pub fn content_digest(value: &Value) -> [u8; 32] {
 pub fn content_digest_combo(cv: &ComboVal) -> [u8; 32] {
     let mut buf = Vec::new();
     serialize_combo(cv, &mut buf);
-    Sha256::digest(&buf).into()
+    digest_identity(&buf)
+}
+
+/// Epoch 2 hashes `0x80 ‖ V(value)`. Nested values are not prefixed. Epoch 1
+/// hashes `V` alone (v0.84.0).
+fn digest_identity(bytes: &[u8]) -> [u8; 32] {
+    if identity_is_legacy() {
+        Sha256::digest(bytes).into()
+    } else {
+        let mut hasher = Sha256::new();
+        hasher.update([0x80]);
+        hasher.update(bytes);
+        hasher.finalize().into()
+    }
 }
 
 // ── Internal serialization ────────────────────────────────────
@@ -599,7 +640,12 @@ fn serialize_combo(cv: &ComboVal, buf: &mut Vec<u8>) {
     });
 
     encode_unsigned_leb128(entries.len() as u64, buf);
-    for (_prio, key, val) in &entries {
+    for (prio, key, val) in &entries {
+        // Q-083 / D106. The axis is part of the entry. Epoch 1 sorted by it
+        // and then dropped it.
+        if !identity_is_legacy() {
+            buf.push(*prio);
+        }
         encode_string(key, buf);
         serialize_value(val, buf);
     }
@@ -609,10 +655,19 @@ fn serialize_union(items: &[Value], buf: &mut Vec<u8>) {
     let mut sorted: Vec<Vec<u8>> = items.iter().map(|v| serialize_bn(v)).collect();
     sorted.sort();
     let mut seen = HashSet::new();
-    for bytes in &sorted {
+    let mut unique = Vec::new();
+    for bytes in sorted {
         if seen.insert(bytes.clone()) {
-            buf.extend_from_slice(bytes);
+            unique.push(bytes);
         }
+    }
+    // Q-083 / D106. Epoch 1 concatenated members and was not a prefix code.
+    if !identity_is_legacy() {
+        buf.push(TAG_UNION);
+        encode_unsigned_leb128(unique.len() as u64, buf);
+    }
+    for bytes in &unique {
+        buf.extend_from_slice(bytes);
     }
 }
 

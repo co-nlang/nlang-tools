@@ -485,7 +485,7 @@ fn r9_a_half_migrated_store_can_still_be_completed() {
     let (_, enc) = w.declarations();
     assert_eq!(
         String::from_utf8_lossy(&enc).trim(),
-        "encoding=5",
+        "encoding=6", // Q-083／D106 紀元
         "an explicit migrate left the encoding axis behind and said: {o}"
     );
 }

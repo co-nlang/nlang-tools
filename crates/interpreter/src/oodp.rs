@@ -11,7 +11,7 @@
 //! any peer can invent any value. Serving, verification and every outcome must
 //! be identical whatever `%from` says (node_identity arc D3 / P1).
 
-use crate::storage::{value_address_matches, StoreReadError};
+use crate::storage::{value_matches_stored_address, StoreReadError};
 use crate::value::{BottomCause, ComboVal, ContentHash, Identity, Value};
 use crate::{IntegrityKind, Ouroboros, PeerAdvert};
 use nlang_parser::ast::{AtomKind as AstAtom, Expr, ExprKind, FieldKey, Prefix};
@@ -1735,8 +1735,9 @@ pub fn remote_fetch_oodp(
         }
     };
 
-    let recomputed = val.content_hash();
-    if !value_address_matches(hash, &recomputed) {
+    // Q-083 / D106. An epoch-1 address still verifies. A miss of both
+    // encodings is the mismatch.
+    if !value_matches_stored_address(hash, &val) {
         oo.record_integrity(hash, &source, IntegrityKind::Mismatch);
         return Err(FetchFail::Peer(BottomCause::CaidMismatch));
     }
@@ -1777,8 +1778,7 @@ fn legacy_or_fail(
             }
         }
     };
-    let recomputed = val.content_hash();
-    if !value_address_matches(hash, &recomputed) {
+    if !value_matches_stored_address(hash, &val) {
         oo.record_integrity(hash, source, IntegrityKind::Mismatch);
         return Err(BottomCause::CaidMismatch);
     }

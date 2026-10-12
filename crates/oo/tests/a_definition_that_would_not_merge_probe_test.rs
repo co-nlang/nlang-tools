@@ -304,12 +304,12 @@ fn r10_bodies_run_only_when_selected() {
 #[test]
 fn g1_a_lone_morphism_keeps_its_root() {
     roots("g1", &[
-        ("f: (x -> x + 1)\n", "039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4"),
-        ("f: (x -> x + 1) & (x -> x + 1)\n", "039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4"),
-        ("m: (_ -> 1)\n", "c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85"),
-        ("p: (x @int -> x)\n", "8b3111a414e8b72b013abaf1da291b995497ce47bce8a796016c7f1fc2099c6b"),
-        ("b: ~%Math./add 1\n", "aebe4b5d40bd461403c00c7d0c5c3a016fb1a77ac6655db7361001dbc1901088"),
-        ("b: ~%Math./add 1 & ~%Math./add 1\n", "aebe4b5d40bd461403c00c7d0c5c3a016fb1a77ac6655db7361001dbc1901088"),
+        ("f: (x -> x + 1)\n", "258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f"), // Q-083／D106 紀元
+        ("f: (x -> x + 1) & (x -> x + 1)\n", "258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f"), // Q-083／D106 紀元
+        ("m: (_ -> 1)\n", "cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6"), // Q-083／D106 紀元
+        ("p: (x @int -> x)\n", "2deaf4e0d99f92201c6dd585046bb68e3b4bbc55e2e6f841dd9125cac6c1ab6d"), // Q-083／D106 紀元
+        ("b: ~%Math./add 1\n", "9b9f9ea2c320dd459b559bd767cd55ebc8d9c7abe89d451666f0a583da148505"), // Q-083／D106 紀元
+        ("b: ~%Math./add 1 & ~%Math./add 1\n", "9b9f9ea2c320dd459b559bd767cd55ebc8d9c7abe89d451666f0a583da148505"), // Q-083／D106 紀元
     ], "a lone morphism, or its meet with itself, keeps its root");
     let w = Ws::new("g1e");
     table(&w, &[
@@ -330,7 +330,7 @@ fn g2_tables_meet_as_before() {
         (r#"((x @int -> "A") & (y @str -> "B")) "s""#, is, r#""B""#),
     ]);
     roots("g2r", &[
-        ("t: { @{ @int }: \"A\" } & { @{ @str }: \"B\" }\n", "bf22771bb06b2da1c435a2aa2331676f26b384289facd8129d300e25498ec29a"),
+        ("t: { @{ @int }: \"A\" } & { @{ @str }: \"B\" }\n", "115075f231dd1dbff5710a5cb44a163555d726792fbbb49a8b032b4b42552360"), // Q-083／D106 紀元
     ], "a meet of two tables keeps its root");
 }
 

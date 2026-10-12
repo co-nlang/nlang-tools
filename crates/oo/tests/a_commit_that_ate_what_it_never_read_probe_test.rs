@@ -420,7 +420,7 @@ fn g1_identity_is_a_red_line() {
     assert_eq!(objects(d), 3, "a solid `x: 0` universe is three objects");
     let (out, _) = oo(d, &["status"]);
     assert!(
-        out.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        out.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "the standard root digest must not move; status said:\n{out}"
     );
 }

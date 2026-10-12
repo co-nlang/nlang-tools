@@ -116,7 +116,7 @@ fn flat(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-const STD_ROOT: &str = "7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911";
+const STD_ROOT: &str = "c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"; // Q-083／D106 紀元
 
 // ------------------------------------------------------------------------
 // RED -- what the arc must make true.

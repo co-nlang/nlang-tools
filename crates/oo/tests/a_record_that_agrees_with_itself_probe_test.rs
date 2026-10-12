@@ -176,8 +176,8 @@ fn evolve_all_at_once(d: &Path, files: &[String]) -> usize {
         .count()
 }
 
-const STD_ROOT: &str = "7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911";
-const X0_ROOT: &str = "31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a";
+const STD_ROOT: &str = "c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"; // Q-083／D106 紀元
+const X0_ROOT: &str = "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"; // Q-083／D106 紀元
 
 // ── R1 ── a lattice move that left no circle is a lie ────────────────────
 //

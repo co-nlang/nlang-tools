@@ -284,17 +284,17 @@ fn r8_fmt_keeps_a_table_a_table() {
 #[test]
 fn g1_roots_without_a_pattern_key_stay() {
     roots("g1", &[
-        ("x: 0\n", "31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a"),
-        ("f: (x -> x + 1)\n", "039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4"),
-        ("k: { @{ @str }: 9, @{ @int }: 1 }\n", "02f77def6ce886af0293a3fc0b2425b0adc82177025f3c4f9dbcfeeb95e693ec"),
-        ("k: { t: { a: 1, b: \"s\" } }\n", "61250f712ed7e4dd017394ac78b6714f5e43d4824bdea24ca5f431f73f41bd29"),
-        ("k: { t: { \"a.b\": 1, _: 2 } }\n", "19b5a0b1ddaa57ad7763135cbc042587af93a9155da32f10bf0d3739e2f0490c"),
-        ("k: { t: { #a: 1, #b: 2 } }\n", "1b8ee686139cce7f5de7625cb280d5332c72a8e057268169f4c1b1e16e0cf4ad"),
-        ("k: { t: { a: 4.., b: ..0 } }\n", "03ec07a3c2b6bb23dc31b0d9c498371941263b5b361534eb586cef1e87b1e624"),
-        ("k: { t: { @int: 1 } }\n", "c0fc771fe73786b1fbe2d85c979aef6d8c179903bc9a918009b908fe21e67b34"),
-        ("f: (x -> { a: x, \"q.r\": x })\n", "7904482ec456056db03cd279fc126dae8141c33309a261f92e3a657719c2a0c9"),
-        ("g: (x @str -> 9) & (y @int -> 1)\n", "7bc5111270f02aa6309f207951fc80e764034e6d34792a98c2171782257ebe36"),
-        ("k: { t: (x @str -> 9) & (y @int -> 1) }\n", "34d601fc74806b06fe95b1e0c4bd6151f168447096a2bdf446ddf70640605e5f"),
+        ("x: 0\n", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"), // Q-083／D106 紀元
+        ("f: (x -> x + 1)\n", "258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f"), // Q-083／D106 紀元
+        ("k: { @{ @str }: 9, @{ @int }: 1 }\n", "8210e484a870e9312794392d57ccce1ff1bb212bc0d1aacb0b52d1676e2b5f3b"), // Q-083／D106 紀元
+        ("k: { t: { a: 1, b: \"s\" } }\n", "3f94650b153f5b8d94a715fa607e6dd28625f6dc401f02cad3b452b1e4c67a8e"), // Q-083／D106 紀元
+        ("k: { t: { \"a.b\": 1, _: 2 } }\n", "1c69b0dc36393a7de3123eeb710dbae0e0130588874ed1ec4a63ed24470653e0"), // Q-083／D106 紀元
+        ("k: { t: { #a: 1, #b: 2 } }\n", "848fee88bc34a0af83330a0dc21df5ca6998fe520f36497327525217afe9e4c9"), // Q-083／D106 紀元
+        ("k: { t: { a: 4.., b: ..0 } }\n", "93ddfe5bcfbf83900f80706e2ad1a93a62d1c1ed3cdde1cc56c00e8d0a12bcf0"), // Q-083／D106 紀元
+        ("k: { t: { @int: 1 } }\n", "0307f8f168689163ef9aafbd1c31f96a5304d958d10eec5236c792e57353e805"), // Q-083／D106 紀元
+        ("f: (x -> { a: x, \"q.r\": x })\n", "84a385e8ddf9140590b6516cebd7a92673119e174e31cfa53650ed97cdb797a6"), // Q-083／D106 紀元
+        ("g: (x @str -> 9) & (y @int -> 1)\n", "0c5271d2f1dafa56b41036624acc72e8baf89896d30a3d9b930640c6f1e6edf4"), // Q-083／D106 紀元
+        ("k: { t: (x @str -> 9) & (y @int -> 1) }\n", "3256228ab6abcece3e30d78af84746f8a35372aa1a2f82338a129317d6080765"), // Q-083／D106 紀元
     ], "a value with no pattern key moved");
 }
 

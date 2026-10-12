@@ -219,7 +219,7 @@ fn g1_a_clean_commit_keeps_its_identity() {
 
     let (out, _) = oo(d, &["inspect", &format!("hash:sha256:v1:{}", head_digest(d))]);
     assert!(
-        out.contains("31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a"),
+        out.contains("b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"), // Q-083／D106 紀元
         "`x: 0` must still root at 31745ef0...; inspect said:\n{out}"
     );
 
