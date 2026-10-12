@@ -481,3 +481,56 @@ fn r9_the_migrate_names_what_it_locks_out() {
     assert_eq!(rc, 0, "migrate: {o}");
     assert!(o.contains("v0.84.0") && !o.contains("locks out no engine"), "migrate cost: {o}");
 }
+
+// ── Acceptance (acceptor, 2026-10-13): the way out the refusal names exists ──
+
+/// `tests/fixtures/epoch1_encoding3_repo` (real `oo v0.25.0`): `t: { int: 1 }`.
+fn encoding3_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/epoch1_encoding3_repo/oo_dir")
+}
+
+const ENCODING3_HEAD: &str = "a733006555c09668cdd080db1aea6df3a142f7f9feeb74d1c8241a6aec80d989";
+
+/// REAL_03 §2.3 and §6.8: a refusal that names a remedy names one that works.
+/// `migrate` leaves encoding=3 as it is (its roots keep the pre-v0.26.0
+/// address rule, O63). So in that store the cross-axis pin is refused, and the
+/// refusal may not send the operator to `oo migrate`: here that prints
+/// "Nothing was changed" and the same pin is refused again.
+/// v0.84.0 red (the pin is accepted and does not land). R-1 delivery red
+/// (the refusal says "run `oo migrate`"; migrate leaves encoding=3).
+#[test]
+fn r11_the_way_out_a_refusal_names_exists() {
+    let w = Ws::new("r11");
+    copy_dir(&encoding3_fixture(), &w.ws.join(".oo"));
+    // layout=2 cannot hold a pinned injection; this migrate is the layout's.
+    let (m, rc) = w.oo(&["migrate", "--grant", "migrate"]);
+    assert_eq!(rc, 0, "layout migrate: {m}");
+    assert_eq!(read_decl(&w, "objects.format"), "encoding=3", "precondition: migrate keeps encoding=3: {m}");
+    let head = w.head();
+    fs::write(w.ws.join("b.n"), "t: { @int: 1 }\n").unwrap();
+    let (e, erc) = w.oo(&["evolve", "--pin", "--grant", "pin", "b.n"]);
+    let (c, crc) = if erc == 0 { w.oo(&["commit", "--grant", "pin", "-m", "b"]) } else { (e.clone(), erc) };
+    assert_ne!(crc, 0, "the pin was accepted into an encoding=3 store: {c}");
+    assert!(c.contains("#identity_collision"), "the refusal must be named: {c}");
+    assert_eq!(w.head(), head, "HEAD moved");
+    assert_eq!(w.eval("_.t"), "{ int: 1 }");
+    if c.contains("run `oo migrate") {
+        let (m, rc) = w.oo(&["migrate", "--grant", "migrate"]);
+        assert_eq!(rc, 0, "migrate: {m}");
+        assert_eq!(
+            read_decl(&w, "objects.format"),
+            "encoding=6",
+            "the refusal sent the operator to `oo migrate`, and migrate did not advance the encoding: {c} / {m}"
+        );
+    }
+}
+
+/// The encoding=3 fixture is the one `oo v0.25.0` wrote.
+#[test]
+fn g8_the_encoding_3_fixture_is_the_real_one() {
+    let f = encoding3_fixture();
+    assert_eq!(fs::read_to_string(f.join("objects.format")).unwrap().trim(), "encoding=3");
+    assert_eq!(fs::read_to_string(f.join("format")).unwrap().trim(), "layout=2");
+    assert!(fs::read_to_string(f.join("HEAD")).unwrap().trim().ends_with(ENCODING3_HEAD));
+    assert!(f.join("objects/sha256").join(&ENCODING3_HEAD[..2]).join(&ENCODING3_HEAD[2..]).exists());
+}

@@ -925,12 +925,24 @@ impl ObjectStore {
         {
             return Ok(());
         }
+        // Name `migrate` only where it advances the encoding. It leaves
+        // encoding=3 as it is (pre-v0.26.0 root rule, O63), and there the
+        // same write would be refused again after it.
+        let way_out = if encoding_after_migration(self.encoding) > 5 {
+            "run `oo migrate --grant migrate` (encoding=6) to write it".to_string()
+        } else {
+            format!(
+                "`oo migrate` does not advance encoding={} (its roots keep the address rule \
+                 from before v0.26.0), so this value cannot be written to this store",
+                self.encoding
+            )
+        };
         anyhow::bail!(
             "#identity_collision: this store declares encoding={} and its addresses cannot tell \
-             this value apart from the one already at {}; run `oo migrate --grant migrate` \
-             (encoding=6) to write it",
+             this value apart from the one already at {}; {}",
             self.encoding,
-            hex::encode(&hash.digest)
+            hex::encode(&hash.digest),
+            way_out
         )
     }
 
