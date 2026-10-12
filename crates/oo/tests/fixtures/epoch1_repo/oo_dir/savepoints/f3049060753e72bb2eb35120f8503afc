@@ -1,0 +1,9 @@
+#nlang/store savepoint
+parents:
+{ f: {{ %kind: #logic %morphism: #true %rules: {{ x: {{ %closure: {{ }} %code: { ~%__nlang_code: #true ~%__nlang_expr: x + 1 } }} }} }} k: { t: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  @{ @str }: 9
+  @{ @int }: 1
+} ~%__nlang_closure: [{ t: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  @{ @str }: 9
+  @{ @int }: 1
+} ~%__nlang_closure: [] } }] } } t: { int: { ~%__nlang_thunk: #true ~%__nlang_expr: 1 ~%__nlang_closure: [{ int: { ~%__nlang_thunk: #true ~%__nlang_expr: 1 ~%__nlang_closure: [] } }] } } u: (1 | 2) ~h: 3 }

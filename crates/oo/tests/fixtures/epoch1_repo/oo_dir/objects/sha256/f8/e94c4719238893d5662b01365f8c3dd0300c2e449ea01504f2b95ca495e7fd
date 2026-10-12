@@ -1,0 +1,2 @@
+#nlang/store commit
+{ kind: #Standard root: { ~%__nlang_hash: #true digest: "99c28198decc1052fcc65212ab15aac6d9a30586546835ac660a38bc744ae47c" version: #v2 masa: _ sketch: "/5/5p9rC1d8MAP+/oqzS0qH9/QEA/5eaj824qK96AP//9Njl6ZuvEQD/r+zI3qiNgxkA/8nmyIiO+eY+AP/G0v+y59z2BQD/xq+yhqrh4wsAAAAAAAAAAAAAAAAAAAAAAA" } meta: { author: "oo-cli" timestamp: 1791811954889 message: "epoch one, second" } parent: _ }

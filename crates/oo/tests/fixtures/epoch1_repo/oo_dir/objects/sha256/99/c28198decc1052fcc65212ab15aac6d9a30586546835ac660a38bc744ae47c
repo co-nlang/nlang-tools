@@ -1,0 +1,8 @@
+#nlang/store
+{ f: {{ %kind: #logic %morphism: #true %rules: {{ x: {{ %closure: {{ }} %code: { ~%__nlang_code: #true ~%__nlang_expr: x + 1 } }} }} }} k: { t: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  @{ @str }: 9
+  @{ @int }: 1
+} ~%__nlang_closure: [{ t: { ~%__nlang_thunk: #true ~%__nlang_expr: {
+  @{ @str }: 9
+  @{ @int }: 1
+} ~%__nlang_closure: [] } }] } } t: { int: 1 } u: (1 | 2) x: 0 ~%__nlang_system_digest: "7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911" ~h: 3 }
