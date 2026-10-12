@@ -696,3 +696,72 @@ impl MorphismDispatchResult {
         }
     }
 }
+
+/// Branch names and body-set keys are digests written into the value. A
+/// value read from (or written to) a store of another identity epoch carries
+/// the other epoch's names; re-key them under the epoch now in force.
+pub fn rekey_identity_names(v: Value) -> Value {
+    match v {
+        Value::Combo(c) => Value::Combo(rekey_combo(c)),
+        Value::Union(items) => Value::Union(items.into_iter().map(rekey_identity_names).collect()),
+        Value::Thunk { expr, closure, context, effect } => Value::Thunk {
+            expr,
+            closure: closure
+                .iter()
+                .map(|f| std::sync::Arc::new(rekey_combo(f.as_ref().clone())))
+                .collect(),
+            context: context.map(|c| Box::new(rekey_identity_names(*c))),
+            effect,
+        },
+        Value::Range { start, end, step } => Value::Range {
+            start: Box::new(rekey_identity_names(*start)),
+            end: Box::new(rekey_identity_names(*end)),
+            step: step.map(|s| Box::new(rekey_identity_names(*s))),
+        },
+        other => other,
+    }
+}
+
+fn rekey_map(m: IndexMap<String, Value>) -> IndexMap<String, Value> {
+    m.into_iter().map(|(k, v)| (k, rekey_identity_names(v))).collect()
+}
+
+fn rekey_combo(mut c: ComboVal) -> ComboVal {
+    c.data = rekey_map(std::mem::take(&mut c.data));
+    c.types = rekey_map(std::mem::take(&mut c.types));
+    c.rules = rekey_map(std::mem::take(&mut c.rules));
+    c.meta = rekey_map(std::mem::take(&mut c.meta));
+    c.system = rekey_map(std::mem::take(&mut c.system));
+    c.local = rekey_map(std::mem::take(&mut c.local));
+    if let Some(Value::Combo(bs)) = c.get_field("%bodies").cloned() {
+        let mut set: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+        for (_, b) in bs.data.clone() {
+            let key = format!("{{{}}}", hex::encode(crate::bn_serial::content_digest(&b)));
+            set.insert(key, b);
+        }
+        let mut nb = bs.clone();
+        nb.data = set.into_iter().collect();
+        nb.cache_id = crate::value::default_cache_id();
+        c.insert_field("%bodies", Value::Combo(nb));
+    }
+    if let Some(Value::Combo(rules)) = c.get_field("%rules").cloned() {
+        if rules_have_pattern(&rules) {
+            let mut out = rules.clone();
+            out.data = IndexMap::new();
+            for (k, r) in rules.data {
+                let name = match &r {
+                    Value::Combo(rc) => match rc.get_field("%pattern") {
+                        Some(p) => pattern_branch_name(p),
+                        None => k,
+                    },
+                    _ => k,
+                };
+                out.data.insert(name, r);
+            }
+            out.cache_id = crate::value::default_cache_id();
+            c.insert_field("%rules", Value::Combo(out));
+        }
+    }
+    c.cache_id = crate::value::default_cache_id();
+    c
+}

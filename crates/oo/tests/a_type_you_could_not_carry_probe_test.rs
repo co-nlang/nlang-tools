@@ -171,7 +171,7 @@ fn g3_no_address_moves() {
     let out = cmd(d).args(["status"]).output().expect("status");
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(
-        text.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        text.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "the standard root digest moved: {text}"
     );
     let objects = fs::read_dir(d.join(".oo/objects/sha256"))
@@ -187,7 +187,7 @@ fn g3_no_address_moves() {
     );
     assert_eq!(
         fs::read_to_string(d.join(".oo/objects.format")).unwrap_or_default(),
-        "encoding=5\n"
+        "encoding=6\n" // Q-083／D106 紀元
     );
 }
 

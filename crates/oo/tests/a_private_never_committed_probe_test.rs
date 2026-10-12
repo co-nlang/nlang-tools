@@ -293,10 +293,10 @@ fn g1_outside_stays_outside() {
 fn g2_other_roots_do_not_move() {
     let mut wrong = Vec::new();
     for (i, (src, want)) in [
-        ("k: 1\n", "ced4d79f3c4ae4d6cbf797089541b9b751e0fd6f6d61286624dde71be96a47d9"),
-        ("t: { ~h: 3, k: 1 }\n", "05dc9846f0de0fa238ae44c23d1cc8c4545d275aaa2583afa1b12dc9d6dba051"),
-        ("t: { ~h: 3, u: { k: h } }\n", "9c306206734fb59b1cbb3a560c2314618feafe7201fbc4273aac34d6069a38ab"),
-        ("c: { b: 2 }\nr: { q: c.b }\n", "94d96d72d96b6c944f6bce50156fa5941f5b0feda16b283a8df29523b8f28cbf"),
+        ("k: 1\n", "da409cd2a1b3e91d120926d95d8828941612c383fefd78beaa581eba5987af04"), // Q-083／D106 紀元
+        ("t: { ~h: 3, k: 1 }\n", "4301f567daafdd0fbe7e73013a4c11887065abbc0eef695b228a587165e1bf31"), // Q-083／D106 紀元
+        ("t: { ~h: 3, u: { k: h } }\n", "d51afb3c7a0329670d12a958a2b362e54a1cdc38dbdf16b0315530a56fbdbaf8"), // Q-083／D106 紀元
+        ("c: { b: 2 }\nr: { q: c.b }\n", "a546ea04cb2e1f70e1f648434f7c59ee29fe30af7dc4aeab9d4b18ef12c49bde"), // Q-083／D106 紀元
     ]
     .iter()
     .enumerate()

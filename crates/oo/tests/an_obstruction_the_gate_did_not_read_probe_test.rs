@@ -292,7 +292,7 @@ fn g4_an_effect_does_not_move_an_address() {
         &format!("~%Discovery./identify (~%List./map ({IMPURE_ONE}, [1,2,3]))"),
     );
     assert!(
-        pure.contains("a04c6b853f9d16a0b4c5b35f6e25aa73fc983bdaa5b05514cbe52ffc77c42e28"),
+        pure.contains("5d48752af1b9d17329bd18f10eb69190a354d398a9dd94b600bafed7e5e6ab36"), // Q-083／D106 紀元
         "REACH: the pure form must still address as measured; got {pure:?}"
     );
     assert_eq!(

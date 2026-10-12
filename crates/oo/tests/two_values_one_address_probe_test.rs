@@ -181,12 +181,12 @@ fn g3_the_standard_root_does_not_move() {
     let d = s.path();
     let root = commit_root(d, "x: 0\n", "r");
     assert!(
-        root.contains("31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a"),
+        root.contains("b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"), // Q-083／D106 紀元
         "the `x: 0` root moved: {root}"
     );
     let (status, _) = run(d, &["status"]);
     assert!(
-        status.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        status.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "the standard root moved: {status}"
     );
 }

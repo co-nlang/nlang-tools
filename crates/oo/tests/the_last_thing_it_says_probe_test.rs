@@ -243,7 +243,7 @@ fn g3_identity_is_a_red_line() {
     let names: Vec<String> =
         objs.iter().map(|p| p.to_string_lossy().replace('/', "")).collect();
     assert!(
-        names.iter().any(|n| n.contains("31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a")),
+        names.iter().any(|n| n.contains("b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f")), // Q-083／D106 紀元
         "the root of `x: 0` moved: {objs:?}"
     );
 }

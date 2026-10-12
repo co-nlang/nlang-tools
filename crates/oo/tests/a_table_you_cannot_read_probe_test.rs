@@ -306,7 +306,7 @@ fn g3_a_plain_combo_is_not_a_table() {
     w.commit_each(&["k: { a: 1, _: 9 }"]);
     assert_eq!(
         w.head_root(),
-        "24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a",
+        "420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e", // Q-083／D106 紀元
         "`k: {{ a: 1, _: 9 }}` root moved"
     );
     table(&w, &[(r#"_.k.a"#, is, "1"), (r#"{ j: 5 }.j"#, is, "5"), (r#"{ j: 5 }"#, is, "{\n  j: 5\n}")]);

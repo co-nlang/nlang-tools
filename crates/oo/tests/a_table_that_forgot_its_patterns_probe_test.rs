@@ -335,10 +335,10 @@ fn g3_bare_binders_behave_as_before() {
 fn g4_bare_binders_keep_their_bytes() {
     let mut wrong = Vec::new();
     for (i, (text, want)) in [
-        ("f: (x -> x + 1)\n", "039d07351a998261d3150af05a84bd0fcf0ad4133b24d644d35ab1e59517d2b4"),
-        ("g: (x y -> x + y)\nh: ((a, b) -> a + b)\n", "e7793d964930ee884019432971e5082f10f1c5576c8abc89b4ab2f48dc013a27"),
-        ("k: { a: 1, _: 9 }\n", "24fe01b6001567e4b03edc5e0715cb4cf53eadea4945994d7a963b495382662a"),
-        ("m: (_ -> 1)\n", "c23f8a56608b9aa32b3fa089aa5d54ec4b0385b990d0cc2fe695970db114fb85"),
+        ("f: (x -> x + 1)\n", "258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f"), // Q-083／D106 紀元
+        ("g: (x y -> x + y)\nh: ((a, b) -> a + b)\n", "5929a1ab841c411e3841809cbef3c971734347fe595e90f7bca913bdfad25bc5"), // Q-083／D106 紀元
+        ("k: { a: 1, _: 9 }\n", "420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e"), // Q-083／D106 紀元
+        ("m: (_ -> 1)\n", "cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6"), // Q-083／D106 紀元
     ]
     .iter()
     .enumerate()

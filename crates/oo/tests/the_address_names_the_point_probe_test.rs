@@ -242,7 +242,7 @@ fn g4_identity_is_a_red_line() {
     assert!(universe(d.path(), "x: 0"), "control: `x: 0` did not commit");
     let (addr, _, _) = root_object(d.path()).expect("VOID READING: no root object was found");
     assert!(
-        addr.contains("31745ef0e8bfde3d8a2673b7dce5bb5cd74f3a7f2cc6f5422aa043c8dce5589a"),
+        addr.contains("b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"), // Q-083／D106 紀元
         "the root of `x: 0` moved: {addr}"
     );
     assert_eq!(objects(d.path()).len(), 3, "the object count changed: {:?}", objects(d.path()).keys());
@@ -251,7 +251,7 @@ fn g4_identity_is_a_red_line() {
     assert!(universe(b.path(), "bad: 1 & 2"), "control: the bottom universe did not commit");
     let (baddr, _, _) = root_object(b.path()).expect("VOID READING: no root object was found");
     assert!(
-        baddr.contains("cbb7ef81861ad908234741642a1fa33071c183d391cb157dbe2b24ae90677a1c"),
+        baddr.contains("8037f4af8ec9f699a4f72cdbdcfcc643c571b2ed811d20818bcbce88d18eb676"), // Q-083／D106 紀元
         "the root of a committed bottom moved: {baddr}"
     );
 }

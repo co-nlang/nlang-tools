@@ -2338,8 +2338,11 @@ fn run_migrate(
 ///   layout 2: v0.22.0.  layout 3: v0.42.0.  layout 4: v0.43.0.  layout 5: v0.44.0.
 ///   encoding 1..=3: v0.22.0.  encoding 4: v0.26.0.  encoding 5: v0.36.0.
 /// Newest engine that opens any of those and does not open layout 9 is v0.74.0.
+/// Advancing the object encoding to 6 also locks out v0.75.0 through v0.84.0:
+/// they open layout 9 and do not open encoding 6.
 /// layout 6 opens from v0.59.0. layout 7 opens from v0.61.0.
 /// layout 8 opens from v0.64.0 (and v0.74.0 still writes it).
+/// layout 9 opens from v0.75.0.
 /// Bare number (the pre-split `.oo/format`), oldest opener:
 ///   1: v0.2.55 (exact `"1"`).  2: v0.20.0 (writes 2, reads 1..=2).
 ///   3: v0.21.0 (writes 3, reads 1..=3).  4: v0.26.0.  5: v0.36.0.
@@ -2347,13 +2350,17 @@ fn run_migrate(
 /// encoding max. v0.19.0 and earlier open only bare `"1"`.
 fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     let target = nlang_interpreter::storage::STORE_LAYOUT_VERSION;
-    let Some(oldest) = first_engine_that_opens(declaration, from_enc) else {
+    // Encoding 6 is the identity epoch. Every tagged engine through v0.84.0
+    // refuses it. A layout advance that leaves the encoding below 6 still
+    // stops at v0.74.0, the newest engine that does not open layout 9.
+    let epoch2 = to_enc >= 6 && from_enc < 6;
+    let newest = if epoch2 { "v0.84.0" } else { "v0.74.0" };
+    let Some(oldest) = first_engine_that_opens_before(declaration, from_enc, newest) else {
         return format!(
             "Advancing object encoding from encoding={from_enc} to encoding={to_enc} \
              locks out no engine."
         );
     };
-    let newest = "v0.74.0";
     let who = if oldest == newest {
         format!("oo {oldest}")
     } else {
@@ -2374,11 +2381,21 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     // v0.44.0 through v0.58.0 open layout 5 and do not open layout 6.
     // Naming them on a layout=6 start would claim this migrate locks out
     // engines that could not open the store before it.
+    // v0.75.0 through v0.84.0 open layout 9 and do not open encoding 6, so
+    // they are not part of the "none of them open layout 9" claim.
     let layout5_clause = if engine_ord(oldest) <= engine_ord("v0.58.0") {
-        format!(
-            " That includes every engine that opens layout=5 \
-             (oo v0.44.0 through {newest}); none of them open layout={target}."
-        )
+        if epoch2 {
+            format!(
+                " That includes every engine that opens layout=5 \
+                 (oo v0.44.0 through v0.74.0); none of them open layout={target}. \
+                 oo v0.75.0 through v0.84.0 open layout={target} and do not open encoding=6."
+            )
+        } else {
+            format!(
+                " That includes every engine that opens layout=5 \
+                 (oo v0.44.0 through {newest}); none of them open layout={target}."
+            )
+        }
     } else {
         String::new()
     };
@@ -2388,10 +2405,10 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     )
 }
 
-/// Oldest tagged engine that opens this declaration. `None` when the
-/// declaration is already layout 9 (only an encoding advance remains, and
-/// this engine already reads encoding 1 through 5).
-fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> {
+/// Oldest tagged engine that opens this declaration and does not open what
+/// this migrate writes. `None` when every opener of the declaration also
+/// opens the result. `newest` is the last engine the result locks out.
+fn first_engine_that_opens_before(declaration: &str, enc: u32, newest: &str) -> Option<&'static str> {
     let layout = declaration
         .strip_prefix("layout=")
         .and_then(|n| n.parse::<u32>().ok());
@@ -2404,6 +2421,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
             6 => "v0.59.0",
             7 => "v0.61.0",
             8 => "v0.64.0",
+            9 => "v0.75.0",
             _ => return None,
         };
         let by_encoding = match enc {
@@ -2423,7 +2441,7 @@ fn first_engine_that_opens(declaration: &str, enc: u32) -> Option<&'static str> 
     } else {
         return None;
     };
-    if engine_ord(floor) > engine_ord("v0.74.0") {
+    if engine_ord(floor) > engine_ord(newest) {
         None
     } else {
         Some(floor)

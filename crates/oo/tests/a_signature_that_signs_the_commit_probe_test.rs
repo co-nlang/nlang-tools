@@ -449,7 +449,8 @@ fn r8_a_layout6_store_is_migrated_on_request() {
     assert_ne!(w.layout(), "layout=6", "a fresh store still declares layout=6: {o}");
     // AMENDED 2026-09-27 for Q-062 (D80): layout=8; v0.59.0-v0.63.0 open layout 6.
     // AMENDED 2026-10-04 for Q-073 (D91): layout=9; v0.59.0-v0.74.0 open layout 6 and not layout 9.
-    assert!(o.contains("v0.59.0") && o.contains("v0.74.0"), "the cost must name v0.59.0 through v0.74.0: {o}");
+    // Q-083 R-1: encoding=6 locks out through v0.84.0.
+    assert!(o.contains("v0.59.0") && o.contains("v0.84.0"), "the cost must name v0.59.0 through v0.84.0: {o}");
     assert_eq!(w.head(), head, "migrate moved HEAD");
     assert!(w.line().contains(&L6_SIGNER[..16]), "the old-form signature stopped reading after migrate");
 }

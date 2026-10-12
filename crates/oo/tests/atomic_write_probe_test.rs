@@ -406,7 +406,7 @@ fn p2_format_moves_only_when_declared() {
     let encoding = fs::read_to_string(oo_dir.join("objects.format")).unwrap();
     assert_eq!(
         encoding.trim(),
-        "encoding=5",
+        "encoding=6", // Q-083／D106 紀元
         ".oo/objects.format moved without a ruling saying it should"
     );
 }

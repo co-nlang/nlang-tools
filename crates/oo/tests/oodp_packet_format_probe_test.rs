@@ -67,7 +67,7 @@ use std::time::{Duration, Instant};
 static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 const PLAIN_SRC: &str = "v: { hello: \"world\" }\n";
-const GOLDEN_VALUE_CAID: &str = "hash:sha256:v2:_:gICS1LCf09bLAQD//5HUsJ/T1ssBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:681781ef857ac859326d707bdfcd04fc939b78e7c9060dd674d9a8be536f2ae4";
+const GOLDEN_VALUE_CAID: &str = "hash:sha256:v2:_:gICS1LCf09bLAQD//5HUsJ/T1ssBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:56d5200a7dfa0e594fc69fe60ec955c1101aec1c1defcec6b678d345970d6311"; // Q-083／D106 紀元
 
 /// Returned by `run_bounded` when the engine had to be killed. Any gate that
 /// sees this has measured a hang, never an answer.

@@ -163,9 +163,12 @@ pub fn commit_body(commit: &Commit) -> String {
     write_commit(commit)
 }
 
+pub fn commit_body_as_value(body: &str) -> Result<Value> {
+    expr_to_value(&parse_body(body.trim())?)
+}
+
 pub fn commit_body_address(body: &str) -> Result<ContentHash> {
-    let value = expr_to_value(&parse_body(body.trim())?)?;
-    Ok(value.content_hash())
+    Ok(commit_body_as_value(body)?.content_hash())
 }
 
 /// Address of a framed commit file: the body after the first line, which is

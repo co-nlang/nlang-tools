@@ -305,7 +305,7 @@ fn p2_a_horizon_knob_belongs_to_the_snapshot() {
 fn p3_a_universe_without_a_blur_keeps_its_root() {
     assert_eq!(
         committed_root("p3", "x: 1\ny: {{a: 2}}\n"),
-        "08a60adb05ea402aadc3f21f225901c5576d27b11d05edec69fd89c27802d277",
+        "a902715631de39871070652431b9df0b4955c9fa2e381d962f142dc1ecde0fac", // Q-083／D106 紀元
         "a universe containing no blur changed its root CAID; this arc's \
          breaking scope is blur-bearing universes only"
     );
@@ -523,7 +523,7 @@ fn r7_absorption_does_not_rewrite_the_snapshot() {
 /// field-thunks. Measured: `d0967392…` → `41ec191e…`.
 #[test]
 fn p4_a_unify_side_blur_has_a_literal_address() {
-    const KNOWN: &str = "41ec191e6a2504c1154ea5d56f9a0e2d03502bf177eda78aa62eb95c496c1d3c";
+    const KNOWN: &str = "c13a68519f5ca190ad90889d0aef8934220b1c8adbd9c5fc1e2ccf14e774f464"; // Q-083／D106 紀元
     let got = caid("p4", &format!("{KNOB}p: {DEEP_A}\ncp: p.%caid\n"));
     assert_eq!(got, KNOWN, "the CHS inputs of a depth-exhausted #blur moved");
 }
@@ -554,7 +554,7 @@ fn p4_a_unify_side_blur_has_a_literal_address() {
 fn p5_a_morphism_bearing_universe_has_its_new_root() {
     assert_eq!(
         committed_root("p5", "inc: (x) -> x + 1\nv: 5\n"),
-        "43f838bf5805d87491b7409d37f726b819372b03edb542832ea51bfb0e3c608e",
+        "d4d28e587171576f76a489d9e9bfedc9e46286e0bf48fab02838edfdd628fee1", // Q-083／D106 紀元
         "a universe holding a morphism moved — Q-050 replaced Debug with a \
          specified Expr encoding; that is an authorized move of Code"
     );

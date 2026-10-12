@@ -485,7 +485,7 @@ fn r9_a_half_migrated_store_can_still_be_completed() {
     let (_, enc) = w.declarations();
     assert_eq!(
         String::from_utf8_lossy(&enc).trim(),
-        "encoding=5",
+        "encoding=6", // Q-083／D106 紀元
         "an explicit migrate left the encoding axis behind and said: {o}"
     );
 }
@@ -530,7 +530,13 @@ fn r10_an_unreadable_node_key_refuses_even_before_there_is_a_store() {
 /// Baseline: red on the R-1 delivery 7187b95.
 #[test]
 fn r11_the_cost_names_the_oldest_engine_it_locks_out() {
-    for (enc, oldest) in [("encoding=3", "v0.22.0"), ("encoding=4", "v0.26.0"), ("encoding=5", "v0.36.0")] {
+    // Q-083 R-1: encoding 4 and 5 advance to encoding=6, whose newest locked-out engine is v0.84.0.
+    // encoding=3 stays encoding=3, so its newest stays v0.74.0.
+    for (enc, oldest, newest) in [
+        ("encoding=3", "v0.22.0", "v0.74.0"),
+        ("encoding=4", "v0.26.0", "v0.84.0"),
+        ("encoding=5", "v0.36.0", "v0.84.0"),
+    ] {
         let w = Ws::new(&format!("r11-{enc}"));
         let _ = w.committed();
         fs::write(w.oo_dir().join("format"), "layout=2\n").unwrap();
@@ -548,8 +554,8 @@ fn r11_the_cost_names_the_oldest_engine_it_locks_out() {
             // layout D74 introduces).
             // AMENDED 2026-09-26 for Q-059 (D76 ③): v0.60.0 (layout=7).
             // AMENDED 2026-09-27 for Q-062 (D80): v0.63.0 (layout=8).
-            o.contains(oldest) && o.contains("v0.74.0"), // AMENDED 2026-10-04 for Q-073 (D91)
-            "layout=2/{enc}: the cost must name {oldest} through v0.74.0: {o}"
+            o.contains(oldest) && o.contains(newest), // AMENDED 2026-10-04 for Q-073 (D91); Q-083 R-1
+            "layout=2/{enc}: the cost must name {oldest} through {newest}: {o}"
         );
     }
 }

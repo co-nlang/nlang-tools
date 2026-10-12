@@ -93,7 +93,7 @@ fn red_pin_overwrites_a_committed_binding() {
     );
     let status = oo(&d, &["status"]);
     assert!(
-        status.contains("42"),
+        status.contains("x: 42"),
         "the pinned value must be staged: {status:?}"
     );
 }
@@ -112,7 +112,7 @@ fn red_pin_requires_the_capability() {
         "--pin without the capability must be refused as unprivileged: {got:?}"
     );
     assert!(
-        !oo(&d, &["status"]).contains("42"),
+        !oo(&d, &["status"]).contains("x: 42"),
         "a refused pin must not have staged anything"
     );
 }
@@ -136,7 +136,7 @@ fn red_pin_capability_is_operation_specific() {
         "effect_override must not authorize #pin (expect a privilege refusal): {got:?}"
     );
     assert!(
-        !oo(&d, &["status"]).contains("42"),
+        !oo(&d, &["status"]).contains("x: 42"),
         "a refused pin must not have staged anything"
     );
 }
@@ -192,7 +192,7 @@ fn red_pin_does_not_mark_the_value() {
     oo(&d, &["evolve", "--grant", "pin", "--pin", "b.n"]);
     let status = oo(&d, &["status"]);
     assert!(
-        status.contains("42"),
+        status.contains("x: 42"),
         "precondition: the pin landed: {status:?}"
     );
     assert!(

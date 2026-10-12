@@ -59,8 +59,8 @@
 // did not move and the store kept serving. So this arc is NOT an epoch. Two
 // addresses must be byte-identical before and after:
 //
-//     root          932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb
-//     standard root 7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911
+//     root          394921b382efcd56b72b532131934ba1ba046735ddaf716baa1e0ca838a0459d // Q-083／D106 紀元
+//     standard root c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b // Q-083／D106 紀元
 //
 // G1/G2 are those. **G2 is also the only witness this file has for the tag
 // literal**: the durable `%effect` is part of the durable form, so an encoder
@@ -85,8 +85,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const ROOT_CAID: &str = "932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb";
-const STANDARD_ROOT: &str = "7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911";
+const ROOT_CAID: &str = "394921b382efcd56b72b532131934ba1ba046735ddaf716baa1e0ca838a0459d"; // Q-083／D106 紀元
+const STANDARD_ROOT: &str = "c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"; // Q-083／D106 紀元
+// The encoding=4 fixture still stores the pre-epoch objects. g6 reads those
+// names; a fresh store uses the constants above.
+const FIXTURE_ROOT_CAID: &str = "932a9f9dd62297a7cb3cb9c9fb56907a06a8c4d4e945cc3dfc4782a6987fb0cb";
+const FIXTURE_STANDARD_ROOT: &str = "7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911";
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -355,7 +359,7 @@ fn r6_a_new_store_declares_the_new_encoding() {
     let d = fresh_store("r6");
     let declared = fs::read_to_string(d.path().join(".oo/objects.format")).expect("format");
     assert!(
-        declared.contains("encoding=5"),
+        declared.contains("encoding=6"), // Q-083／D106 紀元
         "a store written by this engine must declare the new encoding; got {declared:?}"
     );
 }
@@ -405,7 +409,7 @@ fn r7_an_encoding_4_store_opens_and_migrates_without_moving_anything() {
 
     let after_decl = fs::read_to_string(d.path().join(".oo/objects.format")).expect("format");
     assert!(
-        after_decl.contains("encoding=5"),
+        after_decl.contains("encoding=6"), // Q-083／D106 紀元
         "migrate must advance the encoding declaration too. Today it advances \
          `layout` only and leaves this line alone. got {after_decl:?} \
          (migrate said {out:?})"
@@ -520,13 +524,13 @@ fn g6_the_fixture_really_is_the_old_encoding() {
         decl.contains("encoding=4"),
         "fixture must declare encoding=4; got {decl:?}"
     );
-    let root = object_bytes(d.path(), ROOT_CAID);
+    let root = object_bytes(d.path(), FIXTURE_ROOT_CAID);
     assert!(
         !serde_tags_in(&root).is_empty(),
         "fixture's root must still be the Rust serde form — that is what makes \
          it a cross-version fixture rather than a copy of today's output"
     );
-    let std_root = object_bytes(d.path(), STANDARD_ROOT);
+    let std_root = object_bytes(d.path(), FIXTURE_STANDARD_ROOT);
     assert!(
         longest_hex_run(&std_root) > 1000,
         "fixture's standard root must still be the hex blob"

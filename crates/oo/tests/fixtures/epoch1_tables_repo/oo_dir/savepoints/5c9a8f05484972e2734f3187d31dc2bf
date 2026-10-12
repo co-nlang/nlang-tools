@@ -1,0 +1,7 @@
+#nlang/store savepoint
+parents: 9470f3939ebaa922f4db72cec1491af9
+point: cba0ba9fff127c80eac1fb536501c596b4562d768ce494293d5349cbda813565
+observation:
+question: eval\n_.b
+answer: {\n  _: 0\n  k: {\n    b: 2\n  } & {\n    a: 1\n  }\n}
+{}

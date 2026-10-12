@@ -178,13 +178,13 @@ fn g4_the_standard_root_does_not_move_and_holds_no_code() {
     assert_eq!(rc, 0, "REACH: commit: {out}");
     let (status, _) = run(d, &["status"]);
     assert!(
-        status.contains("7038e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911"),
+        status.contains("c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"), // Q-083／D106 紀元
         "the standard root moved: {status}"
     );
 
     let root = d
-        .join(".oo/objects/sha256/70")
-        .join("38e2504b8ef4d4d267dd23b0989946c84303da34fb7e71d01c5b58caf37911");
+        .join(".oo/objects/sha256/c9") // Q-083／D106 紀元
+        .join("6c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b"); // Q-083／D106 紀元
     let bytes = std::fs::read(&root).expect("REACH: the standard root object is on disk");
     let text = String::from_utf8_lossy(&bytes);
     for marker in ["__nlang_code", "__nlang_expr", "ExprKind"] {

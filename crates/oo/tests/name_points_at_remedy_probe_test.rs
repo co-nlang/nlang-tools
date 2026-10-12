@@ -366,7 +366,7 @@ fn p2_fuel_blur_caid_holds() {
     // Q-032 separated the standard root and intentionally moved the horizon
     // context that participates in this CAID. The cross-process relation
     // above remains the load-bearing assertion.
-    const KNOWN: &str = "de65bce3aa8a3e59c5bb70a55b95ab858dbcb89fb6b4901b41c57f307d8576bc";
+    const KNOWN: &str = "4069c7cb91f8ae8a84b955127a7e599d99e7d5f696467077b808c1ed84b7143d"; // Q-083／D106 紀元
     let a = oo_run("p2a", SRC);
     let b = oo_run("p2b", SRC);
     let caid = |s: &str| -> String {

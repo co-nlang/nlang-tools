@@ -144,6 +144,41 @@ pub fn value_address_matches(requested: &ContentHash, recomputed: &ContentHash) 
     }
 }
 
+/// A stored address matches the current encoding, or, if that misses, the
+/// frozen v0.84.0 encoding (Q-083 / D106). A store declaring encoding ≤5
+/// writes the frozen encoding; encoding=6 writes the current one.
+pub fn value_matches_stored_address(requested: &ContentHash, value: &Value) -> bool {
+    if value_address_matches(requested, &value.content_hash()) {
+        return true;
+    }
+    let legacy = crate::bn_serial::with_legacy_identity(|| value.content_hash());
+    value_address_matches(requested, &legacy)
+}
+
+fn reject_unless_stored_address(requested: &ContentHash, value: &Value) -> Result<()> {
+    if value_matches_stored_address(requested, value) {
+        Ok(())
+    } else {
+        Err(StoreReadError::CaidMismatch {
+            requested: requested.clone(),
+            recomputed: value.content_hash(),
+        }
+        .into())
+    }
+}
+
+/// An object that verified only under the frozen encoding still carries that
+/// epoch's branch names. Re-key them to the epoch now in force. An object
+/// that matches the encoding already in force is left alone, so a write that
+/// is itself inside `with_legacy_identity` does not rename epoch-1 bytes.
+fn adopt_stored_epoch(hash: &ContentHash, value: Value) -> Value {
+    if value_address_matches(hash, &value.content_hash()) {
+        value
+    } else {
+        crate::dispatch::rekey_identity_names(value)
+    }
+}
+
 fn is_caid_mismatch(err: &anyhow::Error) -> bool {
     matches!(
         err.downcast_ref::<StoreReadError>(),
@@ -168,7 +203,7 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// — including every future N (`layout=10`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
 pub const STORE_LAYOUT_VERSION: u32 = 9;
-pub const OBJECT_ENCODING_VERSION: u32 = 5;
+pub const OBJECT_ENCODING_VERSION: u32 = 6;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// First layout whose `refine --sign` signs the whole commit (D76).
@@ -568,12 +603,20 @@ impl ObjectStore {
     }
 
     pub fn put_value(&self, value: &Value) -> Result<ContentHash> {
+        // REAL_02 §5.1.1: a store declaring encoding ≤5 receives epoch-1 bytes,
+        // including the names written into the value.
+        if self.encoding <= 5 && !crate::bn_serial::identity_is_legacy() {
+            return crate::bn_serial::with_legacy_identity(|| {
+                self.put_value(&crate::dispatch::rekey_identity_names(value.clone()))
+            });
+        }
         let durable = if self.encoding < 4 {
             value.for_legacy_cas_storage()
         } else {
             value.for_cas_storage()
         };
         let hash = durable.content_hash();
+        self.refuse_collision(&hash, &durable)?;
         let content = self.encode_cas_value(&durable)?;
         self.write_object(&hash, content)?;
         Ok(hash)
@@ -583,6 +626,16 @@ impl ObjectStore {
     /// immutable for one engine build, so history names that table by content
     /// digest rather than copying its body into every root.
     pub fn put_root(&self, root: &ComboVal, standard: &ComboVal) -> Result<ContentHash> {
+        if self.encoding <= 5 && !crate::bn_serial::identity_is_legacy() {
+            return crate::bn_serial::with_legacy_identity(|| {
+                let Value::Combo(r) =
+                    crate::dispatch::rekey_identity_names(Value::Combo(root.clone()))
+                else {
+                    unreachable!()
+                };
+                self.put_root(&r, standard)
+            });
+        }
         if self.encoding < 4 {
             // O73 ② is about pre-sentinel stores, not "encoding < 4". The
             // read path already tells them apart with `has_standard`
@@ -599,6 +652,7 @@ impl ObjectStore {
                 let value = Value::Combo(root.clone());
                 let durable = value.for_legacy_cas_storage();
                 let hash = durable.content_hash();
+                self.refuse_collision(&hash, &durable)?;
                 self.write_object(&hash, encode_readable_cas_json(&durable)?)?;
                 return Ok(hash);
             }
@@ -609,6 +663,7 @@ impl ObjectStore {
             let mut durable = value.for_legacy_cas_storage();
             let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
             project_standard_root(durable_root, standard);
+            self.refuse_collision(&hash, &durable)?;
             self.write_object(&hash, encode_readable_cas_json(&durable)?)?;
             return Ok(hash);
         }
@@ -620,6 +675,7 @@ impl ObjectStore {
         // `get_value` accepts this representation under the same CAID.
         let Value::Combo(standard_combo) = &standard else { unreachable!() };
         if self.encoding >= 5 {
+            self.refuse_collision(&standard_hash, &standard)?;
             self.write_object(&standard_hash, self.encode_cas_value(&standard)?)?;
         } else {
             let raw_combo = canonical_cas_json(standard_combo)?;
@@ -632,6 +688,7 @@ impl ObjectStore {
         let Value::Combo(ref mut durable_root) = durable else { unreachable!() };
         project_standard_root(durable_root, match &standard { Value::Combo(root) => root, _ => unreachable!() });
         let hash = durable.content_hash();
+        self.refuse_collision(&hash, &durable)?;
         let content = self.encode_readable_cas_value(&durable)?;
         self.write_object(&hash, content)?;
         Ok(hash)
@@ -665,18 +722,12 @@ impl ObjectStore {
             // top-level standard coordinates is not the historical rule.
             hydrate_system_table(hydrated_root, standards, hash)?;
             hydrate_standard_root(hydrated_root, &standard);
-            let recomputed = hydrated.content_hash();
-            if !value_address_matches(hash, &recomputed) {
-                return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
-            }
-            let Value::Combo(root) = hydrated else { unreachable!() };
+            reject_unless_stored_address(hash, &hydrated)?;
+            let Value::Combo(root) = adopt_stored_epoch(hash, hydrated) else { unreachable!() };
             return Ok(root);
         }
-        let recomputed = value.content_hash();
-        if !value_address_matches(hash, &recomputed) {
-            return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
-        }
-        let Value::Combo(root) = value else { unreachable!() };
+        reject_unless_stored_address(hash, &value)?;
+        let Value::Combo(root) = adopt_stored_epoch(hash, value) else { unreachable!() };
         Ok(root)
     }
 
@@ -705,23 +756,13 @@ impl ObjectStore {
                         resolve_standard_root(root, &engine.standard_roots, hash)?.clone();
                     hydrate_system_table(root, &engine.standard_roots, hash)?;
                     hydrate_standard_root(root, &standard);
-                    let recomputed = value.content_hash();
-                    if !value_address_matches(hash, &recomputed) {
-                        return Err(StoreReadError::CaidMismatch { requested: hash.clone(), recomputed }.into());
-                    }
-                    return Ok(value);
+                    reject_unless_stored_address(hash, &value)?;
+                    return Ok(adopt_stored_epoch(hash, value));
                 }
             }
         }
-        let recomputed = value.content_hash();
-        if !value_address_matches(hash, &recomputed) {
-            return Err(StoreReadError::CaidMismatch {
-                requested: hash.clone(),
-                recomputed,
-            }
-            .into());
-        }
-        Ok(value)
+        reject_unless_stored_address(hash, &value)?;
+        Ok(adopt_stored_epoch(hash, value))
     }
 
     /// Read the root's declared standard-library dependency without resolving
@@ -739,6 +780,9 @@ impl ObjectStore {
     }
 
     pub fn put_commit(&self, commit: &Commit) -> Result<ContentHash> {
+        if self.encoding <= 5 && !crate::bn_serial::identity_is_legacy() {
+            return crate::bn_serial::with_legacy_identity(|| self.put_commit(commit));
+        }
         let content;
         let hash;
         if self.encoding >= 5 {
@@ -784,23 +828,27 @@ impl ObjectStore {
             }
             return Ok(commit);
         }
-        let recomputed = match hash.version {
-            CaidVersion::V1 => commit.content_hash(),
+        match hash.version {
+            CaidVersion::V1 => {
+                let recomputed = commit.content_hash();
+                if !commit_address_matches(hash, &recomputed) {
+                    return Err(StoreReadError::CaidMismatch {
+                        requested: hash.clone(),
+                        recomputed,
+                    }
+                    .into());
+                }
+            }
             CaidVersion::V2 => {
-                crate::store_codec::commit_document_address(&content).map_err(|e| {
+                let body = content.split_once('\n').map(|(_, b)| b).unwrap_or(&content);
+                let value = crate::store_codec::commit_body_as_value(body).map_err(|e| {
                     StoreReadError::ObjectUndecodable {
                         requested: hash.clone(),
                         detail: e.to_string(),
                     }
-                })?
+                })?;
+                reject_unless_stored_address(hash, &value)?;
             }
-        };
-        if !commit_address_matches(hash, &recomputed) {
-            return Err(StoreReadError::CaidMismatch {
-                requested: hash.clone(),
-                recomputed,
-            }
-            .into());
         }
         Ok(commit)
     }
@@ -816,12 +864,20 @@ impl ObjectStore {
             Ok(commit) => Ok((hash.clone(), commit)),
             Err(err) if hash.version == CaidVersion::V1 && is_caid_mismatch(&err) => {
                 let content = self.read_object_raw(hash)?;
-                let Ok(addr) = crate::store_codec::commit_document_address(&content) else {
+                let body = content.split_once('\n').map(|(_, b)| b).unwrap_or(&content);
+                let Ok(value) = crate::store_codec::commit_body_as_value(body) else {
                     return Err(err);
                 };
-                if addr.digest != hash.digest {
-                    return Err(err);
-                }
+                let current = value.content_hash();
+                let addr = if current.digest == hash.digest {
+                    current
+                } else {
+                    let legacy = crate::bn_serial::with_legacy_identity(|| value.content_hash());
+                    if legacy.digest != hash.digest {
+                        return Err(err);
+                    }
+                    legacy
+                };
                 let commit = self.get_commit(&addr)?;
                 Ok((addr, commit))
             }
@@ -852,6 +908,43 @@ impl ObjectStore {
     }
 
     // O42 R-1: get_horizon_salt removed — clock salt is forbidden in blur CAID.
+
+    /// Epoch-1 addresses cannot tell some values apart (D106). A value whose
+    /// frozen address already holds a different value is refused before it
+    /// is written. The way out is the explicit migrate.
+    fn refuse_collision(&self, hash: &ContentHash, value: &Value) -> Result<()> {
+        if self.encoding > 5 || !self.hash_to_path(hash).exists() {
+            return Ok(());
+        }
+        let content = self.read_object_raw(hash)?;
+        let Ok(existing) = self.decode_cas_value(&content) else {
+            return Ok(());
+        };
+        if crate::dispatch::rekey_identity_names(existing)
+            == crate::dispatch::rekey_identity_names(value.clone())
+        {
+            return Ok(());
+        }
+        // Name `migrate` only where it advances the encoding. It leaves
+        // encoding=3 as it is (pre-v0.26.0 root rule, O63), and there the
+        // same write would be refused again after it.
+        let way_out = if encoding_after_migration(self.encoding) > 5 {
+            "run `oo migrate --grant migrate` (encoding=6) to write it".to_string()
+        } else {
+            format!(
+                "`oo migrate` does not advance encoding={} (its roots keep the address rule \
+                 from before v0.26.0), so this value cannot be written to this store",
+                self.encoding
+            )
+        };
+        anyhow::bail!(
+            "#identity_collision: this store declares encoding={} and its addresses cannot tell \
+             this value apart from the one already at {}; {}",
+            self.encoding,
+            hex::encode(&hash.digest),
+            way_out
+        )
+    }
 
     fn write_object(&self, hash: &ContentHash, content: String) -> Result<()> {
         let path = self.hash_to_path(hash);
