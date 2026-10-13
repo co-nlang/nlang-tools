@@ -75,14 +75,72 @@
 
 ### 8.1 射程逐項對照
 
+I1：`oo eval`、`=`、`run --observe`、`evolve`、`status`、`commit`、提交後讀表，都不執行沒被選中的分支。選中的照常執行。r1 綠。
+I2：延後本體提交後仍是程式碼。`_.m 5` 是 `50`，`_.s 5` 是 `6`，效應本體在 `_.k "s"` 才寫檔，`$ + 1` 與 `$ * 2` 兩個根。r2 綠。
+I3：不同的延後本體不相等；`&`、字面、展開組出的同一張表相等。r3 綠。
+I4：延後本體印源碼。巢狀、展開、`$ + k` 都讀得回。r4 綠。
+I5：同一分支的多個本體各印一列，鍵重複。r5 綠。
+I6：封閉而純的本體仍是值。`{ @{ 4 }: 1 + 1 } = { @{ 4 }: 2 }` 是 `#true`，印 `2`。`k: { @{ 4 }: "f", _: "z" }` 根仍是 `43480b6b…`，`k: { t: { @{ @int }: 1, _: 0 } }` 根仍是 `275bc55d…`。g1 綠。
+
+觀測表時會走到本體的入口列在 8.4 Q1。都照 D109：延後的 `%val` 留著，其餘照舊強制。
+
 ### 8.2 順手改動（逐項指名）
+
+無。改動就是這四處：`dispatch.rs` 的 `is_deferred_body` 與 `normalize_table`（收窄延後本體的 closure）、`eval.rs` 的 `narrow_deferred_body`、`lib.rs` 的 `force_recursive` 與 `project_for_commit`（不強制延後本體；觀測後 `canonical_bodies` 重算本體集合的鍵）、`value.rs` 的 `table_display_rows`（一個本體一列）。
 
 ### 8.3 工單哪裡是錯的
 
+無。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1** 會碰到分支本體的入口：
+
+1. `force_recursive`（`lib.rs`）。規則繭的 `%val` 若是延後本體就留著，不走下去。其餘欄位照舊強制。走完若是規則繭，呼叫 `canonical_bodies` 按本體現在的身分重算集合的鍵。`oo eval`、`run --observe`、宇宙的 observe、`=`（`eval.rs` 對兩邊各 `force_recursive`）都進這裡。
+2. `project_for_commit`（`lib.rs`）。同樣留下延後的 `%val`。它自己不重算鍵。`universe.rs` 提交在投影之後對整棵根呼叫 `canonical_bodies`，那一次只重算鍵，不強制。
+3. `identify`（`oodp.rs` `identify_caid`）先 `to_nlang` 再 eval。thunk 的 `to_nlang` 印源碼，eval 再進 `force_recursive`。
+4. `oo inspect` 印庫裡的值的 `to_nlang`，不強制。提交後的延後本體仍是 thunk，所以印源碼。
+5. `oo status` 印暫存 Combo 的 `to_nlang`，不強制。`oo fmt` 印源碼（`program.to_nlang`），不求值。量過：含 `write_file` 的表，`fmt` 不寫檔。
+6. 內建若對引數呼叫 `force_recursive`（`list` 的 map／fold、`engine` 裡幾處），表進的是同一條，延後本體同樣不跑。分派選中分支時才強制那個本體：`_.k "s"` 寫檔。
+
+**Q2** 基線是釋出二進位 `oo v0.88.0-1074-g86de366+`（tie-back `86de366`，其後兩筆只加探針）。交付是第一輪釋出的 `oo`，版本字串相同。讀數是提交之後。
+
+| 檔案 | v0.88.0 根 | v0.88.0 讀數 | 交付根 | 交付讀數 |
+| --- | --- | --- | --- | --- |
+| `k: { @{ @int }: $ * 10 }`（`_.k 5`） | `7c78f39af9bb1c01ea925a5e339d3c4d0761b9fc6b6a73d8d39cbb513d8358ce` | `#no_context` | `b91f202d0ee7ee9a96f73474c7c743aaf37731fc651b403c1f28b6d8fe830b3d` | `50` |
+| `k: { @{ @int }: $ + 1 }` | 同上 `7c78f39a…` | `#no_context` | `37026f7d8c3572710a84e93e3c4c81f367408b86986d8747a202bdbc3189ad2d` | `6` |
+| `k: { @{ @int }: $ * 2 }` | 同上 `7c78f39a…` | `#no_context` | `38eab6ee5bb4a0e4a95043f1636a399feeb08132386d34e2e021bebb0a5ed497` | `10` |
+| `k: { @{ 4 }: "f", _: "z" }`（`_.k 4`） | `43480b6b8fce1ec0c971f2d6d956b33f2b971371364d65006903ffd67ef41fe9` | `"f"` | 同左 | `"f"` |
+| `k: { @{ 4 }: 1 + 1 }`（`_.k 4`） | `72ce697e34f3a6f59a6fa9b0e773427263fa9d734d83c84d91f81b41a446c216` | `2` | 同左 | `2` |
+| `k: { t: { @{ @int }: $ * 10 } }`（`_.k.t 5`） | `95238ba4df05b3d33220b33ce9ef51dcedd9ab031a69563451bebefe31236b3e` | `50` | 同左 | `50` |
+| `k: { @{ @int }: 1, _: ~%Io./write_file ("q.txt", "x") }` | `1582cfa1440a2311d4775073cfab39f7cc533baabaed323e0d46ad3db5498eee` | 提交寫檔；`_.k` 見 `#true`，讀它也寫檔 | `a5328b8af7a08380c0fb4179d709a7757f2696dc050075da43c5db13b296bab4` | 提交不寫檔；`_.k` 印 `~%Io./write_file ("q.txt", "x")`，不寫檔；`_.k "s"` 才寫 |
+
+**Q3** 延後＝ thunk，而且（預測效應不是 `#pure`，或本體表達式有自由 `$`）。
+
+需要輸入用既有的 `has_free_dollar`。它看見插值與子表裡的 `$`，不走入巢狀箭頭的本體，也不走入 `|>` 的右式。量過：`{ @{ @int }: "a${$}" }` 與 `{ @{ @int }: { b: $ } }` 印源碼；`{ @{ @int }: (x -> $ + x) }` 被強制，印成 `%kind: #logic` 的繭，`%code` 裡仍是 `$ + x`；`{ @{ @int }: 1 |> $ }` 印成 `{ @{ @int }: 1 }`。
+
+帶效應用建立 thunk 時 `predict_effect` 寫上的標記，不看強制之後的實際效應。`~%Io./write_file (...)` 預測是 `#io`，所以留成程式碼，選中才執行。預測與實際不同時，以預測為準：預測為純、又沒有自由 `$` 的本體，觀測時仍會被強制，預測漏掉的效應就在那時執行；預測不是純的本體留成程式碼，不會為了核對實際效應而先跑一次。
+
+**Q4** 延後本體的身分是那個 thunk：表達式、收窄後的 closure、context、效應位元組。closure 保留每一框（`^` 靠位置），框裡只留本體用到的名字，以及那些名字再用到的名字。`normalize_table` 在表成形時做這次收窄。context 槽照舊留著，不在這次收窄裡。
+
+`n: 1` 與 `k: { @{ @int }: $ + 1 }` 寫在同一檔：提交後 `_.k = { @{ @int }: $ + 1 }` 是 `#true`。只有 `k` 的宇宙根是 `37026f7d…`；旁邊有 `n: 1` 的宇宙根是 `650aac5f46ec514b638b945d80af5c05482c97b2db356e4c6acabd28b2c7f6fb`，因為 `n` 在根裡。表 `k` 本身與單獨那張相等。
+
+同一張源碼嵌在組合裡則不相等：`({ n: 1, t: { @{ @int }: $ + 1 } }.t) = { @{ @int }: $ + 1 }` 是 `#false`。兩邊都印 `{ @{ @int }: $ + 1 }`，施於 `5` 都得 `6`。本體是在那個組合裡建成的，context 與頂層建成的不是同一個 thunk。`$ + n` 會捕捉 `n`，`({ n: 1, t: { @{ @int }: $ + n } }.t) = { @{ @int }: $ + n }` 也是 `#false`。
 
 ### 8.5 探針
 
+第三輪，皆 ok。本探針 6／6，2.48s。Q-086 4／4，2.30s。Q-077 `a_table_you_cannot_read` 12／12，3.03s（含 r7）；其 R-1 4／4，1.33s。Q-085 7／7，2.85s。Q-084 11／11，2.08s。Q-083 17／17，6.23s；bytes 1／1，0.23s；epochs 4／4，0.31s；union 2／2，0.00s；`pin_probe_test` 15／15，2.20s。Q-082 10／10，8.72s。Q-081 15／15，4.07s。Q-080 16／16，3.56s。Q-079 10／10，4.07s；R-1 3／3，0.49s。Q-078 15／15，6.14s。`kind_tag` 7／7，0.29s。`a_table_that_forgot_its_patterns` 17／17，2.41s；R-1 6／6，0.61s；R-2 10／10，1.68s。`forward_spread` 12／12，0.88s；`spread_collision` 25／25，0.91s；`spread_privacy` 11／11，0.38s；`blur_spread` 13／13，3.01s；`import_is_spread` 7／7，0.40s；`spread_splice` 9／9，0.16s。`where_there_is_no_universe` 13／13，4.12s。三輪都沒有撞上 `BrokenPipe`。
+
 ### 8.6 數字
 
+1. `oo` 仍是 `0.88.0`。
+2. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，各 `EXIT:0`。`test result:` 279 行，通過 2678，失敗 0，`^error` 0。正規化後各 3512 行，sha256 `fd83ea4d517088a4…`，三輪相同。2678 是 v0.88.0 的 2672 加上本探針的 6。
+3. conformance 162／162，exit 0。前後 `/home/gali/nlang/.oo/format` 都是一個位元組 `0x32`（ASCII `2`；`xxd -p` 印 `32`）。
+4. `~%Math./add` (1, 2)=3、(1, 3)=4，rc 0，不建 `.oo/`。euid 1000。
+5. 身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。新倉 `layout=9`／`encoding=6`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，4.29s。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
 ### 8.7 你認為需要改規格之處
+
+無。規格文字與 `CHANGELOG` 留給驗收方。一般欄位的效應在提交時執行、欄位裡的 `$`、箭頭印出形不可施用，仍是工單 §6。

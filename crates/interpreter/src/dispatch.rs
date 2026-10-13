@@ -78,6 +78,18 @@ pub(crate) fn branch_cocoon(pattern: Value, body: Value) -> Value {
     ))
 }
 
+/// D109: a body is code until its branch is chosen when it needs the
+/// input or has an effect. Its identity is then its code; a closed pure
+/// body may still be evaluated early and is identified by its value.
+pub(crate) fn is_deferred_body(v: &Value) -> bool {
+    match v {
+        Value::Thunk { expr, effect, .. } => {
+            *effect != EffectTag::Pure || nlang_parser::tier::has_free_dollar(expr)
+        }
+        _ => false,
+    }
+}
+
 /// A dispatch branch: a pattern plus one body, or a set of bodies.
 pub(crate) fn is_rule_cocoon(c: &ComboVal) -> bool {
     c.get_field("%pattern").is_some()
@@ -312,7 +324,46 @@ pub(crate) fn canonical_bodies(v: Value) -> Value {
 /// A value with a pattern key has one shape: every plain data key is the
 /// branch its constraint names. Does not walk into `%rules` or into values
 /// that are not themselves tables — a rules combo is not normalized again.
-pub(crate) fn normalize_table(mut c: ComboVal) -> ComboVal {
+pub(crate) fn normalize_table(c: ComboVal) -> ComboVal {
+    let mut c = normalize_table_rows(c);
+    // D109: deferred bodies carry only what they capture, so one body has one
+    // identity however its table was built.
+    if let Some(Value::Combo(rules)) = c.get_field("%rules").cloned() {
+        if rules_have_pattern(&rules) {
+            let mut out = rules.clone();
+            for (k, v) in rules.data.iter() {
+                out.data.insert(k.clone(), narrow_rule(v.clone()));
+            }
+            c.insert_field("%rules", Value::Combo(out));
+        }
+    }
+    c
+}
+
+fn narrow_rule(v: Value) -> Value {
+    match v {
+        Value::Combo(mut rc) if is_rule_cocoon(&rc) => {
+            if let Some(body) = rc.meta.get("val").cloned() {
+                if is_deferred_body(&body) {
+                    rc.meta.insert("val".to_string(), crate::eval::narrow_deferred_body(body));
+                }
+            }
+            if let Some(Value::Combo(mut bs)) = rc.meta.get("bodies").cloned() {
+                let keys: Vec<String> = bs.data.keys().cloned().collect();
+                for k in keys {
+                    if let Some(b) = bs.data.shift_remove(&k) {
+                        bs.data.insert(k, narrow_rule(b));
+                    }
+                }
+                rc.meta.insert("bodies".to_string(), Value::Combo(bs));
+            }
+            Value::Combo(rc)
+        }
+        other => other,
+    }
+}
+
+fn normalize_table_rows(mut c: ComboVal) -> ComboVal {
     let rules = match c.get_field("%rules") {
         Some(Value::Combo(r)) if rules_have_pattern(r) => r.clone(),
         _ => return c,

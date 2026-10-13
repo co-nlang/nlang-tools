@@ -3803,6 +3803,10 @@ impl Ouroboros {
                             // sources (evolve-phase Top) must survive the rebuild.
                             new_c.pending_spreads = std::mem::take(&mut c.pending_spreads);
                             let closed = c.closed;
+                            // D109: a branch body that needs the input (`$`)
+                            // or has an effect is code until dispatch chooses
+                            // the branch. Observing the table does not run it.
+                            let is_rule = crate::dispatch::is_rule_cocoon(&c);
                             // Copy per axis. Flattening through insert_field
                             // re-routes a data key named `@t` onto the type
                             // axis (Q1).
@@ -3828,6 +3832,10 @@ impl Ouroboros {
                                 new_c.rules.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.meta) {
+                                if is_rule && k == "val" && crate::dispatch::is_deferred_body(&v) {
+                                    new_c.meta.insert(k, v);
+                                    continue;
+                                }
                                 let forced = self.force_recursive(v, ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
@@ -3848,7 +3856,14 @@ impl Ouroboros {
                                 }
                                 new_c.local.insert(k, forced);
                             }
-                            Value::Combo(new_c)
+                            if is_rule {
+                                // D109: the body set is keyed by each body's
+                                // identity — its value once evaluated, its
+                                // code while deferred — however it was built.
+                                crate::dispatch::canonical_bodies(Value::Combo(new_c))
+                            } else {
+                                Value::Combo(new_c)
+                            }
                         }
                         other => other,
                     }
@@ -3932,6 +3947,8 @@ impl Ouroboros {
                         new_c.relations = std::mem::take(&mut c.relations);
                         new_c.pending_spreads = std::mem::take(&mut c.pending_spreads);
                         let closed = c.closed;
+                        // D109: a deferred branch body is kept as code.
+                        let is_rule = crate::dispatch::is_rule_cocoon(&c);
                         for (k, v) in std::mem::take(&mut c.data) {
                             let p = parent_c.and_then(|pc| pc.data.get(&k));
                             let projected = self.project_for_commit(v, p, ctx);
@@ -3957,6 +3974,10 @@ impl Ouroboros {
                             new_c.rules.insert(k, projected);
                         }
                         for (k, v) in std::mem::take(&mut c.meta) {
+                            if is_rule && k == "val" && crate::dispatch::is_deferred_body(&v) {
+                                new_c.meta.insert(k, v);
+                                continue;
+                            }
                             let p = parent_c.and_then(|pc| pc.meta.get(&k));
                             let projected = self.project_for_commit(v, p, ctx);
                             if !closed {
