@@ -14,8 +14,13 @@ pub(crate) fn pattern_branch_name(pattern: &Value) -> String {
     )
 }
 
-/// A table's non-pattern key is a constraint: `_` is Top, a key that
-/// is entirely an integer is that integer, anything else is that string.
+/// A table's non-pattern key is a constraint. D107: the key is the
+/// coordinate string, and the table reads it as the atom the parser
+/// would read from that spelling. `_` is Top, an integer spelling is
+/// that integer, `#ident` / `#_` / `#_|_` is that tag, and anything
+/// else is that string. `#a:` and `"#a":` are one coordinate, so both
+/// are the tag. A string that only looks like another atom is written
+/// `@{ "…" }:`, which never reaches here.
 pub(crate) fn constraint_from_data_key(key: &str) -> Value {
     if key == "_" {
         return Value::Top;
@@ -23,7 +28,26 @@ pub(crate) fn constraint_from_data_key(key: &str) -> Value {
     if let Ok(n) = key.parse::<BigInt>() {
         return Value::Atom(AtomKind::Int(n), EffectTag::Pure, None);
     }
+    // `#_` is TagEnd and `#_|_` is TagStart. A later `#` + ident test
+    // would read `#_` as the tag whose name is `_`.
+    match key {
+        "#_" => return Value::Atom(AtomKind::TagEnd, EffectTag::Pure, None),
+        "#_|_" => return Value::Atom(AtomKind::TagStart, EffectTag::Pure, None),
+        _ => {}
+    }
+    if let Some(t) = key.strip_prefix('#') {
+        if is_tag_name(t) {
+            return Value::Atom(AtomKind::Tag(t.to_string()), EffectTag::Pure, None);
+        }
+    }
     Value::Atom(AtomKind::Str(key.to_string()), EffectTag::Pure, None)
+}
+
+/// `tag` in the grammar: `#` then an identifier.
+fn is_tag_name(t: &str) -> bool {
+    let mut cs = t.chars();
+    matches!(cs.next(), Some(c) if c.is_alphabetic() || c == '_')
+        && cs.all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 pub(crate) fn rules_have_pattern(rules: &ComboVal) -> bool {

@@ -570,18 +570,35 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
         } else {
             rc.get_field("%val")?.to_nlang(indent + 1)
         };
-        let key = match pattern {
-            Value::Top | Value::Atom(AtomKind::Top, _, _) => "_".to_string(),
-            Value::Atom(AtomKind::Int(n), _, _) => n.to_string(),
-            Value::Atom(AtomKind::Str(s), _, _) => quote_nlang_field_key("", s),
-            Value::Atom(AtomKind::Tag(_), _, _) => pattern.to_nlang(0),
-            Value::Combo(pc) if crate::type_constraint::is_type_value_combo(pc) => {
-                match pc.get_field("%name") {
-                    Some(Value::Atom(AtomKind::Str(n), _, _)) => format!("@{{ @{n} }}"),
-                    _ => format!("@{{ {} }}", pattern.to_nlang(0)),
-                }
+        // D107: an atom prints as a bare key only when that key reads
+        // back as the same constraint. `@{ "4" }:` is not `4:`.
+        let bare = match pattern {
+            Value::Top | Value::Atom(AtomKind::Top, _, _) => {
+                Some(("_".to_string(), "_".to_string()))
             }
-            other => format!("@{{ {} }}", other.to_nlang(0)),
+            Value::Atom(AtomKind::Int(n), _, _) => Some((n.to_string(), n.to_string())),
+            Value::Atom(AtomKind::Str(s), _, _) => Some((quote_nlang_field_key("", s), s.clone())),
+            Value::Atom(AtomKind::Tag(_) | AtomKind::TagStart | AtomKind::TagEnd, _, _) => {
+                Some((pattern.to_nlang(0), pattern.to_nlang(0)))
+            }
+            _ => None,
+        };
+        let bare = bare.filter(|(_, coord)| {
+            crate::dispatch::pattern_branch_name(&crate::dispatch::constraint_from_data_key(coord))
+                == crate::dispatch::pattern_branch_name(pattern)
+        });
+        let key = if let Some((k, _)) = bare {
+            k
+        } else {
+            match pattern {
+                Value::Combo(pc) if crate::type_constraint::is_type_value_combo(pc) => {
+                    match pc.get_field("%name") {
+                        Some(Value::Atom(AtomKind::Str(n), _, _)) => format!("@{{ @{n} }}"),
+                        _ => format!("@{{ {} }}", pattern.to_nlang(0)),
+                    }
+                }
+                other => format!("@{{ {} }}", other.to_nlang(0)),
+            }
         };
         rows.push((key, body));
     }

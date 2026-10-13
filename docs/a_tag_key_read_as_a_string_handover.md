@@ -74,14 +74,65 @@
 
 ### 8.1 射程逐項對照
 
+I1：表裡的 `#a:`、`#_:`、`#_|_:` 是該標籤。分支值是箭頭時照樣施用。r1 綠。
+I2：`"#a":` 與 `#a:` 是同一個約束，`"4":` 與 `4:` 也是。`@{ "…" }:` 寫的字串約束仍是字串。r2 綠。
+I3：字面、`&`、展開、欄位、提交後、`|>`（含聯集右值）、以聯集為引數，都經同一個讀法。r3、r4 綠。讀座標的地方與印回鍵的地方列在 8.4 Q1。
+I4：至少留一列非原子約束的表，印出再讀回，`=` 是 `#true`。裸印的是讀回仍是它的那些。r5、r6 綠。
+I5：沒有模式鍵的 Combo 仍依座標查找。`k: { #a: 2 }` 的根仍是 `e841a181509be360123c271537de552e48434e667ad5946c3355db623bf2e756`。g1 綠。新倉仍是 `layout=9`／`encoding=6`。
+
 ### 8.2 順手改動（逐項指名）
+
+無。改動就是 `constraint_from_data_key` 與 `table_display_rows`。三個呼叫者與 `to_nlang` 跟著這兩處走。
 
 ### 8.3 工單哪裡是錯的
 
+紅線寫 Q-084 探針 10 支。本樹該檔有 11 支，多了 `r9_a_union_member_and_a_branch_value_land_first`。第三輪 11／11。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1** 把座標字串讀成約束，或把約束寫回成鍵：
+
+1. `constraint_from_data_key`（`dispatch.rs`）照 D107。`_` 是 Top，整數字樣是該整數，`#_` 是 `TagEnd`，`#_|_` 是 `TagStart`，`#` 接識別碼是該標籤，其餘是該字串。三個呼叫者都走它：`normalize_table`（字面與展開落地時把資料鍵收進分支）、`rules_with_parent_data`（施用時旁邊的資料鍵併進已有的 `%rules`）、`table_branch_for_name`（依這個名字找分支）。
+2. `table_display_rows`（`value.rs`）照 D107。原子約束先試裸鍵；`constraint_from_data_key` 讀回的分支名與這個約束相同才裸印，否則印 `@{ … }:`。`Value::to_nlang` 印表時走這裡。`oo eval` 與已落地的 `oo status` 都是這條。v0.86.0 上 evolve 之後、commit 之前，`k: { @{ @str }: 1, #a: 2, _: 0 }` 的 status 印 `"#a":`；交付印 `#a:`。提交之後兩邊的 status 都只說宇宙是靜止的，不再印那張表。
+3. `bn_serial` 不讀拼法。它編的是已經定好的原子：字串與標籤的標記不同，所以帶標籤鍵的表，分支名從字串的摘要換成標籤的摘要，根跟著動。編碼器沒有改。`encoding≥5` 的耐久形是 `store_codec::encode_value`，同樣編原子，不從拼法猜約束。磁碟宣告沒有改。
+4. `oo fmt` 印的是源碼（`program.to_nlang`），保留 `#a:`、`"#b":`、`@{ "#c" }:`、`@{ "4" }:`。兩版輸出相同。
+5. 沒有模式鍵的 Combo 印欄位時仍走 `quote_nlang_field_key`，印的是座標字串。`{ #a: 2 }` 仍印成 `{ "#a": 2 }`。這是工單 §6 留下的，沒有改。
+6. 剖析器仍把 `#a:` 剖成單段路徑鍵，與 `"#a":` 是同一個座標。沒有把它剖成模式鍵。
+
+**Q2** 基線是當時的釋出 `oo`（`oo v0.86.0-1064-gbfbbdbb`）。交付是第一輪釋出閘的 `oo`。根是 `oo inspect` 的 `root:` 最後一個冒號之後的 64 hex。讀的是 `_.k #a`，最後一個是 `_.r`。
+
+| 檔 | v0.86.0 根 | v0.86.0 | 交付根 | 交付 |
+| :-- | :-- | :-- | :-- | :-- |
+| `k: { @{ @str }: 1, #a: 2, _: 0 }` | `ec806753dadeb729d0426b3500eead3fbe54e3376ac529fefebfa3842d8e5497` | `0` | `99eb5e0781a8eec91c01f12ef17b1fb993063f382758a3d6fbc5c40ae6a652ba` | `2` |
+| `k: { @{ @str }: 1, "#a": 2, _: 0 }` | `ec806753dadeb729d0426b3500eead3fbe54e3376ac529fefebfa3842d8e5497` | `0` | `99eb5e0781a8eec91c01f12ef17b1fb993063f382758a3d6fbc5c40ae6a652ba` | `2` |
+| `k: { @{ @str }: 1, @{ #a }: 2, _: 0 }` | `99eb5e0781a8eec91c01f12ef17b1fb993063f382758a3d6fbc5c40ae6a652ba` | `2` | 同一根 | `2` |
+| `k: { @{ @str }: 1, @{ "#a" }: 2, _: 0 }` | `ec806753dadeb729d0426b3500eead3fbe54e3376ac529fefebfa3842d8e5497` | `0` | 同一根 | `0` |
+| `k: { #a: 2 }` | `e841a181509be360123c271537de552e48434e667ad5946c3355db623bf2e756` | `2` | 同一根 | `2` |
+| `k: { @{ @str }: 1, b: 2, _: 0 }` | `cc9f0f806d4e9babb201a78af2a09a417363ba27957a2b0d66f75d270decd030` | `0` | 同一根 | `0` |
+| `r: ({ @{ @str }: 1, #a: 2, _: 0 }) #a` | `070dcd492035437efd178446036c29722ed88f8e06936b150018cdbe7e519db4` | `0` | `b9d2a36282ad0226c11f8dadb920193b012a7c42411ed0e0344ad8a3d57f7d64` | `2` |
+
+前兩個換到第三個的根，答案由 `0` 變 `2`。第三、四、五、六個的根不動。第七個換根，答案由 `0` 變 `2`。
+
+**Q3** 標準根仍是 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。標準庫是 `v0_22_standard_root` 在 Rust 裡鑄出來的，沒有 `include_str!` 的 nlang 源碼；那些鍵不是標籤拼法、整數拼法或 `_`。`examples/test.n` 也沒有這種鍵。沒有一張表的答案因此改變。
+
+**Q4** 沒有模式鍵的 Combo，施用在 `apply_morphism_dispatch` 裡先看 `%rules`。沒有帶模式的 `%rules` 時，引數若是原子，就用 `to_string_plain` 當座標去 `get_field`。`#a` 與 `"#a"` 都拼成 `"#a"`，所以 `({ #a: 2, _: 0 }) #a` 與 `"#a"` 都得 `2`。這條路不經過 `constraint_from_data_key`。有模式鍵的表在這之前就進 `rules_with_parent_data`，那裡才讀約束。
 
 ### 8.5 探針
 
+探針檔未改，未 rustfmt。無 `#[ignore]`。
+
+全樹第三輪：本探針 7／7，2.89s。Q-084 11／11，2.10s。Q-083 探針 17／17，6.45s；bytes 1／1，0.29s；epochs 4／4，0.35s；union 2／2，0.00s。`pin_probe_test` 15／15，2.22s。Q-082 10／10，8.75s。Q-081 15／15，4.19s。Q-080 16／16，3.60s。Q-079 10／10，4.17s；R-1 3／3，0.50s。Q-078 15／15，6.32s。`kind_tag_probe_test` 7／7，0.29s。`a_table_that_forgot_its_patterns` 17／17，2.46s；R-1 6／6，0.63s；R-2 10／10，1.72s。`forward_spread_probe_test` 12／12，0.90s。`spread_collision` 25／25，0.94s。`spread_privacy` 11／11，0.39s。`blur_spread` 13／13，3.09s。`import_is_spread` 7／7，0.40s。`spread_splice_test` 9／9，0.16s。
+
 ### 8.6 數字
 
+1. 版本仍是 `oo` 0.86.0。新倉 `layout=9`／`encoding=6`。
+2. 釋出全樹三輪，`--jobs 1`，`--test-threads=1`。每輪 `test result:` 277 行，passed 2668，failed 0，`^error` 0，exit 0。去掉行首空白與 `finished in …s` 之後，以 `test result:`、`test `、`Running `、`running ` 開頭的行三輪相同，各 3496 行，sha256 前綴 `7ccaa452af707c56`。
+3. conformance 162／162，exit 0。cwd 是 `/home/gali/nlang`。跑完 `.oo/format` 仍是 `32`。
+4. 新鮮目錄裡 `~%Math./add (1, 2)` 是 3，`(1, 3)` 是 4，rc 0，該目錄沒有 `.oo`。euid 1000。`oo-ephemeral-*` 為 0。
+5. `x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，4.91s。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
 ### 8.7 你認為需要改規格之處
+
+無。規格文字與 `CHANGELOG` 留給驗收方。全部分支皆原子約束的表，印出後讀回不是表，仍是工單 §6 留下的那一列。
