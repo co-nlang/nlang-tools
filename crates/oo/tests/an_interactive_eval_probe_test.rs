@@ -89,7 +89,12 @@ impl Ws {
             .expect("oo repl spawns");
         let mut input = lines.join("\n");
         input.push_str("\nexit\n");
-        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        // The child may answer and exit before it reads its input (a
+        // refusal does). What it printed and its exit code are the
+        // reading; a pipe it closed first is not. Other write errors fail.
+        if let Err(e) = child.stdin.take().unwrap().write_all(input.as_bytes()) {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "writing stdin: {e}");
+        }
         let o = child.wait_with_output().unwrap();
         (
             format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)),
