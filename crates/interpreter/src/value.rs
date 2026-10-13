@@ -552,6 +552,9 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
         _ => return None,
     };
     let mut rows = Vec::new();
+    // Bare spellings kept aside. If every row is one of these, none of
+    // them may stay bare: a table with no `@{ … }` reads back as a record.
+    let mut spelled = Vec::new();
     for (_, rule) in rules.data.iter() {
         let rc = match rule {
             Value::Combo(rc) => rc,
@@ -588,6 +591,7 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
                 == crate::dispatch::pattern_branch_name(pattern)
         });
         let key = if let Some((k, _)) = bare {
+            spelled.push(format!("@{{ {} }}", pattern.to_nlang(0)));
             k
         } else {
             match pattern {
@@ -601,6 +605,13 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
             }
         };
         rows.push((key, body));
+    }
+    // D108: bare rows stay bare only when some other row already prints
+    // `@{ … }`. When every row would be bare, every row keeps `@{ … }`.
+    if spelled.len() == rows.len() {
+        for (row, key) in rows.iter_mut().zip(spelled) {
+            row.0 = key;
+        }
     }
     Some(rows)
 }

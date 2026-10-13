@@ -66,14 +66,68 @@
 
 ### 8.1 射程逐項對照
 
+I1：分支值是原子或表的表，印出再讀回，`=` 是 `#true`。全原子、混合、巢狀、展開、`&`、旁邊有非表鍵都在內。r1 綠。
+I2：印出形施於任何引數，答案與原表相同。分支值是表時，印出形也拿輸入施用那張表。r1b 綠。
+I3：沒有一列會留下 `@{ … }:` 時，每一列都印 `@{ … }:`。有一列留下時，其餘照 D102／D107 裸印。沒有模式鍵的 Combo 仍依鍵查找。r2 綠。
+I4：`oo eval`、`oo run --observe`、`oo status`，以及 8.4 Q1 列出的其餘介面，都經 `table_display_rows`。r3 綠。
+I5：根不動。`k: { @{ 4 }: "f", _: "z" }` 仍是 `43480b6b8fce1ec0c971f2d6d956b33f2b971371364d65006903ffd67ef41fe9`。`k: { t: { @{ 4 }: { @{ 5 }: 1 }, _: 0 } }` 仍是 `5f109572de6e26c459ef20f98e8cfc45e0120258fea5389d11b7b3d61c9a145d`。新倉 `layout=9`／`encoding=6`。同一張暫存表的熵仍是 2323 bits。
+
 ### 8.2 順手改動（逐項指名）
+
+無。只改 `value.rs` `table_display_rows` 的結尾：每一列都會裸印時，全部改印 `@{ … }`。
 
 ### 8.3 工單哪裡是錯的
 
+無關於探針支數。Q2 要確認的兩個式子裡，`{ @{ 4 }: "f", @{ 4 }: "g" }` 的鍵有變，本體沒有。讀數在 8.4。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1** 把值印成 n/ 文字的地方都走 `Value::to_nlang`。表在那裡面走 `table_display_rows`。
+
+1. `oo eval`：`run_eval` 印 `result.to_nlang(0)`。
+2. `oo run --observe`：`run_one_shot` 印觀察到的值，同一條。
+3. `oo run --format`：同一條，印暫存的 Combo。v0.87.0 印 `4: "f"`、`_: "z"`；交付印 `@{ 4 }: "f"`、`@{ _ }: "z"`。
+4. `oo status`：宇宙有暫存時印 `Value::Combo(staged).to_nlang(0)`。拼法同上。熵是值的 `bits()`，仍是 2323 bits。提交之後兩邊都只說宇宙是靜止的。
+5. `oo repl`：`print_observed` 印 `=>` 與 `to_nlang`。
+6. `oo inspect`：值的 CAID 印 `val.to_nlang(0)`。根 `43480b6b…` 的表在交付印成 `@{ 4 }:`、`@{ _ }:`。提交本身只印根的摘要，不印那張表。
+7. `#conflict` 的人話：`unify.rs` 用兩邊的 `to_nlang(0)` 組成 `Incompatible types: … vs …`，`Value::Bottom` 的 `to_nlang` 把它接在 `;;` 後面。`1 & 2` 仍是 `_|_  ;; %cause: #conflict  ;; Incompatible types: 1 vs 2`。evolve／commit 的 `format_conflict_where` 只印 `#cause at 座標`，不嵌值。
+8. 寫進檔案的印出：`record_observation` 存的是 `value.to_nlang(0)`（eval、run、repl、test 在該記一筆 ○ 的時候）。
+9. `oodp.rs` `identify_caid` 把 `val.to_nlang(0)` 再送進 eval。`list.unique` 與 `list.dedup` 用 `to_nlang(0)` 當相同與否的鍵。聯集裡結構化成員的印出順序也比 `to_nlang`（`canonical_display_order` 的第三族）。都是同一條。
+10. `oo fmt` 與 `fmt --write` 印源碼（`program.to_nlang`）。`k: { @{ 4 }: "f", _: "z" }` 在兩版都是 `@{ 4 }:` 與 `_: `。
+
+今天沒有一條值的印出路徑繞過 `table_display_rows`。`fmt` 印的是源碼，模式鍵在源碼裡本來就是 `@{ … }`。
+
+**Q2** 基線是釋出二進位 `oo v0.87.0-1069-g4f38b2e`（tie-back `4f38b2e`）。交付是第一輪釋出的 `oo`，版本字串相同（`git describe` 仍指向 `4f38b2e`）；本探針在那一輪裡通過。印出已去掉前後空白。
+
+| 式子 | v0.87.0 | `=` | 交付 | `=` |
+| --- | --- | --- | --- | --- |
+| `{ @{ 4 }: "f", _: "z" }` | `{ 4: "f" _: "z" }` | `#false` | `{ @{ 4 }: "f" @{ _ }: "z" }` | `#true` |
+| `{ @{ _ }: 1 }` | `{ _: 1 }` | `#false` | `{ @{ _ }: 1 }` | `#true` |
+| `{ @{ 4 }: "f", @{ 4 }: "g" }` | `{ 4: "g" & "f" }` | `#false` | `{ @{ 4 }: "g" & "f" }` | `#false` |
+| `{ @{ @int }: 1 } & { @{ @int }: 1 \| 2 }` | `{ @{ @int }: 1 \| 2 & 1 }` | `#false` | 同左 | `#false` |
+
+第三列：本體仍是 `"g" & "f"`，讀回仍是 `#false`。鍵由 `4:` 變成 `@{ 4 }:`，因為合併後只剩一列，而那一列是原子約束，D108 要它留下 `@{ … }:`。第四列本來就是 `@{ @int }:`，印出形沒有變。
+
+**Q3** 列的順序是印出鍵字串的字典序。`to_nlang` 在 `table_display_rows` 交回之後對顯示鍵做 `sort_by`。`%rules` 是 `IndexMap`，插入序不是印出序。鍵從 `4` 換成 `@{ 4 }` 會換掉排序用的字串，所以一列可以換位置。
+
+`{ @{ 4 }: "f", @{ "j" }: 1 }`：v0.87.0 印 `{ 4: "f" j: 1 }`（`4` 在 `j` 前）；交付印 `{ @{ "j" }: 1 @{ 4 }: "f" }`（`@{ "j" }` 在 `@{ 4 }` 前，`"` 排在 `4` 前）。交付讀回 `=` 是 `#true`。
+
+`{ @{ 4 }: "f", _: "z" }` 兩列都變成 `@{ … }` 之後，`@{ 4 }` 仍排在 `@{ _ }` 前，這兩列的先後不變。
 
 ### 8.5 探針
 
+第三輪，皆 ok。本探針 4／4，2.30s。Q-077 `a_table_you_cannot_read` 12／12，3.06s（含已修訂的 r7）；其 R-1 4／4，1.31s。Q-085 7／7，2.87s。Q-084 11／11，2.08s。Q-083 17／17，6.23s；bytes 1／1，0.23s；epochs 4／4，0.35s；union 2／2，0.00s；`pin_probe_test` 15／15，2.18s。Q-082 10／10，8.72s。Q-081 15／15，4.05s。Q-080 16／16，3.56s。Q-079 10／10，4.13s；R-1 3／3，0.54s。Q-078 15／15，6.15s。`kind_tag` 7／7，0.30s。`a_table_that_forgot_its_patterns` 17／17，2.44s；R-1 6／6，0.61s；R-2 10／10，1.66s。`forward_spread` 12／12，0.94s；`spread_collision` 25／25，0.88s；`spread_privacy` 11／11，0.38s；`blur_spread` 13／13，3.17s；`import_is_spread` 7／7，0.39s；`spread_splice` 9／9，0.16s。`where_there_is_no_universe` 13／13，4.14s。三輪都沒有撞上那支的 `BrokenPipe`。
+
 ### 8.6 數字
 
+1. `oo` 仍是 `0.87.0`。
+2. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，各 `EXIT:0`。`test result:` 278 行，通過 2672，失敗 0，`^error` 0。正規化後各 3503 行，sha256 `9e3b0894cc9edadb…`，三輪相同。2672 是 v0.87.0 的 2668 加上本探針的 4。
+3. conformance 162／162，exit 0。前後 `/home/gali/nlang/.oo/format` 都是一個位元組 `0x32`（ASCII `2`；`xxd -p` 印 `32`）。
+4. `~%Math./add` (1, 2)=3、(1, 3)=4，rc 0，不建 `.oo/`。euid 1000。`/tmp/oo-ephemeral-*` 0。
+5. 身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，4.70s。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
 ### 8.7 你認為需要改規格之處
+
+無。規格文字與 `CHANGELOG` 留給驗收方。分支本體以 ` & ` 相接、箭頭印出形不可施用，仍是工單 §6。
