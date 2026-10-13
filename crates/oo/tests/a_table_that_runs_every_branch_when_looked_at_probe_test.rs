@@ -303,3 +303,39 @@ fn g1_a_closed_pure_body_is_a_value() {
         assert_eq!(w.root(), root, "{src}");
     }
 }
+
+// ── Acceptance (acceptor, 2026-10-14): R-1 ───────────────────────────────
+
+/// I1 holds when the effect is not predicted. A body that calls an arrow
+/// with an effect — a sibling by name, or one written in place — is
+/// predicted pure, so delivery 92ce296 still forces it on observation and
+/// commit. The ruling's text said "predicted" (the acceptor's words); the
+/// invariant is that a branch nobody chose does not run.
+/// v0.88.0 red, reference q087-ref 9e26e11 red, delivery 92ce296 red.
+#[test]
+fn r6_an_effect_nobody_predicted_does_not_run_either() {
+    let w = Ws::new("r6");
+    let sib = format!("{{ f: (x -> {WRITE}), t: {{ @{{ @int }}: 1, _: f 1 }} }}.t");
+    let inl = format!("{{ t: {{ @{{ @int }}: 1, _: (x -> {WRITE}) 0 }} }}.t");
+    let mut bad = Vec::new();
+    for (name, e) in [
+        ("eval, sibling arrow", sib.clone()),
+        ("eval, arrow in place", inl.clone()),
+        ("=, sibling arrow", format!("({sib}) = {{ @{{ @int }}: 1, _: 0 }}")),
+    ] {
+        if wrote(&w, || { let _ = w.oo(&["eval", &e]); }) {
+            bad.push(name.to_string());
+        }
+    }
+    fs::write(w.ws.join("b.n"), format!("f: (x -> {WRITE})\nk: {{ @{{ @int }}: 1, _: f 1 }}\n")).unwrap();
+    let (o, rc) = w.oo(&["evolve", "b.n"]);
+    assert_eq!(rc, 0, "evolve: {o}");
+    if wrote(&w, || { let (o, rc) = w.oo(&["commit", "-m", "b"]); assert_eq!(rc, 0, "commit: {o}"); }) {
+        bad.push("commit".to_string());
+    }
+    // Controls: the branch, once chosen, runs — in place and after commit.
+    let chose_in_place = wrote(&w, || { let _ = w.oo(&["eval", &format!("({sib}) \"s\"")]); });
+    let chose_after = wrote(&w, || { let _ = w.eval("_.k \"s\""); });
+    assert!(bad.is_empty() && chose_in_place && chose_after,
+        "ran a branch nobody chose: {bad:?}; chosen in place ran: {chose_in_place}; chosen after commit ran: {chose_after}");
+}
