@@ -237,6 +237,10 @@ fn r6_every_assembly_commits_to_one_root() {
 }
 
 /// D102: a table prints by its constraints, not by digest names.
+/// Revised by the acceptor for Q-086 (D108, 2026-10-13): `LIT` has only
+/// atomic rows, so printed bare it would read back as a record; every row
+/// keeps its `@{ … }`. A mixed table still prints its atomic rows bare
+/// (`_: 0` below). Before: `j: 5`, `k: 1`.
 #[test]
 fn r7_a_table_prints_by_its_constraints() {
     let w = Ws::new("r7");
@@ -245,7 +249,7 @@ fn r7_a_table_prints_by_its_constraints() {
     };
     let mut wrong = Vec::new();
     for (e, must) in [
-        (LIT, vec!["j: 5", "k: 1"]),
+        (LIT, vec!["@{ \"j\" }: 5", "@{ \"k\" }: 1"]),
         (r#"{ @{ @int }: "n", _: 0 }"#, vec!["@{ @int }: \"n\"", "_: 0"]),
         (r#"{ a: 1, b: { @{ @str }: "s" } }"#, vec!["@{ @str }: \"s\""]),
     ] {
@@ -256,7 +260,7 @@ fn r7_a_table_prints_by_its_constraints() {
     }
     fs::write(w.ws.join("p.n"), format!("t: {LIT}\n")).unwrap();
     let (o, _) = w.oo(&["run", "--observe", "t", "p.n"]);
-    if hex64(&o) || !o.contains("j: 5") {
+    if hex64(&o) || !o.contains("@{ \"j\" }: 5") {
         wrong.push(format!("`run --observe t` printed:\n{o}"));
     }
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
