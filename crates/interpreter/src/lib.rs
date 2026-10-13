@@ -3558,6 +3558,16 @@ impl Ouroboros {
                     res = self.force(res, &mut call_ctx);
                     peel += 1;
                 }
+                // A field stores its combo as a thunk. The combo arm below
+                // lands spreads before anyone reads the shape; this arm must
+                // do the same before the value is memoized or returned.
+                if let Value::Combo(c) = res {
+                    res = if c.pending_spreads.is_empty() {
+                        Value::Combo(c)
+                    } else {
+                        self.expand_combo_pending(c, &mut call_ctx)
+                    };
+                }
                 call_ctx.in_flight.remove(&thunk_id);
                 ctx.fuel = call_ctx.fuel;
                 ctx.in_flight = call_ctx.in_flight;

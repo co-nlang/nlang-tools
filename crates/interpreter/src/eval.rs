@@ -1499,6 +1499,16 @@ impl Ouroboros {
         while matches!(&rv, Value::Thunk { .. }) {
             rv = self.force(rv, &mut call_ctx);
         }
+        // Whether the right side is a morphism is read after its spreads land.
+        // A literal table still has `pending_spreads` here: eval does not
+        // expand them, and the loop above only peels thunks.
+        if let Value::Combo(c) = rv {
+            rv = if c.pending_spreads.is_empty() {
+                Value::Combo(c)
+            } else {
+                self.expand_combo_pending(c, &mut call_ctx)
+            };
+        }
         ctx.fuel = call_ctx.fuel;
         // D104: a union on the right distributes like application —
         // x |> (A|B) = (x|>A) | (x|>B).
@@ -1519,6 +1529,17 @@ impl Ouroboros {
         call_ctx: &mut EvalContext,
         ctx: &mut EvalContext,
     ) -> Value {
+        // A union on the right is distributed member by member. Each member
+        // is judged here, so a spread table inside the union lands first.
+        let rv = match rv {
+            Value::Combo(c) if !c.pending_spreads.is_empty() => {
+                call_ctx.fuel = ctx.fuel;
+                let landed = self.expand_combo_pending(c, call_ctx);
+                ctx.fuel = call_ctx.fuel;
+                landed
+            }
+            other => other,
+        };
         if rv.is_morphism() {
             let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
             if matches!(res, Value::Bottom(_) | Value::Top) {
