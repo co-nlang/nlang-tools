@@ -267,3 +267,24 @@ fn g2_the_roots_do_not_move() {
     w.commit(&["k: { t: { @{ @int }: 1, _: 0 } }\n"]);
     assert_eq!(w.root(), "275bc55ddc3801d21b306de8cb06f1d9a8d455aea7bed823ab889975620d559f");
 }
+
+// ── Acceptance (acceptor, 2026-10-13): two cells the reference missed ────
+
+/// The delivery found a third reader the acceptor's reference did not fix:
+/// `|>` distributes a union on the right member by member (D104), and each
+/// member is read as a table only after its spreads land. And a table whose
+/// chosen branch holds a spread table applies it to the input (D100), as it
+/// does the same table written directly.
+/// v0.85.0 red (`#conflict`; `2`; the inner table itself). The acceptor's
+/// reference (q084-ref 66dfcc3) red on the first two. Delivery e270e8b green.
+#[test]
+fn r9_a_union_member_and_a_branch_value_land_first() {
+    answers("r9", &[
+        ("7 |> ({ ...{ @{ @int }: 1 }, _: 0 } | { @{ @str }: 2 })", "1"),
+        ("\"s\" |> ({ ...{ @{ @int }: 1 }, _: 0 } | { @{ @str }: 2 })", "0 | 2"),
+        ("{ @{ @int }: { ...{ @{ @int }: 1 }, _: 0 } } 7", "1"),
+        // Controls, right on v0.85.0: the same, written directly.
+        ("\"s\" |> ({ @{ @int }: 1, _: 0 } | { @{ @str }: 2 })", "0 | 2"),
+        ("{ @{ @int }: { @{ @int }: 1, _: 0 } } 7", "1"),
+    ]);
+}
