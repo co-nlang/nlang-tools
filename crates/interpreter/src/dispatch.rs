@@ -78,16 +78,95 @@ pub(crate) fn branch_cocoon(pattern: Value, body: Value) -> Value {
     ))
 }
 
-/// D109: a body is code until its branch is chosen when it needs the
-/// input or has an effect. Its identity is then its code; a closed pure
-/// body may still be evaluated early and is identified by its value.
+/// A body stays code until its branch is chosen when forcing it might
+/// run something. The stored effect is not enough: an arrow's tag is
+/// pure, so applying one is deferred even when prediction says `#pure`.
+/// A closed pure body that does not apply anything may still be a value.
 pub(crate) fn is_deferred_body(v: &Value) -> bool {
     match v {
         Value::Thunk { expr, effect, .. } => {
-            *effect != EffectTag::Pure || nlang_parser::tier::has_free_dollar(expr)
+            *effect != EffectTag::Pure
+                || nlang_parser::tier::has_free_dollar(expr)
+                || expr_applies(expr)
         }
         _ => false,
     }
+}
+
+/// An `Apply` outside a nested arrow body. Forcing an arrow builds it
+/// and does not run its body, so an application in that body is not
+/// this body's application. Both sides of `|>` count: forcing the pipe
+/// runs the right-hand side.
+fn expr_applies(expr: &nlang_parser::ast::Expr) -> bool {
+    use nlang_parser::ast::{Expr, ExprKind, Field, FieldKey, StringPart};
+    fn go(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Apply(_, _) => true,
+            // Forcing a pipe runs its right-hand side. An arrow there is
+            // predicted pure, the same hole as an application.
+            ExprKind::Pipe(lhs, rhs) => go(lhs) || pipe_rhs_underreports(rhs) || go(rhs),
+            ExprKind::Morphism { param, body: _ } => go(param),
+            ExprKind::Interpolated(parts) => parts.iter().any(|part| match part {
+                StringPart::Interpolated(e) => go(e),
+                StringPart::Literal(_) => false,
+            }),
+            ExprKind::Combo { fields, .. } => fields.iter().any(field_applies),
+            ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b) => go(a) || go(b),
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => go(cond) || go(then_branch) || go(else_branch),
+            ExprKind::Unary { expr: e, .. }
+            | ExprKind::AnonSet(e)
+            | ExprKind::Spread(e)
+            | ExprKind::Structural(e)
+            | ExprKind::Complement(e) => go(e),
+            ExprKind::List(items) | ExprKind::Tuple(items) => items.iter().any(go),
+            ExprKind::Range { start, end, step } => {
+                go(start) || go(end) || step.as_ref().is_some_and(|s| go(s))
+            }
+            ExprKind::Path(_) | ExprKind::Atom(_) | ExprKind::Poset(_) | ExprKind::Context => false,
+        }
+    }
+    fn field_applies(field: &Field) -> bool {
+        let key_applies = match &field.key {
+            FieldKey::Pattern(e) => go(e),
+            FieldKey::Named { .. } | FieldKey::Quoted(_) | FieldKey::Path(_) => false,
+        };
+        key_applies || go(&field.value)
+    }
+    /// A pipe applies this expression. A builtin path's stored effect is
+    /// what prediction already recorded; an arrow's tag is pure either way.
+    fn pipe_rhs_underreports(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Morphism { .. } => true,
+            ExprKind::Path(p) => !p
+                .segments
+                .iter()
+                .any(|s| s.trim().trim_start_matches('/').starts_with("~%")),
+            ExprKind::Pipe(_, rhs) => pipe_rhs_underreports(rhs),
+            _ => false,
+        }
+    }
+    go(expr)
 }
 
 /// A dispatch branch: a pattern plus one body, or a set of bodies.

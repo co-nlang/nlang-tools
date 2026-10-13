@@ -166,3 +166,72 @@ I6：封閉而純的本體仍是值。`{ @{ 4 }: 1 + 1 } = { @{ 4 }: 2 }` 是 `#
     *   **R1-Q1** 你的判準下，`{ g: (x -> x + 1), k: { @{ 4 }: g 1 } }` 這種「封閉、實際純、但施用了箭頭」的本體，是值還是程式碼？`k` 的根在 v0.88.0、`92ce296`、你的 R-1 各是什麼？（D109 Q1 乙說封閉純本體「可」提前求值——是許可，不是義務；延後它不違反裁定。）
     *   **R1-Q2** 你的改動是否改變任何表以外的值的提交形或 `%effect` 標記？舉 `k: { a: (x -> ~%Io./write_file (…)) 0 }`（一般欄位，觀測時執行是 CbO）與 `k: { a: (x -> x + 1) 0 }` 為例，v0.88.0 與 R-1 的提交行為、根、`_.k`。
 *   r1–r5、g1 必須保持綠；§4 紅線不變。
+
+### 9.3 修補回報
+
+#### 9.3.1 射程
+
+沒被選中的分支不執行，預測報成 `#pure` 的也一樣。r6 綠：兄弟箭頭 `f 1`、就地 `(x -> write) 0`，在 `oo eval` 與 `=` 不寫檔，提交也不寫。選中照常寫：就地 `({…}) "s"`，提交後 `_.k "s"`。r1–r5、g1 綠。
+
+#### 9.3.2 順手改動（逐項指名）
+
+只改 `dispatch.rs` 的 `is_deferred_body`。thunk 本體在三條任一成立時留成程式碼：效應標記不是 `#pure`、有自由 `$`、或表達式在巢狀箭頭的本體之外有施用。
+
+施用是 `Apply`。不走入巢狀箭頭的本體（強制一支箭頭是把它建成值，不跑它的本體）；箭頭參數裡的施用算。組合、插值、算術、串列，以及 `|>` 的兩邊都走。`|>` 另計一條：右式是箭頭，或右式是路徑且沒有任何段以 `~%` 開頭，這條管道也延後——預測對箭頭標 `#pure`，強制管道會跑它。
+
+沒有改的，逐項：
+
+1. `predict_effect`（`eval.rs`）沒有改。它的三個使用者因此也不變：
+    *   提交投影 `project_for_commit`：一般欄位仍照舊強制。
+    *   `refuse_lying_pure`：仍拿建成之後的實際效應，對照宣告的 `#pure`。
+    *   值上的 `%effect` 標記仍是預測寫上的那個。
+2. `force_recursive`、`project_for_commit` 對規則繭 `%val` 的跳過、`narrow_deferred_body`、`canonical_bodies`、`table_display_rows`：沿用 `92ce296`，沒有再改。`is_deferred_body` 的三個呼叫點都在規則繭的 `%val` 上。一般欄位不走它。
+
+代價在表的本體，不在表以外的值。封閉、實際純、但有施用的本體留成程式碼（D109 的「可」提前求值是許可）。量過：`{ @{ 4 }: ~%Math./add (1, 2) }` 印源碼，施於 `4` 得 `3`。`1 |> (x -> ~%Io./write_file (…))` 與 `1 |> f`（`f` 是那支箭頭）觀測不寫檔、印源碼，選中才寫。`{ @{ @int }: 1 |> $ }` 仍印 `{ @{ @int }: 1 }`。`{ @{ 4 }: 1 + 1 }` 仍是值 `2`，根仍是 `72ce697e34f3a6f59a6fa9b0e773427263fa9d734d83c84d91f81b41a446c216`。
+
+#### 9.3.3 工單哪裡是錯的
+
+無。
+
+#### 9.3.4 R1-Q1、R1-Q2
+
+**R1-Q1** 本體是程式碼。`oo eval` 與提交後的 `_.k` 都印 `{ @{ 4 }: g 1 }`。`_.k 4` 是 `2`。檔案是 `g: (x -> x + 1)` 與 `k: { @{ 4 }: g 1 }`，根是提交後 `oo inspect` 的宇宙根（最後一個冒號之後的 64 hex）。同一份檔案提交兩次，根相同。
+
+| | 根 | `_.k` |
+| --- | --- | --- |
+| v0.88.0 | `08b59cd38f3d0feb317c521c3fb138cddfc8a12b9d7a451773daad51216761e8` | `{ @{ 4 }: 2 }` |
+| `92ce296` | 同上 | 同上 |
+| R-1 | `6029b1ca8ae983e17a5637ee04f0605e0cb4c72affaf46372a67dbe8e0051aea` | `{ @{ 4 }: g 1 }` |
+
+v0.88.0 是 `86de366` 的乾淨工作樹釋出建置，`oo v0.88.0-1074-g86de366`。`92ce296` 是改引擎之前複製下來的 `target/release/oo`（10877744 bytes，`oo v0.88.0-1074-g86de366+`）。R-1 是本輪釋出建置。
+
+**R1-Q2** 這兩個一般欄位的提交行為、根、`_.k`、`%effect`，v0.88.0、`92ce296`、R-1 三份相同。
+
+| 檔案 | 提交 | 根 | `_.k` |
+| --- | --- | --- | --- |
+| `k: { a: (x -> ~%Io./write_file ("q.txt", "x")) 0 }` | 寫檔 | `94d598bccc983991eb2ae4a3996be9e663ca8735eaa7eff671a5d67340ce67fa` | `{ a: #true ;; %effect: #io }`，讀 `_.k` 也寫檔 |
+| `k: { a: (x -> x + 1) 0 }` | 不寫檔 | `31b7db17b05376d0b1d038884cd323ba9d3f7c565652d250b3f2c3bad058de23` | `{ a: 1 }`（純，不另印 `%effect`） |
+
+Q-087 已經分開的三根仍在：`$ * 10` `b91f202d0ee7ee9a96f73474c7c743aaf37731fc651b403c1f28b6d8fe830b3d`（`_.k 5` 是 `50`），`$ + 1` `37026f7d8c3572710a84e93e3c4c81f367408b86986d8747a202bdbc3189ad2d`（`6`），`$ * 2` `38eab6ee5bb4a0e4a95043f1636a399feeb08132386d34e2e021bebb0a5ed497`（`10`）。未動的：`43480b6b8fce1ec0c971f2d6d956b33f2b971371364d65006903ffd67ef41fe9`、`72ce697e…`（上一節）、巢狀 `95238ba4df05b3d33220b33ce9ef51dcedd9ab031a69563451bebefe31236b3e`（`_.k.t 5` 是 `50`）、效應本體 `a5328b8af7a08380c0fb4179d709a7757f2696dc050075da43c5db13b296bab4`（提交不寫，`_.k "s"` 寫）、g1 `275bc55ddc3801d21b306de8cb06f1d9a8d455aea7bed823ab889975620d559f`。
+
+`n: 1` 旁邊 `k: { @{ @int }: $ + 1 }`，`_.k = { @{ @int }: $ + 1 }` 是 `#true`，宇宙根 `650aac5f46ec514b638b945d80af5c05482c97b2db356e4c6acabd28b2c7f6fb`。`({ n: 1, t: { @{ @int }: $ + 1 } }.t) = { @{ @int }: $ + 1 }` 是 `#false`，兩邊施於 `5` 都是 `6`。`$ + n` 也是 `#false`。
+
+#### 9.3.5 探針
+
+探針檔未改，未 `rustfmt`。本探針 7／7，2.87s（r1–r6、g1）。
+
+§4 紅線，第一輪計時，皆通過：Q-086 4／4，2.28s。Q-077 12／12，3.26s；R-1 4／4，1.34s。Q-085 7／7，2.87s。Q-084 11／11，2.12s。Q-083 17／17，6.21s；bytes 1／1，0.23s；epochs 4／4，0.32s；union 2／2，0.00s；`pin_probe_test` 15／15，2.23s。Q-082 10／10，8.84s。Q-081 15／15，4.03s。Q-080 16／16，3.62s。Q-079 10／10，4.17s；R-1 3／3，0.49s。Q-078 15／15，6.31s。`kind_tag_probe_test` 7／7，0.34s。`a_table_that_forgot_its_patterns` 17／17，2.42s；R-1 6／6，0.65s；R-2 10／10，1.75s。`forward_spread` 12／12，1.06s；`spread_collision` 25／25，1.10s；`spread_privacy` 11／11，0.53s；`blur_spread` 13／13，3.06s；`import_is_spread` 7／7，0.44s；`spread_splice` 9／9，0.19s。`where_there_is_no_universe` 13／13，4.23s。三輪都沒有 `BrokenPipe`。
+
+#### 9.3.6 數字
+
+1. `oo` 仍是 `0.88.0`。
+2. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，各 `EXIT:0`。`test result:` 279 行，通過 2679，失敗 0，`^error` 0。正規化（去掉行首空白與 `finished in …s` 之後，留下 `test result:`、`test `、`Running `、`running ` 開頭的行）各 3513 行，sha256 `db903df5898e36e1a12e463bb2c9c9241503788a4bf3b6505b07cde3629f3469`，三輪相同。2679 是 `92ce296` 那輪的 2678 加上 r6 這一支；結果行數仍是 279，r6 在原探針檔裡。
+3. conformance 162／162，exit 0。前後 `/home/gali/nlang/.oo/format` 都是一個位元組 `0x32`（ASCII `2`；`xxd -p` 印 `32`）。
+4. `~%Math./add` (1, 2)=3、(1, 3)=4，rc 0，不建 `.oo/`。euid 1000。
+5. 身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。新倉物件裡標準根仍是 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。`.oo/format` 文字是 `layout=9`，`.oo/objects.format` 文字是 `encoding=6`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，4.50s。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
+#### 9.3.7 你認為需要改規格之處
+
+無。規格文字與 `CHANGELOG` 留給驗收方。
