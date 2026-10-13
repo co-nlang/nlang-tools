@@ -72,3 +72,71 @@
 ---
 
 ## 8. 交付回報（交付方填；本行以上一字不得動）
+
+### 8.1 射程逐項對照
+
+I1：欄位裡的表、提交後的表、依鍵查找的表、展開與寫出的模式鍵並列、展開一個名字，施用的答案與直接寫在頂層的同一張表相同。r1–r5、r8 綠。
+I2：施用與 `|>` 都在展開落地之後才讀這個 Combo 是不是表。r6 綠。管道右邊是聯集時，每個成員也先落地再讀；v0.85.0 上 `7 |> ({ ...{ @{ @int }: 1 }, _: 0 } | { @{ @str }: 2 })` 是 ⊥ `#conflict`，直接寫的表是 `1`，交付兩邊都是 `1`。
+I3：沒被選中的 `write_file` 不執行。r7 綠。
+I4：`|>` 右邊是一般 Combo 時仍合併。g1 綠。
+I5：表本身的兩根不動（`84df117f…`、`275bc55d…`）。g2 綠。新倉仍是 `layout=9`／`encoding=6`。
+
+### 8.2 順手改動（逐項指名）
+
+無。改動就是上面兩處：`force` 的 thunk 臂，與 `pipe_apply`（含聯集成員進 `pipe_apply_value` 的那一次）。
+
+### 8.3 工單哪裡是錯的
+
+無。Q3 的根與 `_.r` 都沒有變。
+
+### 8.4 工單指名要你回答的問題
+
+**Q1** 讀「是不是表／態射」的入口，落地前與落地後：
+
+1. `apply_morphism_dispatch` 先 `force`，再 `is_morphism`，再讀 `%rules`。Combo 臂本來就會展開。thunk 臂在 v0.85.0 求值完就回傳，欄位裡的表以 thunk 存，所以施用讀到的是只有 `_:` 的那張。交付在回傳與記入記憶之前先展開。
+2. `pipe_apply` 只把 thunk 剝掉，v0.85.0 接著就 `is_morphism`。字面上的展開表還沒有 `%rules`，於是去合併。交付在問之前展開。聯集的每個成員在 `pipe_apply_value` 裡再展開一次，因為分配發生在整段右邊已經判斷過之後。
+3. `force` 的 thunk 臂是上面那個回傳點。`force_recursive`、導航（`navigate_segments`）、`scope_view`、`force_coord`、`force_spread_source` 在讀欄位之前就展開。`=` 與印出走 `force_recursive`，所以本來就對。
+4. 內建收到的引數是施用時已經 `force` 過的。`~%List./map ([7, 8], <表>)` 在 v0.85.0 與交付都回未施用的 `list.map`，引數印出來已是 `{ @{ @int }: 1 _: 0 }`。`~%Refl./type_of` 這個名字兩邊都是 `#missing_key`。沒有另找一個內建在展開落地前讀表。
+5. `&`：`unify_internal` 先 `force` 兩邊，`unify_combo` 再展開，然後才 `meet_as_tables`。`1 & { ...{ @{ @int }: 1 }, _: 0 }` 在 v0.85.0 已是 ⊥ `#conflict`，與直接寫的表相同。`|` 不問它是不是態射。
+6. 選中分支的值若是箭頭，`apply_single_rule` 在 `force` 之後才 `is_morphism`。v0.85.0 這條會看見 thunk 臂交出來的未落地表；thunk 臂補上之後，它看見的是落地後的箭頭。r8 綠。
+
+今天會讀到未落地的形的，是 1、2、3，以及 6 經由 3。4 與 5 在讀之前已經落地。
+
+**Q2** 基線是當時的釋出 `oo`（`oo v0.85.0-1059-g2a6427b`）。交付是本輪釋出閘的 `oo`。根是 `oo inspect` 的 `root:` 最後一個冒號之後的 64 hex。
+
+| 檔 | v0.85.0 根 | v0.85.0 `_.r` | 交付根 | 交付 `_.r` |
+| :-- | :-- | :-- | :-- | :-- |
+| `r: { t: { ...{ @{ @int }: 1 }, _: 0 } }.t 7` | `070dcd492035437efd178446036c29722ed88f8e06936b150018cdbe7e519db4` | `0` | `04f389b7b5b4af1bca66bdf05e0ac406f47d3aff4a54b2b0a8c7884a0fc09c2c` | `1` |
+| `k: { t: { ...{ @{ @int }: 1 }, _: 0 } }` 與 `r: _.k.t 7` | `032029e9c106988b856ef48acab4f54f7096c7d787459853fcf5f08566904d5b` | `0` | 同一根 | `1` |
+| 同上，`r: k.t 7` | `5a543675a1bb9bda7ec9dda29a936bf693face1256755bfc7ec3bff485ea0790` | `0` | `9c9c4b775ed575b4581686f4c7921646d8ceac0fb155a0fd6cc4da00de0de977` | `1` |
+| `r: 7 |> { ...{ @{ @int }: 1 }, _: 0 }` | `7674df6e0cf1aadcedf26afd44b62186155cc717799a1864be4e90d634611f97` | ⊥ `#conflict` | `04f389b7b5b4af1bca66bdf05e0ac406f47d3aff4a54b2b0a8c7884a0fc09c2c` | `1` |
+| `r: { ...{ @{ @int }: 1 }, _: 0 } 7` | `04f389b7b5b4af1bca66bdf05e0ac406f47d3aff4a54b2b0a8c7884a0fc09c2c` | `1` | 同一根 | `1` |
+| `k: { t: { ...{ @{ @int }: 1 }, _: 0 } }` | `84df117faf575e96bcf3db4a95f91a00dd98ed58494ad9974995535dc2dca6aa` | `_` | 同一根 | `_` |
+
+移動的三根，答案都由錯變對。第一與第四交付後的根就是第五個（頂層施用，本來就是 `1`）的根：存下來的 `r` 現在是 `1`。第三個在提交時把兄弟 `k.t 7` 算成值存進去，所以根換了，`_.r` 由 `0` 變 `1`。
+
+第二個根不動，`_.r` 由 `0` 變 `1`。`r: _.k.t 7` 存的是這次讀，提交沒有把當時的 `0` 寫成原子；現在讀的時候展開先落地。第五、六個根不動，答案也不變。第六個就是 g2。
+
+**Q3** 兩次 evolve，先 `r: { a: 1, ...c }`，後 `c: { b: 2 }`，提交後 v0.85.0 與交付都是 `_.r` = `{ a: 1 }`，根都是 `e8994fed4ad867e6be693732ec86e0ca9eaeaa395fd1e38b374751603dcb4f76`。
+
+**Q4** 記憶化存的是落地之後的值。展開插在寫入 `force_memo` 之前；命中直接交回那一筆。同一個 thunk 的命中與未命中都是落地後的 Combo。鍵仍是 thunk（運算式、框、上下文、策略、燃料），所以表的位址不動，g2 仍綠。
+
+### 8.5 探針
+
+探針檔未改，未 rustfmt。無 `#[ignore]`。
+
+全樹第三輪：本探針 10／10，1.87s。Q-083 探針 17／17，6.23s；bytes 1／1，0.23s；epochs 4／4，0.30s；union 2／2，0.00s。`pin_probe_test` 15／15，2.20s。Q-082 10／10，8.68s。Q-081 15／15，4.05s。Q-080 16／16，3.54s。Q-079 10／10，4.04s；R-1 3／3，0.48s。Q-078 15／15，6.08s。`forward_spread_probe_test` 12／12，0.85s。`a_name_spread_in_probe_test` 15／15，6.08s。`spread_collision` 25／25，0.92s。`spread_privacy` 11／11，0.38s。`blur_spread` 13／13，3.07s。`import_is_spread` 7／7，0.42s。`spread_splice_test` 9／9，0.15s。
+
+### 8.6 數字
+
+1. 版本仍是 `oo` 0.85.0。新倉 `layout=9`／`encoding=6`。
+2. 釋出全樹三輪，`--jobs 1`，`--test-threads=1`。每輪 `test result:` 276 行，passed 2660，failed 0，`^error` 0，exit 0。去掉行首空白與 `finished in …s` 之後，以 `test result:`、`test `、`Running `、`running ` 開頭的行三輪相同，各 3485 行。
+3. conformance 162／162，exit 0。cwd 是 `/home/gali/nlang`。跑完 `.oo/format` 仍是 `32`。
+4. 新鮮目錄裡 `~%Math./add (1, 2)` 是 3，`(1, 3)` 是 4，rc 0，該目錄沒有 `.oo`。euid 1000。`oo-ephemeral-*` 為 0。
+5. `x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，4.58s。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
+### 8.7 你認為需要改規格之處
+
+無。規格文字與 `CHANGELOG` 留給驗收方。
