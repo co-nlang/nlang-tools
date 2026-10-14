@@ -100,12 +100,12 @@ fn oo_repl(dir: &Path, lines: &str) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(lines.as_bytes())
-        .unwrap();
+    // The child may answer and exit before it reads its input (a
+    // refusal does). What it printed and its exit code are the reading;
+    // a pipe it closed first is not. Other write errors fail.
+    if let Err(e) = child.stdin.as_mut().unwrap().write_all(lines.as_bytes()) {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "writing stdin: {e}");
+    }
     let out = child.wait_with_output().unwrap();
     format!(
         "{}{}",

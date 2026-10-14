@@ -78,6 +78,97 @@ pub(crate) fn branch_cocoon(pattern: Value, body: Value) -> Value {
     ))
 }
 
+/// A body stays code until its branch is chosen when forcing it might
+/// run something. The stored effect is not enough: an arrow's tag is
+/// pure, so applying one is deferred even when prediction says `#pure`.
+/// A closed pure body that does not apply anything may still be a value.
+pub(crate) fn is_deferred_body(v: &Value) -> bool {
+    match v {
+        Value::Thunk { expr, effect, .. } => {
+            *effect != EffectTag::Pure
+                || nlang_parser::tier::has_free_dollar(expr)
+                || expr_applies(expr)
+        }
+        _ => false,
+    }
+}
+
+/// An `Apply` outside a nested arrow body. Forcing an arrow builds it
+/// and does not run its body, so an application in that body is not
+/// this body's application. Both sides of `|>` count: forcing the pipe
+/// runs the right-hand side.
+fn expr_applies(expr: &nlang_parser::ast::Expr) -> bool {
+    use nlang_parser::ast::{Expr, ExprKind, Field, FieldKey, StringPart};
+    fn go(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Apply(_, _) => true,
+            // Forcing a pipe runs its right-hand side. An arrow there is
+            // predicted pure, the same hole as an application.
+            ExprKind::Pipe(lhs, rhs) => go(lhs) || pipe_rhs_underreports(rhs) || go(rhs),
+            ExprKind::Morphism { param, body: _ } => go(param),
+            ExprKind::Interpolated(parts) => parts.iter().any(|part| match part {
+                StringPart::Interpolated(e) => go(e),
+                StringPart::Literal(_) => false,
+            }),
+            ExprKind::Combo { fields, .. } => fields.iter().any(field_applies),
+            ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b) => go(a) || go(b),
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => go(cond) || go(then_branch) || go(else_branch),
+            ExprKind::Unary { expr: e, .. }
+            | ExprKind::AnonSet(e)
+            | ExprKind::Spread(e)
+            | ExprKind::Structural(e)
+            | ExprKind::Complement(e) => go(e),
+            ExprKind::List(items) | ExprKind::Tuple(items) => items.iter().any(go),
+            ExprKind::Range { start, end, step } => {
+                go(start) || go(end) || step.as_ref().is_some_and(|s| go(s))
+            }
+            ExprKind::Path(_) | ExprKind::Atom(_) | ExprKind::Poset(_) | ExprKind::Context => false,
+        }
+    }
+    fn field_applies(field: &Field) -> bool {
+        let key_applies = match &field.key {
+            FieldKey::Pattern(e) => go(e),
+            FieldKey::Named { .. } | FieldKey::Quoted(_) | FieldKey::Path(_) => false,
+        };
+        key_applies || go(&field.value)
+    }
+    /// A pipe applies this expression. A builtin path's stored effect is
+    /// what prediction already recorded; an arrow's tag is pure either way.
+    fn pipe_rhs_underreports(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Morphism { .. } => true,
+            ExprKind::Path(p) => !p
+                .segments
+                .iter()
+                .any(|s| s.trim().trim_start_matches('/').starts_with("~%")),
+            ExprKind::Pipe(_, rhs) => pipe_rhs_underreports(rhs),
+            _ => false,
+        }
+    }
+    go(expr)
+}
+
 /// A dispatch branch: a pattern plus one body, or a set of bodies.
 pub(crate) fn is_rule_cocoon(c: &ComboVal) -> bool {
     c.get_field("%pattern").is_some()
@@ -312,7 +403,46 @@ pub(crate) fn canonical_bodies(v: Value) -> Value {
 /// A value with a pattern key has one shape: every plain data key is the
 /// branch its constraint names. Does not walk into `%rules` or into values
 /// that are not themselves tables — a rules combo is not normalized again.
-pub(crate) fn normalize_table(mut c: ComboVal) -> ComboVal {
+pub(crate) fn normalize_table(c: ComboVal) -> ComboVal {
+    let mut c = normalize_table_rows(c);
+    // D109: deferred bodies carry only what they capture, so one body has one
+    // identity however its table was built.
+    if let Some(Value::Combo(rules)) = c.get_field("%rules").cloned() {
+        if rules_have_pattern(&rules) {
+            let mut out = rules.clone();
+            for (k, v) in rules.data.iter() {
+                out.data.insert(k.clone(), narrow_rule(v.clone()));
+            }
+            c.insert_field("%rules", Value::Combo(out));
+        }
+    }
+    c
+}
+
+fn narrow_rule(v: Value) -> Value {
+    match v {
+        Value::Combo(mut rc) if is_rule_cocoon(&rc) => {
+            if let Some(body) = rc.meta.get("val").cloned() {
+                if is_deferred_body(&body) {
+                    rc.meta.insert("val".to_string(), crate::eval::narrow_deferred_body(body));
+                }
+            }
+            if let Some(Value::Combo(mut bs)) = rc.meta.get("bodies").cloned() {
+                let keys: Vec<String> = bs.data.keys().cloned().collect();
+                for k in keys {
+                    if let Some(b) = bs.data.shift_remove(&k) {
+                        bs.data.insert(k, narrow_rule(b));
+                    }
+                }
+                rc.meta.insert("bodies".to_string(), Value::Combo(bs));
+            }
+            Value::Combo(rc)
+        }
+        other => other,
+    }
+}
+
+fn normalize_table_rows(mut c: ComboVal) -> ComboVal {
     let rules = match c.get_field("%rules") {
         Some(Value::Combo(r)) if rules_have_pattern(r) => r.clone(),
         _ => return c,

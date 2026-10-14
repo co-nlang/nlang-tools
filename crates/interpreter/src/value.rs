@@ -561,7 +561,9 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
             _ => return None,
         };
         let pattern = rc.get_field("%pattern")?;
-        let body = if let Some(Value::Combo(bs)) = rc.get_field("%bodies") {
+        // D109: each body of a branch prints as its own row under the same
+        // key; repeated keys read back as one branch with that body set.
+        let bodies = if let Some(Value::Combo(bs)) = rc.get_field("%bodies") {
             let mut parts = Vec::new();
             for (_, b) in bs.data.iter() {
                 match b {
@@ -569,9 +571,9 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
                     _ => return None,
                 }
             }
-            parts.join(" & ")
+            parts
         } else {
-            rc.get_field("%val")?.to_nlang(indent + 1)
+            vec![rc.get_field("%val")?.to_nlang(indent + 1)]
         };
         // D107: an atom prints as a bare key only when that key reads
         // back as the same constraint. `@{ "4" }:` is not `4:`.
@@ -591,7 +593,9 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
                 == crate::dispatch::pattern_branch_name(pattern)
         });
         let key = if let Some((k, _)) = bare {
-            spelled.push(format!("@{{ {} }}", pattern.to_nlang(0)));
+            for _ in &bodies {
+                spelled.push(format!("@{{ {} }}", pattern.to_nlang(0)));
+            }
             k
         } else {
             match pattern {
@@ -604,7 +608,9 @@ fn table_display_rows(c: &ComboVal, indent: usize) -> Option<Vec<(String, String
                 other => format!("@{{ {} }}", other.to_nlang(0)),
             }
         };
-        rows.push((key, body));
+        for body in bodies {
+            rows.push((key.clone(), body));
+        }
     }
     // D108: bare rows stay bare only when some other row already prints
     // `@{ … }`. When every row would be bare, every row keeps `@{ … }`.
