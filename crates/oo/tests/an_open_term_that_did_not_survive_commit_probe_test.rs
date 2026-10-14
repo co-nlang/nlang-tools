@@ -237,3 +237,40 @@ fn g1_values_without_open_terms_keep_their_roots() {
         assert_eq!(r, root, "{src}");
     }
 }
+
+// ── Red, added at acceptance (R-1) ───────────────────────────────────────
+
+/// I1 at any depth: a stored open term reached inside an evolution takes
+/// that evolution's `$` wherever it is reached — not only as the whole
+/// right side of `|>`. Each cell is paired with the same template defined
+/// in place and reached by name, which is right on v0.89.0 and on the
+/// first delivery; the stored one must give the same answer. P3: "observed,
+/// it is bound by the nearest enclosing evolution"; SPEC_07 §4.2.2's own
+/// example binds an open term nested in the right side (`v.w.x.a`).
+/// v0.89.0 and `4b0c765`: every stored cell ⊥ #no_context.
+#[test]
+fn r5_a_stored_open_term_binds_wherever_it_is_reached() {
+    let mut bad = Vec::new();
+    // A bare open term, not a record: it collapsed at evolve, before commit.
+    let bare = [("{ b: 1 } |> _.t", "{ b: 1 } |> t", "2")];
+    // A record template, reached in a field, as an arrow's result, and as a
+    // table body. Not here: `<<…>>` on the right of `|>` stays a live
+    // reference whose `$` is bound when it is dereferenced (Stage 3, F1) —
+    // the Inbox row on `<<_.>>`.
+    let rec = [
+        ("{ b: 1 } |> { r: _.t }", "{ b: 1 } |> { r: t }", "{ b: 1 r: { a: 2 } }"),
+        ("{ b: 1 } |> (x -> _.t)", "{ b: 1 } |> (x -> t)", "{ a: 2 }"),
+    ];
+    for (def, cells) in [("$.b + 1", &bare[..]), ("{ a: $.b + 1 }", &rec[..])] {
+        let src = format!("t: {def}\n");
+        for (stored, in_place, want) in cells {
+            // Control, right on v0.89.0.
+            let e = format!("{{ t: {def}, r: {in_place} }}.r");
+            bad.extend(after_commit("r5c", "x: 0\n", &[(e.as_str(), *want)]));
+            bad.extend(after_commit("r5", &src, &[(*stored, *want)]));
+        }
+    }
+    bad.extend(after_commit("r5c", "x: 0\n", &[("{ t: { a: $ + 1 }, k: { @{ @int }: t } }.k 5", "{ a: 6 }")]));
+    bad.extend(after_commit("r5", "t: { a: $ + 1 }\nk: { @{ @int }: t }\n", &[("_.k 5", "{ a: 6 }")]));
+    assert!(bad.is_empty(), "\n{}", bad.join("\n"));
+}
