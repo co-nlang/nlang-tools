@@ -763,7 +763,7 @@ impl Ouroboros {
                 )));
                 call_ctx.context_value = Some(arg.clone());
 
-                let out = self.eval(expr, &mut call_ctx);
+                let out = crate::eval::bind_open_terms(self.eval(expr, &mut call_ctx), &arg);
                 ctx.fuel = call_ctx.fuel;
                 return out;
             }

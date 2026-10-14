@@ -200,3 +200,72 @@ I4：`c: c + 1` 仍是 ⊥ `#divergent`，`k: { a: 1 / 0 }` 仍是 ⊥ `#numeric
 *   **參考實作全樹** `cargo test --workspace --release --offline --no-fail-fast`：285 target、2685 通過、0 失敗（= 第一輪 2684 加 r5）；交叉編譯 0 error；conformance 162／162（前後 `.oo/format` 皆 `0x32`）；§4 身分紅線逐根不動；Q2 六根不動；`t: $.b + 1` 移到 `031d1fa1…`；`run --observe v.w.x.a` 提交前 `"Logic"`。
 *   **變異**（每次只拿掉一處，量完還原）：箭頭 ⟹ 只紅 `(x -> _.t)`；evolve ⟹ 只紅 `t: $.b + 1`；`force` ⟹ 只紅 `{ r: _.t }` 與 `_.k 5`。三處都不是死碼。r1–r4、g1 在每個變異下都綠。
 *   **驗收方自陳**：(1) 第一版 R-1 參考實作 `25edbfc` 也在 `force` 解 Ref 時綁定 ⟹ 標準庫根上的全量觀測 OOM；改成在 `|>` 右邊的 Ref 分支解參照再綁 ⟹ `stage3_probe_test` 四支全紅（活 Ref 被 evolve 快照）。兩次都是跑全樹才看到——探針與 gap 量測都綠。右邊的 `<<…>>` 因此移出 R-1（9.1 末段）。(2) 第一版 r5 有五格，第五格就是那一格，已刪。
+
+### 9.4 修補回報
+
+#### 9.4.1 射程
+
+存起來的開放項，在到達它的那次演化裡綁上那次的 `$`。r5 四格存起來的都綠，四格就地對照仍綠。r1–r4、g1 綠。`{ b: 1 } |> <<_.t>>` 仍是 ⊥ `#no_context`（9.1 末段移出的那格，沒有拉回來）。
+
+#### 9.4.2 順手改動（逐項指名）
+
+三處都呼叫既有的 `bind_open_terms`（`eval.rs`，改成 `pub(crate)`）。它只給 `context` 為空且有自由 `$` 的 thunk 蓋上這次輸入，並走進組合的每個軸與聯集。
+
+1. `lib.rs` `force`。被強制的值是 thunk 時，綁定取 thunk 自己的 `context`，沒有就取當下的 `$`。結果再走 `bind_open_terms`。`Ref` 不在這裡蓋章。
+2. `dispatch.rs` 態射本體的回傳。`%code` 求完之後，以引數蓋上去。
+3. `universe.rs` 頂層欄位的 `evolve`。沒有 `$`、求值結果是 ⊥ `#no_context`、而且式子有自由 `$`，就改存成那個式子的 thunk（`context` 空）。其餘 ⊥ 照舊存下。
+
+D109 的文件註解從 `bind_open_terms` 移回 `narrow_deferred_body`。`narrow_deferred_body` 的函式沒改。
+
+沒有在 `force` 解 `Ref` 時綁，也沒有在管道右邊先解 `<<…>>`。
+
+#### 9.4.3 工單哪裡是錯的
+
+無。
+
+#### 9.4.4 R1-Q1 至 R1-Q4
+
+**R1-Q1** 綁在上面三處。每一處單獨拿掉、其餘兩處留著，只跑 r5（除錯建置，量完還原）：
+
+*   拿掉態射回傳：只有 `{ b: 1 } |> (x -> _.t)`，得到 ⊥ `#no_context`。
+*   拿掉頂層 `evolve`：只有 `t: $.b + 1` 之後的 `{ b: 1 } |> _.t`，得到 ⊥ `#no_context`（說明停在成因：存下的是那個 ⊥）。
+*   拿掉 `force`：`{ b: 1 } |> { r: _.t }` 與 `_.k 5`，都是 ⊥ `#no_context`。
+
+三處都有一格紅。沒有刪。
+
+**R1-Q2** 判準是兩條同時成立：結果的成因是 `#no_context`，而且式子有自由 `$`。不是「任何沒有演化時觀測得 ⊥」。`t: 1 / 0` 的 `status` 仍是 `{ t: _|_ ;; %cause: #numerical_error }`，`_.t` 同。`c: c + 1` 的根仍是 `3f0a62e4ac00a7517e258bee6afbc348f33167cb1cd42e9bcefa419645c2da34`，`_.c` 是 ⊥ `#divergent`。`t: (x -> $)` 求值得到的是箭頭，不是 ⊥，所以這條不改寫它。`t: 1 |> $` 在演化時就是 `1`（`$` 在管道右式，不是這條式子的自由 `$`）。
+
+`t: $.b + 1` 提交後的根是 `031d1fa1fcab64d3c48dad4ec0898d4ca73f930651ebbc264c1ff435318ba286`。`4b0c765` 是 `13d8fecb0b34cabf790d05b2142d7eb544e276c0341bc53591c00154d81a7423`。`status`（提交前）印 `t: $["b"] + 1`。提交後 `_.t` 是觀測，印
+
+```
+_|_  ;; %cause: #no_context  ;; free `$` observed without an enclosing evolution (P3)
+```
+
+`{ b: 1 } |> _.t` 是 `2`。Q2 的六個根沒有再動：`e3f6218e…`、`24ce977c…`、`2c8854d5…`、`3f0a62e4…`、`889b4174…`、`d3de86f4…`。
+
+**R1-Q3** 蓋上去的是到達當下的那次輸入。`t: { a: $.b + 1 }` 提交後：
+
+*   `{ b: 1 } |> { r: { b: 2 } |> _.t }` 是 `{ b: 1, r: { a: 3, b: 2 } }`。內層管道的輸入是 `{ b: 2 }`。
+*   `{ b: 1 } |> { r: (x -> _.t) { b: 7 } }` 是 `{ b: 1, r: { a: 8 } }`。箭頭的引數是 `{ b: 7 }`。外層的 `{ b: 1 }` 沒有蓋進 `_.t`。
+
+**R1-Q4** 會複製。`bind_open_terms` 把輸入 `clone` 進每個還沒綁定的開放項 thunk。`force` 另外把那次綁定（thunk 的 `context`，或當下的 `$`）複製一次，再走那條。不在解 `Ref` 時複製整棵根。`stage3_probe_test` 四支 4／4，1.69s，含標準庫根的全量觀測，沒有 OOM。全樹第一輪 1060.6s（含釋出編譯）；第二輪 588.9s、第三輪 590.4s。Q-088 交付的第二輪是 572.4s、第三輪 569.9s，同樣是編譯之後的一輪。
+
+#### 9.4.5 探針
+
+探針檔未改，未 `rustfmt`。本探針 6／6，3.09s。
+
+§4 紅線，第一輪計時，皆通過：Q-087 7／7，2.87s。Q-086 4／4，2.30s。Q-077 12／12，3.28s；R-1 4／4，1.42s。Q-085 7／7，2.97s。Q-084 11／11，2.08s。Q-083 17／17，6.42s；bytes 1／1，0.23s；epochs 4／4，0.36s；union 2／2，0.00s；`pin_probe_test` 15／15，2.34s。Q-082 10／10，8.75s。Q-081 15／15，4.16s。Q-080 16／16，3.60s。Q-079 10／10，4.05s；R-1 3／3，0.50s。Q-078 15／15，6.14s。`kind_tag_probe_test` 7／7，0.31s。`a_table_that_forgot_its_patterns` 17／17，2.55s；R-1 6／6，0.64s；R-2 10／10，1.74s。`forward_spread` 12／12，1.37s；`spread_collision` 25／25，0.97s；`spread_privacy` 11／11，0.40s；`blur_spread` 13／13，3.17s；`import_is_spread` 7／7，0.42s；`spread_splice` 9／9，0.16s。`where_there_is_no_universe` 13／13，4.17s。`stage3_probe_test` 4／4，1.69s。三輪都沒有 `BrokenPipe`。
+
+#### 9.4.6 數字
+
+1. `oo` 仍是 `0.89.0`。
+2. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，各 `EXIT:0`。`test result:` 280 行，通過 2685，失敗 0，`^error` 0。正規化（去掉行首空白與 `finished in …s` 之後，留下 `test result:`、`test `、`Running `、`running ` 開頭的行）各 3522 行，sha256 `68f0137ccee3589394eb47bdf69d32f7b77c57b48c1e5e428f24bff3cd9f603e`，三輪相同。2685 是 `4b0c765` 那輪的 2684 加上 r5。
+3. conformance 162／162，exit 0。前後 `/home/gali/nlang/.oo/format` 都是一個位元組 `0x32`（ASCII `2`；`xxd -p` 印 `32`）。
+4. `~%Math./add` (1, 2)=3、(1, 3)=4，rc 0，不建 `.oo/`。euid 1000。
+5. 身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。新倉物件裡標準根仍是 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。`.oo/format` 文字是 `layout=9`，`.oo/objects.format` 文字是 `encoding=6`。`k: { @{ @int }: $ + 1 }` 根仍是 `37026f7d8c3572710a84e93e3c4c81f367408b86986d8747a202bdbc3189ad2d`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，4.90s。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
+#### 9.4.7 你認為需要改規格之處
+
+無。規格文字與 `CHANGELOG` 留給驗收方。

@@ -654,6 +654,20 @@ impl Universe {
             ctx.computing.insert(c.clone());
         }
         let mut val = engine.eval(&field.value, &mut ctx);
+        // P3: a top-level open term evaluated with no enclosing evolution
+        // is kept as itself. The ⊥ is what observing it gives, not what
+        // is stored. Only `#no_context` on an expression with a free `$`.
+        if ctx.context_value.is_none()
+            && matches!(&val, Value::Bottom(d) if d.cause == BottomCause::NoContext)
+            && nlang_parser::tier::has_free_dollar(&field.value)
+        {
+            val = Value::Thunk {
+                expr: Box::new(field.value.clone()),
+                closure: ctx.scopes.clone(),
+                context: None,
+                effect: engine.predict_effect(&field.value, &ctx),
+            };
+        }
         for c in &coords {
             ctx.computing.remove(c);
         }

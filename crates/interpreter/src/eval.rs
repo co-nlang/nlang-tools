@@ -277,16 +277,10 @@ fn value_dependencies(value: &Value) -> HashSet<String> {
     }
 }
 
-/// Follow value dependencies to a fixed point before taking the frame slice:
-/// a captured `e` whose recipe reads `d` is not usable unless `d` travels too.
-/// D109: a deferred branch body is code, identified like an arrow body by
-/// its expression and what it captures — not by every frame around it. Its
-/// closure keeps each frame (position matters for `^`) but only the names
-/// the body uses, and what those names use.
-/// P3: an open term in a value that reaches the right of `|>` binds to the
-/// input there. A table body inside is bound too: choosing the branch
-/// binds `$` to the matched input again (D109).
-fn bind_open_terms(v: Value, input: &Value) -> Value {
+/// P3: an unbound open term takes the binding it was reached under.
+/// A table body is stamped too; choosing the branch binds `$` to the
+/// matched input again (D109).
+pub(crate) fn bind_open_terms(v: Value, input: &Value) -> Value {
     match v {
         Value::Thunk {
             expr,
@@ -324,6 +318,12 @@ fn bind_open_terms(v: Value, input: &Value) -> Value {
     }
 }
 
+/// Follow value dependencies to a fixed point before taking the frame slice:
+/// a captured `e` whose recipe reads `d` is not usable unless `d` travels too.
+/// D109: a deferred branch body is code, identified like an arrow body by
+/// its expression and what it captures — not by every frame around it. Its
+/// closure keeps each frame (position matters for `^`) but only the names
+/// the body uses, and what those names use.
 pub(crate) fn narrow_deferred_body(v: Value) -> Value {
     match v {
         Value::Thunk { expr, closure, context, effect } => {
