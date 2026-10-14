@@ -754,16 +754,13 @@ impl Ouroboros {
 
                 // Param frame = body "current" level (isomorphic to nested
                 // literal inside the holder); ^ = holder, ^^ = holder's parent.
-                call_ctx.scopes.push(std::sync::Arc::new(ComboVal::new(
-                    arg_map,
-                    false,
-                    IndexMap::new(),
-                    EffectTag::Pure,
-                    vec![],
-                )));
+                let mut params =
+                    ComboVal::new(arg_map, false, IndexMap::new(), EffectTag::Pure, vec![]);
+                params.given = true;
+                call_ctx.scopes.push(std::sync::Arc::new(params));
                 call_ctx.context_value = Some(arg.clone());
 
-                let out = crate::eval::bind_open_terms(self.eval(expr, &mut call_ctx), &arg);
+                let out = self.eval(expr, &mut call_ctx);
                 ctx.fuel = call_ctx.fuel;
                 return out;
             }

@@ -3376,24 +3376,6 @@ impl Ouroboros {
     }
 
     pub fn force(&self, val: Value, ctx: &mut EvalContext) -> Value {
-        // P3: an open term reached while forcing under a binding takes it.
-        // A reference is not stamped here: dereferencing binds `$` to the
-        // value that was read (F1), which is a different row.
-        let binding: Option<Value> = match &val {
-            Value::Thunk { context, .. } => context
-                .as_ref()
-                .map(|b| (**b).clone())
-                .or_else(|| ctx.context_value.clone()),
-            _ => None,
-        };
-        let res = self.force_unbound(val, ctx);
-        match binding {
-            Some(b) => crate::eval::bind_open_terms(res, &b),
-            None => res,
-        }
-    }
-
-    fn force_unbound(&self, val: Value, ctx: &mut EvalContext) -> Value {
         match val {
             Value::Thunk {
                 expr,
@@ -4046,6 +4028,17 @@ impl Ouroboros {
             },
             other => other,
         }
+    }
+
+    /// Whether a bare name is answered by an arrow's parameter frame.
+    /// That value was given to the evolution, not reached in it.
+    pub(crate) fn name_is_given(&self, name: &str, ctx: &EvalContext) -> bool {
+        for frame in ctx.scopes.iter().rev() {
+            if frame.get_field(name).is_some() || frame.get_local_field(name).is_some() {
+                return frame.given;
+            }
+        }
+        false
     }
 
     pub fn resolve_path(&self, path: &Path, ctx: &mut EvalContext) -> Value {

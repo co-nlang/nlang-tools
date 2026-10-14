@@ -1110,6 +1110,10 @@ pub struct ComboVal {
     pub legacy_fields: IndexMap<String, Value>,
     #[serde(skip, default)]
     pub legacy_local: IndexMap<String, Value>,
+    /// An arrow's parameter frame. What it holds was given to the
+    /// evolution, not reached in it. Not part of identity or the store.
+    #[serde(skip, default)]
+    pub given: bool,
 }
 
 /// Clone must **not** share `cache_id` or `cycle_frame_id`. content_hash /
@@ -1135,6 +1139,7 @@ impl Clone for ComboVal {
             cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),
             legacy_local: self.legacy_local.clone(),
+            given: self.given,
         }
     }
 }
@@ -1157,6 +1162,7 @@ impl Default for ComboVal {
             cycle_frame_id: default_cache_id(),
             legacy_fields: IndexMap::new(),
             legacy_local: IndexMap::new(),
+            given: false,
         }
     }
 }
@@ -3934,6 +3940,7 @@ impl ComboVal {
             cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),
             legacy_local: self.legacy_local.clone(),
+            given: self.given,
         }));
         let h = ContentHash {
             algorithm: HashAlgorithm::Sha256,

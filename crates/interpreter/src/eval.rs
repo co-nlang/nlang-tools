@@ -277,6 +277,15 @@ fn value_dependencies(value: &Value) -> HashSet<String> {
     }
 }
 
+/// P3: a definition read inside an evolution is reached there. What the
+/// evolution was given — a parameter, or `$` — is not.
+pub(crate) fn bind_reached(v: Value, binding: Option<&Value>) -> Value {
+    match binding {
+        Some(c) => bind_open_terms(v, c),
+        None => v,
+    }
+}
+
 /// P3: an unbound open term takes the binding it was reached under.
 /// A table body is stamped too; choosing the branch binds `$` to the
 /// matched input again (D109).
@@ -386,6 +395,7 @@ fn capture_free_fields(scope: &ComboVal, free: &HashSet<String>) -> ComboVal {
     captured.effect = scope.effect;
     captured.relations = scope.relations.clone();
     captured.masa_ref = scope.masa_ref.clone();
+    captured.given = scope.given;
     captured
 }
 
@@ -2040,7 +2050,23 @@ impl Ouroboros {
                 // union interior effects.
                 res
             }
-            ExprKind::Path(p) => self.resolve_path(p, ctx),
+            ExprKind::Path(p) => {
+                // A read of the stored universe inside an evolution is
+                // reached there. A parameter frame's name was given.
+                let v = self.resolve_path(p, ctx);
+                let reached = match p.anchor {
+                    nlang_parser::ast::PathAnchor::Root => true,
+                    nlang_parser::ast::PathAnchor::Bare if !p.segments.is_empty() => {
+                        !self.name_is_given(p.segments[0].trim(), ctx)
+                    }
+                    _ => false,
+                };
+                if reached {
+                    bind_reached(v, ctx.context_value.as_ref())
+                } else {
+                    v
+                }
+            }
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(mbu::OPERATOR_APPLICATION) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {
