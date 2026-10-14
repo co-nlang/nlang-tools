@@ -283,6 +283,47 @@ fn value_dependencies(value: &Value) -> HashSet<String> {
 /// its expression and what it captures — not by every frame around it. Its
 /// closure keeps each frame (position matters for `^`) but only the names
 /// the body uses, and what those names use.
+/// P3: an open term in a value that reaches the right of `|>` binds to the
+/// input there. A table body inside is bound too: choosing the branch
+/// binds `$` to the matched input again (D109).
+fn bind_open_terms(v: Value, input: &Value) -> Value {
+    match v {
+        Value::Thunk {
+            expr,
+            closure,
+            context: None,
+            effect,
+        } if nlang_parser::tier::has_free_dollar(&expr) => Value::Thunk {
+            expr,
+            closure,
+            context: Some(Box::new(input.clone())),
+            effect,
+        },
+        Value::Combo(mut c) => {
+            for axis in [
+                &mut c.data,
+                &mut c.types,
+                &mut c.rules,
+                &mut c.meta,
+                &mut c.system,
+                &mut c.local,
+            ] {
+                let keys: Vec<String> = axis.keys().cloned().collect();
+                for k in keys {
+                    if let Some(x) = axis.shift_remove(&k) {
+                        axis.insert(k, bind_open_terms(x, input));
+                    }
+                }
+            }
+            Value::Combo(c)
+        }
+        Value::Union(items) => {
+            Value::Union(items.into_iter().map(|x| bind_open_terms(x, input)).collect())
+        }
+        other => other,
+    }
+}
+
 pub(crate) fn narrow_deferred_body(v: Value) -> Value {
     match v {
         Value::Thunk { expr, closure, context, effect } => {
@@ -1558,6 +1599,16 @@ impl Ouroboros {
                 landed
             }
             other => other,
+        };
+        // P1/P3: `|>` is where `$` binds. An open term in the right-hand
+        // value binds to this input (GUIDE_03 §11.2 context slot). A
+        // template read back from the store carries none. A morphism on
+        // the right is application, not a merge, so its body is not
+        // stamped here. A reference is left as stored.
+        let rv = if matches!(rv, Value::Combo(_)) && !rv.is_morphism() {
+            bind_open_terms(rv, &lv)
+        } else {
+            rv
         };
         if rv.is_morphism() {
             let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);

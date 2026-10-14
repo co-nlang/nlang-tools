@@ -3912,6 +3912,14 @@ impl Ouroboros {
         ctx: &mut EvalContext,
     ) -> Value {
         match val {
+            // SPEC_07 §4.2 P3: an open term (a free `$` with no binding
+            // carried in) is stored as itself. Forcing it here observes it
+            // with no enclosing evolution and stores ⊥ #no_context.
+            Value::Thunk {
+                ref expr,
+                ref context,
+                ..
+            } if context.is_none() && nlang_parser::tier::has_free_dollar(expr) => val,
             Value::Thunk { ref expr, effect, .. }
                 if !effect.is_pure()
                     || matches!(

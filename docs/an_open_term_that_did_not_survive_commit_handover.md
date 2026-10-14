@@ -68,14 +68,89 @@
 
 ### 8.1 射程逐項對照
 
+I1：存起來的模板，演化結果與就地寫的相同。`t: { a: $.b + 1 }` 提交後 `{ b: 1 } |> _.t` 是 `{ a: 2, b: 1 }`，`{ b: 5 } |> _.t` 是 `{ a: 6, b: 5 }`。r1 綠。清單與巢狀記錄同一條：`{ b: 1 } |> _.t` 是 `{ b: 1, l: [1, 2], n: { c: 10 } }`。r2 綠。
+I2：兩個不同的模板演化後不相等。r3 綠（4 與 6，`=` 是 `#false`）。
+I3：表本體的 `$` 仍是被匹配的輸入。`(({ b: 1 } |> _.t).k) 5` 是 `105`。沒有包圍演化時 `_.t.a` 與 `{ a: $ + 1 }.a` 都是 ⊥ `#no_context`。r4 綠。
+I4：`c: c + 1` 仍是 ⊥ `#divergent`，`k: { a: 1 / 0 }` 仍是 ⊥ `#numerical_error`，沒有開放項的根不動。g1 綠。
+
+另外三個入口走的是同一條，沒有另寫：
+
+*   展開。`{ b: 1 } |> { ...{ a: $.b + 1 } }` 是 `{ a: 2, b: 1 }`。展開先落地，管道再把裡面沒有綁定的開放項綁上。
+*   `&`。`{ b: 1 } |> ({ a: $.b + 1 } & { c: 3 })` 是 `{ a: 2, b: 1, c: 3 }`。合併本身不綁 `$`；之後的管道綁。
+*   態射施用。右式整段是態射時不蓋章，本體在施用時以引數為 `$`。`{ b: 1 } |> (x -> { a: $.b + 1 })` 是 `{ a: 2 }`。
+
 ### 8.2 順手改動（逐項指名）
+
+兩處：
+
+1. `lib.rs` `project_for_commit`。thunk 的 `context` 是空、而且表達式有自由 `$`，就原樣存下。其餘 thunk 仍照舊：非純的強制；純的強制後若是 ⊥ 就存那個 ⊥。
+2. `eval.rs` `pipe_apply_value`。合併之前，`bind_open_terms` 走過右值的每個軸與聯集，把沒有綁定的開放項 thunk 的 `context` 設成這次輸入。右值整段是態射則不走這一步。`Ref` 不先解參照。
+
+沒有改 `force_recursive`、分派選中時重綁表本體、`has_free_dollar` 的掃描邊界。
 
 ### 8.3 工單哪裡是錯的
 
+無。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1** 會碰到開放項的入口：
+
+1. `project_for_commit`。以前在沒有包圍演化時強制它，⊥ `#no_context` 被存下。現在沒有綁定的開放項原樣留下。已經帶 `context` 的 thunk 仍走舊規則，所以有自己理由的 ⊥ 還在。
+2. `force_recursive`（`lib.rs`）。這是觀測。`oo eval`、`=`（兩邊各走一次）、`run --observe`、宇宙的 observe 都進這裡。沒有包圍演化時仍是 ⊥ `#no_context`。
+3. `|>` 的合併（`pipe_apply_value`）。先綁再合併。這一次強制發生在包圍演化裡。
+4. 展開 `...`。`expand_combo_pending` 在綁定之前落地，落地後的欄位走同一條 `bind_open_terms`。沒有第二條儲存路徑。
+5. `&`。合併不給 thunk 一個綁定。沒有隨後的管道時，觀測仍是 ⊥ `#no_context`。量過：`({ a: $.b + 1 } & { c: 3 })` 提交後 `_.t` 的 `a` 是那個 ⊥，`{ b: 1 } |> _.t` 是 `{ a: 2, b: 1, c: 3 }`。
+6. 態射施用的回傳。右式是態射時不蓋章；施用把引數設成 `$`。記錄裡巢狀的箭頭是一個值，箭頭本體裡的 `$` 不是這張記錄的自由 `$`（`has_free_dollar` 不走入箭頭本體）。
+7. `identify`（`oodp.rs` `identify_caid`）。先 `to_nlang` 再 eval 那段源碼。eval 就是觀測，沒有自己的提交投影。
+
+**Q2** 讀數是提交之後。v0.89.0 是改引擎之前的釋出二進位 `oo v0.89.0-1082-g9a7d5bb`（10896232 bytes）。交付是本輪釋出的 `oo`。
+
+| 檔案 | v0.89.0 根 | v0.89.0 讀數 | 交付根 | 交付讀數 |
+| --- | --- | --- | --- | --- |
+| `t: { a: $.b + 1 }`（`{ b: 1 } |> _.t`） | `de67b895ace9bca3ec452dd07500edda9293701eb8081bb014c9b681f5772a04` | `{ a: _|_ #no_context, b: 1 }` | `e3f6218eb9dcb4d9f1ad6025cea45f630d3bf8ebf07ea68b9ef9985818e5f5e0` | `{ a: 2, b: 1 }` |
+| `t: { l: [$.b, 2], n: { c: $.b * 10 } }`（同） | `24ce977c95a12d14990143407e486431770a889978d04a879ced379b842850bc` | 清單與 `n.c` 皆 ⊥ `#no_context` | 同上 | `{ b: 1, l: [1, 2], n: { c: 10 } }` |
+| `w: { x: $.s }`（`_.w.x`） | `c71dfc644a225824ca32685954edeb7fadab1ddf867228eb7e18e5e848654618` | ⊥ `#no_context` | `2c8854d5c402341f15caf190af3c465754a3654b673e3ef1295eac3cae993a99` | ⊥ `#no_context` |
+| `c: c + 1`（`_.c`） | `3f0a62e4ac00a7517e258bee6afbc348f33167cb1cd42e9bcefa419645c2da34` | ⊥ `#divergent` | 同上 | 同上 |
+| `k: { a: 1 / 0 }`（`_.k`） | `889b4174eb7a87bb8452197bc0a7247e6cd0d86d2b84a63e5ede00f87f1a15f2` | `{ a: ⊥ #numerical_error }` | 同上 | 同上 |
+| `u: { b: 1 } |> { a: $.b + 1 }`（`_.u`） | `d3de86f4352682c5a44e1081994cf0b36290a0c37825664c06c06f7904a8f4ed` | `{ a: 2, b: 1 }` | 同上 | 同上 |
+
+前一、三根移動。清單那份存放本來就是開放項，根不動，壞的是讀回，現在讀回是值。
+
+**Q3** `bind_open_terms` 走到組合的每個軸、聯集，以及 `context` 為空且有自由 `$` 的 thunk。清單與巢狀記錄都在這條裡，不另設深度。
+
+表本體也會被蓋上管道的輸入。分派選中該分支時把 `context` 改成被匹配的輸入（`dispatch.rs` `apply_single_rule`），所以蓋章被蓋掉。量過：`({ b: 1 } |> { k: { @{ @int }: $ + 100 } }).k 5` 是 `105`。
+
+箭頭本體裡的 `$` 不是外層的自由 `$`。`{ b: 1 } |> { f: (x -> $) }` 合併出的 `f` 仍是 `%code: $` 的繭。右式整段是箭頭時不蓋章，施用自己把引數設成 `$`：`{ b: 1 } |> (x -> { a: $.b + 1 })` 是 `{ a: 2 }`。
+
+右值裡巢狀的另一條管道是它自己的重綁點。`has_free_dollar` 不把管道右式裡的 `$` 看成外層的自由 `$`。`{ b: 1 } |> { a: $ |> { c: $.b + 1 } }` 是 `{ a: { b: 1, c: 2 }, b: 1 }`：外層 `$` 是這次輸入，內層管道再把 `$` 綁到那個值上。
+
+**Q4** 提交後 `_.t` 仍是觀測，所以仍坍成 ⊥。v0.89.0 印 `{ a: _|_ ;; %cause: #no_context }`，說明停在成因（提交時存下的那個 ⊥）。交付印
+
+```
+{
+  a: _|_  ;; %cause: #no_context  ;; free `$` observed without an enclosing evolution (P3)
+}
+```
+
+成因標籤相同。`;;` 後面多了觀測當下的那句，因為存著的是 thunk，這句是觀測它時寫的。`_.w.x` 同樣從只有 `#no_context` 變成帶這句。`evolve` 之後、提交之前，`status` 仍印 `t: { a: $["b"] + 1 }`。
 
 ### 8.5 探針
 
+`crates/oo/tests/an_open_term_that_did_not_survive_commit_probe_test.rs` 未改，未 `rustfmt`。5／5，1.83s。r1–r4、g1 皆綠。
+
+§4 紅線，第一輪計時，皆通過：Q-087 7／7，2.83s。Q-086 4／4，2.28s。Q-077 12／12，3.13s；R-1 4／4，1.35s。Q-085 7／7，2.90s。Q-084 11／11，2.15s。Q-083 17／17，6.49s；bytes 1／1，0.23s；epochs 4／4，0.32s；union 2／2，0.00s；`pin_probe_test` 15／15，2.24s。Q-082 10／10，8.72s。Q-081 15／15，4.07s。Q-080 16／16，3.72s。Q-079 10／10，4.09s；R-1 3／3，0.52s。Q-078 15／15，6.12s。`kind_tag_probe_test` 7／7，0.30s。`a_table_that_forgot_its_patterns` 17／17，2.55s；R-1 6／6，0.62s；R-2 10／10，1.76s。`forward_spread` 12／12，0.90s；`spread_collision` 25／25，0.94s；`spread_privacy` 11／11，0.41s；`blur_spread` 13／13，3.19s；`import_is_spread` 7／7，0.42s；`spread_splice` 9／9，0.17s。`where_there_is_no_universe` 13／13，4.21s。三輪都沒有 `BrokenPipe`。
+
 ### 8.6 數字
 
+1. `oo` 仍是 `0.89.0`。
+2. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，各 `EXIT:0`。`test result:` 280 行，通過 2684，失敗 0，`^error` 0。正規化（去掉行首空白與 `finished in …s` 之後，留下 `test result:`、`test `、`Running `、`running ` 開頭的行）各 3521 行，sha256 `d92d4775f4af0801ef288263d224f83316f264aba20c59dabb69703096c90f76`，三輪相同。2684 是 v0.89.0 的 2679 加上本探針的 5。
+3. conformance 162／162，exit 0。前後 `/home/gali/nlang/.oo/format` 都是一個位元組 `0x32`（ASCII `2`；`xxd -p` 印 `32`）。
+4. `~%Math./add` (1, 2)=3、(1, 3)=4，rc 0，不建 `.oo/`。euid 1000。
+5. 身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。新倉物件裡標準根仍是 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。`.oo/format` 文字是 `layout=9`，`.oo/objects.format` 文字是 `encoding=6`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，5.22s。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
 ### 8.7 你認為需要改規格之處
+
+無。規格文字與 `CHANGELOG` 留給驗收方。
