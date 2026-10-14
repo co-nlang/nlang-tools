@@ -270,7 +270,53 @@ fn r5_a_stored_open_term_binds_wherever_it_is_reached() {
             bad.extend(after_commit("r5", &src, &[(*stored, *want)]));
         }
     }
+    // Reached by a path of more than one segment, in an arrow's body.
+    bad.extend(after_commit("r5c", "x: 0\n", &[("{ n: { t: { a: $.b + 1 } }, q: { b: 1 } |> (x -> n.t) }.q", "{ a: 2 }")]));
+    bad.extend(after_commit("r5", "n: { t: { a: $.b + 1 } }\n", &[("{ b: 1 } |> (x -> n.t)", "{ a: 2 }")]));
     bad.extend(after_commit("r5c", "x: 0\n", &[("{ t: { a: $ + 1 }, k: { @{ @int }: t } }.k 5", "{ a: 6 }")]));
     bad.extend(after_commit("r5", "t: { a: $ + 1 }\nk: { @{ @int }: t }\n", &[("_.k 5", "{ a: 6 }")]));
+    assert!(bad.is_empty(), "\n{}", bad.join("\n"));
+}
+
+// ── Red, added at R-1 acceptance (R-2) ───────────────────────────────────
+
+/// What an evolution is given passes through it unchanged: a template that
+/// is the input `$` or an arrow's argument is data there, not reached there,
+/// and is not bound to itself. `(x -> x) v` is `v`. Each cell is paired with
+/// the same template defined in place and reached by name (right on
+/// v0.89.0). v0.89.0: the stored cells ⊥ #no_context; `4b0c765`: right;
+/// `118b149`: `{ a: _ b: 1 }` — the template was bound to itself on the way
+/// through. With no evolution around it, given data still observes ⊥ — an
+/// arrow's argument is not reached by the table the arrow returns.
+#[test]
+fn r6_a_template_passed_through_is_not_bound_to_itself() {
+    let mut bad = Vec::new();
+    let def = "{ a: $.b + 1 }";
+    for (stored, in_place) in [
+        ("{ b: 1 } |> (_.t |> (x -> x))", "{ b: 1 } |> (t |> (x -> x))"),
+        ("{ b: 1 } |> (_.t |> { r: $ }).r", "{ b: 1 } |> (t |> { r: $ }).r"),
+        ("{ b: 1 } |> ((x -> x) _.t)", "{ b: 1 } |> ((x -> x) t)"),
+    ] {
+        // Control, right on v0.89.0.
+        let e = format!("{{ t: {def}, r: {in_place} }}.r");
+        bad.extend(after_commit("r6c", "x: 0\n", &[(e.as_str(), "{ a: 2 b: 1 }")]));
+        bad.extend(after_commit("r6", "t: { a: $.b + 1 }\n", &[(stored, "{ a: 2 b: 1 }")]));
+    }
+    // With no evolution around it, given data observes ⊥ — stored, and
+    // written in place (code that never touched the store; right on v0.89.0
+    // and `4b0c765`, `{ a: _ }` / `_` on `118b149`).
+    let w = Ws::new("r6o");
+    w.commit(&["t: { a: $.b + 1 }\n"]);
+    for (e, want) in [
+        ("(_.t |> (x -> x)).a", "_|_ ;; %cause: #no_context"),
+        ("((x -> { @{ @int }: x }) _.t) 5", "{ a: _|_ ;; %cause: #no_context"),
+        ("{ t: { a: $.b + 1 }, r: (t |> (x -> x)).a }.r", "_|_ ;; %cause: #no_context"),
+        ("{ t: { a: $.b + 1 }, r: ((x -> { @{ @int }: x }) t) 5 }.r", "{ a: _|_ ;; %cause: #no_context"),
+    ] {
+        let got = w.eval(e);
+        if !got.starts_with(want) {
+            bad.push(format!("  {e} observed with no evolution: {got}"));
+        }
+    }
     assert!(bad.is_empty(), "\n{}", bad.join("\n"));
 }
