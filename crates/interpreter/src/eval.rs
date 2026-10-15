@@ -277,18 +277,9 @@ fn value_dependencies(value: &Value) -> HashSet<String> {
     }
 }
 
-/// P3: a definition read inside an evolution is reached there. What the
-/// evolution was given — a parameter, or `$` — is not.
-pub(crate) fn bind_reached(v: Value, binding: Option<&Value>) -> Value {
-    match binding {
-        Some(c) => bind_open_terms(v, c),
-        None => v,
-    }
-}
-
-/// P3: an unbound open term takes the binding it was reached under.
-/// A table body is stamped too; choosing the branch binds `$` to the
-/// matched input again (D109).
+/// P3: an open term in a value that reaches the right of `|>` binds to the
+/// input there. A table body inside is bound too: choosing the branch
+/// binds `$` to the matched input again (D109).
 pub(crate) fn bind_open_terms(v: Value, input: &Value) -> Value {
     match v {
         Value::Thunk {
@@ -395,7 +386,6 @@ fn capture_free_fields(scope: &ComboVal, free: &HashSet<String>) -> ComboVal {
     captured.effect = scope.effect;
     captured.relations = scope.relations.clone();
     captured.masa_ref = scope.masa_ref.clone();
-    captured.given = scope.given;
     captured
 }
 
@@ -2051,20 +2041,18 @@ impl Ouroboros {
                 res
             }
             ExprKind::Path(p) => {
-                // A read of the stored universe inside an evolution is
-                // reached there. A parameter frame's name was given.
                 let v = self.resolve_path(p, ctx);
-                let reached = match p.anchor {
-                    nlang_parser::ast::PathAnchor::Root => true,
-                    nlang_parser::ast::PathAnchor::Bare if !p.segments.is_empty() => {
-                        !self.name_is_given(p.segments[0].trim(), ctx)
+                // P3: a stored open term is its definition. Reading it here
+                // evaluates it here, as a sibling name written in place is
+                // (force_lexical_name): under this frame's `$`, or none.
+                match v {
+                    Value::Thunk { ref expr, context: None, .. }
+                        if p.anchor == nlang_parser::ast::PathAnchor::Root
+                            && nlang_parser::tier::has_free_dollar(expr) =>
+                    {
+                        self.force(v, ctx)
                     }
-                    _ => false,
-                };
-                if reached {
-                    bind_reached(v, ctx.context_value.as_ref())
-                } else {
-                    v
+                    other => other,
                 }
             }
             ExprKind::Apply(f, a) => {

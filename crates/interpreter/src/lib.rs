@@ -4030,17 +4030,6 @@ impl Ouroboros {
         }
     }
 
-    /// Whether a bare name is answered by an arrow's parameter frame.
-    /// That value was given to the evolution, not reached in it.
-    pub(crate) fn name_is_given(&self, name: &str, ctx: &EvalContext) -> bool {
-        for frame in ctx.scopes.iter().rev() {
-            if frame.get_field(name).is_some() || frame.get_local_field(name).is_some() {
-                return frame.given;
-            }
-        }
-        false
-    }
-
     pub fn resolve_path(&self, path: &Path, ctx: &mut EvalContext) -> Value {
         let name_raw = if !path.segments.is_empty() {
             &path.segments[0]

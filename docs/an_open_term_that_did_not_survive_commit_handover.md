@@ -473,3 +473,90 @@ _|_  ;; %cause: #no_context  ;; free `$` observed without an enclosing evolution
 
 *   `q088-r3ref dcf1e4c`（自己的 target）：本探針 8／8；全樹 285 target、2687 通過、0 失敗（含修訂後的 `stage2_open_term_test` 3／3、`stage3_probe_test` 4／4）；修訂前全樹唯一的失敗就是那一支 (a)。交叉編譯 0 error；conformance 162／162（前後 `.oo/format` 皆 `0x32`）；§4 身分紅線逐根不動；g1 五根不動；9.10 表中五根如列；R1-Q3 兩格 `r: { a: 3, b: 2 }`、`r: { a: 8 }`；正典範例提交前 `run --observe v.w.x.a` ⟹ `"Logic"`、提交後 `_.v.s` ⟹ `"Logic"`（`_.v.w.x.a` 提交後仍是 Inbox 那列）。
 *   驗收方自陳：(1) R-3 初版以為第一輪的管道綁定是死碼而刪掉——探針當時擋不住，是 r7 的存閉包那格讓它有了變異。(2) 一次 `pkill -f` 的樣式比對到自己的 shell，殺掉了背景全樹；重跑。(3) 第一次全樹撞到 `stage2_open_term_test` (a)，見 9.10 的修訂。
+
+### 9.12 修補回報
+
+#### 9.12.1 射程
+
+含自由 `$` 的定義，在沒有包圍演化時存成它的語法，不物化成一筆記錄裡的未綁 thunk。讀一個存起來的開放項，就在讀者的 `$` 底下求它；讀者沒有 `$` 就沒有。其餘照 `GUIDE_03` §11.2 的強制規則，不另外綁。管道右值仍照 P1 綁到輸入。r1–r7、g1 全綠。`stage3_probe_test` 4／4。
+
+#### 9.12.2 順手改動（逐項指名）
+
+無。
+
+#### 9.12.3 工單哪裡是錯的
+
+無。起因在驗收方，見 §9.9。
+
+#### 9.12.4 R3-Q1 至 R3-Q5
+
+三件事各在一處。R-1 的 `force` 結果綁、箭頭結果綁、evolve 之後把 `#no_context` 改寫回 thunk，以及 R-2 的路徑蓋章、`bind_reached`、`name_is_given`、`ComboVal.given`（欄位、`Clone`、`Default`、`content_hash` 的草圖）、`params.given = true`、`capture_free_fields` 抄旗標，都拿掉了。
+
+1. 存成語法（I5）。`universe.rs` `evolve`，求值之前。`ctx.context_value` 是空且 `is_open_term` 時，存一個 `context: None` 的 thunk，式子是欄位本身，不呼叫 `eval`。否則照舊求值。
+2. 讀時求值（I6）。`eval.rs` `ExprKind::Path`。路徑先照舊求出值。只有 `_.`、值是 `context: None` 的 thunk、而且式子有自由 `$` 時，在這一框 `force`。Bare、`^` 不走這裡；就地的裸名仍由原來的 `force_lexical_name` 求。
+3. 其餘不綁（I7）。被交給演化的值是值。誰強制它，就照 §11.2。管道右值的 `bind_open_terms`（`eval.rs` `pipe_apply_value`，右值是組合且不是態射）留著，這是第一輪的 P1。`project_for_commit` 對沒綁定的開放 thunk 原樣返回也留著，這是第一輪的提交。
+
+**R3-Q1** 上面 1、2，加上第一輪留下的管道綁與提交保留。每一處單獨拿掉，其餘留著，跑這支探針（除錯建置，量完還原，三個源檔的雜湊回到拿掉之前）。r1–r4 在每個變異下都綠。
+
+*   拿掉管道右值綁定：只有 r7 的 `{ b: 1 } |> (_.f 0)`。得 `{ a: ⊥ #no_context b: 1 }`。別名四格、`(_.f 0)`、就地對照仍綠。r5、r6、g1 綠。
+*   拿掉提交保留：r5 的裸開放項 `{ b: 1 } |> _.t`（定義是 `t: $.b + 1`）得 ⊥ `#no_context`。記錄形的 r5 仍綠：那個 thunk 強制之後不是整段 ⊥，純 thunk 的舊規則把原式留下。r7 同一格 `{ b: 1 } |> (_.f 0)` 得 `{ a: ⊥ #no_context b: 1 }`。r6、g1 綠。
+*   拿掉 I5：r5 五格存的全紅，就地對照仍綠。`{ b: 1 } |> _.t` 得 ⊥ `#no_context`；`{ b: 1 } |> { r: _.t }` 的 `a` 是 ⊥ `#no_context`；`{ b: 1 } |> (x -> _.t)` 與 `{ b: 1 } |> (x -> n.t)` 都是 ⊥ `#no_context`；`_.k 5` 得 `{ a: ⊥ #no_context }`。r6、r7、g1 綠。evolve 之後的改寫已經不在，裸開放項沒有第二處把它寫回去。
+*   拿掉 I6：r5、r6、r7 各有格紅。r5 只有 `{ b: 1 } |> (x -> _.t)`，得 ⊥ `#no_context`。整段右值的 `{ b: 1 } |> _.t`、欄位裡的 `{ b: 1 } |> { r: _.t }` 仍綠，管道還是把右值蓋上。`{ b: 1 } |> (x -> n.t)` 與 `_.k 5` 仍綠，那兩格不是 `_.` 這條臂。r6 只有 `{ b: 1 } |> (_.t |> { r: $ }).r`，得 `{ a: _ b: 1 }`；另外兩格配對與四格沒有演化的觀測仍綠。r7 只有 `(_.t |> { s: $, r: s }).r.a`，得 `_`；另外三格別名、`(_.f 0)`、`{ b: 1 } |> (_.f 0)` 仍綠。
+*   表的分支本體也算開放項：g1 紅。`k: { @{ @int }: $ + 1 }` 的根從 `37026f7d8c3572710a84e93e3c4c81f367408b86986d8747a202bdbc3189ad2d` 變成 `58f5fe9f38ba256f3040ec09f4192d00e2d2fc71fb4a681f5759ffd47099edbc`。同一支測試裡排在它前面的 `c: c + 1`、`k: { a: 1 / 0 }`、`k: { a: 1 + 1 }` 仍是原根。斷言停在這一格，`u:` 那一格這次沒跑到。r1–r7 綠。
+
+五處都有格紅。沒有刪。
+
+**R3-Q2** 判準是 `universe.rs` 的 `is_open_term`。組合看每個欄位：鍵是 Pattern 時只看鍵上有沒有自由 `$`，不看分支本體（D109，那個 `$` 是被匹配的輸入）；其他鍵對值遞迴。清單與 tuple 對元素遞迴，所以元素裡的表仍跳過分支本體。其餘交給 `has_free_dollar`：不走進巢狀管道的右式，不走進箭頭本體；插值 `${...}`、展開 `...`、`&`（Meet）會走進。`has_free_dollar` 對表的分支本體也走進，所以「整段是表」與「表出現在 `&` 的一邊」不一樣。
+
+釋出建置，各自的倉，`oo inspect` 的根（`root:` 最後一個冒號之後的 64 hex）：
+
+*   `t: { a: $.b + 1 }`：`3d28862809c08c1356d8ed093871cc8ea270988a4c44fccd3ec20d700044d720`（v0.89.0 `de67b895…`）
+*   `w: { x: $.s }`：`5d1bb0d70986ef24406720aa42865053c533f6411806ee9570def4bd51ea601b`（v0.89.0 `c71dfc64…`）
+*   `t: { l: [$.b, 2], n: { c: $.b * 10 } }`：`690d29022963271a5fd323722ac4ea9f6146f2805579c6b72ec5e8401cee4049`（v0.89.0 `24ce977c…`）
+*   `t: $.b + 1`：`031d1fa1fcab64d3c48dad4ec0898d4ca73f930651ebbc264c1ff435318ba286`（v0.89.0 `13d8fecb…`；與 R-1／R-2 的這根相同）
+*   `t: { a: $.b + 1, k: { @{ @int }: $ + 100 } }`：`56cecaaf024137e0e2ef047fb0ffd59d78b94ce04fbea001f27e3b3890331112`（v0.89.0 `55066add…`）
+
+清單算。`t: [$.b, 2]` 提交後 inspect 印 `t: [$["b"], 2]`。沒有演化的 `_.t` 是 `[⊥ #no_context, 2]`（讀的時候求完了）。`{ b: 1 } |> _.t` 是 `[1, 2]`。
+
+tuple 算。`t: ($.b, 2)` 的 inspect 印 `t: ($["b"], 2)`。沒有演化的 `_.t` 是 `{{ 0: ⊥ #no_context 1: 2 }}`。`{ b: 1 } |> _.t` 是 ⊥ `#missing_key`（tuple 是閉的繭，管道找的是欄位 `b`）。
+
+`&` 算。`t: { a: 1 } & { b: $.c }` 的 inspect 仍是這段 `&`。沒有演化的 `_.t` 是 `{ a: 1 b: ⊥ #no_context }`。
+
+展開算。`t: { ...{ a: $.b }, c: 1 }` 的 inspect 留著 `"...": ...{ a: $["b"] }`。沒有演化的 `_.t` 是 `{ a: ⊥ #no_context c: 1 }`。`{ b: 1 } |> _.t` 是 `{ a: 1 b: 1 c: 1 }`。
+
+插值裡的 `$` 算。`has_free_dollar` 走進 `${...}`。`t: "x ${$.b}"` 的 inspect 是 `t: "x ${$.b}"`。`_.t` 與 `{ b: 1 } |> _.t` 都印 `"x ${$.b}"`。
+
+表的分支本體不算。`k: { @{ @int }: $ + 1 }` 的根仍是 `37026f7d…`，`_.k 5` 是 `6`。清單裡只有這張表時，`(_.t.0) 5` 是 `6`：遞迴走的是 `is_open_term`，分支本體不算。`&` 的一邊是這張表時，落進 `has_free_dollar`，分支本體算進去，inspect 留著整段 `&`；`(_.t) 5` 仍是 `6`，那個 `$` 仍是被匹配的輸入。
+
+箭頭本體不算。`t: (x -> $)` 提交後 `_.t` 是一支態射，`%code` 是 `$`。巢狀管道的右式不算。`t: 1 |> $` 提交後 `_.t` 是 `1`。
+
+**R3-Q3** 提交前 `status` 印語法。`t: { a: $.b + 1 }` 是 `t: { a: $["b"] + 1 }`，與工單對 v0.89.0 記錄形的那句相同。`w: { x: $.s }` 是 `w: { x: $["s"] }`，與 §1 的那句相同。裸的 `t: $.b + 1` 是 `t: $["b"] + 1`；v0.89.0 在 evolve 就印 `t: _|_ ;; %cause: #no_context`。
+
+提交後 `status` 只報宇宙是靜態的，不重印值。`oo inspect` 那個根，印的是同一段語法，並帶 `~%__nlang_system_digest`。記錄形是 `{ t: { a: $["b"] + 1 } }`，裸的是 `{ t: $["b"] + 1 }`，`w` 是 `{ w: { x: $["s"] } }`。觀測 `_.t` 仍是 ⊥ `#no_context`（P3 那句）。
+
+**R3-Q4** 兩格都量了，沒有修。
+
+*   衍生值。`t: { a: $.b + 1 }` 提交後，另一次提交 `g: { m: _.t }`。`{ b: 1 } |> (x -> _.g.m)` 是 `{ a: ⊥ #no_context }`。`g` 的語法沒有自由 `$`，存的是值；列印那一方依 §11.2 強制。開放性是否沿衍生傳遞，另開 Inbox。
+*   `{ b: 1 } |> <<_.t>>` 是 ⊥ `#conflict`，說明是 `Incompatible types: { b: 1 } vs { a: $["b"] + 1 }`。工單記的 v0.89.0 是 `{ a: ⊥, b: 1 }`。活 Ref 解出的是存起來的語法。屬 Inbox「`<<_.>>`」列。
+
+**R3-Q5** R-1 與 R-2 的綁定沒有留下。結果上的綁、讀時蓋章、參數框旗標都不在。留下的兩處是第一輪的：管道右值綁到輸入，提交保留沒綁的開放項。上面的變異裡，拿掉任一個都有格紅，所以留著。它們不是 R-1／R-2 發明的蓋章。
+
+#### 9.12.5 探針
+
+探針檔未改，未 `rustfmt`。`stage2_open_term_test.rs` 未改。本探針在第一輪全樹裡 8／8，5.20s。除錯建置先是 8／8，13.99s；`stage2_open_term_test` 3／3，0.39s；`stage3_probe_test` 4／4，7.42s。
+
+§4 紅線，第一輪計時，皆通過：Q-087 7／7，2.85s。Q-086 4／4，2.42s。Q-077 12／12，3.48s；R-1 4／4，1.58s。Q-085 7／7，2.91s。Q-084 11／11，2.18s。Q-083 17／17，6.24s；bytes 1／1，0.23s；epochs 4／4，0.32s；union 2／2，0.00s；`pin_probe_test` 15／15，2.22s。Q-082 10／10，9.02s。Q-081 15／15，4.31s。Q-080 16／16，3.74s。Q-079 10／10，4.31s；R-1 3／3，0.56s。Q-078 15／15，6.26s。`kind_tag_probe_test` 7／7，0.29s。`a_table_that_forgot_its_patterns` 17／17，2.67s；R-1 6／6，0.65s；R-2 10／10，1.91s。`forward_spread` 12／12，0.92s；`spread_collision` 25／25，0.94s；`spread_privacy` 11／11，0.40s；`blur_spread` 13／13，3.32s；`import_is_spread` 7／7，0.45s；`spread_splice` 9／9，0.16s。`where_there_is_no_universe` 13／13，4.18s。`stage2_open_term_test` 3／3，0.12s。`stage3_probe_test` 4／4，2.17s。三輪都沒有 `BrokenPipe`。
+
+#### 9.12.6 數字
+
+1. `oo` 仍是 `0.89.0`。版本字串是 `oo v0.89.0-1082-g9a7d5bb`（`+` 不在），二進位 10876080 bytes。量根用的是這份拷貝；三輪全樹會重寫 `target/release/oo`。
+2. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，各 `EXIT:0`。第一輪 991.2s（釋出庫已在，測試執行檔這輪重編），第二輪 560.0s，第三輪 581.5s。`test result:` 280 行，通過 2687，失敗 0，`^error` 0。正規化（去掉行首空白與 `finished in …s` 之後，留下 `test result:`、`test `、`Running `、`running ` 開頭的行）各 3524 行，sha256 `a34c5777e40c9d0b2385b1c571c6e5c058ac59ab70a0f31d807fa0aaa56e2b23`，三輪相同。2687 是 R-2 的 2686 加上 r7。280 行沒有增加：r7 在原來那支探針裡。3524 是 R-2 的 3523 加上這一行。驗收方寫的 285 是 target 數；這裡記的是 `test result:` 的行數。
+3. conformance 162／162，exit 0，8.23s。前後 `/home/gali/nlang/.oo/format` 都是一個位元組 `0x32`（ASCII `2`；`xxd -p` 印 `32`）。
+4. `~%Math./add` (1, 2)=3、(1, 3)=4，rc 0，不建 `.oo/`。euid 1000。
+5. 身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。新倉物件裡標準根仍是 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。`.oo/format` 文字是 `layout=9`，`.oo/objects.format` 文字是 `encoding=6`。`k: { @{ @int }: $ + 1 }` 根仍是 `37026f7d8c3572710a84e93e3c4c81f367408b86986d8747a202bdbc3189ad2d`。`c: c + 1` 仍是 `3f0a62e4ac00a7517e258bee6afbc348f33167cb1cd42e9bcefa419645c2da34`。`k: { a: 1 / 0 }` 仍是 `889b4174eb7a87bb8452197bc0a7247e6cd0d86d2b84a63e5ede00f87f1a15f2`。`k: { a: 1 + 1 }` 仍是 `9445101c4b15c42562daed770b5d153f554dee67af0fdb9c8be8325247d111b7`。`u: { b: 1 } |> { a: $.b + 1 }` 仍是 `d3de86f4352682c5a44e1081994cf0b36290a0c37825664c06c06f7904a8f4ed`。9.10 的五根如 9.12.4。`t: 1 / 0` 的 `_.t` 仍是 ⊥ `#numerical_error`。`({ b: 1 } |> { k: { @{ @int }: $ + 100 } }).k 5` 是 `105`。R1-Q3：`{ b: 1 } |> { r: { b: 2 } |> _.t }` 是 `{ b: 1, r: { a: 3, b: 2 } }`，`{ b: 1 } |> { r: (x -> _.t) { b: 7 } }` 是 `{ b: 1, r: { a: 8 } }`。正典範例提交前 `run --observe v.w.x.a` 是 `"Logic"`，不建 `.oo/`；提交後 `_.v.s` 是 `"Logic"`。`_.v.w.x.a` 提交後仍是 ⊥ `#no_context`。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` exit 0，`^error` 0，4.79s。該 target 上先刪了 4 個零長度檔（兩份 rmeta、兩份 cargo lock），然後才檢查。lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 未 push。
+
+#### 9.12.7 你認為需要改規格之處
+
+無。
