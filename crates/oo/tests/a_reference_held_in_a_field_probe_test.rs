@@ -217,6 +217,60 @@ fn r2_a_held_reference_to_an_open_term_is_read_where_observed() {
     assert!(bad.is_empty(), "{} wrong:\n{}", bad.len(), bad.join("\n"));
 }
 
+// ── Added by the acceptor in R-1 (2026-10-15) ───────────────────────────
+//
+// The first round (c2c4ac9, the same shape as the reference 44a2a65) reads
+// a held reference only when a later path segment navigates through it. A
+// path that stops on the held reference hands its user the unread
+// reference: `c.r` prints 1 and `c.r + 1` is ⊥ #conflict. The delivery
+// measured the arithmetic and pipe cells (8.1) and left them because the
+// reference had; the probe had no cell. The acceptor's.
+
+/// A held reference is a value to whoever uses it, exactly as a top-level
+/// reference is (`r: <<n>>`, `r + 1` ⟹ 2), including a computed one (an
+/// arrow returning it, a branch picking it). v0.91.0 and the first round:
+/// every red operand cell ⊥ #conflict; `run --observe c.r` collapsed. Controls: the top-level reference and a
+/// field holding a copy (`u: { r: t }`).
+#[test]
+fn r3_a_held_reference_is_a_value_to_its_user() {
+    let src = "n: 1\nr: <<n>>\nc: { r: <<n>> }\nt: { a: 1 }\nrt: <<t>>\nct: { r: <<t>> }\nu: { r: t }\ng: (y -> <<n>>)\nc2: { r: _.g 0 }\nc3: { r: #true ? <<n>> : 0 }\n";
+    let mut bad = after_commit(
+        "r3",
+        src,
+        &[
+            ("c.r + 1", "2"),
+            ("_.c.r + 1", "2"),
+            ("~%Math./add (c.r, 1)", "2"),
+            ("ct.r & { b: 2 }", "{ a: 1 b: 2 }"),
+            ("ct.r |> { b: $.a }", "{ a: 1 b: 1 }"),
+            ("c2.r + 1", "2"),
+            ("c3.r + 1", "2"),
+            // controls
+            ("r + 1", "2"),
+            ("rt & { b: 2 }", "{ a: 1 b: 2 }"),
+            ("u.r & { b: 2 }", "{ a: 1 b: 2 }"),
+            ("c.r", "1"),
+        ],
+    );
+    let w = Ws::new("r3-run");
+    fs::write(w.ws.join("q.n"), format!("{src}out: c.r + 1\n")).unwrap();
+    let got = squash(&w.oo(&["run", "--observe", "out", "q.n"]).0);
+    if got != "2" {
+        bad.push(format!("  run --observe out (out: c.r + 1)\n    want 2\n    got  {got}"));
+    }
+    // Observing the path that stops on the held reference is a reference-
+    // mediated observation on every surface (SYNTAX_07 §4 #6), as `oo eval
+    // 'c.r'` already is. v0.91.0: `run --observe c.r` prints the collapsed
+    // "Logic" while `oo eval 'c.r'` prints the node.
+    fs::write(w.ws.join("s.n"), "s: \"Logic\" |> { a: $ }\nc: { r: <<s>> }\n").unwrap();
+    let got = squash(&w.oo(&["run", "--observe", "c.r", "s.n"]).0);
+    let want = "{ %val: \"Logic\" a: \"Logic\" }";
+    if got != want {
+        bad.push(format!("  run --observe c.r\n    want {want}\n    got  {got}"));
+    }
+    assert!(bad.is_empty(), "{} wrong:\n{}", bad.len(), bad.join("\n"));
+}
+
 // ── Green fence (v0.91.0 and the reference alike) ───────────────────────
 
 /// What is NOT changed: the reference itself, observed at the end of a
@@ -224,7 +278,7 @@ fn r2_a_held_reference_to_an_open_term_is_read_where_observed() {
 /// prints as the reference's content.
 #[test]
 fn g1_the_held_reference_itself_is_unchanged() {
-    let src = "s: \"Logic\" |> { a: $ }\nw: { x: $.s }\nc: { r: <<s>> }\nd: { r: <<_.>> }\n";
+    let src = "s: \"Logic\" |> { a: $ }\nw: { x: $.s }\nc: { r: <<s>> }\nd: { r: <<_.>> }\nk: c.r\n";
     let w = Ws::new("g1");
     w.commit(&[src]);
     let mut bad = Vec::new();
@@ -233,6 +287,8 @@ fn g1_the_held_reference_itself_is_unchanged() {
         ("_.c.r", "{ %val: \"Logic\" a: \"Logic\" }"),
         ("<<c>>.r", "{ %val: \"Logic\" a: \"Logic\" }"),
         ("c", "{ r: \"Logic\" }"),
+        // a definition whose value is the held reference is that reference
+        ("k", "{ %val: \"Logic\" a: \"Logic\" }"),
     ] {
         let got = w.eval(e);
         if got != want {
