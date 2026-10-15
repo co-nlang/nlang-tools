@@ -318,6 +318,46 @@ pub(crate) fn bind_open_terms(v: Value, input: &Value) -> Value {
     }
 }
 
+/// SYNTAX_07 §2 #4: a definition that computes over a live reference
+/// (`<<path>>`) is live itself — what it means depends on what the
+/// coordinate holds when it is observed. Arrow bodies are not scanned.
+pub(crate) fn has_live_ref(e: &Expr) -> bool {
+    use nlang_parser::ast::ExprKind as K;
+    match &e.kind {
+        K::Structural(inner) => matches!(inner.kind, K::Path(_)) || has_live_ref(inner),
+        K::Morphism { .. } => false,
+        K::Pipe(a, b)
+        | K::Apply(a, b)
+        | K::Meet(a, b)
+        | K::Join(a, b)
+        | K::Diff(a, b)
+        | K::Add(a, b)
+        | K::Sub(a, b)
+        | K::Mul(a, b)
+        | K::Div(a, b)
+        | K::Rem(a, b)
+        | K::Eq(a, b)
+        | K::Ne(a, b)
+        | K::Lt(a, b)
+        | K::Gt(a, b)
+        | K::Lte(a, b)
+        | K::Gte(a, b)
+        | K::LatticeEq(a, b)
+        | K::Probe(a, b)
+        | K::TypeAnnotation(a, b)
+        | K::Lens(a, b) => has_live_ref(a) || has_live_ref(b),
+        K::Combo { fields, .. } => fields.iter().any(|f| has_live_ref(&f.value)),
+        K::List(items) | K::Tuple(items) => items.iter().any(has_live_ref),
+        K::Unary { expr, .. } | K::AnonSet(expr) | K::Spread(expr) | K::Complement(expr) => {
+            has_live_ref(expr)
+        }
+        K::Ternary { cond, then_branch, else_branch } => {
+            has_live_ref(cond) || has_live_ref(then_branch) || has_live_ref(else_branch)
+        }
+        _ => false,
+    }
+}
+
 /// Follow value dependencies to a fixed point before taking the frame slice:
 /// a captured `e` whose recipe reads `d` is not usable unless `d` travels too.
 /// D109: a deferred branch body is code, identified like an arrow body by
@@ -1589,6 +1629,18 @@ impl Ouroboros {
         call_ctx: &mut EvalContext,
         ctx: &mut EvalContext,
     ) -> Value {
+        // P1 with a live reference on the right (SYNTAX_07 §2 #4): the
+        // reference is read now, at this application, and what it holds is
+        // this pipe's transformer — its open terms take this input below.
+        let rv = match rv {
+            Value::Ref(_) => {
+                call_ctx.fuel = ctx.fuel;
+                let read = self.force(rv, call_ctx);
+                ctx.fuel = call_ctx.fuel;
+                read
+            }
+            other => other,
+        };
         // A union on the right is distributed member by member. Each member
         // is judged here, so a spread table inside the union lands first.
         let rv = match rv {
