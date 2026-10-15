@@ -210,10 +210,76 @@ H2。r2 綠：管道裡 `c.r.a` 取該管道的 `$`，帶出框架後是 ⊥ `#n
 
 #### 9.4.1 射程
 
+拿在欄位裡的引用——寫成 `<<t>>` 的、箭頭回傳的、分支挑出的——對使用者是一個值，與頂層 `r: <<n>>` 一致。r3 綠。L2-132 在 171／171 裡。
+
+`n: 1`、`c: { r: <<n>> }`：`c.r + 1`、`_.c.r + 1`、`~%Math./add (c.r, 1)` 由衝突成為 `2`。`ct.r & { b: 2 }` 成為 `{ a: 1, b: 2 }`，`ct.r |> { b: $.a }` 成為 `{ a: 1, b: 1 }`。`c2.r + 1`、`c3.r + 1` 成為 `2`。根沒有動：整數那份 `a234a2df3fcaed854a13b82d236eb3d57e735b473257216691dd82fa09a3498e`，箭頭與分支那份 `46a0176f5eb87c2afc88b87c96eea093bcb3020b49c033e760d42e8ba3fff298`，管道那份 `a99b9b10cc623dd0da3f3eceac645a1e257db3af525dcb2e7da7dfa90ebaf44f`。
+
+路徑停在引用上，每個面都是結構視圖。`run --observe c.r` 由收合的 `"Logic"` 成為 `{ %val: "Logic" a: "Logic" }`，與 `oo eval 'c.r'`、`<<c>>.r`、`_.c.r` 同答。`k: c.r` 仍是那個引用。g1 綠。`k` 那份根 `7f450f9a09541c1fd5cb4c26500b6fb238a8dd28700c8fbcfebf124ce2523360`，v0.91.0 同。
+
+跨提交仍是活的。`c: { r: <<_.y>> }`、`k: c.r`、`k3: c.r.a + 1` 先提交，根 `befbb769e5af893e8b6fa8e96423f2ff0a2f6c919a852971a554cf0893bc48b6`。之後提交 `y: { a: 1 }`，根 `576c62640bc3c7395250982d13d26a365a3e80206e532f645981b85d5abbc711`，兩邊同。`k` 兩邊都成為 `{ a: 1 }`。`k2`、`k3`、`c.r.a` 由 `_` 成為 `1`、`2`、`1`。
+
+引用環留著：`a1`、`a1.x`、`_.a1`、`e.r.x`、`e.r.r.x`、`_.j` 都是 `_`。根 `f6714bcf4a3f4ec173e922aca6521765e159140250b285124089b63a733fcd73` 不動。
+
+r1、r2 保持綠。
+
 #### 9.4.2 順手改動（逐項指名）
+
+沒有。改 `force`、`force_coord`、觀測框。沒有 `cargo fix`，沒有 `rustfmt` 探針，沒有改探針、`parser/src/tier.rs`、`predict_effect`、`refuse_lying_pure`。linux 釋出建置 `nlang-interpreter` lib 仍是 14 條警告。
+
+與參考實作 `q090-r1ref 2151c9f` 的差別：刪了第一輪的導航迴圈和它的深度視界出口（R1-Q2）；沒有留下參考實作觀測框裡的 `Q090_DBG` 輸出。
 
 #### 9.4.3 工單哪裡是錯的
 
+這一輪沒有新的。§2 那個對不上的前綴，8.3 已經記過。
+
 #### 9.4.4 必答
 
+**R1-Q1** 機制在這些地方。每一處單獨拿掉，探針這樣紅：
+
+*   `force` 不讀穿 thunk 算出來的引用：r3 八格。`c.r + 1`、`_.c.r + 1`、`~%Math./add (c.r, 1)`、`c2.r + 1`、`c3.r + 1`、`run --observe out`（`out: c.r + 1`）回到衝突；`ct.r & { b: 2 }`、`ct.r |> { b: $.a }` 回到衝突。對照格與 r1、r2、g1 仍綠。
+*   觀測框對 thunk 不走一步：r3 的 `run --observe c.r` 回到 `"Logic"`。其餘綠。
+*   `oo eval` 拿出的值用完整 `force`：g1 的 `c.r`、`_.c.r`、`<<c>>.r` 收合成 `"Logic"`。`k` 仍是結構視圖。
+*   `force` 內部剝 thunk 改回完整 `force`：g1 的 `<<c>>.r` 收合成 `"Logic"`。
+*   `force_coord` 主分支用完整 `force`：g1 的 `k` 收合成 `"Logic"`。
+
+下面三處拿掉，探針 4／4 仍綠。跟留下的這份比過這些根和提交後讀數，逐行相同：`x: 0` 的 `b74d7758…`；`t`／`c` 的 `756830fc…`（`c.r.a` 是 `1`）；`n`／`c` 的 `a234a2df…`（`c.r + 1` 是 `2`）；`s`／`c`／`k` 的 `7f450f9a…`（`k` 與 `c.r` 是結構視圖）；正典檔 `a96f5aa3…`；先提交 `c`／`k`／`k3` 的 `befbb769…`，提交 `y` 之後的 `576c6264…`（`k` 是 `{ a: 1 }`，`k2` 是 `1`，`k3` 是 `2`，`c.r.a` 是 `1`）；80 跳 `bdf9bce7…`、70 跳 `53386ca5…`、140 跳 `eb40be24…`，`c.r.a` 都是 `1`；引用環 `a1`、`a1.x`、`e.r.x` 是 `_`。
+
+留著，理由如下。`preserve_refs` 護欄：提交投影不讀穿引用。這一輪量不出差別，跟第一輪 Q2 一樣，護欄是那條規則，不刪。`force_coord` 的 `~` 分支走一步：私有座標算出引用時，它就是那個引用，跟公開座標同一條。量不出差別，留著。`force_coord` 的另一支（不是 thunk、不是引用）改回完整 `force` 也量不出差別——那一支的輸入進不了讀穿迴圈，兩種寫法同一件事。留成一步，跟另外兩支同一條規則。
+
+**R1-Q2** 第一輪的導航迴圈刪了。留下的讀穿在 `force`：thunk 算出引用之後，最多再走 64 步。
+
+沒有一格分得出那個導航迴圈。拿掉之後，上面 R1-Q1 列的根、提交後讀數、70／80／140 跳的 `c.r.a`，跟留著迴圈的那份逐行相同；探針 4／4 綠；引用環仍是 `_`。迴圈還在的時候量過：導航在 `force` 之後沒有接到引用；140 跳的鏈在 `force` 裡只計了 1 步，結果已經不是引用。`force` 讀穿之後，那個迴圈碰不到引用。
+
+64 步的上限由 `force` 接手。存成一串裸引用的鏈是在這一次 `force_once` 裡讀完的，導航處的舊上限碰不到，140 跳的 `c.r.a` 是 `1`。引用環不是靠這個上限收成 `_`：`a1`、`a1.x`、`e.r.x` 直接是 `_`，與別名環 `_.j` 同答。深度視界那個出口跟著迴圈一起刪了。量過的程式沒有一支在 64 步之後還是引用，所以沒有格子在用它。
+
+**R1-Q3** 效應各寫一次，與 v0.91.0 同。
+
+*   `{ ...{ w: ~%Io./append_file ("log.txt", "a") }, q: w }.q`：日誌 `a`，答案 `#true`，效應 `#io`。r10 在閘門裡綠（`a_name_spread_in_probe_test` 15／15）。
+*   `e: ~%Io./append_file ("log.txt", "a")`、`c: { r: <<e>> }`、`c.r = #true`：日誌 `a`。答案兩邊都是 `#false`，效應 `#io`。
+
+**R1-Q4** 釋出二進位對 v0.91.0 釋出二進位，根逐字相同。答案只在讀穿的那些格不同。
+
+*   `x: 0`：`b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`。
+*   `v: 1 + 1` 與 `1+1`：`df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。
+*   `f: (x -> x + 1)`：`258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。
+*   `k: { a: 1, _: 9 }`：`420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。
+*   `m: (_ -> 1)`：`cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。
+*   `t: { a: 1 }`、`c: { r: <<t>> }`：`756830fc5e46327bd60b57e540d449e9c522ab76046718c9e85c9ae795f42817`。
+*   巢一層：`6da1e5fb87c44f7209bda45742f6db153ad2a9d7bf02fbb7e944f941b858c0a1`。
+*   `l: [<<t>>]`：`0718c87efc9b8d35dd8666563aa7b453d02963538b5ba811ac6af2bc1c9b4f25`。
+*   `s: "Logic" |> { a: $ }`、`c: { r: <<s>> }`：`69c0ec0f8d990f2dd038e4bed1fe6b65ad4648954cfe60d67591e11d6ffbd65d`。
+*   先寫 `c: { r: <<s>> }`、接著 `s: { a: 1 }`：`6906ff6892baff0360b8161404b362e30c76d2602f4f73aa28a39d25332108b6`。
+*   正典檔（`s`、`w`、`v`、`r`、`t`）：`a96f5aa39a6d231d3bb7125fc7d3d3b410c1944ca1855c7f6b9fbc1eab5b011a`，`v.w.x.a` 是 `"Logic"`。
+*   加上 `k: c.r`：`7f450f9a09541c1fd5cb4c26500b6fb238a8dd28700c8fbcfebf124ce2523360`。
+*   80 跳：`bdf9bce76d16fc87ed0a48039e628f9f40464191005f264e131f09d7b59fbd62`。`c.r` 兩邊都是 `{ a: 1 }`，`c.r.a` 由 `_` 成為 `1`。
+*   標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。新倉 `layout=9`、`encoding=6`。
+
 #### 9.4.5 數字
+
+1. 探針沒有改。釋出 4／4，1.91s。`snapshot_not_a_reading_probe_test` 16／16，2.35s（燃料夾具是驗收方改的，這份沒有再動）。
+2. 三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，依序。牆鐘 1000.75s、557.39s、562.70s。每輪退出碼 0。`test result:` 282 行，2697 通過，0 失敗。去掉前導空白的 `Running ` 279 行。歸一後 3540 行，sha256 `a03f3e6fc9c9ed135598108792411e88911d008edfda1c89ac59a876e8759811`，三輪相同。原始日誌第一輪 287778 位元組（含編譯），第二、三輪 287623。`^error` 0，BrokenPipe 0，panicked 0。2697 是上一輪的 2696 加上 r3 這一支。
+3. §4 紅線，第一輪計時，皆通過：本探針 4／4，1.91s。Q-089 6／6，1.95s。Q-088 8／8，4.92s。`stage2_open_term_test` 3／3，0.10s。`stage3_probe_test` 4／4，0.32s。`stage3_acceptance_test` 6／6，0.11s。Q-087 7／7，2.81s。Q-086 4／4，2.28s。Q-077 12／12，2.96s；R-1 4／4，1.29s。Q-085 7／7，2.85s。Q-084 11／11，2.12s。Q-083 17／17，6.22s；bytes 1／1，0.25s；epochs 4／4，0.36s；union 2／2，0.00s；`pin_probe_test` 15／15，2.16s。`a_name_spread_in_probe_test` 15／15，6.14s。`where_there_is_no_universe` 13／13，4.12s。`a_private_never_committed` 10／10，4.07s；R-1 3／3，0.47s。同輪也綠：`kind_tag_probe_test` 7／7，0.29s。`a_table_that_forgot_its_patterns` 17／17，2.39s；R-1 6／6，0.67s；R-2 10／10，1.77s。`forward_spread` 12／12，0.87s；`spread_collision` 25／25，0.88s；`spread_privacy` 11／11，0.37s；`blur_spread` 13／13，2.98s；`import_is_spread` 7／7，0.40s；`spread_splice` 9／9，0.15s。
+4. conformance 171／171，退出碼 0。`.oo/format` 前後都是 `32`。
+5. `~%Math./add` (1, 2)=3、(1, 3)=4，rc 0，沒有建 `.oo/`。euid 1000。
+6. `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 退出碼 0，`^error` 0，4.34s。動手之前先刪了該 target 裡五個零長度檔（兩份 cargo lock、`oo` 的 build stderr、`liboo` 與 `libnlint` 的 `.rmeta`）。該 target 上 lib 15 條警告。linux 上 lib 14 條。都沒有修。
+7. 釋出二進位 11006448 位元組，mtime 2026-10-16 01:57:31 +0800。未 push。`oo` 仍是 0.91.0。

@@ -2226,6 +2226,12 @@ impl Universe {
             // values, so interactive experience is unchanged; path-directed observe
             // (navigate_segments) forces only the path (§11.4).
             let res = read(engine, &mut ctx);
+            // A path that stops on a held reference observes the reference:
+            // one step only, so it is still a `Ref` below.
+            let res = match res {
+                Value::Thunk { .. } => engine.force_once(res, &mut ctx),
+                other => other,
+            };
             // G6 / SYNTAX_07 §4 #6: Ref-mediated observation = structural view
             // (full hybrid node). Non-path `<<…>>` carries a `%structural`
             // mark (payload in `%node`, not `%val`, so lattice collapse does
@@ -2270,7 +2276,9 @@ impl Universe {
             // (a Ref-mediated observation is the structural view, SYNTAX_07
             // §4 #6); anything else is forced at its coordinate.
             Some(Value::Ref(r)) => self.observe_with(engine, |_, _| Value::Ref(r)),
-            Some(v) => self.observe_with(engine, |engine, ctx| engine.force(v, ctx)),
+            // One step, as `observe` takes a path's value: a held reference
+            // is observed as the reference (SYNTAX_07 §4 #6).
+            Some(v) => self.observe_with(engine, |engine, ctx| engine.force_once(v, ctx)),
             None => self.observe(engine, &path),
         }
     }
