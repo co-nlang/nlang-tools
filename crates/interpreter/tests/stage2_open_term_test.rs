@@ -27,10 +27,14 @@ fn evolve_stores_open_term_as_thunk() {
     let program = parse_program(src).unwrap();
     universe.evolve(&engine, &program.fields[0]).unwrap();
 
-    // After evolve, the staged combo's `w` field should contain `x` as a Thunk
-    // (not collapsed to _|_ #no_context at evolve time — that's Stage 2's move).
+    // After evolve, the open term is stored, not collapsed to _|_ #no_context
+    // at evolve time — that's Stage 2's move. Q-088 R-3 (SPEC_07 §4.2 P3: an
+    // open term is stored as itself, its syntax): `w` may be stored as the
+    // unevaluated definition (a Thunk with no binding), or as a Combo whose
+    // `x` is a Thunk. Either shape keeps the open term; ⊥ does not.
     let w = universe.staged.get_field("w").cloned();
     match w {
+        Some(Value::Thunk { context: None, .. }) => {} // ✓ the definition itself
         Some(Value::Combo(wcv)) => {
             let x = wcv.get_field("x").cloned();
             match x {
@@ -41,7 +45,7 @@ fn evolve_stores_open_term_as_thunk() {
                 other => panic!("expected Thunk for open-term x, got {:?}", other),
             }
         }
-        other => panic!("expected w to be a Combo, got {:?}", other),
+        other => panic!("expected w to be stored as an open term, got {:?}", other),
     }
 }
 

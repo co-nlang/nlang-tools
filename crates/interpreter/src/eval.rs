@@ -277,6 +277,47 @@ fn value_dependencies(value: &Value) -> HashSet<String> {
     }
 }
 
+/// P3: an open term in a value that reaches the right of `|>` binds to the
+/// input there. A table body inside is bound too: choosing the branch
+/// binds `$` to the matched input again (D109).
+pub(crate) fn bind_open_terms(v: Value, input: &Value) -> Value {
+    match v {
+        Value::Thunk {
+            expr,
+            closure,
+            context: None,
+            effect,
+        } if nlang_parser::tier::has_free_dollar(&expr) => Value::Thunk {
+            expr,
+            closure,
+            context: Some(Box::new(input.clone())),
+            effect,
+        },
+        Value::Combo(mut c) => {
+            for axis in [
+                &mut c.data,
+                &mut c.types,
+                &mut c.rules,
+                &mut c.meta,
+                &mut c.system,
+                &mut c.local,
+            ] {
+                let keys: Vec<String> = axis.keys().cloned().collect();
+                for k in keys {
+                    if let Some(x) = axis.shift_remove(&k) {
+                        axis.insert(k, bind_open_terms(x, input));
+                    }
+                }
+            }
+            Value::Combo(c)
+        }
+        Value::Union(items) => {
+            Value::Union(items.into_iter().map(|x| bind_open_terms(x, input)).collect())
+        }
+        other => other,
+    }
+}
+
 /// Follow value dependencies to a fixed point before taking the frame slice:
 /// a captured `e` whose recipe reads `d` is not usable unless `d` travels too.
 /// D109: a deferred branch body is code, identified like an arrow body by
@@ -1559,6 +1600,16 @@ impl Ouroboros {
             }
             other => other,
         };
+        // P1/P3: `|>` is where `$` binds. An open term in the right-hand
+        // value binds to this input (GUIDE_03 §11.2 context slot). A
+        // template read back from the store carries none. A morphism on
+        // the right is application, not a merge, so its body is not
+        // stamped here. A reference is left as stored.
+        let rv = if matches!(rv, Value::Combo(_)) && !rv.is_morphism() {
+            bind_open_terms(rv, &lv)
+        } else {
+            rv
+        };
         if rv.is_morphism() {
             let res = self.apply_morphism(rv.clone(), lv.clone(), ctx);
             if matches!(res, Value::Bottom(_) | Value::Top) {
@@ -1989,7 +2040,21 @@ impl Ouroboros {
                 // union interior effects.
                 res
             }
-            ExprKind::Path(p) => self.resolve_path(p, ctx),
+            ExprKind::Path(p) => {
+                let v = self.resolve_path(p, ctx);
+                // P3: a stored open term is its definition. Reading it here
+                // evaluates it here, as a sibling name written in place is
+                // (force_lexical_name): under this frame's `$`, or none.
+                match v {
+                    Value::Thunk { ref expr, context: None, .. }
+                        if p.anchor == nlang_parser::ast::PathAnchor::Root
+                            && nlang_parser::tier::has_free_dollar(expr) =>
+                    {
+                        self.force(v, ctx)
+                    }
+                    other => other,
+                }
+            }
             ExprKind::Apply(f, a) => {
                 if let Err(e) = ctx.check_resources(mbu::OPERATOR_APPLICATION) {
                     let partial = if needs_partial_body(&e, ctx.strategy) {

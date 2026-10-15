@@ -259,6 +259,19 @@ fn is_system_axis_lhs_forbidden(key: &FieldKey) -> bool {
     }
 }
 
+/// P3: an expression with a free `$` outside the bodies that bind their own
+/// (`->`, a nested `|>`, a table branch: D109, the matched input).
+fn is_open_term(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Combo { fields, .. } => fields.iter().any(|f| match &f.key {
+            FieldKey::Pattern(k) => nlang_parser::tier::has_free_dollar(k),
+            _ => is_open_term(&f.value),
+        }),
+        ExprKind::List(items) | ExprKind::Tuple(items) => items.iter().any(is_open_term),
+        _ => nlang_parser::tier::has_free_dollar(e),
+    }
+}
+
 /// After evolve-time eval, a `#pure` derived answer is not what injection
 /// stores (D46 (i) / S3). Eval still runs so evolve-boundary reports stay
 /// loud (Config types, `#divergent`, resource horizons). The recipe is
@@ -653,7 +666,20 @@ impl Universe {
         for c in &coords {
             ctx.computing.insert(c.clone());
         }
-        let mut val = engine.eval(&field.value, &mut ctx);
+        // SPEC_07 §4.2 P3: an open term is stored as itself — its syntax,
+        // with no binding. Reading it is reading the definition: it binds
+        // where it is forced, exactly as the same definition written in
+        // place does.
+        let mut val = if ctx.context_value.is_none() && is_open_term(&field.value) {
+            Value::Thunk {
+                expr: Box::new(field.value.clone()),
+                closure: ctx.scopes.clone(),
+                context: None,
+                effect: engine.predict_effect(&field.value, &ctx),
+            }
+        } else {
+            engine.eval(&field.value, &mut ctx)
+        };
         for c in &coords {
             ctx.computing.remove(c);
         }
