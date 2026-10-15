@@ -2646,12 +2646,7 @@ fn run_eval(
                 anyhow::bail!("Eval error: {}", format_conflict_where(&e, Some(&fb)));
             }
         }
-        let path = nlang_parser::ast::Path {
-            anchor: nlang_parser::ast::PathAnchor::Bare,
-            segments: vec!["__eval_result".to_string()],
-            span: nlang_parser::ast::Span { start: 0, end: 0 },
-        };
-        Ok(universe.observe(&engine, &path))
+        Ok(universe.observe_field_apart(&engine, "__eval_result"))
     });
     let result = outcome?;
     println!("{}", result.to_nlang(0));

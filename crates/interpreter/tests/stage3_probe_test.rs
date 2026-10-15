@@ -88,8 +88,12 @@ fn contains_horizon(v: &Value) -> bool {
 fn probe_evolve_stores_live_ref_not_snapshot() {
     let dir = tmp_dir("store");
     let (_engine, universe) = build_universe(&dir);
+    // Q-089 (SYNTAX_07 §2 #4; SPEC_07 §4.2 P1): `v: <<_.>> |> <<_.>>` may be
+    // kept as the live reference, or as the unevaluated pipe over live
+    // references (its input must still bind `$` when it is observed). Either
+    // stays live; a Combo is the snapshot this probe forbids.
     match universe.staged.get_field("v") {
-        Some(Value::Ref(_)) => {}
+        Some(Value::Ref(_)) | Some(Value::Thunk { context: None, .. }) => {}
         other => panic!(
             "v must be stored as a live Ref (C-case), not an evolve-time snapshot; got {:?}",
             other.map(|v| format!("{:?}", v).chars().take(80).collect::<String>())

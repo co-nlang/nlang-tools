@@ -86,32 +86,45 @@ fn stage3_ref_structural_creates_ref() {
 
 #[test]
 fn stage3_pipe_with_ref_late_binding() {
-    // v: <<_.>> |> <<_.>> — at evolve time, the pipe expression is stored as a
-    // Thunk on the field. At eval level (before force), the pipe evaluates
-    // Refs; unify_internal's CAID early-out for identical Refs returns Ref
-    // without forcing — this IS the late binding: the Ref resolves to root
-    // only when forced at observe time.
+    // v: <<_.>> |> <<_.>> — late binding: the references are read when the
+    // pipe is evaluated (observed), against the root as it is then — not
+    // snapshotted when the field is defined. Q-089 (SPEC_07 §4.2 P1): the
+    // engine may return the reference itself, or read it at this
+    // application so the pipe's input binds `$`; either way the result is
+    // the root of this context. (The stored field staying live is
+    // stage3_probe_test::probe_evolve_stores_live_ref_not_snapshot.)
     let src = "v: <<_.>> |> <<_.>>";
     let program = parse_program(src).unwrap();
     let oo = Ouroboros::new_in_memory();
+    let mut fields = IndexMap::new();
+    fields.insert(
+        "z".to_string(),
+        Value::Atom(nlang_parser::ast::AtomKind::Int(1.into()), EffectTag::Pure, None),
+    );
     let mut ctx = EvalContext::new(ComboVal::new(
-        IndexMap::new(),
+        fields,
         false,
         IndexMap::new(),
         EffectTag::Pure,
         vec![],
     ));
     let result = oo.eval(&program.fields[0].value, &mut ctx);
-    // Pipe result before force: Ref (late binding — resolves to root at force time)
     match &result {
         Value::Ref(p) => assert!(
             p.anchor == nlang_parser::ast::PathAnchor::Root
                 || p.anchor == nlang_parser::ast::PathAnchor::Bare
         ),
-        other => panic!(
-            "pipe result before force should be Ref (late binding), got {:?}",
-            other
-        ),
+        other => {
+            let seen = oo.force_recursive(other.clone(), &mut ctx);
+            match seen {
+                Value::Combo(c) => assert!(
+                    matches!(c.get_field("z"), Some(Value::Atom(nlang_parser::ast::AtomKind::Int(_), _, _))),
+                    "the pipe read a root without `z`: {:?}",
+                    c
+                ),
+                other => panic!("pipe over <<_.>> should be the root it read, got {:?}", other),
+            }
+        }
     }
 }
 

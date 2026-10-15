@@ -670,7 +670,11 @@ impl Universe {
         // with no binding. Reading it is reading the definition: it binds
         // where it is forced, exactly as the same definition written in
         // place does.
-        let mut val = if ctx.context_value.is_none() && is_open_term(&field.value) {
+        // SYNTAX_07 §2 #4: a computation over a live reference is stored as
+        // what it says (a bare `<<path>>` is the reference itself).
+        let live = !matches!(field.value.kind, ExprKind::Structural(_) | ExprKind::Combo { .. })
+            && crate::eval::has_live_ref(&field.value);
+        let mut val = if ctx.context_value.is_none() && (is_open_term(&field.value) || live) {
             Value::Thunk {
                 expr: Box::new(field.value.clone()),
                 closure: ctx.scopes.clone(),
@@ -2176,6 +2180,16 @@ impl Universe {
         Ok(commit_hash)
     }
     pub fn observe(&self, engine: &Ouroboros, path: &Path) -> Value {
+        self.observe_with(engine, |engine, ctx| engine.resolve_path(path, ctx))
+    }
+
+    /// The observation frame shared by a path (`observe`) and a held value
+    /// (`observe_field_apart`): `read` produces what is observed in it.
+    fn observe_with(
+        &self,
+        engine: &Ouroboros,
+        read: impl FnOnce(&Ouroboros, &mut EvalContext) -> Value,
+    ) -> Value {
         // Overlay staged ~%Config field overrides onto root before unify so
         // lattice meet never conflicts genesis fuel with user override.
         // SPEC_09 §6 display: binding is the EFFECTIVE config (genesis ∧
@@ -2211,7 +2225,7 @@ impl Universe {
             // moved from evolve to observe (GUIDE_03 §11.5). REPL observes return
             // values, so interactive experience is unchanged; path-directed observe
             // (navigate_segments) forces only the path (§11.4).
-            let res = engine.resolve_path(path, &mut ctx);
+            let res = read(engine, &mut ctx);
             // G6 / SYNTAX_07 §4 #6: Ref-mediated observation = structural view
             // (full hybrid node). Non-path `<<…>>` carries a `%structural`
             // mark (payload in `%node`, not `%val`, so lattice collapse does
@@ -2237,6 +2251,27 @@ impl Universe {
             }
         } else {
             BottomCause::Conflict.into()
+        }
+    }
+
+    /// A one-shot evaluation (`oo eval`) evolves its question as a field so
+    /// it is evaluated like any definition, then observes that field's value
+    /// with the field taken back out: `<<_.>>` and `_.` are the universe's
+    /// root, not the root plus the question (SYNTAX_07 §2 #4).
+    pub fn observe_field_apart(&mut self, engine: &Ouroboros, name: &str) -> Value {
+        let held = self.staged.data.shift_remove(name);
+        let path = Path {
+            anchor: PathAnchor::Bare,
+            segments: vec![name.to_string()],
+            span: nlang_parser::ast::Span { start: 0, end: 0 },
+        };
+        match held {
+            // As `resolve_path` reads a field: a reference stays a reference
+            // (a Ref-mediated observation is the structural view, SYNTAX_07
+            // §4 #6); anything else is forced at its coordinate.
+            Some(Value::Ref(r)) => self.observe_with(engine, |_, _| Value::Ref(r)),
+            Some(v) => self.observe_with(engine, |engine, ctx| engine.force(v, ctx)),
+            None => self.observe(engine, &path),
         }
     }
 

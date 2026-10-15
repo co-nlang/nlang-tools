@@ -3663,7 +3663,17 @@ impl Ouroboros {
                         EffectTag::Pure,
                     );
                 }
-                self.resolve_path_internal(&path, ctx)
+                // SPEC_07 §4.2.1 P3 判例: a stored open term is its definition;
+                // reading it through a reference evaluates it here, as `_.`
+                // does — under this frame's `$`, or none.
+                let read = self.resolve_path_internal(&path, ctx);
+                let open = matches!(&read, Value::Thunk { expr, context: None, .. }
+                    if nlang_parser::tier::has_free_dollar(expr));
+                if open {
+                    self.force(read, ctx)
+                } else {
+                    read
+                }
             }
             // forward_spread: private force_coord skips the computing gate and
             // only calls force — expand pending spreads here too so bits/pipe
@@ -3744,19 +3754,10 @@ impl Ouroboros {
         if matches!(&val, Value::Ref(_)) && ctx.preserve_refs {
             return val;
         }
-        // F1 (§3-fix): when force_recursive deref's a Ref, the resolved value
-        // becomes the $ binding for all thunks forced in the subtree (SYNTAX_07
-        // §2.4: "binding occurs at observation time"). Scope via save/restore
-        // so sibling observations are not polluted.
-        let is_ref = matches!(&val, Value::Ref(_));
+        // SYNTAX_07 §2 #4: dereferencing a live reference binds the reference
+        // to what the coordinate holds now. It binds no `$`: only an evolution
+        // does (SPEC_07 §4.2 P1, P3).
         let val = self.force(val, ctx);
-        let old_ctx_val = if is_ref {
-            let old = ctx.context_value.take();
-            ctx.context_value = Some(val.clone());
-            old
-        } else {
-            None
-        };
         let res = match val {
             // Residual thunk after force (path field leave): peel without
             // double-counting depth (Thunk arm above).
@@ -3891,9 +3892,6 @@ impl Ouroboros {
             }
             _ => val,
         };
-        if is_ref {
-            ctx.context_value = old_ctx_val;
-        }
         ctx.depth -= 1;
         // O74 ②: after solidification, an open combo's effect is the actual
         // obstruction of its fields — not the construction-time prediction.
@@ -3915,11 +3913,19 @@ impl Ouroboros {
             // SPEC_07 §4.2 P3: an open term (a free `$` with no binding
             // carried in) is stored as itself. Forcing it here observes it
             // with no enclosing evolution and stores ⊥ #no_context.
+            // SYNTAX_07 §2 #4: a computation over a live reference is the
+            // same kind of value — its syntax. Forcing it here reads the
+            // reference against the root this commit replaces.
             Value::Thunk {
                 ref expr,
                 ref context,
                 ..
-            } if context.is_none() && nlang_parser::tier::has_free_dollar(expr) => val,
+            } if context.is_none()
+                && (nlang_parser::tier::has_free_dollar(expr)
+                    || crate::eval::has_live_ref(expr)) =>
+            {
+                val
+            }
             Value::Thunk { ref expr, effect, .. }
                 if !effect.is_pure()
                     || matches!(
@@ -4429,7 +4435,6 @@ impl Ouroboros {
                         minted
                     }
                     Some(v) => {
-                        let is_ref = matches!(&v, Value::Ref(_));
                         // force_coord only for public root/staged coordinates;
                         // private/local re-entry during HOF is not a cycle.
                         let forced = if name.starts_with('~') {
@@ -4438,30 +4443,12 @@ impl Ouroboros {
                             self.force_coord(name, v, ctx)
                         };
                         if path.segments.len() > 1 {
-                            // F1 (§3-fix): when resolving through a Ref, the deref'd
-                            // value becomes the $ binding for thunks forced in the
-                            // remaining path traversal (SYNTAX_07 §2.4: "binding
-                            // occurs at observation time"). Scoped to the deref
-                            // subtree — saved/restored so sibling observations are
-                            // not polluted.
-                            let old_ctx_val = if is_ref {
-                                let old = ctx.context_value.take();
-                                ctx.context_value = Some(forced.clone());
-                                old
-                            } else {
-                                None
-                            };
-                            let res =
-                                self.navigate_segments(forced, &path.segments[1..], ctx, name);
-                            if is_ref {
-                                ctx.context_value = old_ctx_val;
-                            }
-                            return res;
+                            // SYNTAX_07 §2 #4: navigating through a reference
+                            // reads the coordinate. It does not bind `$`.
+                            return self.navigate_segments(forced, &path.segments[1..], ctx, name);
                         }
-                        // Single-segment: no navigation subtree — return deref'd
-                        // value directly, no context scoping needed. But if this
-                        // Ref observation feeds into force_recursive, the recursion
-                        // needs the deref context (handled in force_recursive F1).
+                        // Single-segment: return the deref'd value. No `$`
+                        // is bound here (SPEC_07 §4.2 P1).
                         forced
                     }
                     None => Value::Top,
