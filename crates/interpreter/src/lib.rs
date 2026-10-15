@@ -4587,6 +4587,32 @@ impl Ouroboros {
             }
             let seg = seg.trim();
             let mut current = self.force(val, ctx);
+            // SYNTAX_07 §2 #4: navigating through a live reference reads the
+            // coordinate, wherever the reference is held — a field, an
+            // element, a returned value (`c: { r: <<t>> }`: `c.r.a` is
+            // `(c.r).a`). Forcing a held field yields the reference itself.
+            // A chain of stored references is followed inside that `force`.
+            // This loop is the other shape: each force hands back another
+            // reference. Commit projection keeps the quote (`preserve_refs`).
+            // Past the budget the value is still a reference, so this is the
+            // depth horizon — ⊤ `#no_coordinate` would print `_` and claim
+            // the coordinate is absent.
+            if !ctx.preserve_refs {
+                let mut hops = 0;
+                while matches!(current, Value::Ref(_)) && hops < 64 {
+                    current = self.force(current, ctx);
+                    hops += 1;
+                }
+                if matches!(current, Value::Ref(_)) {
+                    return handle_resource_exhausted(
+                        crate::ResourceExhausted::DepthExceeded,
+                        ctx.strategy,
+                        &*ctx,
+                        Some(current),
+                        accumulated_effect,
+                    );
+                }
+            }
             accumulated_effect = accumulated_effect.union(current.effect());
             // forward_spread: expand deferred sources before field ops so
             // ⊥/blur absorb and field merge are visible to this segment.
