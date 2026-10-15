@@ -3376,6 +3376,30 @@ impl Ouroboros {
     }
 
     pub fn force(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        // SYNTAX_07 §2 #4: a recipe whose value is a live reference — a field
+        // holding `<<t>>`, an arrow returning one, a branch picking one —
+        // forces to the reference itself. Whoever forces it wants what it
+        // refers to (an operand, a navigation step), as `r + 1` reads a
+        // top-level `r: <<t>>`. A coordinate's own value stays the reference
+        // (`force_coord`); commit projection keeps the quote.
+        let from_thunk = matches!(val, Value::Thunk { .. });
+        let mut out = self.force_once(val, ctx);
+        if from_thunk && !ctx.preserve_refs {
+            let mut hops = 0;
+            while matches!(out, Value::Ref(_)) && hops < 64 {
+                out = self.force_once(out, ctx);
+                if matches!(out, Value::Thunk { .. }) {
+                    out = self.force_once(out, ctx);
+                }
+                hops += 1;
+            }
+        }
+        out
+    }
+
+    /// One step of `force`: a recipe whose value is a live reference yields
+    /// the reference, unread.
+    pub(crate) fn force_once(&self, val: Value, ctx: &mut EvalContext) -> Value {
         match val {
             Value::Thunk {
                 expr,
@@ -3555,7 +3579,9 @@ impl Ouroboros {
                 let mut res = res;
                 let mut peel = 0u32;
                 while matches!(res, Value::Thunk { .. }) && peel < 32 {
-                    res = self.force(res, &mut call_ctx);
+                    // One step at a time: a peeled recipe that yields a live
+                    // reference stays the reference here (`force` reads it).
+                    res = self.force_once(res, &mut call_ctx);
                     peel += 1;
                 }
                 // A field stores its combo as a thunk. The combo arm below
@@ -4987,10 +5013,14 @@ impl Ouroboros {
     /// Force a binding under a coordinate key. Re-entering the same coordinate
     /// in this observation = cycle → ⊥ #divergent (L2-17). Covers path cycles
     /// (`s.v` → `s.v`) where fresh thunk instances may not share a content-hash.
+    /// A coordinate whose definition yields a live reference is that
+    /// reference (SYNTAX_07 §2 #4), as a top-level `r: <<t>>` is: one step
+    /// (`force_once`), so observing it sees a reference (§4 #6) and its user
+    /// reads through it when forcing the reference.
     fn force_coord(&self, coord: &str, val: Value, ctx: &mut EvalContext) -> Value {
         // Private / system locals: not lattice cycle coordinates.
         if coord.starts_with('~') {
-            return self.force(val, ctx);
+            return self.force_once(val, ctx);
         }
         // Gate re-entry for Thunk / Ref, and for Combo still holding deferred
         // spreads (forward_spread): expanding `...al` that aliases back to
@@ -5003,7 +5033,7 @@ impl Ouroboros {
             }
             ctx.computing.insert(coord.to_string());
             ctx.cycle_chain.push(coord.to_string());
-            let res = self.force(val, ctx);
+            let res = self.force_once(val, ctx);
             // Expand deferred spreads WHILE still under this coord so
             // alias-detour re-entry (`...al` → `a`) sees computing and
             // chain_transform_taint (forward_spread C4).
@@ -5019,7 +5049,7 @@ impl Ouroboros {
             ctx.computing.remove(coord);
             res
         } else {
-            self.force(val, ctx)
+            self.force_once(val, ctx)
         }
     }
 

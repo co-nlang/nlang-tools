@@ -167,7 +167,13 @@ const KNOB: &str = "~%Config.max_unification_depth: 2\n";
 const DEEP_A: &str = "{{a: {{b: {{c: {{d: 1}}}}}}}} & {{a: {{b: {{c: {{d: 1}}}}}}}}";
 const DEEP_B: &str = "{{zz: {{yy: {{xx: {{ww: 9}}}}}}}} & {{zz: {{yy: {{xx: {{ww: 9}}}}}}}}";
 /// A fuel-side blur: minted during observe, so it carries the fixed salt.
-const FUEL_BLUR: &str = "~%Config.fuel: 5\np: <<_.>>\n";
+// Revised by the Q-090 acceptor (2026-10-15): fuel 5 → 3. The claim is that
+// a fuel-side blur keeps its identity across processes; the fixture must
+// therefore reach the horizon. `cp: p.%caid` is `_` with enough fuel (v0.91.0
+// from fuel 20 on); Q-090 R-1 reads a held reference in fewer steps and
+// computes `_` within 5. At 3 both v0.91.0 and R-1 blur, with the same
+// %caid (`d65e321e…`).
+const FUEL_BLUR: &str = "~%Config.fuel: 3\np: <<_.>>\n";
 
 // ════════════════════════════════════════════════════════════════════════
 //  CONTROL — green before and after
