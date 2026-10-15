@@ -320,3 +320,56 @@ fn r6_a_template_passed_through_is_not_bound_to_itself() {
     }
     assert!(bad.is_empty(), "\n{}", bad.join("\n"));
 }
+
+// ── Red, added at R-2 acceptance (R-3) ───────────────────────────────────
+
+/// Given data stays given under another name, and in a stored closure.
+/// GUIDE_03 §11.2's force rule decides who binds an open term: the thunk's
+/// own context, else the observer's `$`, else ⊥ #no_context. A value handed
+/// to an evolution and named by a sibling (`{ y: x, r: y }`, `{ s: $, r: s }`)
+/// is still that value; observed with no evolution it is ⊥. v0.89.0 and
+/// `4b0c765`: right, stored and in place; `118b149` and `fa54bf9`: `_` for
+/// all four — a read through a name that is not a parameter frame was taken
+/// as reached. A closure stored by a second commit keeps its captured
+/// argument given: `(_.f 0)` is ⊥ (`118b149`, `fa54bf9`: `{ a: _ }`), and a
+/// pipe around it binds it (P1; v0.89.0: `{ a: ⊥ b: 1 }`).
+#[test]
+fn r7_given_data_stays_given_under_another_name() {
+    let mut bad = Vec::new();
+    let w = Ws::new("r7");
+    w.commit(&["t: { a: $.b + 1 }\n"]);
+    for e in [
+        "((x -> { y: x, r: y }) _.t).r.a",
+        "(_.t |> { s: $, r: s }).r.a",
+        "{ t: { a: $.b + 1 }, q: ((x -> { y: x, r: y }) t).r.a }.q",
+        "{ t: { a: $.b + 1 }, q: (t |> { s: $, r: s }).r.a }.q",
+    ] {
+        let got = w.eval(e);
+        if !got.starts_with("_|_ ;; %cause: #no_context") {
+            bad.push(format!("  {e} observed with no evolution: {got}"));
+        }
+    }
+    // A closure written to the store by a later commit.
+    let w = Ws::new("r7f");
+    w.commit(&["t: { a: $.b + 1 }\nk: (x -> (y -> x))\n"]);
+    fs::write(w.ws.join("later.n"), "f: (_.k _.t)\n").unwrap();
+    for args in [&["evolve", "later.n"][..], &["commit", "-m", "b"][..]] {
+        let (o, rc) = w.oo(args);
+        assert_eq!(rc, 0, "{args:?}: {o}");
+    }
+    let got = w.eval("(_.f 0)");
+    if !got.starts_with("{ a: _|_ ;; %cause: #no_context") {
+        bad.push(format!("  (_.f 0) after a second commit: {got}"));
+    }
+    // Control, right on v0.89.0: the same closure built in place.
+    for (e, want) in [
+        ("{ t: { a: $.b + 1 }, k: (x -> (y -> x)), f: k t, r: { b: 1 } |> (f 0) }.r", "{ a: 2 b: 1 }"),
+        ("{ b: 1 } |> (_.f 0)", "{ a: 2 b: 1 }"),
+    ] {
+        let got = w.eval(e);
+        if got != want {
+            bad.push(format!("  {e}\n    want {want}\n    got  {got}"));
+        }
+    }
+    assert!(bad.is_empty(), "\n{}", bad.join("\n"));
+}
