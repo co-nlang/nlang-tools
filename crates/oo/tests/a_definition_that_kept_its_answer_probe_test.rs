@@ -295,6 +295,34 @@ fn r5_a_loop_has_the_same_cause_for_every_reader() {
     verdict(bad, cases.len() + 2);
 }
 
+/// r6 (R-1) — A table whose patterns read the universe is read again, as
+/// the same table written in place is: its patterns are a reading too. The
+/// first round kept tables out as "construction" — the acceptor's addition,
+/// not the ruling's criterion. v0.92.0 and the first round: `k 5` stays ⊥
+/// #conflict (the pattern froze to `_` while `n` was absent). Not here: an
+/// application `j: k 5` committed while `n` is absent is a real ⊥ then (two
+/// branches match `_`), and ⊥ is kept (D33/D44) — the Inbox row on
+/// operations that answer ⊥ for `_`.
+#[test]
+fn r6_a_table_that_read_the_universe_reads_it_again() {
+    let w = Ws::new("r6");
+    w.commit("k: { @{ _.n }: 1, _: 0 }\nk2: { @{ n }: 1, _: 0 }\n");
+    w.commit("n: 5\n");
+    let mut bad = Vec::new();
+    let cases = [
+        ("k 5", "1"),
+        ("k 4", "0"),
+        ("k2 5", "1"),
+        // controls: in place
+        ("{ @{ _.n }: 1, _: 0 } 5", "1"),
+        ("{ @{ _.n }: 1, _: 0 } 4", "0"),
+    ];
+    for (e, want) in cases {
+        check(&mut bad, e, w.eval(e), want);
+    }
+    verdict(bad, cases.len());
+}
+
 // ── Green ────────────────────────────────────────────────────────────────
 
 /// g1 — What reads nothing keeps its answer and its root; what is not a
@@ -312,9 +340,10 @@ fn g1_what_reads_nothing_keeps_its_root() {
         ("t: { a: 1 }\nc: { r: <<t>> }\nk: c.r\n", "e027a82b8688874a6cc7dc4a338baee22abae5de2559dc44ff1d7818ecb3a3d9"),
         ("t: { a: $.b + 1 }\ng: { m: t }\n", "505b71eeebf318bf7ce54529d05f0d9e4b2c4e5ef218c60db6ba757d4f366f79"),
         ("p: \"x.txt\"\nw: ~%Io./append_file (p, \"a\")\n", "77a310dff48f87848b190783ab27644ec2b22f291545059de9725e408dcdcf5f"),
-        // a table is built, not derived, even when its patterns read names
-        ("@T: { a: @int }\nk: { @{ @T }: \"t\", _: \"o\" }\n", "d63911027ad568f15b1d71a606236b8c511e6d7051c052a693d31fe6f2bd166a"),
-        ("n: 4\nk: { @{ n }: 1, _: 0 }\n", "b6f625009fde1e534130d03bb4655620cd61d02f7d8fef4a47c3450fe93b83d2"),
+        // a table whose patterns read nothing (R-1: one whose patterns read
+        // a name is r6, not a guard)
+        ("k: { @{ 4 }: 1, _: 0 }\n", "9a68d4a3badf7c39c6fe2d2a637c598b5eb08d3d433678b897b0b1116a0c3123"),
+        ("k: { @{ @int }: 1, _: 0 }\n", "ae9e8a566f5a63a580d593de542f7cedaf954c1c1a4d49b9215fb5b4407619a1"),
     ];
     for (i, (src, want)) in cases.iter().enumerate() {
         let w = Ws::new(&format!("g1{i}"));
