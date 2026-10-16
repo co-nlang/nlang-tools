@@ -402,7 +402,10 @@ fn g3_unchanged_values_keep_their_root() {
         // here: what this guard is about (the spread) did not move it, and
         // the liveness of an alias is the Q-091 probe's r1.
         ("...{ j: 5 }\nq: j\n", "40dfda24a4cd86b5a49ddb054d3097cf15c40ff7e442ed79cf636300b762b64b|98df034706b7a1f98ec75b995732c2f975ba284670b738aba8ec875e7a658c4f"),
-        ("s: { j: 5 }\n...s\n", "2355e7e85357191262bea67cf0a3e83a6aacd11490c292ee49f9c893e7ea68cb"), // Q-083／D106 紀元
+        // Q-091 R-2／D110: `...s` reads `s`, so `j` lands as the recipe
+        // `s.j` (`a77a72fa…`; was `2355e7e8…`). Either is accepted here: the
+        // liveness is the Q-091 probe's r9.
+        ("s: { j: 5 }\n...s\n", "2355e7e85357191262bea67cf0a3e83a6aacd11490c292ee49f9c893e7ea68cb|a77a72fa45067d1670401364424c9b8178ca1793a9b4a2aaf69fb3862f555b8c"),
         ("t: { ...{ j: 5, k: j } }\n", "4fe83f4335a89b7d930731c4f62525e4d492337c838c58a3925730702c28c8c4"), // Q-083／D106 紀元
         ("t: { k: 2, ...{ k: 1, q: k } }\n", "cac4a2994d66033de214195d5ac85a970b3d6bba4d58248b7fcd7237cfbd8f2f"), // Q-083／D106 紀元
     ]

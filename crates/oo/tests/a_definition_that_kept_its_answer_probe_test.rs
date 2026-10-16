@@ -42,6 +42,13 @@ struct Ws {
 }
 
 impl Ws {
+    /// Evolve `src` alone: (rc, output).
+    fn evolve(&self, src: &str) -> (i32, String) {
+        fs::write(self.ws.join("e.n"), src).unwrap();
+        let (o, rc) = self.oo(&["evolve", "e.n"]);
+        (rc, o)
+    }
+
     fn new(tag: &str) -> Self {
         let scratch = nlang_interpreter::ScratchDir::new(&format!("kept-answer-{tag}"));
         let root = scratch.path().to_path_buf();
@@ -323,6 +330,92 @@ fn r6_a_table_that_read_the_universe_reads_it_again() {
     verdict(bad, cases.len());
 }
 
+/// r7 (R-2) — A user type read by a pattern or a parameter is a reading of
+/// the universe: defined later, or narrowed later, the table and the arrow
+/// follow it, as written in place. R-1: `h 5` stays "t" and `f 5`, `g 5`
+/// stay 1 (a missing `@T` was taken for an engine name; commit forced the
+/// arrow's recipe into its value).
+#[test]
+fn r7_a_user_type_read_by_a_pattern_is_read_again() {
+    let mut bad = Vec::new();
+    let w = Ws::new("r7a");
+    w.commit("h: { @{ @T }: \"t\", _: \"o\" }\nf: (x @T -> 1)\n");
+    w.commit("@T: @str\n");
+    let later = [
+        ("h 5", "\"o\""),
+        ("h \"a\"", "\"t\""),
+        ("f 5", "_|_ ;; %cause: #no_matching_branch"),
+        ("f \"a\"", "1"),
+        // controls: in place
+        ("{ @{ @T }: \"t\", _: \"o\" } 5", "\"o\""),
+        ("(x @T -> 1) 5", "_|_ ;; %cause: #no_matching_branch"),
+    ];
+    for (e, want) in later {
+        check(&mut bad, &format!("defined later: {e}"), w.eval(e), want);
+    }
+    let v = Ws::new("r7b");
+    v.commit("@T: @any\nh: { @{ @T }: \"t\", _: \"o\" }\ng: (x @T -> 1)\n");
+    v.commit("@T: @str\n");
+    let narrowed = [
+        ("h 5", "\"o\""),
+        ("g 5", "_|_ ;; %cause: #no_matching_branch"),
+        ("g \"a\"", "1"),
+        ("(x @T -> 1) 5", "_|_ ;; %cause: #no_matching_branch"),
+    ];
+    for (e, want) in narrowed {
+        check(&mut bad, &format!("narrowed: {e}"), v.eval(e), want);
+    }
+    verdict(bad, later.len() + narrowed.len());
+}
+
+/// r8 (R-2) — A top-level pattern that reads the universe makes the root a
+/// table whose branch reads it when the root is applied. R-1: `(_.) 4` stays
+/// "hit" after `n: 5` (the pattern froze to `_`).
+#[test]
+fn r8_a_top_level_pattern_is_read_again() {
+    let w = Ws::new("r8");
+    w.commit("@{ _.n }: \"hit\"\nq: 1\n");
+    w.commit("n: 5\n");
+    let mut bad = Vec::new();
+    let cases = [
+        ("(_.) 5", "\"hit\""),
+        ("(_.) 4", "_|_ ;; %cause: #no_matching_branch"),
+        // control: in place
+        ("{ @{ _.n }: \"hit\" } 4", "_|_ ;; %cause: #no_matching_branch"),
+    ];
+    for (e, want) in cases {
+        check(&mut bad, e, w.eval(e), want);
+    }
+    verdict(bad, cases.len());
+}
+
+/// r9 (R-2) — A top-level `...s` lands each field as a reading of `s`: a
+/// later narrowing of `s.j` is seen at `j`. R-1: `j` stays @int. (A field
+/// added to `s` after the spread is not landed — Inbox, not this card.)
+#[test]
+fn r9_a_top_level_spread_reads_its_source_again() {
+    let w = Ws::new("r9");
+    w.commit("s: { j: @int }\n...s\n");
+    w.commit("s: { j: 5 }\n");
+    let mut bad = Vec::new();
+    let cases = [("j", "5"), ("_.j", "5"), ("_.s.j", "5")];
+    for (e, want) in cases {
+        check(&mut bad, e, w.eval(e), want);
+    }
+    verdict(bad, cases.len());
+}
+
+/// r10 (R-2) — A write that collides with a recipe is refused at evolve, as
+/// one that collides with a value is: evolve has both answers. v0.92.0
+/// already refused it for aliases and applications (g3) but not for the
+/// arithmetic recipe (S3): `b: a + 1` then `b: 3` landed.
+#[test]
+fn r10_a_collision_with_a_recipe_is_refused() {
+    let w = Ws::new("r10");
+    let (rc, o) = w.evolve("a: 1\nb: a + 1\nb: 3\n");
+    assert!(rc != 0 && o.contains("#conflict"), "`b: a + 1` then `b: 3`: rc={rc} {o}");
+}
+
 // ── Green ────────────────────────────────────────────────────────────────
 
 /// g1 — What reads nothing keeps its answer and its root; what is not a
@@ -393,4 +486,34 @@ fn g2_a_question_is_not_a_definition() {
         v.eval("_.w")
     }, &format!("{{ a: {NO_CONTEXT} }}"));
     verdict(bad, 15);
+}
+
+/// g3 (R-2) — Evolve still refuses a write that collides with a definition
+/// that read the universe, and still takes one that agrees. v0.92.0 refuses
+/// each of the first five; the first round (recipes) took the alias and the
+/// application, and a spread landed as a recipe took its collision.
+#[test]
+fn g3_a_collision_is_still_refused() {
+    let mut bad = Vec::new();
+    let refused = [
+        "a: 1\nb: a\nb: 3\n",
+        "a: 1\nb: 3\nb: a\n",
+        "a: 1\nb: (x -> x) a\nb: 3\n",
+        "...s\ns: { j: 1 }\nj: 2\n",
+        "s: { j: 1 }\n...s\nj: 2\n",
+    ];
+    for (i, src) in refused.iter().enumerate() {
+        let (rc, o) = Ws::new(&format!("g3r{i}")).evolve(src);
+        if rc == 0 || !o.contains("#conflict") {
+            bad.push(format!("  refuse {:?}: rc={rc} {o}", src.replace('\n', "; ")));
+        }
+    }
+    let taken = ["a: 1\nb: a\nb: 1\n", "s: { j: 1 }\n...s\nj: 1\n"];
+    for (i, src) in taken.iter().enumerate() {
+        let (rc, o) = Ws::new(&format!("g3t{i}")).evolve(src);
+        if rc != 0 {
+            bad.push(format!("  take {:?}: rc={rc} {o}", src.replace('\n', "; ")));
+        }
+    }
+    verdict(bad, refused.len() + taken.len());
 }
