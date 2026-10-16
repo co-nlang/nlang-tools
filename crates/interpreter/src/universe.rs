@@ -287,16 +287,10 @@ fn recipe_instead_of_pure_answer(
     // evolve-time solidification. Other expr kinds keep their eval result
     // (live Refs, `%effect` reads, applications that already ran) -- unless
     // the answer read the universe (D110): then it is a reading of the
-    // universe as it is now, and the recipe is what stays true.
-    let derived_read = read_world
-        && !matches!(
-            expr.kind,
-            ExprKind::Morphism { .. }
-                | ExprKind::Combo { .. }
-                | ExprKind::Structural(_)
-                | ExprKind::Atom(_)
-        )
-        && engine.predict_effect(expr, ctx).is_pure();
+    // universe as it is now, and the recipe is what stays true. A literal
+    // that reads nothing (a record's fields are lazy, an arrow's body is
+    // code) never sets the flag; a table whose patterns read a name does.
+    let derived_read = read_world && engine.predict_effect(expr, ctx).is_pure();
     if !derived_read && !matches!(
         expr.kind,
         ExprKind::Add(_, _)
