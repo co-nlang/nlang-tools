@@ -1180,7 +1180,11 @@ impl Universe {
         let frames = ctx.scopes.clone();
         let recipe_of = |k: &str| -> Option<Value> {
             let p = source_path.as_ref()?;
-            if k.is_empty() || !k.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+            // ACCEPTANCE REPAIR (Q-091 R-2): a field on another axis (`/f`,
+            // `%m`, `@U`) is read through the same path segment; only the
+            // name after its axis must be a plain name.
+            let bare = k.strip_prefix(['/', '%', '@']).unwrap_or(k);
+            if bare.is_empty() || !bare.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
                 return None;
             }
             let mut q = p.clone();

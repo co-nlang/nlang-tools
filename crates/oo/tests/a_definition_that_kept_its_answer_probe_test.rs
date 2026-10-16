@@ -395,10 +395,11 @@ fn r8_a_top_level_pattern_is_read_again() {
 #[test]
 fn r9_a_top_level_spread_reads_its_source_again() {
     let w = Ws::new("r9");
-    w.commit("s: { j: @int }\n...s\n");
-    w.commit("s: { j: 5 }\n");
+    w.commit("s: { j: @int, /f: @int, %m: @int }\n...s\n");
+    w.commit("s: { j: 5, /f: 8, %m: 6 }\n");
     let mut bad = Vec::new();
-    let cases = [("j", "5"), ("_.j", "5"), ("_.s.j", "5")];
+    // `/f`, `%m` (R-2 acceptance): a field on another axis lands the same way.
+    let cases = [("j", "5"), ("_.j", "5"), ("_.s.j", "5"), ("_./f", "8"), ("_.%m", "6")];
     for (e, want) in cases {
         check(&mut bad, e, w.eval(e), want);
     }
