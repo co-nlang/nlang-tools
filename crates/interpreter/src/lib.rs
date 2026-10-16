@@ -935,7 +935,11 @@ impl Ouroboros {
             })
         };
         let in_user = ctx.staged.as_ref().map_or(false, |s| has(s)) || has(&ctx.root);
-        let standard = has(&ctx.standard_root) || TypeConstraint::is_type_constraint_path(name);
+        // A builtin type name is the engine's; a user type `@T` that is not
+        // there yet is a miss in the universe, as any other name is.
+        let builtin_type = TypeConstraint::is_type_constraint_path(name)
+            && TypeConstraint::is_builtin_type_name(name.trim_start_matches('@'));
+        let standard = has(&ctx.standard_root) || builtin_type;
         if in_user || !standard {
             READ_WORLD.with(|c| c.set(true));
         }
@@ -4009,7 +4013,21 @@ impl Ouroboros {
             {
                 // Non-pure: D46 (ii). Morphisms and atoms are values, not
                 // derived observations — forcing them is construction.
-                self.force_recursive(val, ctx)
+                // D110: unless building it read the universe (`x @T` with a
+                // user type): then the recipe is what stays true.
+                let pure = effect.is_pure();
+                let orig = val.clone();
+                let outer = READ_WORLD.with(|c| c.replace(false));
+                let keep = std::mem::replace(&mut ctx.preserve_refs, false);
+                let forced = self.force_recursive(val, ctx);
+                ctx.preserve_refs = keep;
+                let read = READ_WORLD.with(|c| c.get());
+                READ_WORLD.with(|c| c.set(outer || read));
+                if pure && read && !matches!(forced, Value::Bottom(_)) {
+                    orig
+                } else {
+                    forced
+                }
             }
             Value::Thunk { .. } => {
                 // D110: the bottom check reads what a reader reads. With
