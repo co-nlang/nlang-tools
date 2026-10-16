@@ -1127,7 +1127,9 @@ impl Ouroboros {
             SPREADING.with(|s| s.borrow_mut().push(id.clone()));
         }
         let saved_taint = ctx.chain_transform_taint;
+        let saved_hops = ctx.taint_hops;
         ctx.chain_transform_taint = true;
+        ctx.taint_hops += 1;
         let mut val = self.force(src, ctx);
         if let Value::Combo(sc) = val {
             val = if sc.pending_spreads.is_empty() {
@@ -1137,6 +1139,7 @@ impl Ouroboros {
             };
         }
         ctx.chain_transform_taint = saved_taint;
+        ctx.taint_hops = saved_hops;
         if src_id.is_some() {
             SPREADING.with(|s| {
                 s.borrow_mut().pop();
@@ -1164,9 +1167,12 @@ impl Ouroboros {
             // re-enters the combo under construction (alias detour
             // `al: a; a: {...al}`), classify as #divergent not static Top.
             let saved_taint = ctx.chain_transform_taint;
+            let saved_hops = ctx.taint_hops;
             ctx.chain_transform_taint = true;
+            ctx.taint_hops += 1;
             let val = self.force(src, ctx);
             ctx.chain_transform_taint = saved_taint;
+            ctx.taint_hops = saved_hops;
             if let Value::Bottom(d) = val {
                 return Value::Bottom(d);
             }
@@ -2103,6 +2109,14 @@ impl Ouroboros {
                             && nlang_parser::tier::has_free_dollar(expr) =>
                     {
                         self.force(v, ctx)
+                    }
+                    // D110: a stored recipe read inside a frame is read here.
+                    // If it reaches an open term through a name (`w: t`),
+                    // that term binds to this frame's `$`, as `_.t` does;
+                    // carried out unforced it would be forced where no `$`
+                    // is. One step: a reference it yields stays one.
+                    Value::Thunk { context: None, .. } if ctx.context_value.is_some() => {
+                        self.force_once(v, ctx)
                     }
                     other => other,
                 }

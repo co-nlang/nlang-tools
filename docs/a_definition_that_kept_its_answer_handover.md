@@ -78,14 +78,45 @@
 
 ### 8.1 射程逐項對照
 
+引擎四檔與參考實作 `q091-ref 94b1d78` 的 diff 逐位元組相同（相對 `e09b7af`，+114／−11）。探針與規格向量未改。
+
+*   **K1。** 讀了宇宙的純定義存配方。提交後再收窄、以及程式裡的書寫順序，讀到的與就地重寫那句相同。`n: 1`、`r: <<n>>`、`q: r + 1` 根 `05ef1079…` → `6b232603821c66dd6a06895c48f139b697fb616a96b9d94b1de9316b016295d8`，`q` 為 `2`。`q10: r = 1` → `71a287332c01a5c9ef717a8c4d3b576a2d7dd93da43259d505bc97658f50959a`。`a: 1`、`b: a` → `132ced2494ea0551192cab462b1d58afed6d742fccc99e60fa117e2b876ad269`；先提交 `a: @int`、`b: a` 再提交 `a: 5`，`b` 為 `5`（v0.92.0 仍是 `@int`）。`l: [a, 2]` → `8705aade8e15af91813906ca7442af5153866d524badd5caabd7f70297e9abcf`；`a` 缺席時先提交清單、再提交 `a: 7`，`l` 為 `[7, 2]`。r1、r2 綠。
+*   **K2。** 提交判 ⊥ 時把 `preserve_refs` 暫時關掉再強制，之後還原。`q: r + 1` 存配方，讀到 `2`。真的 ⊥ 照舊：`q8: r & 5` 根仍 `f5d347b86b00ff40a1cc84946d3761f35c125b5df59f86410e1b26c1b90f4360`。r3 綠。
+*   **K3。** 路徑求到一個沒有框架的配方 thunk、而讀者自己有框架時，走一步 `force_once`。`t: { a: $.b + 1 }`、`w: t` 根 `26f7a630…` → `6677b2c7cfc5769d80c6cc004551afa129745f93a3b981b8684cb8ec71692b16`。`{ b: 1 }` 餵給 `(x -> _.w)` 得 `{ a: 2 }`。記錄 `g: { m: t }` 根仍 `505b71eeebf318bf7ce54529d05f0d9e4b2c4e5ef218c60db6ba757d4f366f79`。r4、g2 綠。停在引用上的路徑仍是引用：`k: c.r` 根仍 `e027a82b8688874a6cc7dc4a338baee22abae5de2559dc44ff1d7818ecb3a3d9`，Q-090 探針 4／4。
+*   **K4。** 環的成因改為進鏈時記下變換計數，重入時比較。`c: { a2: b2, b2: a2 }`、`out: (c.a2).%cause` 根 `a837427d…` → `2a4ad9a7b61accaa09ecf318fe35291dbe6074afaee2d13aa585879448045154`。`(_.c.a2).%cause` 與 `(c.a2).%cause` 同為 `#static_cycle`；環上有 `+` 的仍是 `#divergent`。r5 綠。
+*   **另一半。** 閉合式 `~%Math./add (1, 1)` 根 `62c61785a4a3be671547891247ad11b5a282f3c881915460fa2f8eebae0473ed`，`(x -> x + 1) 2` 根 `cf1330a656b92c3a21b359a7257be329535c09675b9c97435409c899ae1e719d`，`b: a + 1` 根 `6ef35a73ba9e12629b6d42bc27db08cf1469980e1ae9a3ca071533e167ec9c8e`，字面量 `&` 根 `917b3ddb841747501e42d3618c1345fb0c401292d78ec953bb8bb38ee670a482`，`v: <<_.>>` 根 `76c1a2ec07590b3eb7a618fc177c8af0fb9dea95085f7281fe6f432cbac81086`，正典五句根 `a96f5aa39a6d231d3bb7125fc7d3d3b410c1944ca1855c7f6b9fbc1eab5b011a`。皆與 v0.92.0 相同。效應格寫檔一次，根 `77a310df…` 由 g1 釘住。
+*   **同卡一併罩到的入口**（同一個「名字落到宇宙就標記」；根與參考實作相同）：管道左值 `q: t |> { a: $.b }` 在 `t` 之後才提交時讀到 `{ a: 9 b: 9 }`，根 `a839a630cc5ff7ac…`（v0.92.0 為 `{ a: _ }`，根 `63e2d573…`）。`y: x & { b: 2 }` 在 `x` 之後才提交時讀到 `{ a: 1 b: 2 }`，根 `8f435e77ff02d1b8423604534cd7a4cb493089fb7f358d6b3ae3e9c4c4463a3b`。`...{ j: 5 }`、`q: j` 根 `98df034706b7a1f9…`（v0.92.0 `40dfda24…`），`q` 為 `5`。記錄字面量裡的展開 `{ a: 1, ...m }` 是構造，根仍 `5907d3003f1a3b39…`，與 v0.92.0、參考實作相同。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。四個引擎檔以外未改。探針、`parser/src/tier.rs`、`predict_effect`、規格、向量、`CHANGELOG`、`crates/oo/Cargo.toml` 都未動。
 
 ### 8.3 工單哪裡是錯的
 
+沒有要改的句子。§7 寫參考實作全樹 283 target；本輪協議數到的是 283 條 `test result:`、280 條 `Running `（文件測試的 `running 0 tests` 在小寫那列）。通過數 2704 與工單相同。
+
 ### 8.4 工單指名要你回答的問題
+
+*   **Q1。** 旗標 `READ_WORLD`。標記處：`resolve_path` 在詞法框落空、向暫存或根問之前；`resolve_path_internal` 的裸名在作用域裡找不到時；`PathAnchor::Root`（`_.`）直接設旗標。判準：名字以 `~%` 起頭則不標記；名字在暫存或根裡、或它不是標準根的名字也不是型別約束路徑，則標記。因此「那裡還沒有這個名字」也算。不標記：詞法框先命中就返回；標準根上的名字；`~%`。各一格：命中——`a: @int`、`b: a` 再 `a: 5`，`b` 為 `5`，根相對 `a: 1`、`b: a` 的 v0.92.0 從 `3f865f4e…` 移到 `132ced24…`。找不到——拿掉 `!standard` 只留命中，只有 r2 紅。`_.`——拿掉 `PathAnchor::Root` 的標記，只有 r1 紅。引用——`q: r + 1` 根 `6b232603…`，讀數 `2`。開放項——`w: t` 根 `6677b2c7…`。`~%`——`k: ~%Math./add` 根 `e2bd5c4fe2a565a32821396c1705ca8292fefa324b840d40062ef11cfbc572a7`、`k: ~%Config` 根 `98c043a69ba6d0810ff837fceb2ffdfc0a93bb135f39f9dbbd50b720cc42094a`，皆與 v0.92.0 相同；拿掉 `~%` 排除，`a_library_that_lives_in_the_root_test::a_legacy_root_still_dispatches_its_own_library` 紅。構造——`a: @int` 根 `4d3416049439da77d386266e3a0f48c9c227a92d1708395844033a6a71210aa3` 不動；拿掉構造排除，只有 g1 紅。效應——拿掉 `predict_effect` 的純性條件，只有 g1 紅。L2-83 沒有對這個變異單獨跑；留下的樹上 conformance 175／175。
+*   **Q2。** 那次強制讀穿：進入前把 `preserve_refs` 換成 `false`，出來還原。留下 `preserve_refs` 時 r1 與 r3 紅。自指 `v: <<_.>> |> <<_.>>` 的提交：`/usr/bin/time` 本輪 0.06 秒、最大駐留 30212 KB，v0.92.0 0.06 秒、30052 KB。根仍 `5ce55aa56a6260f0a38232802ce05cd798e7ec8b250c873b7d15c2b22022d168`，所以那次強制的答案不是 ⊥（配方留下）。事後 `eval v` 兩邊都是 `#blur`，222397 位元組，0.248 秒對 0.240 秒。
+*   **Q3。** 在 `eval.rs` 的 Path 臂：值是沒有框架的 thunk、讀者有 `context_value` 時 `force_once` 一次。沒有放在 `force` 或 `force_once` 的普遍規則裡。拿掉這一步，只有 r4 紅。停在引用上仍見引用（見 8.1 的 `k: c.r`）。
+*   **Q4。** 每次經過變換 `taint_hops` 加一，成員進 `computing` 時把當時的計數寫進 `entry_hops`，重入時只有「現在的計數比進鏈時大」才算環外的變換。`computing` 寫回父上下文時 `entry_hops` 一起寫回。拿掉寫回，本探針 7／7。出貨組態下我沒有找到分得出的一格，也沒有為這個刪除再跑全樹。寫回留下。
+*   **Q5。** 同意。`a: 1` 已提交後：`oo eval '_.a'` 本輪與 v0.92.0 都是 0 個新 Savepoint，答案 `1`。`run --observe out` 的 `out: _.a` 本輪留 1 個、答案 `1`，v0.92.0 留 0 個。`out: _.a + 1` 兩邊都留 1 個、答案 `2`。參考實作與本輪相同。
+*   **Q6。** 正典三句（`s`／`w`／`v`）根兩邊都是 `7a9a498bb9e51d4536de15602ec4d5012d0750eb7bd7e0b0c9d15181ee1e197a`。全量 `run --observe v`：本輪 0.38 秒、247720 KB、290693 位元組、`#fuel`；v0.92.0 0.37 秒、247824 KB、同長度。`oo eval '_.v'`：0.38 秒、247792 KB 對 0.38 秒、247764 KB，同長度。`v.w.x.a` 兩邊 `"Logic"`。五句正典根兩邊 `a96f5aa3…`，提交 0.07 秒／30684 KB 對 0.06 秒／30440 KB。200 個別名 `a1: a2` … `a200: 1`：提交本輪 1.668 秒、v0.92.0 1.266 秒；讀 `a1` 兩邊 0.06 秒、答案 `1`，最大駐留 45172 KB 對 37452 KB。
 
 ### 8.5 探針
 
+未改。釋出閘門第一輪 `a_definition_that_kept_its_answer_probe_test` 7／7，5.23 秒。除錯建置的基線也是 7／7。變異（除錯，每次一處，還原後觸碰原始碼再編）見 Q1–Q4：拿掉找不到、`_.`、構造、效應、讀穿、路徑一步、環的計數、eval 豁免，紅的支與 §7 相同；進鏈寫回拿掉仍 7／7。
+
 ### 8.6 數字
 
+*   三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`：600.58 秒、578.00 秒、575.15 秒，退出碼都是 0。正規化後 3550 行，sha256 `585254a37e61977bc4157d06d35c1b3619d118eb3863c15ad262f457fce2b804`，三輪相同。`test result:` 283 條，合計 2704 通過、0 失敗。`Running ` 280 條。原始日誌 288362／288273／288273 位元組。`^error` 0，BrokenPipe 0，panicked 0。重啟曾把 21 支測試二進位寫成全零（`Exec format error`）；刪掉後重跑，上列是重跑的三輪。
+*   紅線（閘門第一輪）：本探針 7／7 5.23 秒；Q-090 4／4 1.97 秒；Q-089 6／6 1.99 秒；Q-088 8／8 4.96 秒；`stage2_open_term_test` 3／3 0.10 秒；`stage3_probe_test` 4／4 0.33 秒；`stage3_acceptance_test` 6／6 0.11 秒；Q-087 7／7 2.87 秒；Q-086 4／4 2.30 秒；Q-077 12／12 3.01 秒、R-1 4／4 1.34 秒；Q-085 7／7 2.93 秒；Q-084 11／11 2.10 秒；Q-083 17／17 6.37 秒、bytes 1／1 0.23 秒、epochs 4／4 0.33 秒、union 2／2 0.00 秒；`pin_probe_test` 15／15 2.14 秒；`what_an_observation_leaves_probe_test` 15／15 3.77 秒；`caused_top_probe_test` 11／11 1.21 秒；`taint_scope_probe_test` 15／15 0.55 秒；`static_cycle_probe_test` 17／17 0.67 秒；`math_union_probe_test` 17／17 1.04 秒；`a_library_that_lives_in_the_root_test` 2／2 0.06 秒；`where_there_is_no_universe` 13／13 4.10 秒；`a_private_never_committed` 10／10 4.05 秒、R-1 3／3 0.52 秒；`a_name_spread_in` 15／15 6.08 秒；`import_is_spread` 7／7 0.45 秒；`kind_tag` 7／7 0.28 秒；forgot 17／17 2.42 秒、R-1 6／6 0.66 秒、R-2 10／10 1.69 秒；`forward_spread` 12／12 0.86 秒；`spread_collision` 25／25 0.86 秒；`spread_privacy` 11／11 0.37 秒；`blur_spread` 13／13 2.98 秒；`spread_splice` 9／9 0.15 秒。
+*   conformance 175／175，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release in 4.29s`，`WIN_EXIT` 0，`^error` 0，120 行。該目標 `nlang-interpreter` lib 15 則警告；linux 閘門同一 lib 14 則。未修。
+*   身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。`~%Math./add (1, 2)` 為 3、`(1, 3)` 為 4，不建 `.oo/`。新倉 `layout=9`、`encoding=6`。十七格與 v0.92.0 逐格相同（第 4 格的 caid 仍是 `c4795988b270943143937362ae4d17dda63539e44fea91d2545ab43a25ac5330`）。位址列與 `inb_92.txt` 相同。
+*   釋出 `oo` 11019568 位元組，mtime 2026-10-16 13:34:14 +0800。三輪閘門沒有重連這支二進位。
+
 ### 8.7 你認為需要改規格之處
+
+沒有。D110 已裁定；規格文字、向量索引與 `CHANGELOG` 留驗收方。

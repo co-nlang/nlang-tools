@@ -95,6 +95,12 @@ pub enum ResourceExhausted {
 /// `max_unification_depth` can outrun the native stack. Not a policy knob.
 pub const HARD_RECURSION_LIMIT: u32 = 400;
 
+thread_local! {
+    /// Q-091 / D110: set when an evaluation reads the universe. Evolve
+    /// clears it around one definition and reads it after.
+    pub(crate) static READ_WORLD: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
 #[derive(Debug, Clone)]
 pub struct EvalContext {
     // F2 (Stage 3-fix): Arc so EvalContext::clone (sub_context on every thunk
@@ -135,6 +141,13 @@ pub struct EvalContext {
     /// non-pure-reference expression (arithmetic, apply, …). Pure-ref
     /// re-entry → caused Top; tainted re-entry → ⊥ #divergent.
     pub chain_transform_taint: bool,
+    /// D110: transform hops taken on this force chain so far, and the count
+    /// when each loop member (coordinate, lexical name, in-flight thunk)
+    /// entered it. A loop has a transform in it only if a hop came after
+    /// the re-entered member entered: an observer's own transform,
+    /// `(c.a2).%cause`, is outside the loop `a2 -> b2 -> a2`.
+    pub taint_hops: u32,
+    pub entry_hops: std::collections::HashMap<String, u32>,
     /// Coordinates / bare names on the current force stack (cycle members).
     pub cycle_chain: Vec<String>,
     pub in_math_op: bool,
@@ -207,6 +220,8 @@ impl EvalContext {
             in_flight: HashSet::new(),
             lexical_forcing: HashSet::new(),
             chain_transform_taint: false,
+            taint_hops: 0,
+            entry_hops: std::collections::HashMap::new(),
             cycle_chain: Vec::new(),
             in_math_op: false,
             in_evolve: false,
@@ -531,8 +546,10 @@ fn expr_is_lattice_structural(expr: &Expr) -> bool {
 /// it belongs to the loop even when the chain missed it (acceptance repair:
 /// mutual cycle minted members ["a"] only, misreading 互指 as 自指 — the
 /// ruling makes loop SHAPE readable from the member list).
-fn cycle_reentry(ctx: &EvalContext, reentered: Option<&str>) -> Value {
-    if ctx.chain_transform_taint {
+fn cycle_reentry(ctx: &EvalContext, reentered: Option<&str>, key: &str) -> Value {
+    let transformed = ctx.chain_transform_taint
+        && ctx.entry_hops.get(key).map_or(true, |h| ctx.taint_hops > *h);
+    if transformed {
         BottomCause::Divergent.into()
     } else {
         let mut members = ctx.cycle_chain.clone();
@@ -895,6 +912,33 @@ impl Ouroboros {
     /// without making cache warmth observable through the fuel horizon.
     pub fn force_memo_hit_count(&self) -> u64 {
         self.force_memo_hit_count.load(Ordering::Relaxed)
+    }
+
+    /// Q-091 / D110: this read asked the universe (a staged or committed
+    /// coordinate, or a miss there), not a lexical frame or the standard
+    /// root. `_.` marks where it anchors; a live reference is only reached
+    /// through a name.
+    fn mark_world_read(&self, ctx: &EvalContext, name: &str) {
+        // The engine minted every `~%` name; a legacy root that holds its
+        // library still holds the engine's names, not the universe's.
+        if name.starts_with("~%") {
+            return;
+        }
+        let has = |c: &ComboVal| {
+            ["", "/", "@", "~", "~%"].iter().any(|p| {
+                let alt = if !p.is_empty() && name.starts_with(p) {
+                    name.trim_start_matches(p).to_string()
+                } else {
+                    format!("{}{}", p, name)
+                };
+                c.get_field(&alt).is_some() || c.get_local_field(&alt).is_some()
+            })
+        };
+        let in_user = ctx.staged.as_ref().map_or(false, |s| has(s)) || has(&ctx.root);
+        let standard = has(&ctx.standard_root) || TypeConstraint::is_type_constraint_path(name);
+        if in_user || !standard {
+            READ_WORLD.with(|c| c.set(true));
+        }
     }
 
     /// Stage 5 (§5a): record a coordinate dependency in the active collector.
@@ -3501,7 +3545,7 @@ impl Ouroboros {
                     // The re-entered thunk's own expr coordinate is a loop
                     // member (repair: chain alone missed the mutual partner).
                     let rc = path_coord_of(&expr);
-                    return cycle_reentry(ctx, rc.as_deref());
+                    return cycle_reentry(ctx, rc.as_deref(), &format!("#{thunk_id:?}"));
                 }
                 // Holder re-entry: force_coord("s.v") put "s.v" in computing;
                 // a path-shaped thunk whose expr is that same path is the
@@ -3510,7 +3554,7 @@ impl Ouroboros {
                 let path_coord = path_coord_of(&expr);
                 if let Some(ref pc) = path_coord {
                     if ctx.computing.contains(pc) {
-                        return cycle_reentry(ctx, Some(pc));
+                        return cycle_reentry(ctx, Some(pc), pc);
                     }
                 }
 
@@ -3557,11 +3601,13 @@ impl Ouroboros {
                 // `expr_is_lattice_structural`) — not transform hops.
                 if !expr_is_pure_ref(&expr) && !expr_is_lattice_structural(&expr) {
                     call_ctx.chain_transform_taint = true;
+                    call_ctx.taint_hops += 1;
                 }
                 call_ctx.context_value = effective_context;
                 call_ctx.dep_collector = inner_collector;
                 // in_flight rides sub_context clone for nested observation.
                 call_ctx.in_flight.insert(thunk_id.clone());
+                call_ctx.entry_hops.insert(format!("#{thunk_id:?}"), ctx.taint_hops);
                 // SPEC_10 §3.1 (b): entering the body is the reduction.
                 // A memo hit returned above and does not count. Fuel spent
                 // on the way in does not count either.
@@ -3598,6 +3644,8 @@ impl Ouroboros {
                 ctx.fuel = call_ctx.fuel;
                 ctx.in_flight = call_ctx.in_flight;
                 ctx.computing = call_ctx.computing;
+                // D110: when each member entered goes back with the member.
+                ctx.entry_hops = call_ctx.entry_hops;
                 ctx.lexical_forcing = call_ctx.lexical_forcing;
                 // Taint scoping (SPEC_12 §1.1 Q2/Q4; taint_scope arc):
                 // chain_transform_taint is *chain-local*. Downward inheritance
@@ -3964,8 +4012,14 @@ impl Ouroboros {
                 self.force_recursive(val, ctx)
             }
             Value::Thunk { .. } => {
+                // D110: the bottom check reads what a reader reads. With
+                // `preserve_refs` on, `r + 1` meets an unread reference and
+                // looks like a conflict; the recipe is kept unless the
+                // reading itself is ⊥.
                 let orig = val.clone();
+                let keep = std::mem::replace(&mut ctx.preserve_refs, false);
                 let forced = self.force_recursive(val, ctx);
+                ctx.preserve_refs = keep;
                 match &forced {
                     Value::Bottom(_) => forced,
                     _ => orig,
@@ -4148,6 +4202,7 @@ impl Ouroboros {
                     }
                 }
             }
+            self.mark_world_read(ctx, name);
             // SPEC_09 §6: ~%Config binding = effective (genesis ∧ overrides),
             // never the staged fragment alone (display + path reads).
             if name == "~%Config" {
@@ -4282,7 +4337,10 @@ impl Ouroboros {
 
     fn resolve_path_internal(&self, path: &Path, ctx: &mut EvalContext) -> Value {
         let start_val: Value = match path.anchor {
-            PathAnchor::Root => Value::Combo((*ctx.root).clone()),
+            PathAnchor::Root => {
+                READ_WORLD.with(|c| c.set(true));
+                Value::Combo((*ctx.root).clone())
+            }
             PathAnchor::Bare => {
                 let name = if !path.segments.is_empty() {
                     path.segments[0].trim()
@@ -4342,6 +4400,9 @@ impl Ouroboros {
                     {
                         found = Some(self.read_branch(rule, pattern, bname, ctx));
                     }
+                }
+                if found.is_none() {
+                    self.mark_world_read(ctx, name);
                 }
                 // SPEC_09 §6: never bind staged Config fragment as ~%Config;
                 // multi-segment reads (~%Config.timeout) need genesis ∧ override.
@@ -5029,9 +5090,10 @@ impl Ouroboros {
             || matches!(&val, Value::Combo(c) if !c.pending_spreads.is_empty());
         if needs_gate {
             if ctx.computing.contains(coord) {
-                return cycle_reentry(ctx, Some(coord));
+                return cycle_reentry(ctx, Some(coord), coord);
             }
             ctx.computing.insert(coord.to_string());
+            ctx.entry_hops.insert(coord.to_string(), ctx.taint_hops);
             ctx.cycle_chain.push(coord.to_string());
             let res = self.force_once(val, ctx);
             // Expand deferred spreads WHILE still under this coord so
@@ -5068,11 +5130,12 @@ impl Ouroboros {
             return val;
         }
         if ctx.lexical_forcing.contains(name) {
-            return cycle_reentry(ctx, Some(name));
+            return cycle_reentry(ctx, Some(name), name);
         }
         let track = matches!(&val, Value::Thunk { .. });
         if track {
             ctx.lexical_forcing.insert(name.to_string());
+            ctx.entry_hops.insert(name.to_string(), ctx.taint_hops);
             ctx.cycle_chain.push(name.to_string());
         }
         let res = if use_coord {

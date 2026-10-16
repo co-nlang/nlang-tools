@@ -281,11 +281,23 @@ fn recipe_instead_of_pure_answer(
     expr: &Expr,
     val: Value,
     ctx: &crate::EvalContext,
+    read_world: bool,
 ) -> Value {
     // S3 as measured: `top: 1 + 2` must not land as `3`. Arithmetic is the
     // evolve-time solidification. Other expr kinds keep their eval result
-    // (live Refs, `%effect` reads, applications that already ran).
-    if !matches!(
+    // (live Refs, `%effect` reads, applications that already ran) -- unless
+    // the answer read the universe (D110): then it is a reading of the
+    // universe as it is now, and the recipe is what stays true.
+    let derived_read = read_world
+        && !matches!(
+            expr.kind,
+            ExprKind::Morphism { .. }
+                | ExprKind::Combo { .. }
+                | ExprKind::Structural(_)
+                | ExprKind::Atom(_)
+        )
+        && engine.predict_effect(expr, ctx).is_pure();
+    if !derived_read && !matches!(
         expr.kind,
         ExprKind::Add(_, _)
             | ExprKind::Sub(_, _)
@@ -416,6 +428,10 @@ pub struct Universe {
     /// immutable injection at `save_staged`. Empty unless an evolve succeeded.
     session_delta: ComboVal,
     session_has_delta: bool,
+    /// D110 is a rule about what a definition stores. A one-shot question
+    /// (`oo eval`) is never stored: it is answered where it is asked, so
+    /// reading a stored atom stays a read of data (SPEC_10, D91).
+    pub answer_in_place: bool,
     /// IDs present when this evolve process loaded the immutable workset.
     injection_ids: std::collections::BTreeSet<String>,
     /// Paths of the members this process folded. Commit unlinks exactly these
@@ -468,6 +484,7 @@ impl Universe {
             effect_pending: None,
             session_delta: ComboVal::default(),
             session_has_delta: false,
+            answer_in_place: false,
             injection_ids: std::collections::BTreeSet::new(),
             injection_sources: Vec::new(),
             held_sources: Vec::new(),
@@ -665,6 +682,7 @@ impl Universe {
         let coords = field_coords(&field.key);
         for c in &coords {
             ctx.computing.insert(c.clone());
+            ctx.entry_hops.insert(c.clone(), ctx.taint_hops);
         }
         // SPEC_07 §4.2 P3: an open term is stored as itself — its syntax,
         // with no binding. Reading it is reading the definition: it binds
@@ -674,6 +692,7 @@ impl Universe {
         // what it says (a bare `<<path>>` is the reference itself).
         let live = !matches!(field.value.kind, ExprKind::Structural(_) | ExprKind::Combo { .. })
             && crate::eval::has_live_ref(&field.value);
+        let mut read_world = false;
         let mut val = if ctx.context_value.is_none() && (is_open_term(&field.value) || live) {
             Value::Thunk {
                 expr: Box::new(field.value.clone()),
@@ -682,7 +701,13 @@ impl Universe {
                 effect: engine.predict_effect(&field.value, &ctx),
             }
         } else {
-            engine.eval(&field.value, &mut ctx)
+            // D110: did this definition's answer read the universe?
+            let outer = crate::READ_WORLD.with(|c| c.replace(false));
+            let v = engine.eval(&field.value, &mut ctx);
+            let read = crate::READ_WORLD.with(|c| c.get());
+            crate::READ_WORLD.with(|c| c.set(outer || read));
+            read_world = read && !self.answer_in_place;
+            v
         };
         for c in &coords {
             ctx.computing.remove(c);
@@ -710,7 +735,7 @@ impl Universe {
                 effect: engine.predict_effect(&field.value, &ctx),
             };
         } else if !is_root_config_field_write(&field.key) {
-            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx);
+            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx, read_world);
         }
         let val_effect = val.effect();
 
