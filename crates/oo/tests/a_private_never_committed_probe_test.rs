@@ -136,7 +136,13 @@ fn committed(cases: &[(&str, &str, &str)]) -> Vec<String> {
             continue;
         }
         let o = w.eval(e);
-        if o != *want {
+        // ` …` at the end: the reading starts with this (Q-092 acceptor
+        // revision — a cause may carry its message).
+        let ok = match want.strip_suffix(" …") {
+            Some(p) => o.starts_with(p),
+            None => o == *want,
+        };
+        if !ok {
             wrong.push(format!("after `{}`: `{e}` => {o}   (wanted {want})", src.replace('\n', "; ")));
         }
     }
@@ -257,10 +263,13 @@ fn r6_a_committed_field_spreads_a_root_name() {
         ("~c: {{ b: 2 }}\n~o: { a: 1 }\nresult_spread: { a: 1, ...~c }\n", "_.result_spread.b", "2"),
     ]);
     // A collision through such a spread is a bottom field, whichever line
-    // comes first — as `{ a: 1, ...{ a: 2 } }` is.
+    // comes first — as `{ a: 1, ...{ a: 2 } }` is. Q-092 acceptor revision:
+    // the record is now stored as its source (D110), and reading it gives
+    // the cause with its message, as the one-shot `{ a: 1, ...{ a: 2 } }`
+    // and the nested `r: { x: { a: 1, ...c } }` always did.
     wrong.extend(committed(&[
-        ("c: { a: 2 }\nr: { a: 1, ...c }\n", "_.r.a", "_|_  ;; %cause: #conflict"),
-        ("r: { a: 1, ...c }\nc: { a: 2 }\n", "_.r.a", "_|_  ;; %cause: #conflict"),
+        ("c: { a: 2 }\nr: { a: 1, ...c }\n", "_.r.a", "_|_  ;; %cause: #conflict …"),
+        ("r: { a: 1, ...c }\nc: { a: 2 }\n", "_.r.a", "_|_  ;; %cause: #conflict …"),
     ]));
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
 }
