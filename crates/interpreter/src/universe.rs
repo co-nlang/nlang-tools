@@ -509,7 +509,7 @@ impl Universe {
             ordinary.remove_field(c);
             ordinary.local.shift_remove(c.as_str());
         }
-        let met = match engine.unify(Value::Combo(root.clone()), Value::Combo(ordinary)) {
+        let met = match engine.unify_universe(Value::Combo(root.clone()), Value::Combo(ordinary)) {
             Value::Combo(m) => m,
             _ => return None,
         };
@@ -570,7 +570,7 @@ impl Universe {
             self.session_delta = Self::replace_merge(&self.session_delta, incoming);
             return;
         }
-        if let Value::Combo(m) = engine.unify(
+        if let Value::Combo(m) = engine.unify_universe(
             Value::Combo(self.session_delta.clone()),
             Value::Combo(incoming.clone()),
         ) {
@@ -700,6 +700,13 @@ impl Universe {
             // D110: did this definition's answer read the universe?
             let outer = crate::READ_WORLD.with(|c| c.replace(false));
             let v = engine.eval(&field.value, &mut ctx);
+            // Q-092: a record's spread reads lazily (at landing); read it now so
+            // a spread of the universe is seen as a reading (D110).
+            if let Value::Combo(c) = &v {
+                if !c.pending_spreads.is_empty() {
+                    let _ = engine.expand_combo_pending(c.clone(), &mut ctx);
+                }
+            }
             let read = crate::READ_WORLD.with(|c| c.get());
             crate::READ_WORLD.with(|c| c.set(outer || read));
             read_world = read && !self.answer_in_place;
@@ -994,7 +1001,7 @@ impl Universe {
             self.restamp_thunk_effects(engine);
             return Ok(());
         }
-        let res = engine.unify(
+        let res = engine.unify_universe(
             Value::Combo(self.staged.clone()),
             Value::Combo(incoming.clone()),
         );
@@ -1127,7 +1134,7 @@ impl Universe {
             self.restamp_thunk_effects(engine);
             return Ok(());
         }
-        match engine.unify(
+        match engine.unify_universe(
             Value::Combo(self.staged.clone()),
             Value::Combo(incoming.clone()),
         ) {
@@ -1434,8 +1441,10 @@ impl Universe {
             return Ok(injections);
         }
         let root = Self::root_now(engine, base_dir)?;
+        // Q-092: "HEAD already holds it" is the same meet as the commit's;
+        // a recipe on either side stays a recipe there too.
         let at_head = engine
-            .unify(
+            .unify_universe(
                 Value::Combo(root.clone()),
                 Value::Combo(ComboVal::default()),
             )
@@ -1443,7 +1452,7 @@ impl Universe {
         let mut kept = Vec::with_capacity(injections.len());
         for injection in injections {
             let at = engine
-                .unify(
+                .unify_universe(
                     Value::Combo(root.clone()),
                     Value::Combo(injection.combo.clone()),
                 )
@@ -1893,7 +1902,7 @@ impl Universe {
                 None => return Err(anyhow::anyhow!("Commit failed")),
             }
         } else {
-            match engine.unify(
+            match engine.unify_universe(
                 Value::Combo(self.root.clone()),
                 Value::Combo(staged_for_commit),
             ) {
@@ -2352,7 +2361,7 @@ impl Universe {
             // Strip Config from staged so unify does not re-meet overrides.
             staged_for_obs.insert_field("~%Config", Value::Top);
         }
-        let current = engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
+        let current = engine.unify_universe(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
         if let Value::Combo(r) = current {
             let mut ctx =
                 EvalContext::new(r.clone()).with_standard_root(self.standard_root.clone());

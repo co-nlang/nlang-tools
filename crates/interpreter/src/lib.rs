@@ -99,6 +99,10 @@ thread_local! {
     /// Q-091 / D110: set when an evaluation reads the universe. Evolve
     /// clears it around one definition and reads it after.
     pub(crate) static READ_WORLD: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-092: set while the universe's own writes meet (evolve, members,
+    /// commit, observation). A recipe met there stays a recipe: the meet of
+    /// its syntax and the other write's, read where it is read.
+    pub(crate) static DEFER_RECIPES: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
 #[derive(Debug, Clone)]

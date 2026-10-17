@@ -115,6 +115,95 @@ impl Ouroboros {
         self.unify_internal(a, b, &mut ctx)
     }
 
+    /// Q-092: the meet of two writes to the universe. A recipe on either
+    /// side is not forced here (this context does not see the universe);
+    /// the coordinate keeps the meet's syntax.
+    pub fn unify_universe(&self, a: Value, b: Value) -> Value {
+        let outer = crate::DEFER_RECIPES.with(|c| c.replace(true));
+        let r = self.unify(a, b);
+        crate::DEFER_RECIPES.with(|c| c.set(outer));
+        r
+    }
+
+    /// A recipe in D110's sense: a pure thunk whose answer reads the
+    /// universe (a literal field's thunk `1` does not), or a live reference.
+    fn is_recipe(&self, v: &Value) -> bool {
+        match v {
+            Value::Thunk { expr, context: None, effect, .. }
+                if effect.is_pure() && !nlang_parser::tier::has_free_dollar(expr) =>
+            {
+                let outer = crate::READ_WORLD.with(|c| c.replace(false));
+                let mut ctx = self.eval_context();
+                let _ = self.force_once(v.clone(), &mut ctx);
+                let read = crate::READ_WORLD.with(|c| c.get());
+                crate::READ_WORLD.with(|c| c.set(outer));
+                read
+            }
+            Value::Ref(_) => true,
+            _ => false,
+        }
+    }
+
+    /// The syntax a stored value reads as, conjunct by conjunct.
+    fn conjuncts_of(&self, v: &Value) -> Option<Vec<nlang_parser::ast::Expr>> {
+        fn flat(e: &nlang_parser::ast::Expr, out: &mut Vec<nlang_parser::ast::Expr>) {
+            match &e.kind {
+                nlang_parser::ast::ExprKind::Meet(l, r) => {
+                    flat(l, out);
+                    flat(r, out);
+                }
+                _ => out.push(e.clone()),
+            }
+        }
+        let mut out = Vec::new();
+        match v {
+            Value::Thunk { expr, context: None, .. } => flat(expr, &mut out),
+            _ => {
+                let src = v.to_nlang(0);
+                let e = nlang_parser::parse_expr_only(&src).ok()?;
+                let mut ctx = self.eval_context();
+                // A stored value and its source differ in laziness (a
+                // literal's fields are thunks of their source); compare
+                // what each reads as.
+                let back = self.force_recursive(self.eval(&e, &mut ctx), &mut ctx);
+                let held = self.force_recursive(v.clone(), &mut ctx);
+                if back.content_hash() != held.content_hash() {
+                    return None;
+                }
+                flat(&e, &mut out);
+            }
+        }
+        Some(out)
+    }
+
+    fn lazy_meet(&self, a: &Value, b: &Value) -> Option<Value> {
+        let mut all = self.conjuncts_of(a)?;
+        all.extend(self.conjuncts_of(b)?);
+        let mut keyed: Vec<(String, nlang_parser::ast::Expr)> =
+            all.into_iter().map(|e| (e.to_nlang(0), e)).collect();
+        keyed.sort_by(|x, y| x.0.cmp(&y.0));
+        keyed.dedup_by(|x, y| x.0 == y.0);
+        let mut it = keyed.into_iter().map(|(_, e)| e);
+        let first = it.next()?;
+        let expr = it.fold(first, |acc, e| {
+            let span = acc.span;
+            nlang_parser::ast::Expr::new(
+                nlang_parser::ast::ExprKind::Meet(Box::new(acc), Box::new(e)),
+                span,
+            )
+        });
+        let closure = match (a, b) {
+            (Value::Thunk { closure, .. }, _) | (_, Value::Thunk { closure, .. }) => closure.clone(),
+            _ => Vec::new(),
+        };
+        Some(Value::Thunk {
+            expr: Box::new(expr),
+            closure,
+            context: None,
+            effect: a.effect().union(b.effect()),
+        })
+    }
+
     /// When CAID equal: keep caused-Top provenance if either side has it.
     /// Prefer static_cycle over no_coordinate when both are caused; merge
     /// members when both are static_cycle.
@@ -175,6 +264,15 @@ impl Ouroboros {
         match (&a, &b) {
             (Value::Top | Value::TopCaused { .. }, Value::Thunk { .. }) => return b,
             (Value::Thunk { .. }, Value::Top | Value::TopCaused { .. }) => return a,
+            _ if crate::DEFER_RECIPES.with(|c| c.get())
+                && (self.is_recipe(&a) || self.is_recipe(&b))
+                && !matches!(a, Value::Bottom(_) | Value::Top | Value::TopCaused { .. })
+                && !matches!(b, Value::Bottom(_) | Value::Top | Value::TopCaused { .. }) =>
+            {
+                if let Some(m) = self.lazy_meet(&a, &b) {
+                    return m;
+                }
+            }
             // Atom(Top) alias — the literal `_` evaluates to Value::Top (eval
             // normalization), but manually constructed Atom(Top) still exists.
             // Re-enter as Value::Top rather than short-circuiting `other.clone()`:
@@ -320,7 +418,9 @@ impl Ouroboros {
         // Top and TopCaused share a CAID (cause is not in the address). Memo
         // keyed on that digest would let `plain: _` teach `opaque: ⊤+%cause`
         // to evaporate. D67: the fibre must survive meet with a hole.
-        let top_like = a.is_top() || b.is_top();
+        // Q-092: a meet of the universe's writes keeps recipes; a memo entry
+        // from an ordinary meet of the same pair forced them.
+        let top_like = a.is_top() || b.is_top() || crate::DEFER_RECIPES.with(|c| c.get());
         let cache_key = if id_a.digest <= id_b.digest {
             (id_a, id_b)
         } else {

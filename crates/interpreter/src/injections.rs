@@ -254,7 +254,7 @@ pub fn fold(
                 c.local.shift_remove(coord.as_str());
             }
         }
-        match engine.unify(Value::Combo(acc), Value::Combo(c)) {
+        match engine.unify_universe(Value::Combo(acc), Value::Combo(c)) {
             Value::Combo(m) => acc = m,
             Value::Bottom(d) => return Err(*d),
             _ => {
