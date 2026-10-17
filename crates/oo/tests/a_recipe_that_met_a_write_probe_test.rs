@@ -403,3 +403,197 @@ fn g3_a_write_that_adds_nothing_does_not_move_the_root() {
     }
     verdict(bad, 8);
 }
+
+// ── R-1 (acceptor, 2026-10-18): red on the first delivery and on q092-ref ─
+//
+// The first round kept each recipe but not always where it came from: the
+// meet carried one side's frame, kept two answers apart or together by the
+// order they arrived in, dropped a recipe met by a record a function built,
+// and let a collision one level down into the root as ⊥.
+
+/// r8 — Each side of a meet reads its own names. A record's field reads its
+/// own record's siblings, in either order, as one `&` does. q092-ref:
+/// `{ b: 2 q: _ }` in one order, and two roots for `r.x: c` / `r.x.z: 9`.
+#[test]
+fn r8_each_side_of_a_meet_reads_its_own_names() {
+    let mut bad = Vec::new();
+    let pairs = [
+        ("r: { s: 5, x: c }\n", "r: { t: 7, x: { q: t } }\n", "_.r.x", "{ b: 2 q: 7 }"),
+        ("r.x: c\n", "r.x.z: 9\n", "_.r.x", "{ b: 2 z: 9 }"),
+    ];
+    for (i, (p, q, at, want)) in pairs.iter().enumerate() {
+        let mut roots = Vec::new();
+        for (j, src) in [format!("c: {{ b: 2 }}\n{p}{q}"), format!("c: {{ b: 2 }}\n{q}{p}")].iter().enumerate() {
+            let w = Ws::new(&format!("r8-{i}-{j}"));
+            w.commit(src);
+            check(&mut bad, &format!("{src:?}: {at}"), w.eval(at), want);
+            roots.push(w.root());
+        }
+        check(&mut bad, &format!("pair {i}: root of the second order"), roots[1].clone(), &roots[0]);
+    }
+    verdict(bad, 6);
+}
+
+/// r9 — Three writes, every order and every split into evolves and commits,
+/// one root; and writing one of them again moves nothing; two recipes in
+/// either order, one root. q092-ref: two roots (`ac50bbfd…`, `134cd0e9…`),
+/// and `r.w: 1` again moves the second.
+#[test]
+fn r9_three_writes_one_root() {
+    let mut bad = Vec::new();
+    let ws = ["r: c\n", "r.z: 9\n", "r.w: 1\n"];
+    let mut roots = Vec::new();
+    for (i, o) in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]].iter().enumerate() {
+        let src = format!("c: {{ b: 2 }}\n{}{}{}", ws[o[0]], ws[o[1]], ws[o[2]]);
+        let w = Ws::new(&format!("r9f{i}"));
+        w.commit(&src);
+        check(&mut bad, &format!("{src:?}: _.r"), w.eval("_.r"), "{ b: 2 w: 1 z: 9 }");
+        roots.push((format!("{src:?}"), w.root()));
+    }
+    for (i, (a, b)) in [("c: { b: 2 }\nr.z: 9\nr.w: 1\n", "r: c\n"), ("c: { b: 2 }\nr: c\nr.w: 1\n", "r.z: 9\n")].iter().enumerate() {
+        let w = Ws::new(&format!("r9c{i}"));
+        w.commit(a);
+        w.commit(b);
+        roots.push((format!("{a:?} then {b:?}"), w.root()));
+        let before = w.root();
+        fs::write(w.ws.join("g.n"), "r.w: 1\n").unwrap();
+        let (o, rc) = w.oo(&["evolve", "g.n"]);
+        assert_eq!(rc, 0, "{o}");
+        let _ = w.oo(&["commit", "-m", "again"]);
+        check(&mut bad, &format!("{a:?} then {b:?}, then r.w: 1 again: root"), w.root(), &before);
+    }
+    let r0 = roots[0].1.clone();
+    for (label, r) in &roots {
+        check(&mut bad, &format!("root of {label}"), r.clone(), &r0);
+    }
+    // two recipes and an answer, two orders
+    let two = [
+        first_commit_root("c: { b: 2 }\nd: { y: 3 }\nr: c\nr: d\nr.z: 9\n", "r9d0"),
+        first_commit_root("c: { b: 2 }\nd: { y: 3 }\nr.z: 9\nr: d\nr: c\n", "r9d1"),
+    ];
+    check(&mut bad, "r: c, r: d, r.z: 9 — root of the reverse order", two[1].clone(), &two[0]);
+    verdict(bad, 6 + 2 + roots.len() + 1);
+}
+
+/// r10 — A recipe met by a record that a function built keeps its side,
+/// in either order. q092-ref and v0.93.0: `{ z: 9 }` — the printed record
+/// (`{ z: x }`) does not read back, and the fallback read the recipe as `_`.
+#[test]
+fn r10_a_recipe_met_by_a_built_record_keeps_its_side() {
+    let mut bad = Vec::new();
+    let built = [
+        ("(x -> { z: x }) 9", "{ b: 2 z: 9 }"),
+        ("9 |> (x -> { z: x })", "{ b: 2 z: 9 }"),
+        ("(x -> { z: x, w: x + 1 }) 9", "{ b: 2 w: 10 z: 9 }"),
+    ];
+    for (i, (e, want)) in built.iter().enumerate() {
+        let mut roots = Vec::new();
+        for (j, src) in [format!("c: {{ b: 2 }}\nr: c\nr: {e}\n"), format!("c: {{ b: 2 }}\nr: {e}\nr: c\n")].iter().enumerate() {
+            let w = Ws::new(&format!("r10-{i}-{j}"));
+            w.commit(src);
+            check(&mut bad, &format!("{src:?}: _.r"), w.eval("_.r"), want);
+            roots.push(w.root());
+        }
+        check(&mut bad, &format!("{e}: root of the second order"), roots[1].clone(), &roots[0]);
+    }
+    let w = Ws::new("r10x");
+    w.commit("c: { b: 2 }\nr: c\n");
+    w.commit("r: (x -> { z: x }) 9\n");
+    check(&mut bad, "across a commit: _.r", w.eval("_.r"), "{ b: 2 z: 9 }");
+    verdict(bad, 10);
+}
+
+/// r11 — A write that disagrees with a recipe one level down is refused
+/// when it is evolved in, as at the coordinate (g1, r6); one that agrees is
+/// kept. q092-ref: accepted, and the root stores `{ x: ⊥ #conflict }`
+/// (v0.93.0: accepted, `{ x: { b: 3 } }`).
+#[test]
+fn r11_a_collision_below_a_coordinate_is_refused() {
+    let mut bad = Vec::new();
+    for (i, src) in [
+        "c: { b: 2 }\nr: { x: c }\nr: { x: { b: 3 } }\n",
+        "c: { b: 2 }\nr: { x: { b: 3 } }\nr: { x: c }\n",
+        "c: { b: 2 }\nr: { x: { a: 1, ...c } }\nr: { x: { b: 3 } }\n",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let w = Ws::new(&format!("r11-{i}"));
+        let (rc, o) = w.evolve(src);
+        if rc == 0 {
+            bad.push(format!("  {src:?}: evolve accepted it\n    {o}"));
+        }
+    }
+    let w = Ws::new("r11x");
+    w.commit("c: { b: 2 }\nr: { x: c }\n");
+    let (rc, o) = w.evolve("r: { x: { b: 3 } }\n");
+    if rc == 0 {
+        bad.push(format!("  across a commit: evolve accepted r: {{ x: {{ b: 3 }} }}\n    {o}"));
+    }
+    check(&mut bad, "across a commit: _.r", w.eval("_.r"), "{ x: { b: 2 } }");
+    let k = Ws::new("r11k");
+    k.commit("c: { b: 2 }\nr: { x: c }\nr: { x: { z: 9 } }\n");
+    check(&mut bad, "agreeing one level down: _.r", k.eval("_.r"), "{ x: { b: 2 z: 9 } }");
+    verdict(bad, 6);
+}
+
+/// r12 — A pin commit's ordinary writes meet the root's recipe as any
+/// commit does. q092-ref passes; v0.93.0 and q092-ref with that one merge
+/// put back give `{ z: 9 }`. (The first round's probe did not hold it.)
+#[test]
+fn r12_a_pin_commit_keeps_the_recipe() {
+    let w = Ws::new("r12");
+    w.commit("c: { b: 2 }\nr: c\n");
+    fs::write(w.ws.join("p.n"), "y: 7\n").unwrap();
+    let (o, rc) = w.oo(&["evolve", "--pin", "--grant", "pin", "p.n"]);
+    assert_eq!(rc, 0, "{o}");
+    fs::write(w.ws.join("z.n"), "r.z: 9\n").unwrap();
+    let (o, rc) = w.oo(&["evolve", "z.n"]);
+    assert_eq!(rc, 0, "{o}");
+    let (o, rc) = w.oo(&["commit", "--grant", "pin", "-m", "b"]);
+    assert_eq!(rc, 0, "{o}");
+    let mut bad = Vec::new();
+    check(&mut bad, "_.r", w.eval("_.r"), "{ b: 2 z: 9 }");
+    check(&mut bad, "_.y", w.eval("_.y"), "7");
+    verdict(bad, 2);
+}
+
+/// r13 — A coordinate written a hundred times reads: what v0.93.0 could
+/// read (the written fields) stays readable, and the recipe's side is
+/// there too. q092-ref: `#fuel_exhausted` for both from about 70 writes.
+#[test]
+fn r13_a_coordinate_written_many_times_reads() {
+    let mut src = String::from("c: { b: 2 }\nr: c\n");
+    for i in 0..100 {
+        src.push_str(&format!("r.k{i}: 1\n"));
+    }
+    let w = Ws::new("r13");
+    w.commit(&src);
+    let mut bad = Vec::new();
+    check(&mut bad, "_.r.k0", w.eval("_.r.k0"), "1");
+    check(&mut bad, "_.r.k99", w.eval("_.r.k99"), "1");
+    check(&mut bad, "_.r.b", w.eval("_.r.b"), "2");
+    verdict(bad, 3);
+}
+
+/// g4 — A function written beside a recipe keeps both: the recipe's side,
+/// and a function that calls (closed, capturing, or reading the universe).
+/// Green on q092-ref; an R-1 that prints only full answers refuses these.
+#[test]
+fn g4_a_function_beside_a_recipe_keeps_both() {
+    let mut bad = Vec::new();
+    for (i, (z, call, want)) in [
+        ("(x -> x + 1)", "_.r.z 1", "2"),
+        ("(y -> (x -> y)) 1", "_.r.z 0", "1"),
+        ("(x -> x + n)", "_.r.z 1", "6"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let w = Ws::new(&format!("g4-{i}"));
+        w.commit(&format!("n: 5\nc: {{ b: 2 }}\nr: c\nr.z: {z}\n"));
+        check(&mut bad, &format!("r.z: {z}: _.r.b"), w.eval("_.r.b"), "2");
+        check(&mut bad, &format!("r.z: {z}: {call}"), w.eval(call), want);
+    }
+    verdict(bad, 6);
+}
