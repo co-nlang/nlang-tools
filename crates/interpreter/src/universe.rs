@@ -847,11 +847,20 @@ impl Universe {
         // D110: a recipe meets a later write lazily, so a collision would be
         // found only when someone reads it. Evolve already has both answers;
         // the refusal stays where it was (`b: a` then `b: 3` is a conflict,
-        // as `b: 1` then `b: 3` is).
+        // as `b: 1` then `b: 3` is). Q-092: a coordinate whose value reads
+        // the universe anywhere below it (`r: { x: c }`, a nested spread) is
+        // judged the same way, on both sides' full answers.
         if !(self.pin_mode && engine.privilege.pin) {
-            let mine = match &answer {
-                Some(a) if !matches!(a, Value::Thunk { .. } | Value::Bottom(_)) => Some(a.clone()),
-                _ => None,
+            let read_here = |v: &Value, ctx: &mut EvalContext| -> (Value, bool) {
+                let outer = crate::READ_WORLD.with(|c| c.replace(false));
+                let got = engine.force_recursive(v.clone(), ctx);
+                let read = crate::READ_WORLD.with(|c| c.get());
+                crate::READ_WORLD.with(|c| c.set(outer));
+                (got, read)
+            };
+            let open = |v: &Value| {
+                matches!(v, Value::Thunk { expr, context: None, .. }
+                    if nlang_parser::tier::has_free_dollar(expr))
             };
             for c in &evolved_coords {
                 let held = [
@@ -859,27 +868,28 @@ impl Universe {
                     self.root.get_field(c).cloned().or_else(|| self.root.get_local_field(c).cloned()),
                 ];
                 for existing in held.into_iter().flatten() {
-                    let recipe_side = matches!(existing, Value::Thunk { .. })
+                    if open(&existing) || open(&val) {
+                        continue;
+                    }
+                    let (theirs, read_theirs) = read_here(&existing, &mut ctx);
+                    let (ours, read_ours) = match &answer {
+                        Some(a) if !matches!(a, Value::Thunk { .. } | Value::Bottom(_)) => {
+                            read_here(a, &mut ctx)
+                        }
+                        _ => read_here(&val, &mut ctx),
+                    };
+                    let recipe_side = read_theirs
+                        || read_world
+                        || read_ours
+                        || matches!(existing, Value::Thunk { .. })
                         || matches!(val, Value::Thunk { .. });
                     if !recipe_side {
                         continue;
                     }
-                    let theirs = match existing {
-                        Value::Thunk { ref expr, context: None, .. }
-                            if nlang_parser::tier::has_free_dollar(expr) =>
-                        {
-                            continue
-                        }
-                        Value::Thunk { .. } => engine.force_recursive(existing, &mut ctx),
-                        other => other,
-                    };
-                    let ours = match &mine {
-                        Some(a) => a.clone(),
-                        None => continue,
-                    };
                     // A side that cannot be read here (an open term with no
                     // frame reads as ⊥ #no_context) is not a collision.
                     if matches!(theirs, Value::Bottom(_) | Value::Thunk { .. })
+                        || matches!(ours, Value::Bottom(_) | Value::Thunk { .. })
                         || !theirs.bottom_leaves().is_empty()
                         || !ours.bottom_leaves().is_empty()
                     {

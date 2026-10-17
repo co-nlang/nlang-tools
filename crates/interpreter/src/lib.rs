@@ -100,9 +100,10 @@ thread_local! {
     /// clears it around one definition and reads it after.
     pub(crate) static READ_WORLD: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Q-092: set while the universe's own writes meet (evolve, members,
-    /// commit, observation). A recipe met there stays a recipe: the meet of
-    /// its syntax and the other write's, read where it is read.
-    pub(crate) static DEFER_RECIPES: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// commit, observation): 1 at the two roots, 2 at their coordinates,
+    /// 0 below a coordinate. A coordinate that reads the universe keeps the
+    /// meet of its writes' syntax, read where it is read.
+    pub(crate) static DEFER_RECIPES: std::cell::Cell<u8> = std::cell::Cell::new(0);
 }
 
 #[derive(Debug, Clone)]
