@@ -281,11 +281,17 @@ fn recipe_instead_of_pure_answer(
     expr: &Expr,
     val: Value,
     ctx: &crate::EvalContext,
+    read_world: bool,
 ) -> Value {
     // S3 as measured: `top: 1 + 2` must not land as `3`. Arithmetic is the
     // evolve-time solidification. Other expr kinds keep their eval result
-    // (live Refs, `%effect` reads, applications that already ran).
-    if !matches!(
+    // (live Refs, `%effect` reads, applications that already ran) -- unless
+    // the answer read the universe (D110): then it is a reading of the
+    // universe as it is now, and the recipe is what stays true. A literal
+    // that reads nothing (a record's fields are lazy, an arrow's body is
+    // code) never sets the flag; a table whose patterns read a name does.
+    let derived_read = read_world && engine.predict_effect(expr, ctx).is_pure();
+    if !derived_read && !matches!(
         expr.kind,
         ExprKind::Add(_, _)
             | ExprKind::Sub(_, _)
@@ -416,6 +422,10 @@ pub struct Universe {
     /// immutable injection at `save_staged`. Empty unless an evolve succeeded.
     session_delta: ComboVal,
     session_has_delta: bool,
+    /// D110 is a rule about what a definition stores. A one-shot question
+    /// (`oo eval`) is never stored: it is answered where it is asked, so
+    /// reading a stored atom stays a read of data (SPEC_10, D91).
+    pub answer_in_place: bool,
     /// IDs present when this evolve process loaded the immutable workset.
     injection_ids: std::collections::BTreeSet<String>,
     /// Paths of the members this process folded. Commit unlinks exactly these
@@ -468,6 +478,7 @@ impl Universe {
             effect_pending: None,
             session_delta: ComboVal::default(),
             session_has_delta: false,
+            answer_in_place: false,
             injection_ids: std::collections::BTreeSet::new(),
             injection_sources: Vec::new(),
             held_sources: Vec::new(),
@@ -665,6 +676,7 @@ impl Universe {
         let coords = field_coords(&field.key);
         for c in &coords {
             ctx.computing.insert(c.clone());
+            ctx.entry_hops.insert(c.clone(), ctx.taint_hops);
         }
         // SPEC_07 §4.2 P3: an open term is stored as itself — its syntax,
         // with no binding. Reading it is reading the definition: it binds
@@ -674,6 +686,9 @@ impl Universe {
         // what it says (a bare `<<path>>` is the reference itself).
         let live = !matches!(field.value.kind, ExprKind::Structural(_) | ExprKind::Combo { .. })
             && crate::eval::has_live_ref(&field.value);
+        let mut read_world = false;
+        // The answer evolve computed, before it is swapped for its recipe.
+        let mut answer: Option<Value> = None;
         let mut val = if ctx.context_value.is_none() && (is_open_term(&field.value) || live) {
             Value::Thunk {
                 expr: Box::new(field.value.clone()),
@@ -682,7 +697,13 @@ impl Universe {
                 effect: engine.predict_effect(&field.value, &ctx),
             }
         } else {
-            engine.eval(&field.value, &mut ctx)
+            // D110: did this definition's answer read the universe?
+            let outer = crate::READ_WORLD.with(|c| c.replace(false));
+            let v = engine.eval(&field.value, &mut ctx);
+            let read = crate::READ_WORLD.with(|c| c.get());
+            crate::READ_WORLD.with(|c| c.set(outer || read));
+            read_world = read && !self.answer_in_place;
+            v
         };
         for c in &coords {
             ctx.computing.remove(c);
@@ -710,7 +731,8 @@ impl Universe {
                 effect: engine.predict_effect(&field.value, &ctx),
             };
         } else if !is_root_config_field_write(&field.key) {
-            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx);
+            answer = Some(val.clone());
+            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx, read_world);
         }
         let val_effect = val.effect();
 
@@ -814,6 +836,60 @@ impl Universe {
                 return Ok(());
             }
         };
+
+        // D110: a recipe meets a later write lazily, so a collision would be
+        // found only when someone reads it. Evolve already has both answers;
+        // the refusal stays where it was (`b: a` then `b: 3` is a conflict,
+        // as `b: 1` then `b: 3` is).
+        if !(self.pin_mode && engine.privilege.pin) {
+            let mine = match &answer {
+                Some(a) if !matches!(a, Value::Thunk { .. } | Value::Bottom(_)) => Some(a.clone()),
+                _ => None,
+            };
+            for c in &evolved_coords {
+                let held = [
+                    self.staged.get_field(c).cloned().or_else(|| self.staged.get_local_field(c).cloned()),
+                    self.root.get_field(c).cloned().or_else(|| self.root.get_local_field(c).cloned()),
+                ];
+                for existing in held.into_iter().flatten() {
+                    let recipe_side = matches!(existing, Value::Thunk { .. })
+                        || matches!(val, Value::Thunk { .. });
+                    if !recipe_side {
+                        continue;
+                    }
+                    let theirs = match existing {
+                        Value::Thunk { ref expr, context: None, .. }
+                            if nlang_parser::tier::has_free_dollar(expr) =>
+                        {
+                            continue
+                        }
+                        Value::Thunk { .. } => engine.force_recursive(existing, &mut ctx),
+                        other => other,
+                    };
+                    let ours = match &mine {
+                        Some(a) => a.clone(),
+                        None => continue,
+                    };
+                    // A side that cannot be read here (an open term with no
+                    // frame reads as ⊥ #no_context) is not a collision.
+                    if matches!(theirs, Value::Bottom(_) | Value::Thunk { .. })
+                        || !theirs.bottom_leaves().is_empty()
+                        || !ours.bottom_leaves().is_empty()
+                    {
+                        continue;
+                    }
+                    if let Value::Bottom(mut d) = engine.unify(theirs, ours) {
+                        let leaf = d.path.take().filter(|s| !s.is_empty());
+                        d.path = Some(match leaf {
+                            Some(p) if p == *c || p.starts_with(&format!("{c}.")) => p,
+                            Some(p) => format!("{c}.{p}"),
+                            None => c.clone(),
+                        });
+                        return Err(*d);
+                    }
+                }
+            }
+        }
 
         // G2-S: root coordinates evolve monotonically. If the incoming value
         // conflicts with an existing ROOT binding at any written coordinate,
@@ -954,7 +1030,40 @@ impl Universe {
             },
             field.span,
         );
+        let outer = crate::READ_WORLD.with(|c| c.replace(false));
         let built = engine.eval(&synthetic, ctx);
+        let read = crate::READ_WORLD.with(|c| c.get());
+        crate::READ_WORLD.with(|c| c.set(outer || read));
+        // D110: a top-level pattern that read the universe (`@{ n }: …`) is
+        // kept as what it says; dispatch forces `%pattern`, so the branch
+        // reads the universe as it is when the root is applied.
+        let built = match (built, &field.key) {
+            (Value::Combo(mut c), FieldKey::Pattern(k)) if read && !self.answer_in_place => {
+                if let Some(Value::Combo(mut rules)) = c.get_field("%rules").cloned() {
+                    for (_, r) in rules.data.iter_mut() {
+                        if let Value::Combo(rc) = r {
+                            if rc.get_field("%pattern").is_some() {
+                                rc.insert_field(
+                                    "%pattern",
+                                    Value::Thunk {
+                                        expr: Box::new(k.clone()),
+                                        closure: ctx.scopes.clone(),
+                                        context: None,
+                                        effect: engine.predict_effect(k, ctx),
+                                    },
+                                );
+                                rc.cache_id = crate::value::default_cache_id();
+                            }
+                        }
+                    }
+                    rules.cache_id = crate::value::default_cache_id();
+                    c.insert_field("%rules", Value::Combo(rules));
+                    c.cache_id = crate::value::default_cache_id();
+                }
+                Value::Combo(c)
+            }
+            (other, _) => other,
+        };
         let Value::Combo(incoming) = built else {
             return match built {
                 Value::Bottom(d) => Err(*d),
@@ -1054,7 +1163,41 @@ impl Universe {
             context: ctx.context_value.clone().map(Box::new),
             effect: te,
         });
-        match engine.expand_combo_pending(holder, &mut ctx) {
+        let outer = crate::READ_WORLD.with(|c| c.replace(false));
+        let expanded = engine.expand_combo_pending(holder, &mut ctx);
+        let read = crate::READ_WORLD.with(|c| c.get());
+        crate::READ_WORLD.with(|c| c.set(outer || read));
+        // D110: `...s` that read the universe lands each field as a reading
+        // of the source (`j` as `s.j`), so a later narrowing of `s` is seen.
+        let source = match &field.value.kind {
+            ExprKind::Spread(inner) => &inner.kind,
+            other => other,
+        };
+        let source_path = match source {
+            ExprKind::Path(p) if read && !self.answer_in_place => Some(p.clone()),
+            _ => None,
+        };
+        let frames = ctx.scopes.clone();
+        let recipe_of = |k: &str| -> Option<Value> {
+            let p = source_path.as_ref()?;
+            // ACCEPTANCE REPAIR (Q-091 R-2): a field on another axis (`/f`,
+            // `%m`, `@U`) is read through the same path segment; only the
+            // name after its axis must be a plain name.
+            let bare = k.strip_prefix(['/', '%', '@']).unwrap_or(k);
+            if bare.is_empty() || !bare.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+                return None;
+            }
+            let mut q = p.clone();
+            q.segments.push(k.to_string());
+            let e = Expr::new(ExprKind::Path(q), field.value.span);
+            Some(Value::Thunk {
+                expr: Box::new(e),
+                closure: frames.clone(),
+                context: None,
+                effect: crate::value::EffectTag::Pure,
+            })
+        };
+        match expanded {
             Value::Combo(incoming)
                 if incoming.field_keys().is_empty()
                     && incoming.local.is_empty()
@@ -1136,7 +1279,12 @@ impl Universe {
                         }
                         next.insert_field(&k, merged);
                     } else {
-                        next.insert_field(&k, v);
+                        let landed = if v.effect().is_pure() {
+                            recipe_of(&k).unwrap_or(v)
+                        } else {
+                            v
+                        };
+                        next.insert_field(&k, landed);
                     }
                 }
                 for (k, v) in incoming.local_fields() {

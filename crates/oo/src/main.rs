@@ -2618,6 +2618,7 @@ fn run_eval(
     let mut engine = engine_for_one_shot(&cur, universe_dir.is_some(), ephemeral)?;
     apply_cli_privilege(&mut engine, privileged, &grants)?;
     let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
+    universe.answer_in_place = true;
     let record_at = observation_root(&engine, &cur, ephemeral);
     let asked = expr.trim().to_string();
 

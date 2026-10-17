@@ -102,9 +102,17 @@ fn r1_a_top_level_import_makes_its_names_resolve() {
         "...~%Cond\nresult: /if (#true, (@any -> \"yes\"), (@any -> \"no\"))\n",
     );
 
-    let got = field_line(&status, "result").unwrap_or_else(|| {
+    field_line(&status, "result").unwrap_or_else(|| {
         panic!("REACH: coordinate `result` must exist after evolve.\n{status}")
     });
+    // Q-091／D110: `result` reads the universe (`/if`), so the working set
+    // holds its recipe and `status` prints that. What the arc makes true is
+    // that `/if` lands at the top and the call answers "yes".
+    assert!(
+        status.lines().any(|l| l.starts_with("  /if: ")),
+        "a top-level `...~%Cond` must put `/if` in the root\n{status}"
+    );
+    let got = format!("result: {}", oo(&_d, &["run", "a.n", "--observe", "result"]).trim());
 
     assert_eq!(
         got, "result: \"yes\"",
