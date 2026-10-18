@@ -128,6 +128,29 @@ fn has_top(v: &Value) -> bool {
     }
 }
 
+/// R-3: a function in this value was made inside a call: its closure has
+/// frames (a function made at the root has none). Its printed form does not
+/// carry the call's frame.
+pub(crate) fn holds_call_names(v: &Value) -> bool {
+    match v {
+        Value::Combo(c) => {
+            if let Some(Value::Combo(frames)) = c.get_field("%closure") {
+                if !frames.data.is_empty() {
+                    return true;
+                }
+            }
+            c.data
+                .values()
+                .chain(c.types.values())
+                .chain(c.rules.values())
+                .chain(c.meta.values())
+                .chain(c.local.values())
+                .any(holds_call_names)
+        }
+        _ => false,
+    }
+}
+
 /// Q-092: a write that reads the universe met a value whose syntax this
 /// engine cannot write back. Refused rather than kept without one side.
 fn cannot_keep(v: &Value) -> Value {
@@ -237,7 +260,12 @@ impl Ouroboros {
     /// The syntax an answer reads back as: its printed form (a literal's
     /// fields print their source), else the printed form of its full answer
     /// (a record a function built prints `{ z: x }` until forced).
-    fn answer_syntax(&self, v: &Value) -> Option<nlang_parser::ast::Expr> {
+    /// R-3: `holds_call_names` of the value read in full.
+    pub(crate) fn made_in_a_call(&self, v: &Value) -> bool {
+        holds_call_names(&self.force_recursive(v.clone(), &mut self.eval_context()))
+    }
+
+    pub(crate) fn answer_syntax(&self, v: &Value) -> Option<nlang_parser::ast::Expr> {
         let mut ctx = self.eval_context();
         let full = self.force_recursive(v.clone(), &mut ctx);
         let held = full.content_hash();
@@ -286,6 +314,17 @@ impl Ouroboros {
         let mut answers: Vec<Value> = Vec::new();
         for (v, read) in [(&a, reads[0]), (&b, reads[1])] {
             if !read {
+                // R-3: a recipe kept because its answer does not print back
+                // is its own syntax here too.
+                if let Value::Thunk { expr, context: None, closure, .. } = v {
+                    if closure.is_empty()
+                        && self.made_in_a_call(v)
+                        && self.answer_syntax(v).is_none()
+                    {
+                        kept.push((**expr).clone());
+                        continue;
+                    }
+                }
                 answers.push(v.clone());
                 continue;
             }
@@ -305,7 +344,11 @@ impl Ouroboros {
                 let _ = self.force_recursive(got.clone(), &mut c);
                 let read = crate::READ_WORLD.with(|c| c.get());
                 crate::READ_WORLD.with(|c| c.set(outer));
-                if read {
+                // R-3: a conjunct whose answer does not print back keeps its
+                // syntax, as a reading of the universe does.
+                if read
+                    || (self.made_in_a_call(&got) && self.answer_syntax(&got).is_none())
+                {
                     kept.push(part);
                 } else {
                     answers.push(got);

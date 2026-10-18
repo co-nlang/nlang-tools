@@ -291,7 +291,16 @@ fn recipe_instead_of_pure_answer(
     // that reads nothing (a record's fields are lazy, an arrow's body is
     // code) never sets the flag; a table whose patterns read a name does.
     let derived_read = read_world && engine.predict_effect(expr, ctx).is_pure();
-    if !derived_read && !matches!(
+    // R-3: a record a call built that does not print back as what it reads
+    // (a function in it captured the call's names) keeps its recipe, which
+    // does; a later write meets that recipe as it would one `&`.
+    let unprintable = !derived_read
+        && matches!(val, Value::Combo(_))
+        && !matches!(expr.kind, ExprKind::Combo { .. })
+        && val.effect().is_pure()
+        && engine.made_in_a_call(&val)
+        && engine.answer_syntax(&val).is_none();
+    if !derived_read && !unprintable && !matches!(
         expr.kind,
         ExprKind::Add(_, _)
             | ExprKind::Sub(_, _)
