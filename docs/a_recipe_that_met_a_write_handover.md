@@ -304,7 +304,57 @@ v0.93.0 在這幾格讀得到 `z: 6`，只是丟了 `b`——**R1-M6「讀得到
 ## 9.8 修補回報（交付方填）
 
 ### 9.8.1 射程
+
+引擎兩檔（`unify.rs`、`universe.rs`）與 `q092-r2ref 9f31805` 逐位元組相同。探針未改。`oo` 仍是 `0.93.0`。
+
+*   **R2-M1 完整讀到宇宙就存配方。** 十一格兩種順序同暫存、同根、同讀數，與一句 `&` 同讀數。跨一次提交（先 `r: c`，再 `r: (x -> { z: x + n }) 1`）與同檔同根 `73b81091123393a2da08645b59bdac5f5aa87461e9b8aa3cbbcdb7335ec693e9`，讀 `{ b: 2 z: 6 }`。取出的欄位讀 `6`，根 `153d917eca0db736dee200236c58d1974100b794bed6e3b1fbd13d6ca39800f6`。展開進字面量讀 `{ a: 1 b: 2 z: 6 }`，根 `2874216d839a391acec3823010a3d0fd43e1d6e32c50a5cecdaf7803e1c43de5`，與一句 `&` 同根。其餘十格一句 `&` 的根不同、讀數相同。逐格在 §9.8.4。
+*   **R2-M2 寫不回去就拒絕。** `syntax_of` 與 `answer_syntax` 先比每個延後欄位的語法與框架，再比雜湊。完整答案裡有 `_` 時，不拿它的印出形當候選。對不上就回 `None`，座標交會回 ⊥，evolve 拒絕。
+*   **R2-M3 舊宇宙在寫入處拒絕。** v0.93.0 提交的前三格，本建置 evolve `r: c` 退出碼 1，`#conflict at r`，讀數仍是舊的。後兩格收下。`pin` 換掉第一格之後再寫 `r: c`，讀 `{ b: 2 z: 6 }`。
+*   **另一半。** 單獨寫時讀數與 v0.93.0 相同。不讀宇宙的五格根與 v0.93.0 逐位元組相同：`(x -> { z: x }) 9` 是 `6f2e2b61a10e0a11d64fc1236e451386a4d99433cef66972741a1b990218a196`；`(x -> [x]) 9` 是 `e674dc4f8d8c7e407f7de727f3ffc27931d80a455a35fd7de306fcbf75ef6e8b`；取出的 `.z` 是 `3a36abddbeba2fcb594fdac57a3b666a528d24ef4bfdc52e8025fa9f1b28ad82`；展開是 `a7584f8c93b12215429bb792b845b8277933606e9fd63021b43b71a1ce43f4a5`；旁邊有 `n: 5` 的那格是 `00001fe4fd9ac97bdd3d38d249fa9679d9dc92d351c2ac1abf244e8998d669a5`。
+
+讀宇宙的定義單獨寫時根移了、讀數沒變：`(x -> { z: x + n }) 1` 由 `38dbde2f…` 到 `2d97e3bcf73b0cfcae9ecc57676fcfba9bd5ceddef74ca3794907725c94f178f`；`.z` 由 `db576a40…` 到 `57244a60fe629a9649d47879defc7ee52bd71f0e522d9a3c8f8d8957d07b8fd2`；展開由 `1332b13c…` 到 `1d346c8c960b0b07009be986bb41121e0df9d2172391e9ea9d3cdd83eb2e2501`；`(x -> { z: x, w: c }) 1` 由 `158f468b…` 到 `7144212fd99b4253f8dfd6c334283829c0078d14e3af18500bead5dbef310dd9`。字面量裡讀宇宙的欄位 `c: { r: n + 1 }`、`k: c.r` 由 `58a829f7…` 到 `7c86d6739523b251efc6efaea0d994641d9fe7d313d1517c33581d5c9d2ff5e1`，讀 `6`。`r: c` 之後 200 次點號寫入的根仍是 R-1 的 `8d1fc70d1a953abbc9a6e29ca94d37d5644e40232682aacdc59b39f00fb71aee`。
+
 ### 9.8.2 順手改動
+
+沒有。
+
 ### 9.8.3 工單哪裡是錯的
+
+§9.6 寫「對暫存也做，200 次點號寫入由 15 秒變 20 秒」。參考實作只對根上已提交的值做那次交會；暫存側是本引擎寫的，交會直接當 Top。本機在閘門之前量：本輪 evolve 15.319 秒、提交 0.101 秒；R-1 的二進位 15.053 秒、0.099 秒；兩支同根 `8d1fc70d…`，`_.r.b` 是 `2`、`_.r.k0` 是 `1`。v0.93.0 evolve 0.969 秒，`_.r.b` 是 `_`。§9.7 的 15.0 秒與這次同一側。
+
 ### 9.8.4 必答
+
+*   **R2-Q1 表示。** 兩種順序的暫存相同。`oo status` 把記錄拆行；下面寫成一行。取欄位印成 `["z"]`。
+    *   `(x -> { z: x + n }) 1 & c`，根 `73b81091123393a2da08645b59bdac5f5aa87461e9b8aa3cbbcdb7335ec693e9`，讀 `{ b: 2 z: 6 }`。
+    *   `(x -> { z: { y: x + n } }) 1 & c`，根 `2f865e47f079e9f77e6c72ef39b62abd546fcb8b9d8fa03b1c25605a72dcf894`，讀 `{ b: 2 z: { y: 6 } }`。
+    *   `(f -> { z: f 1 }) (y -> y + n) & c`，根 `b62fa4e6d4ff8027a4ac55c32a74ac7a74e435b01a9d94be521717e550d37ace`，讀 `{ b: 2 z: 6 }`。
+    *   `(1 |> (x -> { z: x + n })) & c`，根 `23c399c9eab24450982f307bdc360e0a8d0de57db9a1fc8d441f25e35eb80366`，讀 `{ b: 2 z: 6 }`。
+    *   `(x -> { z: x + n }) 1 & c & { k: 1 }`，根 `11539af4f68ec8d31434cf15430c419876a1cf4edde34362f952b4b5daceb242`，讀 `{ b: 2 k: 1 z: 6 }`。
+    *   `(x -> { z: x, w: c }) 1 & c`，根 `759bf084a5c0dcef5457abc81c68a8e221fa1e54f0dff555b109bdf6f112d11e`，讀 `{ b: 2 w: { b: 2 } z: 1 }`。
+    *   `(x -> { z: x, w: c.b }) 1 & c`，根 `134cb5c9a49740de4fb035fc8d4c89afab8f72064747939f0052738e43709b18`，讀 `{ b: 2 w: 2 z: 1 }`。
+    *   `(x -> { z: [x, n] }) 1 & c`，根 `55dc3384b9d024b2a5460d7e5f4660134950e85906e25ea2caded88e92bfad4e`，讀 `{ b: 2 z: [1, 5] }`。
+    *   `((x -> { z: x + n }) 1)["z"] & c`，根 `153d917eca0db736dee200236c58d1974100b794bed6e3b1fbd13d6ca39800f6`，讀 `6`。
+    *   `((x -> { z: { y: x + n } }) 1)["z"] & c`，根 `cb7e032a25ade44c84fc3d27e71ff7d83f264040cf8c11eeed14acb670352075`，讀 `{ b: 2 y: 6 }`。
+    *   `c & { a: 1, ...((x -> { z: x + n }) 1) }`，根 `2874216d839a391acec3823010a3d0fd43e1d6e32c50a5cecdaf7803e1c43de5`，讀 `{ a: 1 b: 2 z: 6 }`。
+    *   單獨寫四格的根見 §9.8.1。讀數是 `{ z: 6 }`、`{ w: { b: 2 } z: 1 }`、`6`、`{ a: 1 z: 6 }`，與 v0.93.0 相同。
+*   **R2-Q2 判準與代價。** 求值之後，值是記錄或 thunk、這次寫入的語法不是記錄字面量、效應是純的、而且這次還沒設 D110 的旗標，就完整讀一次。記錄字面量不做這次完整讀。字面量裡的展開，落地之後對每個純的來源再完整讀，旗標已設就停。完整讀設了旗標，就存這個定義的配方。取出的片段若是延後的、而且它的語法不是這個定義本身，也不是結構引用，就改存這個定義的語法。
+    *   200 個 `rK: (x -> { z: x + n }) K`（K 從 0 到 199，旁邊 `n: 5`、`c: { b: 2 }`）：本輪 evolve 1.204 秒、提交 0.153 秒，`_.r0` 是 `{ z: 5 }`。R-1 二進位 1.637 秒、0.209 秒。v0.93.0 1.742 秒、0.199 秒。讀數相同。
+    *   `r: c` 之後 200 次點號寫入見 §9.8.3。
+*   **R2-Q3 寫不回去。** 拒絕在 evolve。座標讀了宇宙時，對根上已提交的值以座標層的交會走一次；結果的訊息以 `cannot keep` 起頭，就以該座標拒絕，不進提交。CLI 印的是原因與座標。v0.93.0 提交、本建置 evolve `r: c`：
+    *   `r: (x -> { z: x + n }) 1`：evolve 退出碼 1，`Error: Evolution Conflict in "b.n": #conflict at r`。提交退出碼 1，`Error: Nothing to commit`。`_.r` 仍是 `{ z: 6 }`。
+    *   `r: ((x -> { z: x + n }) 1).z`：同樣兩句，`_.r` 仍是 `6`。
+    *   `r: { a: 1, ...((x -> { z: x + n }) 1) }`：同樣兩句，`_.r` 仍是 `{ a: 1 z: 6 }`。
+    *   `r: (x -> { z: x }) 9`：evolve 退出碼 0，提交退出碼 0，`_.r` 是 `{ b: 2 z: 9 }`。
+    *   `r: { z: n }`：evolve 退出碼 0，提交退出碼 0，`_.r` 是 `{ b: 2 z: 5 }`。
+    *   第一格以 `evolve --pin --grant pin` 重寫同一句、`commit --grant pin` 之後，根是單獨寫的 `2d97e3bc…`，`_.r` 是 `{ z: 6 }`。再普通寫 `r: c` 並提交，根 `73b81091…`，`_.r` 是 `{ b: 2 z: 6 }`。
+
 ### 9.8.5 數字
+
+*   探針 `a_recipe_that_met_a_write_probe_test` 19／19，閘門第一輪 28.48 秒。探針檔未改。
+*   三輪：992.06 秒、621.16 秒、767.45 秒，退出碼都是 0。正規化 3578 行，sha256 `cba299f2f9bcf64c674a25a5fdd1bc2330eeae7027f9db12bbdd783c4a9a1fc1`，三輪相同。`test result:` 284 條，合計 2729 通過、0 失敗。`Running ` 281 條。`test ` 且以 `ok` 結尾的行是 2728。原始日誌 290048／289894／289897 位元組。`^error` 0，BrokenPipe 0，panicked 0。
+*   紅線（閘門第一輪）：本探針 19／19 28.48 秒；Q-091 13／13 7.56 秒；Q-090 4／4 1.97 秒；Q-089 6／6 2.01 秒；Q-088 8／8 4.92 秒；`stage2_open_term_test` 3／3 0.10 秒；`stage3_probe_test` 4／4 0.37 秒；`stage3_acceptance_test` 6／6 0.12 秒；Q-087 7／7 2.85 秒；Q-086 4／4 2.32 秒；Q-077 12／12 3.14 秒、R-1 4／4 1.42 秒；Q-085 7／7 2.86 秒；Q-084 `a_table_that_lost_its_patterns_probe_test` 10／10 8.83 秒；Q-083 17／17 6.27 秒、bytes 1／1 0.23 秒、epochs 4／4 0.33 秒、union 2／2 0.00 秒；`pin_probe_test` 15／15 2.23 秒；`what_an_observation_leaves_probe_test` 15／15 3.92 秒；`caused_top_probe_test` 11／11 1.10 秒；`taint_scope_probe_test` 15／15 0.54 秒；`static_cycle_probe_test` 17／17 0.70 秒；`math_union_probe_test` 17／17 0.98 秒；`a_library_that_lives_in_the_root_test` 2／2 0.05 秒；`where_there_is_no_universe` 13／13 4.28 秒；`a_private_never_committed` 10／10 4.05 秒、R-1 3／3 0.49 秒；`kind_tag` 7／7 0.27 秒；forgot 17／17 2.48 秒、R-1 6／6 0.63 秒、R-2 10／10 1.74 秒；`forward_spread` 12／12 0.85 秒；`spread_collision` 25／25 0.87 秒；`spread_privacy` 11／11 0.36 秒；`blur_spread` 13／13 2.96 秒；`spread_splice` 9／9 0.16 秒；`import_is_spread` 7／7 0.44 秒；`a_name_spread_in` 15／15 6.09 秒。
+*   conformance 175／175，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release profile [optimized] target(s) in 4.92s`，`WIN_EXIT` 0，`^error` 0，120 行。該目標 lib 15 則警告；linux 閘門 lib 14 則。未修。
+*   身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`；標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。`~%Math./add` (1, 2)=3、(1, 3)=4，且不建 `.oo/`。新倉 `layout=9`、`encoding=6`。
+*   十七格與 `st_93.txt` 逐行相同。位址列只動「展開先於來源」那一列：兩種順序同根 `f6be66e9`，讀 `{ a: 1 b: 2 }`。其餘與 `inb_93.txt` 逐行相同。
+*   釋出 `oo` 11066976 位元組，mtime 2026-10-18 11:21:50 +0800。三輪閘門沒有重連這支二進位。

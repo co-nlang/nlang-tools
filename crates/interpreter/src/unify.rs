@@ -109,13 +109,32 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
     }))
 }
 
+/// A `_` anywhere in a value: where the universe is not visible, a reading
+/// of it is `_`, and `_` prints back as `_`.
+fn has_top(v: &Value) -> bool {
+    match v {
+        Value::Top | Value::TopCaused { .. } => true,
+        Value::Combo(c) => c
+            .data
+            .values()
+            .chain(c.types.values())
+            .chain(c.rules.values())
+            .chain(c.meta.values())
+            .chain(c.system.values())
+            .chain(c.local.values())
+            .any(has_top),
+        Value::Union(items) => items.iter().any(has_top),
+        _ => false,
+    }
+}
+
 /// Q-092: a write that reads the universe met a value whose syntax this
 /// engine cannot write back. Refused rather than kept without one side.
 fn cannot_keep(v: &Value) -> Value {
     Value::Bottom(Box::new(BottomDetail {
         cause: BottomCause::Conflict,
         message: Some(format!(
-            "cannot keep the meet of a reading of the universe with {}",
+            "cannot keep the meet of a reading of the universe with {}: it does not print back as what it reads (pin a new value to replace it)",
             v.to_nlang(0)
         )),
         ..Default::default()
@@ -169,9 +188,50 @@ impl Ouroboros {
         let src = v.to_nlang(0);
         let e = nlang_parser::parse_expr_only(&src).ok()?;
         let mut ctx = self.eval_context();
-        let back = self.force_recursive(self.eval(&e, &mut ctx), &mut ctx);
+        let read = self.eval(&e, &mut ctx);
+        // A recipe read where the universe is not visible reads `_` on both
+        // sides, so its answers cannot tell a lost binding (`{ z: x + n }`
+        // printed from a call with `x: 1`). Compare what each lazy field
+        // would read: its source and the names it is bound to.
+        if !Self::same_reading(v, &read) {
+            return None;
+        }
+        let back = self.force_recursive(read, &mut ctx);
         let held = self.force_recursive(v.clone(), &mut ctx);
         (back.content_hash() == held.content_hash()).then_some(e)
+    }
+
+    /// Two values read the same, field by field, without forcing: each lazy
+    /// field has the same source and the same frames it is read in.
+    fn same_reading(a: &Value, b: &Value) -> bool {
+        fn frames(c: &[std::sync::Arc<ComboVal>]) -> Vec<String> {
+            c.iter().map(|f| Value::Combo((**f).clone()).to_nlang(0)).collect()
+        }
+        fn axis(x: &IndexMap<String, Value>, y: &IndexMap<String, Value>) -> bool {
+            x.len() == y.len()
+                && x.iter().all(|(k, v)| y.get(k).map_or(false, |w| Ouroboros::same_reading(v, w)))
+        }
+        match (a, b) {
+            (
+                Value::Thunk { expr: e1, closure: c1, context: x1, .. },
+                Value::Thunk { expr: e2, closure: c2, context: x2, .. },
+            ) => {
+                x1.is_none() == x2.is_none()
+                    && e1.to_nlang(0) == e2.to_nlang(0)
+                    && frames(c1) == frames(c2)
+            }
+            (Value::Combo(x), Value::Combo(y)) => {
+                axis(&x.data, &y.data)
+                    && axis(&x.types, &y.types)
+                    && axis(&x.rules, &y.rules)
+                    && axis(&x.meta, &y.meta)
+                    && axis(&x.system, &y.system)
+                    && axis(&x.local, &y.local)
+                    && x.pending_spreads.len() == y.pending_spreads.len()
+            }
+            (Value::Thunk { .. }, _) | (_, Value::Thunk { .. }) => a.to_nlang(0) == b.to_nlang(0),
+            _ => a.content_hash() == b.content_hash() || a.to_nlang(0) == b.to_nlang(0),
+        }
     }
 
     /// The syntax an answer reads back as: its printed form (a literal's
@@ -184,7 +244,15 @@ impl Ouroboros {
         [v.to_nlang(0), full.to_nlang(0)].into_iter().find_map(|src| {
             let e = nlang_parser::parse_expr_only(&src).ok()?;
             let mut c = self.eval_context();
-            let back = self.force_recursive(self.eval(&e, &mut c), &mut c);
+            let read = self.eval(&e, &mut c);
+            // As in syntax_of: `x + n` bound to `x: 1` and printed alone both
+            // read `_` here.
+            if !Self::same_reading(v, &read)
+                && (has_top(&full) || !Self::same_reading(&full, &read))
+            {
+                return None;
+            }
+            let back = self.force_recursive(read, &mut c);
             (back.content_hash() == held).then_some(e)
         })
     }

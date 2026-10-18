@@ -308,6 +308,22 @@ fn recipe_instead_of_pure_answer(
         return val;
     }
     match &val {
+        // R-2: a lazy piece of what a call built (`((x -> { z: x + n }) 1).z`
+        // is `x + n` bound to `x: 1`) is not this definition's recipe.
+        // A reference held in a field is its own form (Q-090), not a piece.
+        Value::Thunk { expr: e, .. }
+            if derived_read
+                && val.effect().is_pure()
+                && !matches!(e.kind, ExprKind::Structural(_))
+                && e.to_nlang(0) != expr.to_nlang(0) =>
+        {
+            Value::Thunk {
+                expr: Box::new(expr.clone()),
+                closure: ctx.scopes.clone(),
+                context: ctx.context_value.clone().map(Box::new),
+                effect: engine.predict_effect(expr, ctx),
+            }
+        }
         Value::Bottom(_) | Value::Blur(_) | Value::Thunk { .. } => val,
         Value::Top | Value::TopCaused { .. } | Value::Ref(_) => val,
         _ if val.effect().is_pure() => Value::Thunk {
@@ -705,7 +721,25 @@ impl Universe {
             if let Value::Combo(c) = &v {
                 if !c.pending_spreads.is_empty() {
                     let _ = engine.expand_combo_pending(c.clone(), &mut ctx);
+                    // R-2: what a spread lands may be a record a call built.
+                    for s in c.pending_spreads.iter().filter(|s| s.effect().is_pure()) {
+                        if crate::READ_WORLD.with(|c| c.get()) {
+                            break;
+                        }
+                        let _ = engine.force_recursive(s.clone(), &mut ctx);
+                    }
                 }
+            }
+            // Q-092 R-2: a record that a function or a pipe built keeps its
+            // fields lazy, bound to the call's names (and so does a field
+            // taken from one); reading it in full may read the universe. A
+            // record literal's fields are its own syntax and stay as they are.
+            if matches!(v, Value::Combo(_) | Value::Thunk { .. })
+                && !matches!(field.value.kind, ExprKind::Combo { .. })
+                && v.effect().is_pure()
+                && !crate::READ_WORLD.with(|c| c.get())
+            {
+                let _ = engine.force_recursive(v.clone(), &mut ctx);
             }
             let read = crate::READ_WORLD.with(|c| c.get());
             crate::READ_WORLD.with(|c| c.set(outer || read));
@@ -867,7 +901,11 @@ impl Universe {
                     self.staged.get_field(c).cloned().or_else(|| self.staged.get_local_field(c).cloned()),
                     self.root.get_field(c).cloned().or_else(|| self.root.get_local_field(c).cloned()),
                 ];
-                for existing in held.into_iter().flatten() {
+                for (from_root, existing) in held
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, v)| v.map(|v| (i == 1, v)))
+                {
                     if open(&existing) || open(&val) {
                         continue;
                     }
@@ -885,6 +923,25 @@ impl Universe {
                         || matches!(val, Value::Thunk { .. });
                     if !recipe_side {
                         continue;
+                    }
+                    // Q-092 R-2: the meet that observe and commit will make
+                    // here. A committed answer that does not print back as
+                    // what it reads (an older engine kept a record a call
+                    // built) is refused now, where the write is, not at
+                    // commit. What this engine staged prints back.
+                    let kept = if from_root {
+                        let outer = crate::DEFER_RECIPES.with(|c| c.replace(2));
+                        let kept = engine.unify(existing.clone(), val.clone());
+                        crate::DEFER_RECIPES.with(|c| c.set(outer));
+                        kept
+                    } else {
+                        Value::Top
+                    };
+                    if let Value::Bottom(mut d) = kept {
+                        if d.message.as_deref().is_some_and(|m| m.starts_with("cannot keep")) {
+                            d.path = Some(c.clone());
+                            return Err(*d);
+                        }
                     }
                     // A side that cannot be read here (an open term with no
                     // frame reads as ⊥ #no_context) is not a collision.
