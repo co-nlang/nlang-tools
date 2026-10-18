@@ -261,6 +261,15 @@ impl Ouroboros {
     /// fields print their source), else the printed form of its full answer
     /// (a record a function built prints `{ z: x }` until forced).
     /// R-3: `holds_call_names` of the value read in full.
+    /// R-4: a recipe kept because its answer holds a function a call made
+    /// and does not print back (universe.rs, recipe_instead_of_pure_answer).
+    pub(crate) fn keeps_its_syntax(&self, v: &Value) -> bool {
+        matches!(v, Value::Thunk { context: None, closure, .. } if closure.is_empty())
+            && v.effect().is_pure()
+            && self.made_in_a_call(v)
+            && self.answer_syntax(v).is_none()
+    }
+
     pub(crate) fn made_in_a_call(&self, v: &Value) -> bool {
         holds_call_names(&self.force_recursive(v.clone(), &mut self.eval_context()))
     }
@@ -298,7 +307,11 @@ impl Ouroboros {
             return self.unify_internal(a, b, ctx);
         }
         let reads = [self.reads_world(&a), self.reads_world(&b)];
-        if !(reads[0] || reads[1]) {
+        let own = [
+            !reads[0] && self.keeps_its_syntax(&a),
+            !reads[1] && self.keeps_its_syntax(&b),
+        ];
+        if !(reads[0] || reads[1] || own[0] || own[1]) {
             return self.unify_internal(a, b, ctx);
         }
         fn flat(e: &nlang_parser::ast::Expr, out: &mut Vec<nlang_parser::ast::Expr>) {
@@ -312,24 +325,19 @@ impl Ouroboros {
         }
         let mut kept: Vec<nlang_parser::ast::Expr> = Vec::new();
         let mut answers: Vec<Value> = Vec::new();
-        for (v, read) in [(&a, reads[0]), (&b, reads[1])] {
-            if !read {
-                // R-3: a recipe kept because its answer does not print back
-                // is its own syntax here too.
-                if let Value::Thunk { expr, context: None, closure, .. } = v {
-                    if closure.is_empty()
-                        && self.made_in_a_call(v)
-                        && self.answer_syntax(v).is_none()
-                    {
-                        kept.push((**expr).clone());
-                        continue;
-                    }
-                }
+        for ((v, read), own) in [(&a, reads[0]), (&b, reads[1])].into_iter().zip(own) {
+            if !read && !own {
                 answers.push(v.clone());
                 continue;
             }
-            let Some(e) = self.syntax_of(v) else {
-                return cannot_keep(v);
+            // R-4: a recipe kept because its answer does not print back is
+            // its own syntax here too, split into conjuncts as a reading is.
+            let e = match v {
+                Value::Thunk { expr, .. } if own => (**expr).clone(),
+                _ => match self.syntax_of(v) {
+                    Some(e) => e,
+                    None => return cannot_keep(v),
+                },
             };
             let mut parts = Vec::new();
             flat(&e, &mut parts);
@@ -619,7 +627,12 @@ impl Ouroboros {
         // to evaporate. D67: the fibre must survive meet with a hole.
         // Q-092: a meet of the universe's writes keeps recipes; a memo entry
         // from an ordinary meet of the same pair forced them.
-        let top_like = a.is_top() || b.is_top() || crate::DEFER_RECIPES.with(|c| c.get()) != 0;
+        // R-4: an engine-internal context (eval_context) reads no universe;
+        // its meet of a name is not the meet a reading makes.
+        let top_like = a.is_top()
+            || b.is_top()
+            || crate::DEFER_RECIPES.with(|c| c.get()) != 0
+            || !ctx.memo_enabled;
         let cache_key = if id_a.digest <= id_b.digest {
             (id_a, id_b)
         } else {
