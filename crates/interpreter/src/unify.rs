@@ -133,7 +133,6 @@ fn has_top(v: &Value) -> bool {
 /// carry the call's frame.
 pub(crate) fn holds_call_names(v: &Value) -> bool {
     match v {
-        Value::Union(vs) => vs.iter().any(holds_call_names),
         Value::Combo(c) => {
             if let Some(Value::Combo(frames)) = c.get_field("%closure") {
                 if !frames.data.is_empty() {
@@ -313,20 +312,7 @@ impl Ouroboros {
             !reads[1] && self.keeps_its_syntax(&b),
         ];
         if !(reads[0] || reads[1] || own[0] || own[1]) {
-            let met = self.unify_internal(a.clone(), b.clone(), ctx);
-            if matches!(met, Value::Bottom(_))
-                || met.is_top()
-                || !met.effect().is_pure()
-                || !self.made_in_a_call(&met)
-                || self.answer_syntax(&met).is_some()
-                // R-6: a side with no syntax of its own (an older engine
-                // kept the meet as its answer) is not split: it meets as
-                // it did.
-                || self.answer_syntax(&a).is_none()
-                || self.answer_syntax(&b).is_none()
-            {
-                return met;
-            }
+            return self.unify_internal(a, b, ctx);
         }
         fn flat(e: &nlang_parser::ast::Expr, out: &mut Vec<nlang_parser::ast::Expr>) {
             match &e.kind {
@@ -379,7 +365,6 @@ impl Ouroboros {
         }
         if let Some(first) = answers.first().cloned() {
             let met = answers
-                .clone()
                 .into_iter()
                 .skip(1)
                 .fold(first, |acc, v| self.unify_internal(acc, v, ctx));
@@ -387,46 +372,10 @@ impl Ouroboros {
                 return met;
             }
             if !met.is_top() {
-                match self.answer_syntax(&met) {
-                    Some(e) => kept.push(e),
-                    // R-5: each side prints back, their meet does not (a
-                    // function with frames landed beside another write).
-                    // The sides stay, as conjuncts, in one form whatever
-                    // came first: each conjunct holding such a function as
-                    // its own syntax, everything else met into one answer.
-                    None if self.made_in_a_call(&met) => {
-                        let mut plain: Vec<Value> = Vec::new();
-                        for v in &answers {
-                            let Some(e) = self.answer_syntax(v) else {
-                                return cannot_keep(v);
-                            };
-                            let outer = crate::READ_WORLD.with(|c| c.get());
-                            let framed = self.made_in_a_call(v);
-                            crate::READ_WORLD.with(|c| c.set(outer));
-                            if framed {
-                                kept.push(e);
-                            } else {
-                                plain.push(v.clone());
-                            }
-                        }
-                        if let Some(first) = plain.first().cloned() {
-                            let rest = plain
-                                .into_iter()
-                                .skip(1)
-                                .fold(first, |acc, v| self.unify_internal(acc, v, ctx));
-                            if matches!(rest, Value::Bottom(_)) {
-                                return rest;
-                            }
-                            if !rest.is_top() {
-                                let Some(e) = self.answer_syntax(&rest) else {
-                                    return cannot_keep(&rest);
-                                };
-                                kept.push(e);
-                            }
-                        }
-                    }
-                    None => return cannot_keep(&met),
-                }
+                let Some(e) = self.answer_syntax(&met) else {
+                    return cannot_keep(&met);
+                };
+                kept.push(e);
             }
         }
         let mut keyed: Vec<(String, nlang_parser::ast::Expr)> =

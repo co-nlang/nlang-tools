@@ -297,7 +297,7 @@ fn recipe_instead_of_pure_answer(
     // taken from one, a spread, a record literal holding one. A later write
     // meets that recipe as it would one `&`.
     let unprintable = !derived_read
-        && matches!(val, Value::Combo(_) | Value::Thunk { .. } | Value::Union(_))
+        && matches!(val, Value::Combo(_) | Value::Thunk { .. })
         && val.effect().is_pure()
         && {
             let outer = crate::READ_WORLD.with(|c| c.get());
