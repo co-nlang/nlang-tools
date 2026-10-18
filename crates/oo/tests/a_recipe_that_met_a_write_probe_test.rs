@@ -1125,3 +1125,80 @@ fn g8_writes_that_meet_into_what_prints_back_keep_their_root() {
     }
     verdict(bad, 2 + cases.len());
 }
+
+// ── R-6 (acceptor, 2026-10-18): red on the R-5 delivery and on q092-r5ref ─
+//
+// v0.93.0 kept the meet of two writes to one record as its answer; with a
+// function in it, that answer has no syntax of its own. R-5 split every
+// such meet into syntax, found none, and refused the commit — of any later
+// write to the record, even the same one again. The store is a real
+// v0.93.0 one (tests/fixtures/v093_dotted_functions_repo).
+
+fn fixture_ws(tag: &str, name: &str) -> Ws {
+    let w = Ws::new(tag);
+    copy_fixture(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name).join("oo_dir"),
+        &w.ws.join(".oo"),
+    );
+    w
+}
+
+fn copy_fixture(from: &std::path::Path, to: &std::path::Path) {
+    fs::create_dir_all(to).unwrap();
+    for e in fs::read_dir(from).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            copy_fixture(&p, &to.join(e.file_name()));
+        } else {
+            fs::copy(&p, to.join(e.file_name())).unwrap();
+        }
+    }
+}
+
+/// r18 — A universe v0.93.0 committed, holding records written field by
+/// field with functions in them, takes a later write to those records as
+/// v0.93.0 did: evolve and commit both take it, and it reads. A recipe met
+/// there is still refused at evolve, at the coordinate (R2-M3).
+/// q092-r5ref: evolve takes each write, commit `Commit failed`.
+#[test]
+fn r18_a_record_an_older_engine_kept_as_its_answer_takes_a_write() {
+    let mut bad = Vec::new();
+    const FX: &str = "v093_dotted_functions_repo";
+    let w = fixture_ws("r18r", FX);
+    for (at, want) in [("_.api.f 1", "2"), ("_.api.g 9", "9"), ("_.r.z 2", "3"), ("_.r.k", "1"), ("_.s.w 4", "4"), ("_.s.k", "1")] {
+        check(&mut bad, &format!("as committed: {at}"), w.eval(at), want);
+    }
+    let cases: [(&str, &[(&str, &str)]); 5] = [
+        ("api.h: (z -> z * 2)\n", &[("_.api.h 3", "6"), ("_.api.f 1", "2")]),
+        ("api: { h: (z -> z * 2), k: 1 }\n", &[("_.api.h 3", "6"), ("_.api.k", "1")]),
+        ("r.w: 2\n", &[("_.r.w", "2"), ("_.r.z 2", "3")]),
+        ("s.q: 5\n", &[("_.s.q", "5"), ("_.s.w 4", "4")]),
+        ("q: 1\n", &[("_.q", "1")]),
+    ];
+    for (i, (src, reads)) in cases.iter().enumerate() {
+        let w = fixture_ws(&format!("r18-{i}"), FX);
+        let (rc, o) = w.evolve(src);
+        let (o2, rc2) = w.oo(&["commit", "-m", "b"]);
+        if rc != 0 || rc2 != 0 {
+            bad.push(format!("  {src:?}: refused (evolve {rc}, commit {rc2})\n    {o} {o2}"));
+        }
+        for (at, want) in reads.iter() {
+            check(&mut bad, &format!("{src:?}: {at}"), w.eval(at), want);
+        }
+    }
+    let w = fixture_ws("r18a", FX);
+    let before = w.root();
+    let (rc, o) = w.evolve("api.f: (x -> x + 1)\n");
+    let (o2, _) = w.oo(&["commit", "-m", "again"]);
+    if rc != 0 || !(o2.contains("already in HEAD") || o2.contains("Commit successful")) {
+        bad.push(format!("  api.f written again: refused\n    {o} {o2}"));
+    }
+    check(&mut bad, "api.f written again: root", w.root(), &before);
+    let w = fixture_ws("r18c", FX);
+    let (rc, o) = w.evolve("r: c\n");
+    if rc == 0 || !o.contains("at r") {
+        bad.push(format!("  r: c (a recipe): want refused at evolve at r\n    rc {rc}: {o}"));
+    }
+    check(&mut bad, "r: c refused: _.r.k", w.eval("_.r.k"), "1");
+    verdict(bad, 6 + 9 + 1 + 1 + 1 + 1);
+}
