@@ -597,3 +597,94 @@ fn g4_a_function_beside_a_recipe_keeps_both() {
     }
     verdict(bad, 6);
 }
+
+// ── R-2 (acceptor, 2026-10-18): red on the R-1 delivery and on q092-r1ref ─
+//
+// A record a call built keeps its fields lazy, bound to the call's names.
+// Evolve read it shallowly, found no reading of the universe, and kept the
+// answer; a recipe that met it printed `{ z: x + n }` and the check, made
+// where the universe is not visible, read `_` on both sides and passed.
+
+/// r14 — A recipe met by a record a call built, whose fields read the
+/// universe, keeps both sides, in either order, one root; as one `&` does.
+/// So does a field taken from such a record, and such a record spread into
+/// a literal. q092-r1ref: `{ b: 2 z: _ }` (rows 1–5), `{ b: 2 }` (row 9),
+/// `#conflict at r` at evolve (rows 6–8, 11); v0.93.0: the recipe's side
+/// gone (`{ z: 6 }`).
+#[test]
+fn r14_a_recipe_met_by_a_record_a_call_built_keeps_both() {
+    let mut bad = Vec::new();
+    let built = [
+        ("(x -> { z: x + n }) 1", "{ b: 2 z: 6 }"),
+        ("(x -> { z: { y: x + n } }) 1", "{ b: 2 z: { y: 6 } }"),
+        ("(f -> { z: f 1 }) (y -> y + n)", "{ b: 2 z: 6 }"),
+        ("1 |> (x -> { z: x + n })", "{ b: 2 z: 6 }"),
+        ("(x -> { z: x + n }) 1 & { k: 1 }", "{ b: 2 k: 1 z: 6 }"),
+        ("(x -> { z: x, w: c }) 1", "{ b: 2 w: { b: 2 } z: 1 }"),
+        ("(x -> { z: x, w: c.b }) 1", "{ b: 2 w: 2 z: 1 }"),
+        ("(x -> { z: [x, n] }) 1", "{ b: 2 z: [1, 5] }"),
+        ("((x -> { z: x + n }) 1).z", "6"),
+        ("((x -> { z: { y: x + n } }) 1).z", "{ b: 2 y: 6 }"),
+        ("{ a: 1, ...((x -> { z: x + n }) 1) }", "{ a: 1 b: 2 z: 6 }"),
+    ];
+    for (i, (e, want)) in built.iter().enumerate() {
+        let mut roots = Vec::new();
+        for (j, src) in [
+            format!("n: 5\nc: {{ b: 2 }}\nr: c\nr: {e}\n"),
+            format!("n: 5\nc: {{ b: 2 }}\nr: {e}\nr: c\n"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let w = Ws::new(&format!("r14-{i}-{j}"));
+            let (rc, o) = w.evolve(src);
+            if rc != 0 {
+                bad.push(format!("  {src:?}: evolve refused it\n    {o}"));
+                continue;
+            }
+            let (o, rc) = w.oo(&["commit", "-m", "a"]);
+            assert_eq!(rc, 0, "commit {src:?}: {o}");
+            check(&mut bad, &format!("{src:?}: _.r"), w.eval("_.r"), want);
+            roots.push(w.root());
+        }
+        if roots.len() == 2 {
+            check(&mut bad, &format!("{e}: root of the second order"), roots[1].clone(), &roots[0]);
+        }
+    }
+    let w = Ws::new("r14x");
+    w.commit("n: 5\nc: { b: 2 }\nr: c\n");
+    w.commit("r: (x -> { z: x + n }) 1\n");
+    check(&mut bad, "across a commit: _.r", w.eval("_.r"), "{ b: 2 z: 6 }");
+    verdict(bad, 3 * built.len() + 1);
+}
+
+/// g5 — Written alone, a definition a call built reads as it did; one
+/// that reads nothing of the universe keeps its v0.93.0 root.
+#[test]
+fn g5_a_definition_a_call_built_reads_as_it_did() {
+    let mut bad = Vec::new();
+    for (i, (e, want)) in [
+        ("(x -> { z: x + n }) 1", "{ z: 6 }"),
+        ("(x -> { z: x, w: c }) 1", "{ w: { b: 2 } z: 1 }"),
+        ("((x -> { z: x + n }) 1).z", "6"),
+        ("{ a: 1, ...((x -> { z: x + n }) 1) }", "{ a: 1 z: 6 }"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let w = Ws::new(&format!("g5r-{i}"));
+        w.commit(&format!("n: 5\nc: {{ b: 2 }}\nr: {e}\n"));
+        check(&mut bad, &format!("r: {e}: _.r"), w.eval("_.r"), want);
+    }
+    let cases = [
+        ("r: (x -> { z: x }) 9\n", "6f2e2b61a10e0a11d64fc1236e451386a4d99433cef66972741a1b990218a196"),
+        ("r: (x -> [x]) 9\n", "e674dc4f8d8c7e407f7de727f3ffc27931d80a455a35fd7de306fcbf75ef6e8b"),
+        ("r: ((x -> { z: x }) 9).z\n", "3a36abddbeba2fcb594fdac57a3b666a528d24ef4bfdc52e8025fa9f1b28ad82"),
+        ("r: { a: 1, ...((x -> { z: x }) 9) }\n", "a7584f8c93b12215429bb792b845b8277933606e9fd63021b43b71a1ce43f4a5"),
+        ("n: 5\nr: (x -> { z: x }) 9\n", "00001fe4fd9ac97bdd3d38d249fa9679d9dc92d351c2ac1abf244e8998d669a5"),
+    ];
+    for (i, (src, want)) in cases.iter().enumerate() {
+        check(&mut bad, &format!("{src:?}: root"), first_commit_root(src, &format!("g5-{i}")), want);
+    }
+    verdict(bad, 4 + cases.len());
+}
