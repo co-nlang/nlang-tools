@@ -795,3 +795,161 @@ fn g6_what_prints_back_keeps_its_root() {
     }
     verdict(bad, 2 + cases.len());
 }
+
+// ── R-4 (acceptor, 2026-10-18): red on the R-3 delivery and on q092-r3ref ─
+//
+// R-3 kept the recipe of a call that built a record holding the call's
+// function. The same answer reaches a coordinate other ways -- a field taken
+// from such a record, a spread of one, a meet with another write that read
+// nothing -- and a write met there was refused, or committed as a conflict.
+// One `&` reads them all; v0.92.0 did too.
+
+const CALL_FN: &str = "(x -> { z: (y -> x + y) }) 1";
+
+/// r16 — However a call's function reaches a coordinate, a recipe met there
+/// keeps both sides, in any order, one root; evolve and commit agree, and
+/// the same program evolved again moves nothing. A collision is still
+/// refused. q092-r3ref: the field taken and the spread `#conflict at r` at
+/// evolve, two of six orders of three writes refused, a nested coordinate
+/// evolved twice refused at commit (`#conflict at s`); v0.93.0: `_.r.b`
+/// is `_`.
+#[test]
+fn r16_however_a_call_s_function_arrives_the_recipe_meets_it() {
+    let mut bad = Vec::new();
+    let pre = "n: 5\nc: { b: 2 }\n";
+    fn once(bad: &mut Vec<String>, tag: &str, src: &str, reads: &[(&str, &str)], again: bool) -> Option<String> {
+        let w = Ws::new(tag);
+        let (rc, o) = w.evolve(src);
+        if rc != 0 {
+            bad.push(format!("  {src:?}: evolve refused it\n    {o}"));
+            return None;
+        }
+        let (o, rc) = w.oo(&["commit", "-m", "a"]);
+        if rc != 0 {
+            bad.push(format!("  {src:?}: evolve took it, commit refused it\n    {o}"));
+            return None;
+        }
+        for (at, want) in reads {
+            check(bad, &format!("{src:?}: {at}"), w.eval(at), want);
+        }
+        let root = w.root();
+        if again {
+            let (rc, o) = w.evolve(src);
+            if rc != 0 {
+                bad.push(format!("  {src:?} evolved again: refused\n    {o}"));
+            }
+            let _ = w.oo(&["commit", "-m", "again"]);
+            check(bad, &format!("{src:?} evolved again: root"), w.root(), &root);
+        }
+        Some(root)
+    }
+    let zb = [("_.r.z 2", "3"), ("_.r.b", "2")];
+    let reached = [
+        "((x -> { s: { z: (y -> x + y) } }) 1).s".to_string(),
+        format!("{{ a: 1, ...({CALL_FN}) }}"),
+    ];
+    for (i, e) in reached.iter().enumerate() {
+        let a = once(&mut bad, &format!("r16a{i}0"), &format!("{pre}r: c\nr: {e}\n"), &zb, true);
+        let b = once(&mut bad, &format!("r16a{i}1"), &format!("{pre}r: {e}\nr: c\n"), &zb, false);
+        if let (Some(a), Some(b)) = (a, b) {
+            check(&mut bad, &format!("{e}: root of the second order"), b, &a);
+        }
+    }
+    let built = format!("r: {CALL_FN}");
+    let three = ["r: { k: 1 }", built.as_str(), "r: c"];
+    let mut roots = Vec::new();
+    for (j, p) in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]].iter().enumerate() {
+        let src = format!("{pre}{}\n{}\n{}\n", three[p[0]], three[p[1]], three[p[2]]);
+        let reads = [("_.r.z 2", "3"), ("_.r.b", "2"), ("_.r.k", "1")];
+        if let Some(r) = once(&mut bad, &format!("r16b{j}"), &src, &reads, false) {
+            roots.push((src, r));
+        }
+    }
+    for (src, r) in roots.iter().skip(1) {
+        check(&mut bad, &format!("{src:?}: root as the first order"), r.clone(), &roots[0].1);
+    }
+    let sz = [("_.s.r.z 2", "3"), ("_.s.r.b", "2")];
+    let a = once(&mut bad, "r16c0", &format!("{pre}s: {{ r: c }}\ns: {{ r: {CALL_FN} }}\n"), &sz, true);
+    let b = once(&mut bad, "r16c1", &format!("{pre}s: {{ r: {CALL_FN} }}\ns: {{ r: c }}\n"), &sz, true);
+    if let (Some(a), Some(b)) = (a, b) {
+        check(&mut bad, "nested coordinate: root of the second order", b, &a);
+    }
+    for (i, (s1, s2)) in [
+        (format!("{pre}r: c\n"), format!("r: {}\n", reached[0])),
+        (format!("{pre}r: {}\n", reached[0]), "r: c\n".to_string()),
+        (format!("{pre}r: c\n"), format!("r: {}\n", reached[1])),
+        (format!("{pre}r: {{ k: 1 }}\nr: {CALL_FN}\n"), "r: c\n".to_string()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let w = Ws::new(&format!("r16x{i}"));
+        w.commit(s1);
+        let (rc, o) = w.evolve(s2);
+        let (o2, rc2) = w.oo(&["commit", "-m", "b"]);
+        if rc != 0 || rc2 != 0 {
+            bad.push(format!("  {s1:?} then {s2:?}: refused\n    {o} {o2}"));
+        }
+        for (at, want) in zb {
+            check(&mut bad, &format!("{s1:?} then {s2:?}: {at}"), w.eval(at), want);
+        }
+    }
+    for (i, src) in [
+        format!("{pre}r: c\nr: ((x -> {{ s: {{ b: (y -> x) }} }}) 1).s\n"),
+        format!("{pre}r: {{ z: 3 }}\nr: {{ k: 1 }}\nr: {CALL_FN}\n"),
+        format!("{pre}s: {{ r: c }}\ns: {{ r: (x -> {{ b: (y -> x) }}) 1 }}\n"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let w = Ws::new(&format!("r16k{i}"));
+        let (rc, o) = w.evolve(src);
+        if rc == 0 {
+            bad.push(format!("  {src:?}: evolve accepted it\n    {o}"));
+        }
+    }
+    // Evolved twice before one commit, no function in sight: the root of
+    // once (q092-r1ref to q092-r3ref: a meet an engine-internal reading
+    // memoized came back as the second evolve's answer).
+    let src = format!("{pre}s: {{ r: c }}\ns: {{ r: {{ z: 3 }} }}\n");
+    let once_root = first_commit_root(&src, "r16t1");
+    let w = Ws::new("r16t2");
+    let _ = w.evolve(&src);
+    w.commit(&src);
+    check(&mut bad, &format!("{src:?} evolved twice: root"), w.root(), &once_root);
+    // The same with a call's function: q092-r3ref took both evolves and
+    // refused the commit (`#conflict at s`), q092-r2ref refused the second.
+    let src = format!("{pre}s: {{ r: c }}\ns: {{ r: {CALL_FN} }}\n");
+    let w = Ws::new("r16t3");
+    let (rc, o) = w.evolve(&src);
+    let (rc2, o2) = w.evolve(&src);
+    let (o3, rc3) = w.oo(&["commit", "-m", "a"]);
+    if rc != 0 || rc2 != 0 || rc3 != 0 {
+        bad.push(format!("  {src:?} evolved twice: refused\n    {o} {o2} {o3}"));
+    }
+    for (at, want) in sz {
+        check(&mut bad, &format!("{src:?} evolved twice: {at}"), w.eval(at), want);
+    }
+    verdict(bad, 2 * 6 + (6 * 3 + 5) + (2 * 3 + 1) + 4 * 2 + 3 + 1 + 2);
+}
+
+/// g7 — A record literal holding a call's function prints back as itself:
+/// written alone, its root is v0.93.0's; a field taken from a call's record
+/// reads as it did.
+#[test]
+fn g7_a_literal_holding_a_call_s_function_keeps_its_root() {
+    let mut bad = Vec::new();
+    let w = Ws::new("g7r");
+    w.commit("r: ((x -> { s: { z: (y -> x + y) } }) 1).s\nq: { a: 1, ...((x -> { z: (y -> x + y) }) 1) }\n");
+    check(&mut bad, "_.r.z 2", w.eval("_.r.z 2"), "3");
+    check(&mut bad, "_.q.z 2", w.eval("_.q.z 2"), "3");
+    let cases = [
+        ("s: { r: (x -> { z: (y -> x + y) }) 1 }\n", "95beb356292349743f62dd5550f1ec7ef6f9187b6d0fe1514e622374d37216cf"),
+        ("s: { a: ((x -> (y -> x)) 1) 2 }\n", "04f5f02836391bbaa9878ccfd523a20548e2481e11df0f1f299057521d529376"),
+        ("s: { f: (y -> y) }\n", "a4ce9d337444cbc26c40976e7d8b10f64bd92b7efa94846a601d2ac4f64652e3"),
+    ];
+    for (i, (src, want)) in cases.iter().enumerate() {
+        check(&mut bad, &format!("{src:?}: root"), first_commit_root(src, &format!("g7-{i}")), want);
+    }
+    verdict(bad, 2 + cases.len());
+}
