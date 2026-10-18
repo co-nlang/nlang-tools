@@ -291,7 +291,22 @@ fn recipe_instead_of_pure_answer(
     // that reads nothing (a record's fields are lazy, an arrow's body is
     // code) never sets the flag; a table whose patterns read a name does.
     let derived_read = read_world && engine.predict_effect(expr, ctx).is_pure();
-    if !derived_read && !matches!(
+    // R-4: an answer that holds a function a call made, and does not print
+    // back as what it reads (the function captured the call's names), keeps
+    // its recipe, which does -- whatever brought it here: a call, a field
+    // taken from one, a spread, a record literal holding one. A later write
+    // meets that recipe as it would one `&`.
+    let unprintable = !derived_read
+        && matches!(val, Value::Combo(_) | Value::Thunk { .. })
+        && val.effect().is_pure()
+        && {
+            let outer = crate::READ_WORLD.with(|c| c.get());
+            let made = engine.made_in_a_call(&val);
+            crate::READ_WORLD.with(|c| c.set(outer));
+            made
+        }
+        && engine.answer_syntax(&val).is_none();
+    if !derived_read && !unprintable && !matches!(
         expr.kind,
         ExprKind::Add(_, _)
             | ExprKind::Sub(_, _)
@@ -308,6 +323,22 @@ fn recipe_instead_of_pure_answer(
         return val;
     }
     match &val {
+        // R-2: a lazy piece of what a call built (`((x -> { z: x + n }) 1).z`
+        // is `x + n` bound to `x: 1`) is not this definition's recipe.
+        // A reference held in a field is its own form (Q-090), not a piece.
+        Value::Thunk { expr: e, .. }
+            if (derived_read || unprintable)
+                && val.effect().is_pure()
+                && !matches!(e.kind, ExprKind::Structural(_))
+                && e.to_nlang(0) != expr.to_nlang(0) =>
+        {
+            Value::Thunk {
+                expr: Box::new(expr.clone()),
+                closure: ctx.scopes.clone(),
+                context: ctx.context_value.clone().map(Box::new),
+                effect: engine.predict_effect(expr, ctx),
+            }
+        }
         Value::Bottom(_) | Value::Blur(_) | Value::Thunk { .. } => val,
         Value::Top | Value::TopCaused { .. } | Value::Ref(_) => val,
         _ if val.effect().is_pure() => Value::Thunk {
@@ -509,7 +540,7 @@ impl Universe {
             ordinary.remove_field(c);
             ordinary.local.shift_remove(c.as_str());
         }
-        let met = match engine.unify(Value::Combo(root.clone()), Value::Combo(ordinary)) {
+        let met = match engine.unify_universe(Value::Combo(root.clone()), Value::Combo(ordinary)) {
             Value::Combo(m) => m,
             _ => return None,
         };
@@ -570,7 +601,7 @@ impl Universe {
             self.session_delta = Self::replace_merge(&self.session_delta, incoming);
             return;
         }
-        if let Value::Combo(m) = engine.unify(
+        if let Value::Combo(m) = engine.unify_universe(
             Value::Combo(self.session_delta.clone()),
             Value::Combo(incoming.clone()),
         ) {
@@ -700,6 +731,31 @@ impl Universe {
             // D110: did this definition's answer read the universe?
             let outer = crate::READ_WORLD.with(|c| c.replace(false));
             let v = engine.eval(&field.value, &mut ctx);
+            // Q-092: a record's spread reads lazily (at landing); read it now so
+            // a spread of the universe is seen as a reading (D110).
+            if let Value::Combo(c) = &v {
+                if !c.pending_spreads.is_empty() {
+                    let _ = engine.expand_combo_pending(c.clone(), &mut ctx);
+                    // R-2: what a spread lands may be a record a call built.
+                    for s in c.pending_spreads.iter().filter(|s| s.effect().is_pure()) {
+                        if crate::READ_WORLD.with(|c| c.get()) {
+                            break;
+                        }
+                        let _ = engine.force_recursive(s.clone(), &mut ctx);
+                    }
+                }
+            }
+            // Q-092 R-2: a record that a function or a pipe built keeps its
+            // fields lazy, bound to the call's names (and so does a field
+            // taken from one); reading it in full may read the universe. A
+            // record literal's fields are its own syntax and stay as they are.
+            if matches!(v, Value::Combo(_) | Value::Thunk { .. })
+                && !matches!(field.value.kind, ExprKind::Combo { .. })
+                && v.effect().is_pure()
+                && !crate::READ_WORLD.with(|c| c.get())
+            {
+                let _ = engine.force_recursive(v.clone(), &mut ctx);
+            }
             let read = crate::READ_WORLD.with(|c| c.get());
             crate::READ_WORLD.with(|c| c.set(outer || read));
             read_world = read && !self.answer_in_place;
@@ -840,39 +896,72 @@ impl Universe {
         // D110: a recipe meets a later write lazily, so a collision would be
         // found only when someone reads it. Evolve already has both answers;
         // the refusal stays where it was (`b: a` then `b: 3` is a conflict,
-        // as `b: 1` then `b: 3` is).
+        // as `b: 1` then `b: 3` is). Q-092: a coordinate whose value reads
+        // the universe anywhere below it (`r: { x: c }`, a nested spread) is
+        // judged the same way, on both sides' full answers.
         if !(self.pin_mode && engine.privilege.pin) {
-            let mine = match &answer {
-                Some(a) if !matches!(a, Value::Thunk { .. } | Value::Bottom(_)) => Some(a.clone()),
-                _ => None,
+            let read_here = |v: &Value, ctx: &mut EvalContext| -> (Value, bool) {
+                let outer = crate::READ_WORLD.with(|c| c.replace(false));
+                let got = engine.force_recursive(v.clone(), ctx);
+                let read = crate::READ_WORLD.with(|c| c.get());
+                crate::READ_WORLD.with(|c| c.set(outer));
+                (got, read)
+            };
+            let open = |v: &Value| {
+                matches!(v, Value::Thunk { expr, context: None, .. }
+                    if nlang_parser::tier::has_free_dollar(expr))
             };
             for c in &evolved_coords {
                 let held = [
                     self.staged.get_field(c).cloned().or_else(|| self.staged.get_local_field(c).cloned()),
                     self.root.get_field(c).cloned().or_else(|| self.root.get_local_field(c).cloned()),
                 ];
-                for existing in held.into_iter().flatten() {
-                    let recipe_side = matches!(existing, Value::Thunk { .. })
+                for (from_root, existing) in held
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, v)| v.map(|v| (i == 1, v)))
+                {
+                    if open(&existing) || open(&val) {
+                        continue;
+                    }
+                    let (theirs, read_theirs) = read_here(&existing, &mut ctx);
+                    let (ours, read_ours) = match &answer {
+                        Some(a) if !matches!(a, Value::Thunk { .. } | Value::Bottom(_)) => {
+                            read_here(a, &mut ctx)
+                        }
+                        _ => read_here(&val, &mut ctx),
+                    };
+                    let recipe_side = read_theirs
+                        || read_world
+                        || read_ours
+                        || matches!(existing, Value::Thunk { .. })
                         || matches!(val, Value::Thunk { .. });
                     if !recipe_side {
                         continue;
                     }
-                    let theirs = match existing {
-                        Value::Thunk { ref expr, context: None, .. }
-                            if nlang_parser::tier::has_free_dollar(expr) =>
-                        {
-                            continue
+                    // Q-092 R-2: the meet that observe and commit will make
+                    // here. A committed answer that does not print back as
+                    // what it reads (an older engine kept a record a call
+                    // built) is refused now, where the write is, not at
+                    // commit. What this engine staged prints back.
+                    let kept = if from_root {
+                        let outer = crate::DEFER_RECIPES.with(|c| c.replace(2));
+                        let kept = engine.unify(existing.clone(), val.clone());
+                        crate::DEFER_RECIPES.with(|c| c.set(outer));
+                        kept
+                    } else {
+                        Value::Top
+                    };
+                    if let Value::Bottom(mut d) = kept {
+                        if d.message.as_deref().is_some_and(|m| m.starts_with("cannot keep")) {
+                            d.path = Some(c.clone());
+                            return Err(*d);
                         }
-                        Value::Thunk { .. } => engine.force_recursive(existing, &mut ctx),
-                        other => other,
-                    };
-                    let ours = match &mine {
-                        Some(a) => a.clone(),
-                        None => continue,
-                    };
+                    }
                     // A side that cannot be read here (an open term with no
                     // frame reads as ⊥ #no_context) is not a collision.
                     if matches!(theirs, Value::Bottom(_) | Value::Thunk { .. })
+                        || matches!(ours, Value::Bottom(_) | Value::Thunk { .. })
                         || !theirs.bottom_leaves().is_empty()
                         || !ours.bottom_leaves().is_empty()
                     {
@@ -994,7 +1083,7 @@ impl Universe {
             self.restamp_thunk_effects(engine);
             return Ok(());
         }
-        let res = engine.unify(
+        let res = engine.unify_universe(
             Value::Combo(self.staged.clone()),
             Value::Combo(incoming.clone()),
         );
@@ -1127,7 +1216,7 @@ impl Universe {
             self.restamp_thunk_effects(engine);
             return Ok(());
         }
-        match engine.unify(
+        match engine.unify_universe(
             Value::Combo(self.staged.clone()),
             Value::Combo(incoming.clone()),
         ) {
@@ -1434,8 +1523,10 @@ impl Universe {
             return Ok(injections);
         }
         let root = Self::root_now(engine, base_dir)?;
+        // Q-092: "HEAD already holds it" is the same meet as the commit's;
+        // a recipe on either side stays a recipe there too.
         let at_head = engine
-            .unify(
+            .unify_universe(
                 Value::Combo(root.clone()),
                 Value::Combo(ComboVal::default()),
             )
@@ -1443,7 +1534,7 @@ impl Universe {
         let mut kept = Vec::with_capacity(injections.len());
         for injection in injections {
             let at = engine
-                .unify(
+                .unify_universe(
                     Value::Combo(root.clone()),
                     Value::Combo(injection.combo.clone()),
                 )
@@ -1893,7 +1984,7 @@ impl Universe {
                 None => return Err(anyhow::anyhow!("Commit failed")),
             }
         } else {
-            match engine.unify(
+            match engine.unify_universe(
                 Value::Combo(self.root.clone()),
                 Value::Combo(staged_for_commit),
             ) {
@@ -2352,7 +2443,7 @@ impl Universe {
             // Strip Config from staged so unify does not re-meet overrides.
             staged_for_obs.insert_field("~%Config", Value::Top);
         }
-        let current = engine.unify(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
+        let current = engine.unify_universe(Value::Combo(root_for_obs), Value::Combo(staged_for_obs));
         if let Value::Combo(r) = current {
             let mut ctx =
                 EvalContext::new(r.clone()).with_standard_root(self.standard_root.clone());

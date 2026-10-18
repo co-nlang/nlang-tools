@@ -109,10 +109,296 @@ fn make_h2_split_bottom(a: &ComboVal, b: &ComboVal) -> Value {
     }))
 }
 
+/// A `_` anywhere in a value: where the universe is not visible, a reading
+/// of it is `_`, and `_` prints back as `_`.
+fn has_top(v: &Value) -> bool {
+    match v {
+        Value::Top | Value::TopCaused { .. } => true,
+        Value::Combo(c) => c
+            .data
+            .values()
+            .chain(c.types.values())
+            .chain(c.rules.values())
+            .chain(c.meta.values())
+            .chain(c.system.values())
+            .chain(c.local.values())
+            .any(has_top),
+        Value::Union(items) => items.iter().any(has_top),
+        _ => false,
+    }
+}
+
+/// R-3: a function in this value was made inside a call: its closure has
+/// frames (a function made at the root has none). Its printed form does not
+/// carry the call's frame.
+pub(crate) fn holds_call_names(v: &Value) -> bool {
+    match v {
+        Value::Combo(c) => {
+            if let Some(Value::Combo(frames)) = c.get_field("%closure") {
+                if !frames.data.is_empty() {
+                    return true;
+                }
+            }
+            c.data
+                .values()
+                .chain(c.types.values())
+                .chain(c.rules.values())
+                .chain(c.meta.values())
+                .chain(c.local.values())
+                .any(holds_call_names)
+        }
+        _ => false,
+    }
+}
+
+/// Q-092: a write that reads the universe met a value whose syntax this
+/// engine cannot write back. Refused rather than kept without one side.
+fn cannot_keep(v: &Value) -> Value {
+    Value::Bottom(Box::new(BottomDetail {
+        cause: BottomCause::Conflict,
+        message: Some(format!(
+            "cannot keep the meet of a reading of the universe with {}: it does not print back as what it reads (pin a new value to replace it)",
+            v.to_nlang(0)
+        )),
+        ..Default::default()
+    }))
+}
+
 impl Ouroboros {
     pub fn unify(&self, a: Value, b: Value) -> Value {
         let mut ctx = self.eval_context();
         self.unify_internal(a, b, &mut ctx)
+    }
+
+    /// Q-092: the meet of two writes to the universe. Each coordinate is
+    /// decided where the two roots meet it: a coordinate whose value reads
+    /// the universe keeps the meet of the writes' syntax; below a coordinate
+    /// the meet is ordinary.
+    pub fn unify_universe(&self, a: Value, b: Value) -> Value {
+        let outer = crate::DEFER_RECIPES.with(|c| c.replace(1));
+        let r = self.unify(a, b);
+        crate::DEFER_RECIPES.with(|c| c.set(outer));
+        r
+    }
+
+    /// D110: does reading this value read the universe? A live reference
+    /// always does; an open term (a `$` with no frame) is not decided here.
+    fn reads_world(&self, v: &Value) -> bool {
+        match v {
+            Value::Ref(_) => true,
+            Value::Thunk { context: Some(_), .. } => false,
+            Value::Thunk { effect, .. } if !effect.is_pure() => false,
+            Value::Top | Value::TopCaused { .. } | Value::Bottom(_) => false,
+            _ => {
+                let outer = crate::READ_WORLD.with(|c| c.replace(false));
+                let mut ctx = self.eval_context();
+                let _ = self.force_recursive(v.clone(), &mut ctx);
+                let read = crate::READ_WORLD.with(|c| c.get());
+                crate::READ_WORLD.with(|c| c.set(outer));
+                read
+            }
+        }
+    }
+
+    /// The closed syntax a stored recipe reads as: its own source when it
+    /// carries no frame, else its printed form when that reads the same.
+    fn syntax_of(&self, v: &Value) -> Option<nlang_parser::ast::Expr> {
+        if let Value::Thunk { expr, context: None, closure, .. } = v {
+            if closure.is_empty() {
+                return Some((**expr).clone());
+            }
+        }
+        let src = v.to_nlang(0);
+        let e = nlang_parser::parse_expr_only(&src).ok()?;
+        let mut ctx = self.eval_context();
+        let read = self.eval(&e, &mut ctx);
+        // A recipe read where the universe is not visible reads `_` on both
+        // sides, so its answers cannot tell a lost binding (`{ z: x + n }`
+        // printed from a call with `x: 1`). Compare what each lazy field
+        // would read: its source and the names it is bound to.
+        if !Self::same_reading(v, &read) {
+            return None;
+        }
+        let back = self.force_recursive(read, &mut ctx);
+        let held = self.force_recursive(v.clone(), &mut ctx);
+        (back.content_hash() == held.content_hash()).then_some(e)
+    }
+
+    /// Two values read the same, field by field, without forcing: each lazy
+    /// field has the same source and the same frames it is read in.
+    fn same_reading(a: &Value, b: &Value) -> bool {
+        fn frames(c: &[std::sync::Arc<ComboVal>]) -> Vec<String> {
+            c.iter().map(|f| Value::Combo((**f).clone()).to_nlang(0)).collect()
+        }
+        fn axis(x: &IndexMap<String, Value>, y: &IndexMap<String, Value>) -> bool {
+            x.len() == y.len()
+                && x.iter().all(|(k, v)| y.get(k).map_or(false, |w| Ouroboros::same_reading(v, w)))
+        }
+        match (a, b) {
+            (
+                Value::Thunk { expr: e1, closure: c1, context: x1, .. },
+                Value::Thunk { expr: e2, closure: c2, context: x2, .. },
+            ) => {
+                x1.is_none() == x2.is_none()
+                    && e1.to_nlang(0) == e2.to_nlang(0)
+                    && frames(c1) == frames(c2)
+            }
+            (Value::Combo(x), Value::Combo(y)) => {
+                axis(&x.data, &y.data)
+                    && axis(&x.types, &y.types)
+                    && axis(&x.rules, &y.rules)
+                    && axis(&x.meta, &y.meta)
+                    && axis(&x.system, &y.system)
+                    && axis(&x.local, &y.local)
+                    && x.pending_spreads.len() == y.pending_spreads.len()
+            }
+            (Value::Thunk { .. }, _) | (_, Value::Thunk { .. }) => a.to_nlang(0) == b.to_nlang(0),
+            _ => a.content_hash() == b.content_hash() || a.to_nlang(0) == b.to_nlang(0),
+        }
+    }
+
+    /// The syntax an answer reads back as: its printed form (a literal's
+    /// fields print their source), else the printed form of its full answer
+    /// (a record a function built prints `{ z: x }` until forced).
+    /// R-3: `holds_call_names` of the value read in full.
+    /// R-4: a recipe kept because its answer holds a function a call made
+    /// and does not print back (universe.rs, recipe_instead_of_pure_answer).
+    pub(crate) fn keeps_its_syntax(&self, v: &Value) -> bool {
+        matches!(v, Value::Thunk { context: None, closure, .. } if closure.is_empty())
+            && v.effect().is_pure()
+            && self.made_in_a_call(v)
+            && self.answer_syntax(v).is_none()
+    }
+
+    pub(crate) fn made_in_a_call(&self, v: &Value) -> bool {
+        holds_call_names(&self.force_recursive(v.clone(), &mut self.eval_context()))
+    }
+
+    pub(crate) fn answer_syntax(&self, v: &Value) -> Option<nlang_parser::ast::Expr> {
+        let mut ctx = self.eval_context();
+        let full = self.force_recursive(v.clone(), &mut ctx);
+        let held = full.content_hash();
+        [v.to_nlang(0), full.to_nlang(0)].into_iter().find_map(|src| {
+            let e = nlang_parser::parse_expr_only(&src).ok()?;
+            let mut c = self.eval_context();
+            let read = self.eval(&e, &mut c);
+            // As in syntax_of: `x + n` bound to `x: 1` and printed alone both
+            // read `_` here.
+            if !Self::same_reading(v, &read)
+                && (has_top(&full) || !Self::same_reading(&full, &read))
+            {
+                return None;
+            }
+            let back = self.force_recursive(read, &mut c);
+            (back.content_hash() == held).then_some(e)
+        })
+    }
+
+    /// One coordinate of two universe writes. Neither side reads the
+    /// universe: the ordinary meet. Otherwise the meet of both sides'
+    /// syntax, in a form that does not depend on which write came first:
+    /// the conjuncts that read the universe (or are open) sorted and
+    /// deduplicated by their printed form, and every other conjunct met
+    /// now into one answer.
+    fn meet_coordinate(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
+        if matches!(a, Value::Bottom(_) | Value::Top | Value::TopCaused { .. })
+            || matches!(b, Value::Bottom(_) | Value::Top | Value::TopCaused { .. })
+        {
+            return self.unify_internal(a, b, ctx);
+        }
+        let reads = [self.reads_world(&a), self.reads_world(&b)];
+        let own = [
+            !reads[0] && self.keeps_its_syntax(&a),
+            !reads[1] && self.keeps_its_syntax(&b),
+        ];
+        if !(reads[0] || reads[1] || own[0] || own[1]) {
+            return self.unify_internal(a, b, ctx);
+        }
+        fn flat(e: &nlang_parser::ast::Expr, out: &mut Vec<nlang_parser::ast::Expr>) {
+            match &e.kind {
+                nlang_parser::ast::ExprKind::Meet(l, r) => {
+                    flat(l, out);
+                    flat(r, out);
+                }
+                _ => out.push(e.clone()),
+            }
+        }
+        let mut kept: Vec<nlang_parser::ast::Expr> = Vec::new();
+        let mut answers: Vec<Value> = Vec::new();
+        for ((v, read), own) in [(&a, reads[0]), (&b, reads[1])].into_iter().zip(own) {
+            if !read && !own {
+                answers.push(v.clone());
+                continue;
+            }
+            // R-4: a recipe kept because its answer does not print back is
+            // its own syntax here too, split into conjuncts as a reading is.
+            let e = match v {
+                Value::Thunk { expr, .. } if own => (**expr).clone(),
+                _ => match self.syntax_of(v) {
+                    Some(e) => e,
+                    None => return cannot_keep(v),
+                },
+            };
+            let mut parts = Vec::new();
+            flat(&e, &mut parts);
+            for part in parts {
+                if nlang_parser::tier::has_free_dollar(&part) {
+                    kept.push(part);
+                    continue;
+                }
+                let outer = crate::READ_WORLD.with(|c| c.replace(false));
+                let mut c = self.eval_context();
+                let got = self.eval(&part, &mut c);
+                let _ = self.force_recursive(got.clone(), &mut c);
+                let read = crate::READ_WORLD.with(|c| c.get());
+                crate::READ_WORLD.with(|c| c.set(outer));
+                // R-3: a conjunct whose answer does not print back keeps its
+                // syntax, as a reading of the universe does.
+                if read
+                    || (self.made_in_a_call(&got) && self.answer_syntax(&got).is_none())
+                {
+                    kept.push(part);
+                } else {
+                    answers.push(got);
+                }
+            }
+        }
+        if let Some(first) = answers.first().cloned() {
+            let met = answers
+                .into_iter()
+                .skip(1)
+                .fold(first, |acc, v| self.unify_internal(acc, v, ctx));
+            if matches!(met, Value::Bottom(_)) {
+                return met;
+            }
+            if !met.is_top() {
+                let Some(e) = self.answer_syntax(&met) else {
+                    return cannot_keep(&met);
+                };
+                kept.push(e);
+            }
+        }
+        let mut keyed: Vec<(String, nlang_parser::ast::Expr)> =
+            kept.into_iter().map(|e| (e.to_nlang(0), e)).collect();
+        keyed.sort_by(|x, y| x.0.cmp(&y.0));
+        keyed.dedup_by(|x, y| x.0 == y.0);
+        let mut it = keyed.into_iter().map(|(_, e)| e);
+        let Some(first) = it.next() else {
+            return Value::Top;
+        };
+        let expr = it.fold(first, |acc, e| {
+            let span = acc.span;
+            nlang_parser::ast::Expr::new(
+                nlang_parser::ast::ExprKind::Meet(Box::new(acc), Box::new(e)),
+                span,
+            )
+        });
+        Value::Thunk {
+            expr: Box::new(expr),
+            closure: Vec::new(),
+            context: None,
+            effect: a.effect().union(b.effect()),
+        }
     }
 
     /// When CAID equal: keep caused-Top provenance if either side has it.
@@ -170,6 +456,25 @@ impl Ouroboros {
             // Top and TopCaused share a CAID (lattice identity) — prefer
             // caused provenance so static-cycle fields survive combo merge.
             return Self::prefer_caused_top(a, b);
+        }
+
+        // Q-092: the universe's own meet. Two roots meet field by field;
+        // each coordinate is decided once (meet_coordinate), ordinary below.
+        match crate::DEFER_RECIPES.with(|c| c.get()) {
+            1 if matches!((&a, &b), (Value::Combo(_), Value::Combo(_))) => {
+                let (Value::Combo(ca), Value::Combo(cb)) = (a, b) else { unreachable!() };
+                crate::DEFER_RECIPES.with(|c| c.set(2));
+                let r = self.unify_combo(ca, cb, ctx);
+                crate::DEFER_RECIPES.with(|c| c.set(1));
+                return r;
+            }
+            0 => {}
+            level => {
+                crate::DEFER_RECIPES.with(|c| c.set(0));
+                let r = self.meet_coordinate(a, b, ctx);
+                crate::DEFER_RECIPES.with(|c| c.set(level));
+                return r;
+            }
         }
 
         match (&a, &b) {
@@ -320,7 +625,14 @@ impl Ouroboros {
         // Top and TopCaused share a CAID (cause is not in the address). Memo
         // keyed on that digest would let `plain: _` teach `opaque: ⊤+%cause`
         // to evaporate. D67: the fibre must survive meet with a hole.
-        let top_like = a.is_top() || b.is_top();
+        // Q-092: a meet of the universe's writes keeps recipes; a memo entry
+        // from an ordinary meet of the same pair forced them.
+        // R-4: an engine-internal context (eval_context) reads no universe;
+        // its meet of a name is not the meet a reading makes.
+        let top_like = a.is_top()
+            || b.is_top()
+            || crate::DEFER_RECIPES.with(|c| c.get()) != 0
+            || !ctx.memo_enabled;
         let cache_key = if id_a.digest <= id_b.digest {
             (id_a, id_b)
         } else {
