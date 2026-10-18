@@ -688,3 +688,110 @@ fn g5_a_definition_a_call_built_reads_as_it_did() {
     }
     verdict(bad, 4 + cases.len());
 }
+
+// ── R-3 (acceptor, 2026-10-18): red on the R-2 delivery and on q092-r2ref ─
+//
+// A record a call built can hold a function that captured the call's names.
+// Its answer does not print back as what it reads, and reading it in full
+// reads nothing of the universe, so it kept its answer; a recipe that met
+// it refused the write. One `&` reads it; v0.92.0 did too.
+
+/// r15 — A recipe met by a record a call built that holds a function of the
+/// call's names keeps both sides, in either order, one root; written again,
+/// it moves nothing; across a commit, either way. A collision is still
+/// refused. q092-r2ref: every row `#conflict at r` at evolve; v0.93.0: the
+/// recipe's side gone (`_.r.b` is `_`).
+#[test]
+fn r15_a_recipe_met_by_a_record_holding_a_call_s_function() {
+    let mut bad = Vec::new();
+    let built = [
+        ("(x -> { z: (y -> x + y) }) 1", "_.r.z 2", "3"),
+        ("(x -> { z: (y -> x + y + n) }) 1", "_.r.z 2", "8"),
+        ("(x -> { z: (y -> y + n) }) 1", "_.r.z 2", "7"),
+        ("(x -> { z: (y -> x + y), b: 2 }) 1", "_.r.z 2", "3"),
+    ];
+    for (i, (e, at, want)) in built.iter().enumerate() {
+        let mut roots = Vec::new();
+        for (j, src) in [
+            format!("n: 5\nc: {{ b: 2 }}\nr: c\nr: {e}\n"),
+            format!("n: 5\nc: {{ b: 2 }}\nr: {e}\nr: c\n"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let w = Ws::new(&format!("r15-{i}-{j}"));
+            let (rc, o) = w.evolve(src);
+            if rc != 0 {
+                bad.push(format!("  {src:?}: evolve refused it\n    {o}"));
+                continue;
+            }
+            let (o, rc) = w.oo(&["commit", "-m", "a"]);
+            assert_eq!(rc, 0, "commit {src:?}: {o}");
+            check(&mut bad, &format!("{src:?}: {at}"), w.eval(at), want);
+            check(&mut bad, &format!("{src:?}: _.r.b"), w.eval("_.r.b"), "2");
+            roots.push(w.root());
+            if j == 0 {
+                let before = w.root();
+                fs::write(w.ws.join("g.n"), src).unwrap();
+                let (o, rc) = w.oo(&["evolve", "g.n"]);
+                if rc != 0 {
+                    bad.push(format!("  {src:?} written again: evolve refused it\n    {o}"));
+                }
+                let _ = w.oo(&["commit", "-m", "again"]);
+                check(&mut bad, &format!("{src:?} written again: root"), w.root(), &before);
+            }
+        }
+        if roots.len() == 2 {
+            check(&mut bad, &format!("{e}: root of the second order"), roots[1].clone(), &roots[0]);
+        }
+    }
+    for (i, (a, b)) in [
+        ("n: 5\nc: { b: 2 }\nr: c\n", "r: (x -> { z: (y -> x + y) }) 1\n"),
+        ("n: 5\nc: { b: 2 }\nr: (x -> { z: (y -> x + y) }) 1\n", "r: c\n"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let w = Ws::new(&format!("r15x{i}"));
+        w.commit(a);
+        w.commit(b);
+        check(&mut bad, &format!("{a:?} then {b:?}: _.r.z 2"), w.eval("_.r.z 2"), "3");
+        check(&mut bad, &format!("{a:?} then {b:?}: _.r.b"), w.eval("_.r.b"), "2");
+    }
+    for (i, src) in [
+        "c: { b: 2 }\nr: c\nr: (x -> { b: (y -> x) }) 1\n",
+        "r: (x -> { z: (y -> x) }) 1\nr: { z: 3 }\n",
+        "r: { z: 3 }\nr: (x -> { z: (y -> x) }) 1\n",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let w = Ws::new(&format!("r15c{i}"));
+        let (rc, o) = w.evolve(src);
+        if rc == 0 {
+            bad.push(format!("  {src:?}: evolve accepted it\n    {o}"));
+        }
+    }
+    verdict(bad, 6 * built.len() + 4 + 3);
+}
+
+/// g6 — Written alone, a record holding a call's function reads as it did;
+/// what a named function built, and an answer that prints back, keep their
+/// v0.93.0 roots.
+#[test]
+fn g6_what_prints_back_keeps_its_root() {
+    let mut bad = Vec::new();
+    let w = Ws::new("g6r");
+    w.commit("g: (y -> (x -> y)) 1\nr: (x -> { z: (y -> x + y) }) 1\n");
+    check(&mut bad, "_.g 5", w.eval("_.g 5"), "1");
+    check(&mut bad, "_.r.z 2", w.eval("_.r.z 2"), "3");
+    let cases = [
+        ("f: (x -> (y -> x + y))\ng: f 1\n", "70b1a6e0086c73f4accace72c7146285babeef1ac7a699496d0a2a69ec792dd9"),
+        ("f: (x -> { z: (y -> x + y) })\ng: f 1\n", "8c304343c29154caab4f5d54558a2560ed65b9531cd99fff064016bda1292be1"),
+        ("r: (x -> { z: x }) 9\n", "6f2e2b61a10e0a11d64fc1236e451386a4d99433cef66972741a1b990218a196"),
+    ];
+    for (i, (src, want)) in cases.iter().enumerate() {
+        check(&mut bad, &format!("{src:?}: root"), first_commit_root(src, &format!("g6-{i}")), want);
+    }
+    verdict(bad, 2 + cases.len());
+}
