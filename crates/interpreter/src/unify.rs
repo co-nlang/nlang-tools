@@ -319,6 +319,11 @@ impl Ouroboros {
                 || !met.effect().is_pure()
                 || !self.made_in_a_call(&met)
                 || self.answer_syntax(&met).is_some()
+                // R-6: a side with no syntax of its own (an older engine
+                // kept the meet as its answer) is not split: it meets as
+                // it did.
+                || self.answer_syntax(&a).is_none()
+                || self.answer_syntax(&b).is_none()
             {
                 return met;
             }

@@ -701,7 +701,39 @@ v0.93.0 在這幾格讀得到 `z: 6`，只是丟了 `b`——**R1-M6「讀得到
 ## 9.24 修補回報（交付方填）
 
 ### 9.24.1 射程
+
+引擎 `unify.rs` 與 `q092-r6ref 6ba733a` 逐位元組相同。探針未改。`oo` 仍是 `0.93.0`。
+
+*   **R6-M1 沒有自己語法的一側照舊交會。** v0.93.0 與 R-4 各提交 §9.21 表的第一欄（每格旁有 `n: 5`、`c: { b: 2 }`），本建置再寫第二欄：七格都不讀宇宙的寫入，evolve 與提交都收下，沒有一格 `Commit failed`。原樣再寫 `api.f`，提交是 `already in HEAD`，根仍是 `02f8ad25…`。`api.f: (x -> x + 2)` 收下，讀是 `_|_`（`Incompatible types: 2 vs 3`）。遇上配方 `r: c`，evolve 退出碼 1，`#conflict at r`，根不動，`_.r.k` 仍是 `1`，`_.r.z 2` 仍是 `3`。兩種舊引擎的退出碼、訊息、讀數、前後根都相同。逐格在 §9.24.4。
+*   **另一半。** 探針 26／26，r17 與 g8 仍綠。R5-Q2 四項的根與 R-5 二進位相同。
+
 ### 9.24.2 順手改動
+
+沒有。
+
 ### 9.24.3 工單哪裡是錯的
+
+*   **§9.21 的表是七列，§9.23 的「八格」多一格。** `oldu.sh` 另有一格無關寫入 `q: 1`。本輪兩種舊引擎都收下：`_.q` 是 `1`，`_.api.f 1` 是 `2`，根由 `02f8ad25…` 到 `558a1802…`。
+*   **秒數是這台機器的。** 含函式的點號寫入，本輪 evolve 15.615 秒、R-5 二進位 13.488 秒（§9.23 寫 17.2–17.3 對 14.8–15.2），同根 `49445427…`。不含函式 4.880 對 4.999（§9.23 寫 5.3 對 5.8–6.0），同根 `2a4aa69e…`。`r: c` 之後 16.989 對 16.879（§9.23 寫 18.6–19.6 對 18.4–18.8），同根 `8d1fc70d…`。`sK` 2.642 對 2.560（§9.23 寫 2.7–2.9 對 2.5–2.7），同根 `0fbc8620…`。
+
 ### 9.24.4 必答
+
+*   **R6-Q1。** 舊提交是 v0.93.0 與本機 R-4 二進位各一次；下面的退出碼、訊息、讀數、根，兩種舊引擎相同。`F` 是 `(x -> (y -> x + y)) 1`。
+    *   `api.f`、`api.g` 再寫 `api.h: (z -> z * 2)`：evolve 0、提交 0。`_.api.h 3` 是 `6`，`_.api.f 1` 是 `2`。根 `02f8ad2549c0c5eb9b2409e5808904c7d80fb7b4ed7eec0f297da8e941e58922` → `e874d290b3e793e389b676f2c90843e69c83c8354ead0df4466b1dd5becee0a7`。
+    *   同上再寫 `api.f: (x -> x + 1)`：evolve 0、提交 1，`already in HEAD`。`_.api.f 1` 是 `2`。HEAD 與根都仍是 `02f8ad25…`。
+    *   同上再寫 `api.f: (x -> x + 2)`：evolve 0、提交 0。`_.api.f 1` 是 `_|_ ;; %cause: #conflict ;; Incompatible types: 2 vs 3`。根 → `b81e1390104b192b98d2b96a6a6272c08ee4fdde266be69a3c152074b72a0a4e`。
+    *   同上再寫 `api: { h: (z -> z * 2), k: 1 }`：evolve 0、提交 0。`_.api.h 3` 是 `6`，`_.api.k` 是 `1`，`_.api.f 1` 是 `2`。根 → `fb6bacd3c8898bda59d470b5756ff14971d889857f9deffe47d3942bb631978d`。
+    *   `r.k: 1`、`r.z: F` 再寫 `r.w: 2`：evolve 0、提交 0。`_.r.w` 是 `2`，`_.r.z 2` 是 `3`。根 `966074ca17b8a962143e4fe1af4bdfb3905fa2977a6d6592c23d8ceca0416f8b` → `a27e6340321b85f033500b1203176919218fa042c4e8a0826b714be670a90444`。
+    *   `r: { k: 1 }`、`r: { w: (y -> y) }` 再寫 `r.q: 5`：evolve 0、提交 0。`_.r.q` 是 `5`，`_.r.w 4` 是 `4`。根 `6e4109a8f66e070bdc507fe3395d0df7354a2a8abbca7d23981a6ad8cfb6b43c` → `c81869363f55dd6aa22789c9cf7125d46cda34ca67cb9f489e62857ebf65b82a`。
+    *   `r.k: 1`、`r.z: F` 再寫 `r: c`：evolve 1，`#conflict at r`；提交 1，`Nothing to commit`。根仍是 `966074ca…`。`_.r.k` 是 `1`，`_.r.z 2` 是 `3`，`_.r.b` 是 `_`。
+*   **R6-Q2。** 兩側都不讀宇宙時，R-5 已先交會；交會是純的、不是底也不是頂、在呼叫裡造出、而且自己印不回去時，本輪再問兩側各自印不印得回去。任一側沒有自己的語法，就回那個交會的答案，不拆。兩側都印得回去，才照 R-5 走語法交會。多出來的是這條路上兩側各一次印回。四項與 R-5 二進位同機：含函式 15.615／0.174 秒對 13.488／0.174 秒，`_.r0.f 1` 是 `1`、`_.r0.g 9` 是 `9`；不含函式 4.880／0.231 對 4.999／0.191，`_.r0` 是 `{ a: 0 b: 0 }`；`r: c` 之後 16.989／0.096 對 16.879／0.096，`_.r.b` 是 `2`、`_.r.k0` 是 `1`，根 `8d1fc70d1a953abbc9a6e29ca94d37d5644e40232682aacdc59b39f00fb71aee`；`sK` 2.642／0.265 對 2.560／0.263，`_.s0.f 3` 是 `3`。四個根都沒有移動。
+
 ### 9.24.5 數字
+
+*   三輪閘門退出碼都是 0。牆鐘 1047.86 秒、668.86 秒、663.30 秒。第一輪含 `Finished release profile [optimized] target(s) in 6m 27s`。正規化 3585 行，sha256 `51b0482c584092c926206ca3eb8a117a80ce768b57f3c09ccfab4e0bde791889`，三輪相同。`test result:` 284，加總通過 2736、失敗 0。`Running ` 281。`test ` 行以 ` ok` 結尾 2735。原始位元組第一輪 290501、後兩輪 290347。原始 sha256 前綴 `90763164858fa0e0`、`d38a488cc2fa57fc`、`28bbbcb503cd6d6d`。`^error` 0，BrokenPipe 0，panicked 0。
+*   紅線（閘門第一輪）：本探針 26／26 68.58 秒；Q-091 13／13 8.06 秒；Q-090 4／4 2.05 秒；Q-089 6／6 2.03 秒；Q-088 8／8 4.97 秒；`stage2_open_term_test` 3／3 0.10 秒；`stage3_probe_test` 4／4 0.34 秒；`stage3_acceptance_test` 6／6 0.12 秒；Q-087 7／7 2.89 秒；Q-086 4／4 2.30 秒；Q-077 12／12 3.21 秒、R-1 4／4 1.39 秒；Q-085 7／7 2.91 秒；Q-084 `a_table_that_lost_its_patterns_probe_test` 10／10 8.81 秒；Q-083 17／17 6.36 秒、bytes 1／1 0.27 秒、epochs 4／4 0.34 秒、union 2／2 0.00 秒；`pin_probe_test` 15／15 2.31 秒；`what_an_observation_leaves_probe_test` 15／15 4.13 秒；`caused_top_probe_test` 11／11 1.17 秒；`taint_scope_probe_test` 15／15 0.59 秒；`static_cycle_probe_test` 17／17 0.67 秒；`math_union_probe_test` 17／17 1.06 秒；`a_library_that_lives_in_the_root_test` 2／2 0.04 秒；`where_there_is_no_universe` 13／13 4.16 秒；`a_private_never_committed` 10／10 4.11 秒、R-1 3／3 0.59 秒；`kind_tag` 7／7 0.29 秒；forgot 17／17 2.72 秒、R-1 6／6 0.66 秒、R-2 10／10 1.75 秒；`forward_spread` 12／12 0.88 秒；`spread_collision` 25／25 0.93 秒；`spread_privacy` 11／11 0.38 秒；`blur_spread` 13／13 3.01 秒；`spread_splice` 9／9 0.17 秒；`import_is_spread` 7／7 0.44 秒；`a_name_spread_in` 15／15 6.19 秒。
+*   conformance 175／175，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release profile [optimized] target(s) in 4.89s`，`WIN_EXIT` 0，`^error` 0，120 行。該目標 lib 15 則警告；linux 閘門 lib 14 則。未修。
+*   身分：`x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`；標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。`~%Math./add` (1, 2)=3、(1, 3)=4，且不建 `.oo/`。新倉 `layout=9`、`encoding=6`。
+*   十七格與 `st_93.txt` 逐行相同。位址列只動「展開先於來源」那一列：兩種順序同根 `f6be66e9`，讀 `{ a: 1 b: 2 }`。其餘與 `inb_93.txt` 逐行相同。
+*   釋出 `oo` 11064520 位元組，mtime 2026-10-19 00:07:24 +0800。三輪閘門沒有重連這支二進位。
