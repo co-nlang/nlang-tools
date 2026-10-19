@@ -237,7 +237,42 @@ root:   hash:sha256:v2:_:/5+P3KDApMdOAP/fl5Sl4NXN0gEAv6ynpvSkppzZAQC/07HpxbrfzgU
 ## 9.4 修補回報（交付方填）
 
 ### 9.4.1 射程
+
+`universe.rs` 與 `q093-r1ref` `8ddb0f9` 逐位元組相同。探針未改。`oo` 仍是 `0.94.0`。
+
+*   **R1-M1 不碰展開的寫入，留下展開的鍵。** 鍵上已有的值若與來源一致，重攤把它從這一次拿掉。
+    *   同一次寫入遇上的答案。`b: 2`、`...c`、`c: { b: 2 }` 提交後，根 `f3bf36fc0b458751e2f9dc80f5b51e01036c23f62218ba3ba6f3383293c9b440`，`_.b` 是 `2`。再提交 `x: 1`，根 `a75ab440b717bcc169d3b59b7c6d272882f674ba7d47c29bce654e995ee17888`，`_.b` 仍是 `2`，`_.x` 是 `1`。四行一次提交、先寫 `x` 再寫 `b` 與 `...c`，都是這個根。
+    *   `--pin` 寫下的值。只提交 `c: { b: 2 }` 之後 `--pin` 寫 `...c`，根也是 `f3bf36fc…`，`_.b` 是 `2`。之後 `x: 1`，與先寫 `x` 再 pin，根都是 `a75ab440…`，`_.b` 是 `2`，`_.x` 是 `1`。
+    *   提交時存成的視界。7×200 與 10×200 的種子提交成功；之後 `x: 1` evolve 與提交退出碼都是 0。`_.f6_199`、`_.f9_199` 在這筆之前與之後都是 `#blur #fuel_exhausted`。讀數在 9.4.4。
+*   **另一半。** `b: 3`、`...c` 之後 evolve `c: { b: 2 }`，退出碼 1，訊息 `Error: Evolution Conflict: #conflict at b`，工作集成員數 0。r5 在 10／10 裡通過。r1–r3 通過：新增與晚到仍在重攤時出現。
+
 ### 9.4.2 順手改動
+
+沒有。
+
 ### 9.4.3 工單哪裡是錯的
+
+沒有。
+
 ### 9.4.4 必答
+
+*   **R1-Q1 鍵上的值。** 重攤會遇上三種「不是這個讀法」的值。與來源 `unify` 之後不是 ⊥ 的，這一次不攤；是 ⊥ 的留下，由後面的檢查以鍵拒絕。
+    *   答案。`b: 2` 與 `...c`、`c: { b: 2 }` 一次提交，根 `f3bf36fc…`，`_.b` 是 `2`。再寫 `x: 1`，四行一次提交，或 `x` 先寫，根都是 `a75ab440…`，`_.b` 是 `2`。
+    *   pin。`--pin` 的 `...c` 先寫或後寫，與上面那筆 `x: 1` 合在一起，根都是 `a75ab440…`，`_.b` 是 `2`，`_.x` 是 `1`。pin 當時、還沒寫 `x` 的根是 `f3bf36fc…`。
+    *   視界。7 列種子根 `bf1c642b2ca6e43ed96fd72bb161e422f5cefb8cc56ff5ef8d5cead9b7ae2ace`，`_.f6_199` 是 `#blur { %cause: #fuel_exhausted, %caid: "hash:sha256:v1:a8e14d3b1c6a39b53ce1a10958f3cf64da5684fa0f94723df0f4fc8ea43e3445" }`。`x: 1` 提交後根 `b5ebeb5c170f4a59cc858cbb2ade52904e72971ccf18e25ba458059935057f7b`，讀數仍是 `#fuel_exhausted`，caid `hash:sha256:v1:20a14926c22a7760386319ec6a2036230dea00145fcbb6bb8cf0b27f35a1927c`。10 列種子根 `7728675dba5c12b98e7545cc2c72abfd5572833410d531c63680473c72b2366a`，`_.f9_199` 的 caid 是 `dabca8c56a6c34f1b1cd7fb7abc1ab99451e2c442808d5b3621bd3ffebf363fc`；`x: 1` 之後根 `2e29ed616a79dc172cac0f17b6f59b560a79c88b24ae10fda7c72f72585f60e1`，caid 是 `1738c1aed6b9a9753c51f74305515e5d8082e2321e31a0ac14323dcb1e2232d4`。v0.94.0 同一格的視界 caid，種子之後與 `x: 1` 之後，都與上面這兩個相同。
+    *   不一致。`b: 3`、`...c` 之後的 `c: { b: 2 }` 在 evolve 拒絕，`#conflict at b`，成員數 0。
+*   **R1-Q2 規模。** 各來源 200 欄。本輪與 v0.94.0（`v0.94.0-verify`）同機，2026-10-19。`x: 1` 的 evolve 與提交分開計時。
+    *   7 列，本輪：evolve 0.87 秒、rc 0、最大駐留 99916 KB；提交 1.18 秒、rc 0、124676 KB。v0.94.0：evolve 0.42 秒、rc 0、102172 KB；提交 0.67 秒、rc 0、122916 KB。兩邊 `_.f6_199` 在提交後都是上面那個 `20a14926…` 視界。
+    *   10 列，本輪：evolve 2.12 秒、rc 0、117644 KB；提交 2.64 秒、rc 0、131048 KB。v0.94.0：evolve 0.79 秒、rc 0、122324 KB；提交 1.22 秒、rc 0、129236 KB。兩邊 `_.f9_199` 在提交後都是 `1738c1ae…` 視界。
+    *   種子本身的提交仍是重的一截。本輪 7 列 26.19 秒、3100208 KB；10 列 38.09 秒、4445696 KB。v0.94.0 7 列 25.29 秒、3093744 KB；10 列 36.49 秒、4435988 KB。種子的 evolve／提交退出碼都是 0。
+
 ### 9.4.5 數字
+
+*   探針 `a_spread_at_the_root_probe_test` 10／10。閘門第一輪 8.88 秒。閘門前單獨跑一次 8.70 秒，退出碼 0。探針檔未改。
+*   三輪：2026-10-19 21:04:14 起 1052.16 秒、21:21:46 起 660.17 秒、21:32:46 起 649.26 秒，退出碼都是 0。正規化 3597 行，sha256 `9e10fa95d3ea35d0b1a7d0d3f43605912701e68132de12357f53ca434efe9a2c`，三輪相同。`test result:` 285 條，合計 2745 通過、0 失敗。以 `test ` 起算的通過行 2744。`Running ` 282 條。原始日誌 291203／291049／291049 位元組，sha256 前綴 `a442e1613a6ba67d`、`003aefd0b44cd24e`、`f6943c382d106189`。`^error` 0，BrokenPipe 0，panicked 0。
+*   紅線（閘門第一輪，皆通過）：本探針 10／10 8.88 秒；Q-092 25／25 45.54 秒；Q-091 13／13 7.86 秒；Q-090 4／4 2.07 秒；Q-089 6／6 2.03 秒；Q-088 8／8 5.18 秒；`forward_spread` 12／12 0.92 秒；`spread_collision` 25／25 0.89 秒；`spread_privacy` 11／11 0.36 秒；`blur_spread` 13／13 3.13 秒；`spread_splice` 9／9 0.16 秒；`import_is_spread` 7／7 0.45 秒；`a_name_spread_in` 15／15 6.08 秒；`pin_probe_test` 15／15 2.32 秒；`what_an_observation_leaves` 15／15 4.20 秒；`where_there_is_no_universe` 13／13 4.20 秒；`a_private_never_committed` 10／10 4.13 秒、R-1 3／3 0.51 秒。同輪還有：Q-084 10／10 8.76 秒；`a_table_that_runs_every_branch_when_looked_at` 7／7 2.79 秒；`a_table_that_stops_being_one_when_printed` 4／4 2.28 秒；`a_table_you_cannot_read` 12／12 3.33 秒、R-1 4／4 1.55 秒；`a_tag_key_read_as_a_string` 7／7 2.85 秒；epochs 4／4 0.37 秒；union 2／2 0.00 秒；bytes 1／1 0.26 秒；`caused_top` 11／11 1.17 秒；`effect_union` 15／15 0.54 秒；`kind_tag` 7／7 0.28 秒；`math_union` 17／17 0.98 秒；`stage2_open_term_test` 3／3 0.10 秒；`stage3_acceptance_test` 6／6 0.12 秒；`stage3_probe_test` 4／4 0.34 秒；`static_cycle` 17／17 0.69 秒。
+*   conformance 178／178，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release in 4.57s`，`WIN_EXIT` 0，`^error` 0。該目標 lib 15 則警告。linux 閘門 lib 14 則。未修。
+*   十七格與 `st_93.txt` 逐行相同。位址列與 `inb_94.txt` 逐行相同。
+*   釋出 `oo` 11103240 位元組，mtime 2026-10-19 20:58:53 +0800。三輪閘門沒有重連這支二進位。工作區在編譯時是髒的，所以這裡不引 `--version`。
+

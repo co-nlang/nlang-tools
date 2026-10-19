@@ -1314,6 +1314,19 @@ impl Universe {
                         .and_then(spelled);
                     if reading.is_some() && reading == held {
                         incoming.remove_field(&k);
+                        continue;
+                    }
+                    // R-1: landing a row again over a key that already holds
+                    // something else (an answer the spread met, a pinned
+                    // value, a horizon) checks agreement and lands nothing.
+                    // A disagreement stays in `incoming` and is refused below.
+                    if self.relanding {
+                        let present = self.staged.get_field(&k).or_else(|| self.root.get_field(&k)).cloned();
+                        if let (Some(p), Some(v)) = (present, incoming.get_field(&k).cloned()) {
+                            if !matches!(engine.unify(p, v), Value::Bottom(_)) {
+                                incoming.remove_field(&k);
+                            }
+                        }
                     }
                 }
                 if self.relanding {
