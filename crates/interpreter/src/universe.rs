@@ -184,6 +184,7 @@ pub fn staged_has_committable_content(staged: &ComboVal) -> bool {
         || !s.meta.is_empty()
         || !s.system.is_empty()
         || !s.local.is_empty()
+        || !s.spread_rows.is_empty()
 }
 
 /// Committable content this member would contribute on its own.
@@ -486,6 +487,8 @@ pub struct Universe {
     /// A source may be written later in the file (SPEC_03 §3.1).
     deferred_spreads: Vec<Field>,
     in_spread_retry: bool,
+    /// D112: landing the root's spread rows again after an evolve.
+    relanding: bool,
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
@@ -521,6 +524,7 @@ impl Universe {
             workset_bottom: None,
             deferred_spreads: Vec::new(),
             in_spread_retry: false,
+            relanding: false,
         }
     }
 
@@ -569,6 +573,7 @@ impl Universe {
         }
         // Carry effect union conservatively (does not taint CAID of values).
         out.effect = out.effect.union(incoming.effect);
+        out.spread_rows.extend(incoming.spread_rows.iter().cloned());
         out
     }
     pub fn load(engine: &Ouroboros, base_dir: &std::path::Path) -> Result<Self> {
@@ -1266,6 +1271,10 @@ impl Universe {
             ExprKind::Path(p) if read && !self.answer_in_place => Some(p.clone()),
             _ => None,
         };
+        // D112: a spread of a universe name is a row of the root.
+        let row = source_path
+            .as_ref()
+            .map(|p| Expr::new(ExprKind::Path(p.clone()), field.value.span).to_nlang(0));
         let frames = ctx.scopes.clone();
         let recipe_of = |k: &str| -> Option<Value> {
             let p = source_path.as_ref()?;
@@ -1286,6 +1295,53 @@ impl Universe {
                 effect: crate::value::EffectTag::Pure,
             })
         };
+        // D112: a spread lands only what is not yet its reading, so writing
+        // `...c` again, or landing a row again, leaves the root as it was.
+        let mut all_held = false;
+        let expanded = match expanded {
+            Value::Combo(mut incoming) => {
+                let spelled = |v: &Value| match v {
+                    Value::Thunk { expr, .. } => Some(expr.to_nlang(0)),
+                    _ => None,
+                };
+                let before = incoming.field_keys().len();
+                for k in incoming.field_keys() {
+                    let reading = recipe_of(&k).as_ref().and_then(spelled);
+                    let held = self
+                        .staged
+                        .get_field(&k)
+                        .or_else(|| self.root.get_field(&k))
+                        .and_then(spelled);
+                    if reading.is_some() && reading == held {
+                        incoming.remove_field(&k);
+                    }
+                }
+                if self.relanding {
+                    incoming.local.clear();
+                }
+                all_held = before > 0
+                    && incoming.field_keys().is_empty()
+                    && (self.relanding || incoming.local.is_empty());
+                if self.relanding && incoming.field_keys().is_empty() {
+                    return Ok(());
+                }
+                Value::Combo(incoming)
+            }
+            _ if self.relanding => return Ok(()),
+            other => other,
+        };
+        if let Some(r) = row.as_ref().filter(|_| !self.relanding) {
+            if !self.staged.spread_rows.contains(r) && !self.root.spread_rows.contains(r) {
+                let mut only = ComboVal::default();
+                only.spread_rows.insert(r.clone());
+                self.note_session_incoming(engine, &only);
+                self.staged.spread_rows.insert(r.clone());
+                self.is_dirty = true;
+            }
+        }
+        if all_held {
+            return Ok(());
+        }
         match expanded {
             Value::Combo(incoming)
                 if incoming.field_keys().is_empty()
@@ -1473,8 +1529,45 @@ impl Universe {
                     next.local.insert(k.clone(), v);
                 }
             }
+            next.spread_rows = self.session_delta.spread_rows.clone();
             self.session_delta = next;
         }
+    }
+
+    /// D112: a root's spread rows read the universe every time. After an
+    /// evolve, land each row again: fields the source gained, or a source
+    /// that arrived, land as readings; a clash is refused here, by key.
+    pub fn land_root_spreads(
+        &mut self,
+        engine: &Ouroboros,
+    ) -> std::result::Result<(), crate::value::BottomDetail> {
+        let rows: Vec<String> = self
+            .root
+            .spread_rows
+            .union(&self.staged.spread_rows)
+            .cloned()
+            .collect();
+        if rows.is_empty() {
+            return Ok(());
+        }
+        self.relanding = true;
+        let mut out = Ok(());
+        for row in rows {
+            let Ok(program) = nlang_parser::parse_program(&format!("...{row}")) else {
+                continue;
+            };
+            for f in &program.fields {
+                if let Err(e) = self.evolve_field(engine, f) {
+                    out = Err(e);
+                    break;
+                }
+            }
+            if out.is_err() {
+                break;
+            }
+        }
+        self.relanding = false;
+        out
     }
 
     fn unlink_legacy_staged(base_dir: &std::path::Path) -> Result<()> {
@@ -1710,6 +1803,19 @@ impl Universe {
         // injection drops them (partial is CAID-only on disk). Uncommitted
         // bodies are unreachable after the next commit of a different root
         // and are local-GC fodder — same class as auto-cleared adverts.
+        // D112: a spread row has no form below encoding 7.
+        if !self.session_delta.spread_rows.is_empty()
+            && engine.store.encoding_version() < crate::storage::SPREAD_ROW_ENCODING
+        {
+            let row = self.session_delta.spread_rows.iter().next().cloned().unwrap_or_default();
+            anyhow::bail!(
+                "this store declares encoding={}; a spread of a universe name at the top \
+                 (`...{row}`) is kept as a row of the root, which needs encoding={}. \
+                 Run `oo migrate --grant migrate`",
+                engine.store.encoding_version(),
+                crate::storage::SPREAD_ROW_ENCODING
+            );
+        }
         // Land spreads before the member is written: pending spreads do not
         // travel in the working set.
         self.land_staged_spreads(engine);
@@ -1960,6 +2066,16 @@ impl Universe {
                 } else {
                     format!(" at {coord}")
                 }
+            ));
+        }
+        // D112: members written apart (two evolves that did not see each
+        // other) may hold a row and its source; land the rows over the
+        // working set this commit folds. A clash refuses the commit by key.
+        if let Err(d) = self.land_root_spreads(engine) {
+            let coord = d.path.as_deref().filter(|s| !s.is_empty()).unwrap_or("");
+            return Err(anyhow::anyhow!(
+                "Evolution Conflict: #conflict{}",
+                if coord.is_empty() { String::new() } else { format!(" at {coord}") }
             ));
         }
         // O37: horizon parameters do not enter history. Strip `~%Config` from

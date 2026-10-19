@@ -639,7 +639,9 @@ fn serialize_combo(cv: &ComboVal, buf: &mut Vec<u8>) {
         a.1.cmp(b.1)
     });
 
-    encode_unsigned_leb128(entries.len() as u64, buf);
+    // D112: a root's spread rows follow the fields, axis 9, key only.
+    // A combo without one keeps every byte it had.
+    encode_unsigned_leb128((entries.len() + cv.spread_rows.len()) as u64, buf);
     for (prio, key, val) in &entries {
         // Q-083 / D106. The axis is part of the entry. Epoch 1 sorted by it
         // and then dropped it.
@@ -649,7 +651,14 @@ fn serialize_combo(cv: &ComboVal, buf: &mut Vec<u8>) {
         encode_string(key, buf);
         serialize_value(val, buf);
     }
+    for row in &cv.spread_rows {
+        buf.push(AXIS_SPREAD_ROW);
+        encode_string(row, buf);
+    }
 }
+
+/// D112: the axis byte of a root's spread row (`REAL_03` §6.2).
+pub const AXIS_SPREAD_ROW: u8 = 9;
 
 fn serialize_union(items: &[Value], buf: &mut Vec<u8>) {
     let mut sorted: Vec<Vec<u8>> = items.iter().map(|v| serialize_bn(v)).collect();

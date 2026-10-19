@@ -203,7 +203,9 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// — including every future N (`layout=10`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
 pub const STORE_LAYOUT_VERSION: u32 = 9;
-pub const OBJECT_ENCODING_VERSION: u32 = 6;
+pub const OBJECT_ENCODING_VERSION: u32 = 7;
+/// D112: the first encoding that carries a root's spread rows.
+pub const SPREAD_ROW_ENCODING: u32 = 7;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// First layout whose `refine --sign` signs the whole commit (D76).
@@ -929,7 +931,7 @@ impl ObjectStore {
         // encoding=3 as it is (pre-v0.26.0 root rule, O63), and there the
         // same write would be refused again after it.
         let way_out = if encoding_after_migration(self.encoding) > 5 {
-            "run `oo migrate --grant migrate` (encoding=6) to write it".to_string()
+            format!("run `oo migrate --grant migrate` (encoding={OBJECT_ENCODING_VERSION}) to write it")
         } else {
             format!(
                 "`oo migrate` does not advance encoding={} (its roots keep the address rule \
