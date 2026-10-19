@@ -258,7 +258,8 @@ fn r6_a_migrated_layout7_store_records_points() {
     assert_eq!(w.layout(), "layout=9", "migrate did not advance the declaration: {o}"); // AMENDED 2026-10-04 for Q-073 (D91)
     // AMENDED 2026-10-04 for Q-073 (D91): layout 7 opens from v0.61.0; the newest engine that does not open layout 9 is v0.74.0.
     // Q-083 R-1: encoding=6 locks out through v0.84.0.
-    assert!(o.contains("v0.61.0") && o.contains("v0.84.0"), "the cost must name v0.61.0 through v0.84.0: {o}");
+    // AMENDED 2026-10-19 for Q-093 (D112): encoding=7 locks out through v0.94.0.
+    assert!(o.contains("v0.61.0") && o.contains("v0.94.0"), "the cost must name v0.61.0 through v0.94.0: {o}");
     let point = w.head_digest();
     w.write("c.n", "c: 3\n");
     let text = one(w.evolve_new("c.n"), "c.n after migrate");

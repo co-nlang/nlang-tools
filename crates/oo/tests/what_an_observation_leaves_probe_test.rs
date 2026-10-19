@@ -336,6 +336,8 @@ fn r9_layout_nine_and_an_older_declaration_receives_none() {
     let fmt = w.ws.join(".oo/format");
     assert_eq!(fs::read_to_string(&fmt).unwrap().trim(), "layout=9", "a new store's layout");
     fs::write(&fmt, "layout=8\n").unwrap();
+    // AMENDED 2026-10-19 for Q-093 (D112): a layout=8 store declares at most encoding=5.
+    fs::write(w.ws.join(".oo/objects.format"), "encoding=5\n").unwrap();
     let n = w.count();
     let (o, rc) = w.oo(&["eval", "_.v"]);
     assert!(rc == 0 && prints(&o, "2"), "a layout-8 store no longer answers: {o}");
@@ -343,7 +345,8 @@ fn r9_layout_nine_and_an_older_declaration_receives_none() {
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     assert_eq!(rc, 0, "migrate: {o}");
     assert_eq!(fs::read_to_string(&fmt).unwrap().trim(), "layout=9", "migrate did not reach layout 9: {o}");
-    assert!(o.contains("v0.64.0") && o.contains("v0.74.0"), "the cost must name v0.64.0 through v0.74.0 (they open layout 8): {o}");
+    // AMENDED 2026-10-19 for Q-093 (D112): the encoding advances to 7 as well; the newest locked out is v0.94.0.
+    assert!(o.contains("v0.64.0") && o.contains("v0.94.0"), "the cost must name v0.64.0 through v0.94.0 (they open layout 8 and encoding 5): {o}");
     w.oo(&["eval", "_.v"]);
     assert_eq!(w.count(), n + 1, "after migrate the observation left nothing");
 }
