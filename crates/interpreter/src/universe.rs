@@ -1319,13 +1319,21 @@ impl Universe {
                     // R-1: landing a row again over a key that already holds
                     // something else (an answer the spread met, a pinned
                     // value, a horizon) checks agreement and lands nothing.
-                    // A disagreement stays in `incoming` and is refused below.
+                    // R-2: the check reads the universe (a reading of another
+                    // coordinate is forced where that coordinate is), and a
+                    // disagreement is refused here, by key.
                     if self.relanding {
                         let present = self.staged.get_field(&k).or_else(|| self.root.get_field(&k)).cloned();
                         if let (Some(p), Some(v)) = (present, incoming.get_field(&k).cloned()) {
-                            if !matches!(engine.unify(p, v), Value::Bottom(_)) {
-                                incoming.remove_field(&k);
+                            let both_there = !matches!(p, Value::Bottom(_)) && !matches!(v, Value::Bottom(_));
+                            if both_there && matches!(engine.unify_internal(p, v, &mut ctx), Value::Bottom(_)) {
+                                return Err(crate::value::BottomDetail {
+                                    cause: BottomCause::Conflict,
+                                    path: Some(k.clone()),
+                                    ..Default::default()
+                                });
                             }
+                            incoming.remove_field(&k);
                         }
                     }
                 }

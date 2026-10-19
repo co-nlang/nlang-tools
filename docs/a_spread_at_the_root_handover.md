@@ -314,7 +314,50 @@ root:   hash:sha256:v2:_:/5+P3KDApMdOAP/fl5Sl4NXN0gEAv6ynpvSkppzZAQC/07HpxbrfzgU
 ## 9.8 修補回報（交付方填）
 
 ### 9.8.1 射程
+
+`universe.rs` 與 `q093-r2ref` `d804420` 逐位元組相同。探針未改。`oo` 仍是 `0.94.0`。
+
+*   **R2-M1 晚到的來源與鍵上已有的值相撞，在 evolve 以鍵拒絕。** 判一致用的是這次 evolve 的上下文。列已經在根上。
+    *   別的座標的讀法。`d: { b: 3 }`、`b: d.b`、`...c` 提交後 evolve `c: { b: 2 }`，退出碼 1，`Error: Evolution Conflict: #conflict at b`，工作集成員數 0。`_.b` 仍是 `3`，`_.c.b` 是 `_`。兩次 evolve 的退出碼是 `0 1`，同一句。
+    *   別名。`n: 3`、`b: n`、`...c` 之後同樣拒絕，`_.b` 仍是 `3`。兩次 evolve 也是 `0 1`。
+    *   配方。`b: d.b + 0` 之後 evolve `c: { b: 2 }`，拒絕，`_.b` 仍是 `3`。`b: { k: d.b }` 之後 evolve `c: { b: { k: 2 } }`，拒絕，`_.b` 仍是 `{ k: 3 }`。兩次 evolve 都是 `0 1`。
+    *   同一個檔。r8 在 11／11 裡通過：讀法與別名各有一次同一個檔的拒絕。
+    *   一致的照收。`d: { b: 2 }`、`b: d.b`、`...c` 再提交 `c: { b: 2 }`，`_.b` 是 `2`，根 `c7a8e3204e5a43cb705e1e6a0195298277756b3643eab2ea1bca92237df96ecb`。兩次 evolve 退出碼都是 0。
+*   **R1-M1 照舊。** `b: 2`、`...c`、`c: { b: 2 }` 提交後根 `f3bf36fc0b458751e2f9dc80f5b51e01036c23f62218ba3ba6f3383293c9b440`，`_.b` 是 `2`。再提交 `x: 1`，根 `a75ab440b717bcc169d3b59b7c6d272882f674ba7d47c29bce654e995ee17888`，`_.b` 是 `2`，`_.x` 是 `1`。7×200 種子根 `bf1c642b2ca6e43ed96fd72bb161e422f5cefb8cc56ff5ef8d5cead9b7ae2ace`，`x: 1` 之後 `b5ebeb5c170f4a59cc858cbb2ade52904e72971ccf18e25ba458059935057f7b`，evolve 與提交退出碼都是 0。10×200 種子根 `7728675dba5c12b98e7545cc2c72abfd5572833410d531c63680473c72b2366a`，之後 `2e29ed616a79dc172cac0f17b6f59b560a79c88b24ae10fda7c72f72585f60e1`。r7 在 11／11 裡通過。
+
 ### 9.8.2 順手改動
+
+沒有。
+
 ### 9.8.3 工單哪裡是錯的
+
+沒有。
+
 ### 9.8.4 必答
+
+*   **R2-Q1 還有哪些檢查看不到宇宙。** `engine.unify` 自建一份求值上下文，根與暫存都不在裡面。重攤時「不是這個讀法」的那一處已改成 `unify_internal`，上下文就是這次 evolve 的（根與暫存都在）。兩邊都有值、相交是 ⊥，就在這裡以鍵拒絕，然後把這個鍵從這一次拿掉。列已經在根上的晚到來源走這裡，到不了下面那個與根比的檢查。
+    *   **`evolve_spread` 與根比的 `engine.unify(root_val, v)` 仍會放過一條路。** 根上還沒有這一列的時候，第一次落地走這個檢查。先提交 `d: { b: 3 }`、`b: d.b`（沒有 `...c`），再 evolve 並提交 `c: { b: 2 }`、`...c`：evolve 與提交退出碼都是 0，根 `82cb04140f094316f3f5dd6e89b07e116ef6718e0b7c016db98f9522b4616f5e`，`_.b` 是 `_|_`，`%cause: #conflict`，`_.c.b` 是 `2`。別名 `n: 3`、`b: n` 同樣，根 `df49d2ffad6b5e4eec268a2b4276dc64bdf6203e3aa01d482e1f69adbd556aef`，`_.b` 是 `#conflict`。`b: { k: d.b }` 對上 `c: { b: { k: 2 } }`，根 `595d32c98dbba4198ffab480194640aeb39913b8a467503aaae7c092540e4ceb`，`_.b` 是 `#conflict`。鍵上是答案 `b: 3` 時，兩個數在這一次就相交成 ⊥：evolve 退出碼 1，`#conflict at b`，`_.b` 仍是 `3`。
+    *   **evolve 與提交路徑上，用 `engine.unify` 判相撞的地方，各一格。**
+        *   普通欄位對根上的答案：`engine.unify(root_val, val)`。`b: 1` 再 evolve `b: 2`，退出碼 1，`#conflict at b`，`_.b` 仍是 `1`。
+        *   座標的值讀了宇宙：先在這次的上下文裡強制，再 `engine.unify(theirs, ours)`。`d: { b: 3 }`、`b: d.b` 再 evolve `b: 2`，退出碼 1，`#conflict at b`，`_.b` 仍是 `3`。
+        *   根上的值對這次寫入做座標交會：`engine.unify(existing, val)`，`DEFER_RECIPES` 設為 2。訊息以 `cannot keep` 起頭才在這裡拒絕。v0.93.0 夾具 `v093_dotted_functions_repo` 上 evolve `r: c`，退出碼 1，`#conflict at r`；提交 `Error: Nothing to commit`；`_.r.k` 仍是 `1`。這具引擎自己提交的 `n: 5`、`c: { b: 2 }`、`r: (x -> { z: x + n }) 1` 再 evolve `r: c`，退出碼 0，`_.r` 仍是 `{ z: 6 }`。CLI 印的是原因與座標。
+        *   暫存與這次寫入整顆相交：`unify_universe`（裡面是 `engine.unify`）。同一個檔 `b: 1`、`b: 2`，退出碼 1，`#conflict at b`，成員數 0。
+        *   模式欄位與根比：`engine.unify(root_val, val)`。`@{ @int }: "a"` 再 evolve `@{ @int }: "b"`，退出碼 0。提交退出碼 0，根 `090f653622d8a3ee49aa6861db3253462776f256886e2b87e3196560ceb8df98`，`(_. ) 1` 是 `_|_`，`%cause: #conflict`，並寫著不相容的型別 `"b"` 與 `"a"`。
+        *   `~%Config` 的部分交會：`engine.unify`。`~%Config.fuel: 50` 提交退出碼 1。再 evolve `~%Config.fuel: 40`，退出碼 1，`#conflict at ~%Config.fuel`。
+        *   展開與根比：上一格。有列的重攤在這之前已經以鍵拒絕。
+        *   提交本體：`unify_universe`。沒有列的那一格 evolve 已收下，提交退出碼 0，鍵上留下 `#conflict`。有列的不一致在 evolve 已經拒絕。`--pin` 的普通部分走 `pin_commit_merge` 裡的 `unify_universe`；本輪沒有另開這一格。
+    *   拿摘要比位置的 `head_if_it_holds`、`session_would_be_listed`、`injection_positions_equal`、`proposals_at` 也呼叫 `engine.unify`，比的是摘要等不等。`refine` 的幾何檢查同樣呼叫它，不在 evolve 與 `oo commit` 這條路上。重攤的新檢查與暫存欄位的交會是 `unify_internal`，上下文看得到宇宙。
+*   **R2-Q2 代價。** 各來源 200 欄。本輪 2026-10-19，與 R-1 同機。種子根、`x: 1` 之後的根、視界的 caid，都與 R-1 那一輪相同。
+    *   7 列。種子 evolve 8.36 秒、最大駐留 184392 KB、rc 0；提交 26.70 秒、3100112 KB、rc 0。R-1 的種子提交是 26.19 秒、3100208 KB。`x: 1` evolve 0.45 秒、103212 KB、rc 0；提交 0.68 秒、124436 KB、rc 0。R-1 同一格是 evolve 0.87 秒、99916 KB，提交 1.18 秒、124676 KB。`_.f6_199` 在種子之後是 `a8e14d3b…`，`x: 1` 之後是 `20a14926…`，都是 `#fuel_exhausted`。
+    *   10 列。種子 evolve 13.81 秒、228304 KB、rc 0；提交 42.49 秒、4445816 KB、rc 0。R-1 的種子提交是 38.09 秒、4445696 KB，evolve 13.66 秒。`x: 1` evolve 0.89 秒、123752 KB、rc 0；提交 1.25 秒、131064 KB、rc 0。R-1 同一格是 evolve 2.12 秒、117644 KB，提交 2.64 秒、131048 KB。`_.f9_199` 在種子之後是 `dabca8c5…`，`x: 1` 之後是 `1738c1ae…`。
+
 ### 9.8.5 數字
+
+*   探針 `a_spread_at_the_root_probe_test` 11／11。閘門第一輪 9.93 秒。閘門前單獨跑一次 9.49 秒，退出碼 0。探針檔未改。二進位檔名仍是 `a_spread_at_the_root_probe_test-0d67b36161985d2d`；cargo 編譯了 `oo` 並跑了 11 個測試，含 r8。
+*   三輪：2026-10-19 22:56:11 起 1095.16 秒、23:14:26 起 653.01 秒、23:25:19 起 657.35 秒，退出碼都是 0。正規化 3598 行，sha256 `8a2d4cfa7f5c1b055a3835cfdf3eea065232a2137c7a2c1068d7d81e1c767679`，三輪相同。`test result:` 285 條，合計 2746 通過、0 失敗。以 `test ` 起算的通過行 2745。`Running ` 282 條。原始日誌 291272／291118／291119 位元組，sha256 前綴 `07fd7294dc1edafc`、`62eef4df1cb725c7`、`3691a6ad2e70834b`。`^error` 0，BrokenPipe 0，panicked 0。
+*   紅線（閘門第一輪，皆通過）：本探針 11／11 9.93 秒；Q-092 25／25 46.04 秒；Q-091 13／13 7.94 秒；Q-090 4／4 2.09 秒；Q-089 6／6 2.03 秒；Q-088 8／8 5.10 秒；`forward_spread` 12／12 1.00 秒；`spread_collision` 25／25 1.28 秒；`spread_privacy` 11／11 0.50 秒；`blur_spread` 13／13 3.40 秒；`spread_splice` 9／9 0.20 秒；`import_is_spread` 7／7 0.47 秒；`a_name_spread_in` 15／15 6.18 秒；`pin_probe_test` 15／15 2.60 秒；`what_an_observation_leaves` 15／15 4.29 秒；`where_there_is_no_universe` 13／13 4.29 秒；`a_private_never_committed` 10／10 4.11 秒、R-1 3／3 0.52 秒。同輪還有：Q-084 10／10 8.86 秒；`a_table_that_runs_every_branch_when_looked_at` 7／7 2.82 秒；`a_table_that_stops_being_one_when_printed` 4／4 2.28 秒；`a_table_you_cannot_read` 12／12 3.31 秒、R-1 4／4 1.42 秒；`a_tag_key_read_as_a_string` 7／7 2.93 秒；epochs 4／4 0.35 秒；union 2／2 0.00 秒；bytes 1／1 0.23 秒；`caused_top` 11／11 1.27 秒；`effect_union` 15／15 0.67 秒；`kind_tag` 7／7 0.31 秒；`math_union` 17／17 1.10 秒；`stage2_open_term_test` 3／3 0.13 秒；`stage3_acceptance_test` 6／6 0.15 秒；`stage3_probe_test` 4／4 0.39 秒；`static_cycle` 17／17 0.80 秒。
+*   conformance 178／178，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release profile [optimized] target(s) in 4.63s`，`WIN_EXIT` 0，`^error` 0。該目標 lib 15 則警告。linux 閘門 lib 14 則。未修。
+*   十七格與 `st_93.txt` 逐行相同。位址列與 `inb_94.txt` 逐行相同。
+*   釋出 `oo` 11103904 位元組，mtime 2026-10-19 22:50:03 +0800。三輪閘門沒有重連這支二進位。工作區在編譯時是髒的，所以這裡不引 `--version`。
+
