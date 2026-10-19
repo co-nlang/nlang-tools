@@ -458,3 +458,39 @@ fn r7_an_unrelated_write_leaves_a_spread_key_as_it_was() {
     }
     verdict(bad, 14);
 }
+
+// ── Added at acceptance of R-1 (2026-10-19), repair round R-2 ────────────
+
+/// r8 — A source that arrives later and disagrees with what a key holds is
+/// refused at evolve, by key, whatever the key holds: an answer (r5), a
+/// reading of another coordinate, an alias. One file refuses it today; two
+/// commits and two evolves must too. Agreement is not a clash. R-1
+/// delivery 332dff8: the reading and the alias are accepted, `_.b` stays
+/// `3` beside `_.c.b` `2` (85d865b stored ⊥ over two commits).
+#[test]
+fn r8_a_later_source_that_clashes_with_a_reading_is_refused() {
+    let mut bad = Vec::new();
+    let held = ["d: { b: 3 }\nb: d.b\n...c\n", "n: 3\nb: n\n...c\n"];
+    for (i, a) in held.iter().enumerate() {
+        let w = Ws::new(&format!("r8-cm{i}"));
+        check(&mut bad, &format!("commit {a:?}"), w.commit(a), "");
+        let before = w.members().len();
+        let (rc, o) = w.evolve("c: { b: 2 }\n");
+        check(&mut bad, &format!("c after {a:?}: rc"), rc.to_string(), "1");
+        check(&mut bad, &format!("c after {a:?}: names the key"), o.contains("#conflict at b").to_string(), "true");
+        check(&mut bad, &format!("c after {a:?}: no member"), (w.members().len() - before).to_string(), "0");
+        check(&mut bad, &format!("c after {a:?}: _.b"), w.eval("_.b"), "3");
+        let w = Ws::new(&format!("r8-ev{i}"));
+        let (r1, _) = w.evolve(a);
+        let (r2, o) = w.evolve("c: { b: 2 }\n");
+        check(&mut bad, &format!("two evolves {a:?}: rc"), format!("{r1} {r2}"), "0 1");
+        check(&mut bad, &format!("two evolves {a:?}: names the key"), o.contains("#conflict at b").to_string(), "true");
+        let (rc, _) = Ws::new(&format!("r8-one{i}")).evolve(&format!("{a}c: {{ b: 2 }}\n"));
+        check(&mut bad, &format!("one file {a:?}: rc"), rc.to_string(), "1");
+    }
+    let w = Ws::new("r8-agree");
+    check(&mut bad, "agree 1", w.commit("d: { b: 2 }\nb: d.b\n...c\n"), "");
+    check(&mut bad, "agree 2", w.commit("c: { b: 2 }\n"), "");
+    check(&mut bad, "agree: _.b", w.eval("_.b"), "2");
+    verdict(bad, 17);
+}
