@@ -403,3 +403,58 @@ fn g3_narrowing_and_a_clash_in_one_file() {
     check(&mut bad, "clash in one file: rc", rc.to_string(), "1");
     verdict(bad, 4);
 }
+
+// ── Added at acceptance (2026-10-19), repair round R-1 ───────────────────
+
+/// `b: 2`, `...c`, `c: { b: 2 }`, and `x: 1`: one root however they are
+/// split. `b` holds the answer the spread met, not the reading.
+const R1: &str = "a75ab440b717bcc169d3b59b7c6d272882f674ba7d47c29bce654e995ee17888";
+
+/// r7 — A write that does not touch a spread's keys does not change what
+/// those keys hold. A key that already holds something other than the
+/// spread's reading — an answer the spread met in the same write, or a
+/// value `--pin` wrote — keeps it when the row lands again; the order of
+/// an unrelated write does not matter. Delivery 85d865b: an unrelated
+/// `x: 1` written later lands `b` again as a reading (`c8f03993…`).
+#[test]
+fn r7_an_unrelated_write_leaves_a_spread_key_as_it_was() {
+    let mut bad = Vec::new();
+    let w = Ws::new("r7-later");
+    check(&mut bad, "commit b, ...c, c", w.commit("b: 2\n...c\nc: { b: 2 }\n"), "");
+    check(&mut bad, "then x", w.commit("x: 1\n"), "");
+    check(&mut bad, "x later: root", w.root(), R1);
+    check(&mut bad, "x later: _.b", w.eval("_.b"), "2");
+    check(&mut bad, "one commit", first_commit_root("b: 2\n...c\nc: { b: 2 }\nx: 1\n", "r7-one"), R1);
+    let w = Ws::new("r7-first");
+    check(&mut bad, "commit c, x", w.commit("c: { b: 2 }\nx: 1\n"), "");
+    check(&mut bad, "then b, ...c", w.commit("b: 2\n...c\n"), "");
+    check(&mut bad, "x first: root", w.root(), R1);
+    // `...c` written under `--pin`, then `x: 1`; and the other order
+    for (i, steps) in [["pin", "x"], ["x", "pin"]].iter().enumerate() {
+        let w = Ws::new(&format!("r7-pin{i}"));
+        check(&mut bad, "seed c", w.commit("c: { b: 2 }\n"), "");
+        for s in steps.iter() {
+            let (rc, o) = if *s == "pin" {
+                let n = fs::read_dir(&w.ws).map(|d| d.count()).unwrap_or(0);
+                fs::write(w.ws.join(format!("p{n}.n")), "...c\n").unwrap();
+                let (o, rc) = w.oo(&["evolve", "--pin", "--grant", "pin", &format!("p{n}.n")]);
+                if rc != 0 {
+                    (rc, o)
+                } else {
+                    let (o, rc) = w.oo(&["commit", "--grant", "pin", "-m", "p"]);
+                    (rc, o)
+                }
+            } else {
+                let o = w.commit("x: 1\n");
+                (if o.is_empty() { 0 } else { 1 }, o)
+            };
+            check(&mut bad, &format!("{steps:?} step {s}"), format!("{rc}"), "0");
+            if rc != 0 {
+                bad.push(format!("  said: {}", squash(&o)));
+            }
+        }
+        check(&mut bad, &format!("{steps:?}: root"), w.root(), R1);
+        check(&mut bad, &format!("{steps:?}: _.b"), w.eval("_.b"), "2");
+    }
+    verdict(bad, 14);
+}
