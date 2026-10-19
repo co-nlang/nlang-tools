@@ -187,7 +187,7 @@ fn g3_no_address_moves() {
     );
     assert_eq!(
         fs::read_to_string(d.join(".oo/objects.format")).unwrap_or_default(),
-        "encoding=6\n" // Q-083／D106 紀元
+        "encoding=7\n" // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7
     );
 }
 

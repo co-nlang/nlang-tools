@@ -251,6 +251,7 @@ impl Ouroboros {
                     && axis(&x.system, &y.system)
                     && axis(&x.local, &y.local)
                     && x.pending_spreads.len() == y.pending_spreads.len()
+                    && x.spread_rows == y.spread_rows
             }
             (Value::Thunk { .. }, _) | (_, Value::Thunk { .. }) => a.to_nlang(0) == b.to_nlang(0),
             _ => a.content_hash() == b.content_hash() || a.to_nlang(0) == b.to_nlang(0),
@@ -947,6 +948,8 @@ impl Ouroboros {
         // Preserve deferred spreads that expand could not resolve yet
         // (forward_spread: evolve/observe-entry unify vs system root).
         out.pending_spreads = pending_spreads;
+        // D112: a root's spread rows are a set; the meet holds both.
+        out.spread_rows = a.spread_rows.union(&b.spread_rows).cloned().collect();
         Value::Combo(out)
     }
 

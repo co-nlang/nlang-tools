@@ -359,7 +359,7 @@ fn r6_a_new_store_declares_the_new_encoding() {
     let d = fresh_store("r6");
     let declared = fs::read_to_string(d.path().join(".oo/objects.format")).expect("format");
     assert!(
-        declared.contains("encoding=6"), // Q-083／D106 紀元
+        declared.contains("encoding=7"), // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7
         "a store written by this engine must declare the new encoding; got {declared:?}"
     );
 }
@@ -409,7 +409,7 @@ fn r7_an_encoding_4_store_opens_and_migrates_without_moving_anything() {
 
     let after_decl = fs::read_to_string(d.path().join(".oo/objects.format")).expect("format");
     assert!(
-        after_decl.contains("encoding=6"), // Q-083／D106 紀元
+        after_decl.contains("encoding=7"), // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7
         "migrate must advance the encoding declaration too. Today it advances \
          `layout` only and leaves this line alone. got {after_decl:?} \
          (migrate said {out:?})"

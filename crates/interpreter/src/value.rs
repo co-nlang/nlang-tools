@@ -1099,6 +1099,11 @@ pub struct ComboVal {
     /// not required for in-session evolve/observe; store solidifies via force).
     #[serde(skip, default)]
     pub pending_spreads: Vec<Value>,
+    /// D112: a root's `...c` of a universe name, kept as the source's
+    /// canonical spelling. It enters identity (axis 9) and the store frame,
+    /// and is landed again whenever the universe changes.
+    #[serde(skip, default)]
+    pub spread_rows: std::collections::BTreeSet<String>,
     #[serde(skip, default = "default_cache_id")]
     pub cache_id: Arc<RwLock<Option<ContentHash>>>,
     /// M1: memo for `cycle_frame_digest` (force/in_flight frame identity).
@@ -1131,6 +1136,7 @@ impl Clone for ComboVal {
             relations: self.relations.clone(),
             masa_ref: self.masa_ref.clone(),
             pending_spreads: self.pending_spreads.clone(),
+            spread_rows: self.spread_rows.clone(),
             cache_id: default_cache_id(),
             cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),
@@ -1153,6 +1159,7 @@ impl Default for ComboVal {
             relations: vec![],
             masa_ref: MasaRef::Top,
             pending_spreads: Vec::new(),
+            spread_rows: std::collections::BTreeSet::new(),
             cache_id: default_cache_id(),
             cycle_frame_id: default_cache_id(),
             legacy_fields: IndexMap::new(),
@@ -1458,6 +1465,7 @@ impl PartialEq for ComboVal {
             && self.effect == other.effect
             && self.relations == other.relations
             && self.pending_spreads == other.pending_spreads
+            && self.spread_rows == other.spread_rows
     }
 }
 
@@ -3930,6 +3938,7 @@ impl ComboVal {
             relations: self.relations.clone(),
             masa_ref: self.masa_ref.clone(),
             pending_spreads: self.pending_spreads.clone(),
+            spread_rows: self.spread_rows.clone(),
             cache_id: default_cache_id(),
             cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),

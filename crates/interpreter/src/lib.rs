@@ -3886,6 +3886,7 @@ impl Ouroboros {
                             // forward_spread acceptance repair: re-queued pending
                             // sources (evolve-phase Top) must survive the rebuild.
                             new_c.pending_spreads = std::mem::take(&mut c.pending_spreads);
+                            new_c.spread_rows = std::mem::take(&mut c.spread_rows);
                             let closed = c.closed;
                             // D109: a branch body that needs the input (`$`)
                             // or has an effect is code until dispatch chooses
@@ -4063,6 +4064,7 @@ impl Ouroboros {
                         new_c.effect = if c.closed { c.effect } else { EffectTag::Pure };
                         new_c.relations = std::mem::take(&mut c.relations);
                         new_c.pending_spreads = std::mem::take(&mut c.pending_spreads);
+                        new_c.spread_rows = std::mem::take(&mut c.spread_rows);
                         let closed = c.closed;
                         // D109: a deferred branch body is kept as code.
                         let is_rule = crate::dispatch::is_rule_cocoon(&c);

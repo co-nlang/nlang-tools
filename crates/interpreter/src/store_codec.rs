@@ -38,6 +38,9 @@ const RANK: &str = "__nlang_rank";
 const REF: &str = "__nlang_ref";
 const TOP_CAUSE: &str = "__nlang_top_cause";
 const HASH: &str = "__nlang_hash";
+/// D112: a root's spread rows, as the sources' canonical spellings. A
+/// store-only key like `__nlang_effect`: the decoder takes it off the value.
+const SPREADS: &str = "__nlang_spreads";
 
 #[derive(Debug)]
 pub enum StoreDocument {
@@ -591,6 +594,10 @@ fn write_combo(c: &ComboVal, indent: usize) -> String {
     for (k, v) in &c.local {
         push(&mut rows, "~", k, v);
     }
+    if !c.spread_rows.is_empty() {
+        let spelled: Vec<String> = c.spread_rows.iter().map(|r| quote_string(r)).collect();
+        rows.push((format!("~%{SPREADS}"), format!("[{}]", spelled.join(", "))));
+    }
     // (c-2) runtime slot when it is not already the hashed `%effect` field.
     if !c.effect.is_pure() {
         let materialized = c.meta.get("effect").map(value_as_effect) == Some(c.effect);
@@ -1092,8 +1099,21 @@ fn combo_expr_to_value(fields: &[Field], closed: bool) -> Result<Value> {
         return decode_atom_wrap(&sys);
     }
 
+    if let Some((expr, _)) = sys.get(SPREADS) {
+        let ExprKind::List(xs) = &expr.kind else {
+            anyhow::bail!("store decode: {SPREADS} is not a list");
+        };
+        for x in xs {
+            match &x.kind {
+                ExprKind::Atom(AtomKind::Str(r)) => {
+                    combo.spread_rows.insert(r.clone());
+                }
+                _ => anyhow::bail!("store decode: {SPREADS} holds a non-string"),
+            }
+        }
+    }
     for (name, (expr, _)) in &sys {
-        if name == EFFECT {
+        if name == EFFECT || name == SPREADS {
             continue;
         }
         combo.system.insert(name.clone(), expr_to_value(expr)?);

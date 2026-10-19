@@ -237,7 +237,9 @@ fn names_the_boundary(out: &str) -> bool {
     // reference engine is v0.60.0.
     // AMENDED 2026-09-27 for Q-062 (D80): layout=8; the newest locked-out reference engine is v0.63.0.
     // AMENDED 2026-10-04 for Q-073 (D91): layout=9; the newest locked-out reference engine is v0.74.0.
-    out.contains("v0.74.0")
+    // AMENDED 2026-10-19 for Q-093 (D112): the newest locked-out engine is v0.94.0 (encoding=7);
+    // v0.74.0 is still named, as the newest that does not open layout=9.
+    out.contains("v0.74.0") && out.contains("v0.94.0")
 }
 
 // ── Controls and guards (green at baseline, must stay green) ─────────────
@@ -325,7 +327,7 @@ fn k1_every_red_predicate_is_met_by_a_real_refusal() {
     assert!(!reads_as_absence(&o, rc), "{o}");
 
     // r6/r7: the predicate is met by a sentence of the required kind.
-    assert!(names_the_boundary("oo v0.22.0 through v0.74.0 will no longer open this store")); // AMENDED 2026-10-04 for Q-073 (D91)
+    assert!(names_the_boundary("oo v0.22.0 through v0.94.0 will no longer open this store. That includes every engine that opens layout=5 (oo v0.44.0 through v0.74.0)")); // AMENDED 2026-10-04 for Q-073 (D91); AMENDED 2026-10-19 for Q-093 (D112)
     assert!(!names_the_boundary(
         "unopenable by oo v0.40.0 through v0.43.0. oo v0.44.0 and later still open layout=5."
     ));
@@ -412,6 +414,9 @@ fn r6_the_cost_is_on_the_screen_before_the_store_is_touched() {
     let w = Ws::new("r6");
     let _ = w.committed();
     fs::write(w.oo_dir().join("format"), "layout=2\n").unwrap();
+    // AMENDED 2026-10-19 for Q-093 (D112): a layout=2 store declares at most encoding=5. A store this
+    // engine makes declares encoding=7, which no layout=2 engine opens.
+    fs::write(w.oo_dir().join("objects.format"), "encoding=5\n").unwrap();
     let before = w.declarations();
     chmod(&w.oo_dir(), 0o555);
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
@@ -432,6 +437,8 @@ fn r7_migrate_names_every_engine_it_locks_out() {
     let w = Ws::new("r7");
     let _ = w.committed();
     fs::write(w.oo_dir().join("format"), "layout=2\n").unwrap();
+    // AMENDED 2026-10-19 for Q-093 (D112): a layout=2 store declares at most encoding=5 (see r6).
+    fs::write(w.oo_dir().join("objects.format"), "encoding=5\n").unwrap();
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     assert_eq!(rc, 0, "setup: {o}");
     assert!(names_the_boundary(&o), "the cost names only part of what it locks out: {o}");
@@ -485,7 +492,7 @@ fn r9_a_half_migrated_store_can_still_be_completed() {
     let (_, enc) = w.declarations();
     assert_eq!(
         String::from_utf8_lossy(&enc).trim(),
-        "encoding=6", // Q-083／D106 紀元
+        "encoding=7", // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7
         "an explicit migrate left the encoding axis behind and said: {o}"
     );
 }
@@ -534,8 +541,9 @@ fn r11_the_cost_names_the_oldest_engine_it_locks_out() {
     // encoding=3 stays encoding=3, so its newest stays v0.74.0.
     for (enc, oldest, newest) in [
         ("encoding=3", "v0.22.0", "v0.74.0"),
-        ("encoding=4", "v0.26.0", "v0.84.0"),
-        ("encoding=5", "v0.36.0", "v0.84.0"),
+        // AMENDED 2026-10-19 for Q-093 (D112): encoding 4 and 5 advance to encoding=7; the newest locked out is v0.94.0.
+        ("encoding=4", "v0.26.0", "v0.94.0"),
+        ("encoding=5", "v0.36.0", "v0.94.0"),
     ] {
         let w = Ws::new(&format!("r11-{enc}"));
         let _ = w.committed();

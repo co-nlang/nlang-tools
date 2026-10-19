@@ -123,7 +123,7 @@ fn g1_a_fresh_workspace_lands_both_declarations() {
     );
     assert_eq!(
         read(d, ".oo/objects.format").as_deref(),
-        Some("encoding=6\n"), // Q-083／D106 紀元
+        Some("encoding=7\n"), // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7
         "the encoding declaration"
     );
 }

@@ -363,7 +363,8 @@ fn g2_what_meets_no_recipe_keeps_its_root() {
         ("a: 1\nb: a\n", "132ced2494ea0551192cab462b1d58afed6d742fccc99e60fa117e2b876ad269"),
         ("n: 1\nr: <<n>>\nq: r + 1\n", "6b232603821c66dd6a06895c48f139b697fb616a96b9d94b1de9316b016295d8"),
         ("t: { a: $.b + 1 }\nw: t\n", "6677b2c7cfc5769d80c6cc004551afa129745f93a3b981b8684cb8ec71692b16"),
-        ("s: { j: 5 }\n...s\n", "a77a72fa45067d1670401364424c9b8178ca1793a9b4a2aaf69fb3862f555b8c"),
+        // AMENDED 2026-10-19 for Q-093 (D112): a root spread of a universe name is a row of the root.
+        ("s: { j: 5 }\n...s\n", "126f178575b732d567189d84b5253b45e16f44474909ffef0395f0a876d36f3a"),
         ("c: { b: 2 }\nr: { x: { ...c } }\n", "7a0688650d0aa99e87e539e5b1aeb2c28aa375fc1c16daf22aa3b92955202f7f"),
         ("r: { a: 1, ...{ j: 5 } }\n", "862fc7a498b63dacaea04be09dea0b290817aa6c33e7a51ddf0933436fe749f8"),
         ("r: { b: 2 }\nr: { z: 9 }\n", "14c2852d5d03ffb5d807dbae8b78011bce511ee6c38332e7818508c6ab4b7e61"),

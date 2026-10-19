@@ -834,6 +834,10 @@ fn evolve_files(
             }
         }
     }
+    // D112: the root's spread rows read the universe this evolve left.
+    if let Err(e) = universe.land_root_spreads(engine) {
+        anyhow::bail!("Evolution Conflict: {}", format_conflict_where(&e, None));
+    }
     Ok(())
 }
 
@@ -2354,7 +2358,15 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     // refuses it. A layout advance that leaves the encoding below 6 still
     // stops at v0.74.0, the newest engine that does not open layout 9.
     let epoch2 = to_enc >= 6 && from_enc < 6;
-    let newest = if epoch2 { "v0.84.0" } else { "v0.74.0" };
+    // Encoding 7 (D112) is refused by every tagged engine through v0.94.0.
+    let rows = to_enc >= 7 && from_enc < 7;
+    let newest = if rows {
+        "v0.94.0"
+    } else if epoch2 {
+        "v0.84.0"
+    } else {
+        "v0.74.0"
+    };
     let Some(oldest) = first_engine_that_opens_before(declaration, from_enc, newest) else {
         return format!(
             "Advancing object encoding from encoding={from_enc} to encoding={to_enc} \
@@ -2399,9 +2411,16 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     } else {
         String::new()
     };
+    // D112: v0.85.0 through v0.94.0 open encoding=6 and do not open
+    // encoding=7; name them when the range above runs past them.
+    let rows_clause = if rows && engine_ord(oldest) < engine_ord("v0.85.0") {
+        " oo v0.85.0 through v0.94.0 open encoding=6 and do not open encoding=7.".to_string()
+    } else {
+        String::new()
+    };
     format!(
         "Migrating this store from {from} to layout={target} will make it unopenable \
-         by {who}.{layout5_clause}{encoding_note}"
+         by {who}.{layout5_clause}{rows_clause}{encoding_note}"
     )
 }
 
@@ -2427,7 +2446,8 @@ fn first_engine_that_opens_before(declaration: &str, enc: u32, newest: &str) -> 
         let by_encoding = match enc {
             0..=3 => "v0.22.0",
             4 => "v0.26.0",
-            _ => "v0.36.0",
+            5 => "v0.36.0",
+            _ => "v0.85.0",
         };
         later_engine(by_layout, by_encoding)
     } else if declaration.parse::<u32>().is_ok() {
