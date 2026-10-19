@@ -176,7 +176,9 @@ impl Ouroboros {
     /// the meet is ordinary.
     pub fn unify_universe(&self, a: Value, b: Value) -> Value {
         let outer = crate::DEFER_RECIPES.with(|c| c.replace(1));
+        let merging = crate::UNMETERED_MERGE.with(|c| c.replace(true));
         let r = self.unify(a, b);
+        crate::UNMETERED_MERGE.with(|c| c.set(merging));
         crate::DEFER_RECIPES.with(|c| c.set(outer));
         r
     }
@@ -441,7 +443,11 @@ impl Ouroboros {
         // intersections/unions.  Put the bill at the shared operation rather
         // than only at surface `&` / `|`, so a runtime-sized union or spread
         // cannot make additional merges free.
-        if let Err(e) = ctx.check_resources(mbu::ORTHOGONAL_MERGE) {
+        // D113: the universe's own merge (staging, members, commit, the
+        // observation view) is bookkeeping, not an observation; it spends
+        // no fuel. A coordinate is a horizon only when its own definition is.
+        let metered = !crate::UNMETERED_MERGE.with(|c| c.get());
+        if let Err(e) = if metered { ctx.check_resources(mbu::ORTHOGONAL_MERGE) } else { Ok(()) } {
             let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
                 Some(Value::Union(vec![a.clone(), b.clone()]))
             } else {
