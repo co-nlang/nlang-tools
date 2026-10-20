@@ -183,6 +183,16 @@ impl Ouroboros {
         r
     }
 
+    /// D113: a meet the universe makes for itself outside `unify_universe`
+    /// (a field or spread staged over what is there, refine's check). It
+    /// spends no fuel; a definition forced on the way is metered.
+    pub fn unify_unmetered(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
+        let merging = crate::UNMETERED_MERGE.with(|c| c.replace(true));
+        let r = self.unify_internal(a, b, ctx);
+        crate::UNMETERED_MERGE.with(|c| c.set(merging));
+        r
+    }
+
     /// D110: does reading this value read the universe? A live reference
     /// always does; an open term (a `$` with no frame) is not decided here.
     fn reads_world(&self, v: &Value) -> bool {

@@ -184,3 +184,52 @@ conformance 在空目錄跑，179／179，退出碼 0。父倉 `.oo/format` 前�
 `q094-r1ref 07cb5c9` ⟹ 本探針 **9／9**（約 1.8 分鐘）；交付 **6 綠 3 紅**：r5 紅 1 格（K=2100 的 refine 被拒）、r6 紅 4 格（根 `bf0fd250…` 與三個視界）、r7 紅 5 格（`_.a199`、`_.a299` 是視界，第 251 個鍵的相撞被收下並提交）。conformance **179／179**（空目錄，前後皆空）；17 格、位址列、身分紅線、展開矩陣與探針外的格子（`acc/q93/hunt.sh`）與交付逐行相同。全樹 **286 target、2755 通過、0 失敗**（交付 2752 加 r5–r7）。
 
 **變異**（每次一處，還原後觸碰原始碼；`acc/q94/mut3.py`）：refine 照舊計費 ⟹ r5；`~%Config` 那一支照舊計費 ⟹ r6；展開照舊計費 ⟹ r7；`unify_unmetered` 不設旗標 ⟹ r5、r6、r7。
+
+## 9.4 修補回報（交付方填）
+
+### 9.4.1 射程
+
+`unify.rs` 的 `unify_unmetered` 與 `q094-r1ref` `07cb5c9` 逐位元組相同。`universe.rs` 比參考多一處。參考的三處改呼叫它：refine 的單調檢查（第 2720 行，一份新的 `eval_context`）、`evolve_field` 的 `~%Config` 分支（第 876 行，同樣一份新的上下文）、展開的 `fields()` 迴圈（第 1439 行，這一行的演化上下文）。多的一處是 Q-093 重攤的一致檢查（第 1330 行）：同一份演化上下文，`unify_internal` 改成 `unify_unmetered`。探針未改。`oo` 仍是 `0.95.0`。
+
+*   **R1-M1。** 探針 9／9。r5：K=10 與 K=2100，`-s` 新根 `-t` 舊根退出碼 1，訊息含 `refinement fails geometric monotonicity`；`-s` 舊根 `-t` 新根退出碼 0。r6：根 `47a731009320466efc60440b8f0406dec948f20aa8df4a3de159a5992d`，`_.a1999` 是 1999，`_.a2000` 是 2000，`_.a2099` 是 2099。r7：暫存燃料 1000，300 個同意的鍵 `_.a0`、`_.a199`、`_.a299` 讀自己；第 6 個鍵與第 251 個鍵相撞，evolve 退出碼 1，`#conflict at a5`、`#conflict at a250`，沒有 HEAD。
+*   **重攤那一格（參考沒改、量到了才改）。** 先提交 300 個字面量與 `...c`，來源 `c` 還沒寫，暫存燃料 1000。再 evolve `c`，其中第 251 個鍵是 7。改之前 evolve 退出碼 0，`_.a250` 仍是 250。同一個相撞在預設燃料退出碼 1，`#conflict at a250`。第 6 個鍵在燃料 1000 退出碼 1，`#conflict at a5`。改之後，燃料 1000 的第 251 鍵退出碼 1，`#conflict at a250`，`_.a250` 仍是 250。300 個鍵都同意、再寫 `x: 1`，evolve 與提交退出碼都是 0，`_.a250` 是 250，`_.x` 是 1，根 `a77efa7c31e4ebd35a151b4f86c5cd9fcfba4335ee304199fbc14d1e7b7ce0d2`。
+*   **另一半。** 不單調的 refine 在 10 與 2100 都拒絕。展開與暫存的相撞在第 6 鍵與第 251 鍵都以鍵拒絕。r1–r4、g1、g2 通過。
+
+### 9.4.2 順手改動
+
+沒有。
+
+### 9.4.3 工單哪裡是錯的
+
+沒有。
+
+### 9.4.4 必答
+
+`check_resources(mbu::ORTHOGONAL_MERGE)` 只有兩處：`unify.rs` 第 460 行（`UNMETERED_MERGE` 立著就跳過），`eval.rs` 第 2350 行（`Join`，定義的求值，沒有改）。`Meet` 在 `eval.rs` 第 2343 行走 `unify_internal`，同樣是定義的求值。g1 仍通過。燃料用盡時 `unify_internal` 回 blur，不是 `Value::Bottom`。
+
+下面每處都是宇宙的簿記。上下文寫「新」的，是 `engine.unify` 或 `eval_context()` 那一份，預設燃料 10000，看不到暫存的 `~%Config.fuel`，也不跨鍵累積。寫「演化」的，是這一行的 `ctx`，使用者的燃料在裡面，鍵與鍵共用，用完就留在用完。
+
+*   **refine，第 2720 行。改了。** 兩個根的交會，新上下文，比 `content_hash`，不把交會存下來。r5 如上。K=4800 見 R1-Q2。燃料用盡時雜湊與目標不同，檢查會拒絕一筆本來單調的 refine。
+*   **`~%Config`，第 876 行。改了。** 暫存的整顆記錄與這一行的設定，新上下文。r6 如上。
+*   **展開 `fields()`，第 1439 行。改了。** 已暫存的鍵與展開進來的值，演化上下文。r7 如上。燃料用盡時交會是 blur，`clash` 只認 ⊥，blur 會被寫進暫存。
+*   **重攤一致檢查，第 1330 行。改了。** 根或暫存上已有的值與這一次展開的值，演化上下文。只在交會是 ⊥ 時以鍵拒絕；blur 會把這個鍵從這一次拿掉，舊值留下，evolve 退出碼 0。格子見 9.4.1。
+*   **展開 `local_fields()`，第 1460 行。沒有改。** 與 `fields()` 同一個形狀：演化上下文，已有的 local 與進來的值。`expand_combo_pending` 只在 `spread_target_is_insider` 時才把來源的 local 複製進這顆記錄。根上的演化沒有把使用者的記錄放進 scopes。兩格都設燃料 1000：`~h{i}` 與 `c: { ~h{i} }`、`...c`，n=20 第 6 鍵寫 7、n=300 第 251 鍵寫 7，evolve 與提交退出碼都是 0，`oo eval h` 是 `_`。改成頂層 `~h: 1` 再 `...{ ~h{i} }`，同樣兩格，evolve 退出碼 0，`h` 仍是 `_`，沒有 `#conflict`。沒有量到這個迴圈收下或拒絕。燃料用盡時與 `fields()` 修之前相同：blur 不是 ⊥，會寫進 local。
+*   **G2-S，`evolve_field` 第 1005 行。沒有改。** 根上這一個座標的值與這一次的值，新上下文，只在 ⊥ 時拒絕。燃料用盡是 blur，會放行。格子：20 個字面量（預設燃料）、20 個（燃料 1000）、400 個（燃料 1000），再寫 `a0: 7`，三格 evolve 退出碼都是 1，`#conflict at a0`。把已提交的 `c` 整顆換成含 `a250: 7` 的記錄，拒絕在 `c.a250`，那一格走的是這裡，不是重攤。
+*   **G2-S，`evolve_spread` 第 1419 行。沒有改。** 每個鍵各叫一次 `engine.unify`，新上下文，只在 ⊥ 時拒絕。燃料用盡會放行。格子：提交 400 個字面量，暫存燃料 1000，再展開一個 400 鍵的 `c`、第 0 鍵是 7。evolve 退出碼 1，`#conflict at a0`，`_.a0` 是 0。
+*   **`evolve_pattern_field` 第 1186 行。沒有改。** 與 `evolve_field` 的 G2-S 同一個形狀，新上下文，只在 ⊥ 時拒絕，燃料用盡會放行。沒有另量一格。
+*   **`kept`，第 955 行。沒有改。** 根上已提交的值與這一次的值，包在 `DEFER_RECIPES` 裡，新上下文。只在 ⊥ 且訊息以 `cannot keep` 開頭時拒絕；燃料用盡的 blur 會放行。接著第 976 行 `engine.unify(theirs, ours)` 也是新上下文，只在 ⊥ 時拒絕，blur 會放行。格子：`b: 1` 旁邊 20 個與 400 個字面量，燃料 1000，再寫 `b: 2`。兩格 evolve 退出碼都是 1，`#conflict at b`，沒有 HEAD。
+*   **`injection_has_committable_content`，第 194 行。沒有改。** `engine.unify(成員, 空記錄)`，新上下文。結果不是 Combo（含燃料 blur）就回 false，成員不進可提交的清單。r6 的 2100 個字面量提交走 `staged_has_committable_content`，不走這個函式，提交退出碼 0。沒有另造一個大成員。
+*   **`head_if_it_holds` 第 1689 行、`session_would_be_listed` 第 1730 行、`injection_positions_equal` 第 1777 行。沒有改。** 整顆根對空記錄、對成員、或對注入前後，各一次 `engine.unify`，新上下文，比 `content_hash`。與修之前的 refine 同一個形狀。燃料用盡時雜湊是 blur 的雜湊。沒有量到一句 `status`。
+*   **已經走 `unify_universe` 的，第一輪就設了旗標，本輪沒有再動。** `pin_commit_merge` 第 547 行、`note_session_incoming` 第 609 行、`evolve_field` 的主合併第 1092 行、`evolve_pattern_field` 的主合併第 1225 行、`proposals_at` 第 1644 與 1652 行、`commit` 第 2125 行、`observe` 第 2584 行。r1–r4 與 r6 的提交通過。
+
+*   **R1-Q2。** K=4800 的 refine，收下的方向（`-s` 舊根 `-t` 新根），0.34 秒，最大駐留 75032 KB，退出碼 0。舊根 `22ddfb3725ddb9ceedced2044c71ccd8d3bb13558608726764e2b8672333a2c2`（與第一輪 K=4800 的針相同）。那次 evolve 209.42 秒、58868 KB，提交 0.75 秒、71744 KB。`b: 5` 的 evolve 0.24 秒、58556 KB，提交 0.77 秒、69972 KB。新根 `1844bbd4ecba6c0f8f846c22043c56c31fa1fe6d1567eb4f136fc9b0c2a92e08`，`_.b` 是 5，`_.a4799` 是 4799。refine 寫下的提交是 `7234fe44f5ef1d838eaa90cfcd9b8a163645d5469950549b78dc726710f34c56`，`Refine authority: unverified`。上限 6 GB、15 分鐘，沒有撞上。
+
+### 9.4.5 數字
+
+*   探針 `a_universe_that_ran_out_of_room_probe_test` 9／9。閘門第一輪 232.32 秒。閘門前單獨跑一次 238.84 秒，退出碼 0。同一次還跑了 Q-093 的探針 11／11，9.76 秒。探針檔未改。
+*   三輪：2026-10-20 12:52:54 起 1244.07 秒、13:13:38 起 857.55 秒、13:27:56 起 892.75 秒，退出碼都是 0。正規化 3610 行，sha256 `40a0c22b2110c4323d96218a3022ca469b11e4762df2bb2bc18d55e0532c6311`，三輪相同。`test result:` 286 條，合計 2755 通過、0 失敗。以 `test ` 起算的通過行 2754。差的那一條是 `a_working_set_that_is_a_set`（6 通過、5 行）。`Running ` 283 條。原始日誌 291955／291801／291801 位元組，sha256 前綴 `e6b11e362fcb3930`、`3cd32bc544e35322`、`2bec667139f82b5c`。`^error` 0，BrokenPipe 0，panicked 0。
+*   紅線（閘門第一輪，皆通過）：本探針 9／9 232.32 秒；Q-093 11／11 9.35 秒；Q-092 25／25 43.49 秒；Q-091 13／13 7.72 秒；Q-090 4／4 2.05 秒；Q-089 6／6 2.03 秒；Q-088 8／8 4.90 秒；`caused_top` 11／11 1.12 秒；`static_cycle` 17／17 0.65 秒；`math_union` 17／17 0.99 秒；`what_an_observation_leaves` 15／15 3.85 秒；`blur_spread` 13／13 2.91 秒；`pin_probe_test` 15／15 2.24 秒；`forward_spread` 12／12 0.81 秒；`spread_collision` 25／25 0.89 秒；`spread_privacy` 11／11 0.35 秒；`spread_splice` 9／9 0.17 秒；`import_is_spread` 7／7 0.44 秒；`a_name_spread_in` 15／15 6.20 秒；`where_there_is_no_universe` 13／13 4.14 秒；`a_private_never_committed` 10／10 4.09 秒、R-1 3／3 0.49 秒。同輪還有：Q-084 10／10 8.71 秒；`a_table_that_runs_every_branch_when_looked_at` 7／7 2.83 秒；`a_table_that_stops_being_one_when_printed` 4／4 2.30 秒；`a_table_you_cannot_read` 12／12 3.06 秒、R-1 4／4 1.32 秒；`a_tag_key_read_as_a_string` 7／7 2.85 秒；epochs 4／4 0.36 秒；union 2／2 0.00 秒；bytes 1／1 0.23 秒；`effect_union` 15／15 0.54 秒；`kind_tag` 7／7 0.27 秒；`stage2_open_term_test` 3／3 0.10 秒；`stage3_acceptance_test` 6／6 0.12 秒；`stage3_probe_test` 4／4 0.33 秒。
+*   conformance 179／179，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release in 5.01s`，`WIN_EXIT` 0，`^error` 0。該目標 lib 15 則警告（`cargo fix` 會動 13 處）。linux 建置同一 lib 14 則警告（`cargo fix` 會動 12 處）。未修。
+*   `st.sh` 對 `st_95.txt`、`inb.sh` 對 `inb_95.txt`，diff 都是 0 行。
+*   釋出 `oo` 11107032 位元組，mtime 2026-10-20 12:43:05 +0800。三輪閘門沒有重連這支二進位。工作區在編譯時是髒的，所以這裡不引 `--version`。
