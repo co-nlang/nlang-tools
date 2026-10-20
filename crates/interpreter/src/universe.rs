@@ -1416,7 +1416,9 @@ impl Universe {
                 if !(self.pin_mode && engine.privilege.pin) {
                     for (k, v) in incoming.fields() {
                         if let Some(root_val) = self.root.get_field(&k).cloned() {
-                            if let Value::Bottom(mut d) = engine.unify(root_val, v.clone()) {
+                            // D110: judged where the universe is visible; a
+                            // held reading reads what it reads, not `_`.
+                            if let Value::Bottom(mut d) = engine.unify_unmetered(root_val, v.clone(), &mut ctx) {
                                 let leaf = d.path.take().filter(|s| !s.is_empty());
                                 d.path = Some(match leaf {
                                     Some(p) if p == k || p.starts_with(&format!("{k}.")) => p,
