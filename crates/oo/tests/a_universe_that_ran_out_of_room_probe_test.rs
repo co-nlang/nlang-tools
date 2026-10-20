@@ -325,3 +325,40 @@ fn r7_a_spread_over_what_is_staged() {
     }
     verdict(bad, 10);
 }
+
+// ── Added at acceptance of R-1 (2026-10-20) ───────────────────────────────
+
+/// r8 — A source that lands later is checked for agreement with what its
+/// keys hold as the universe's bookkeeping. With the staged fuel at 1000, a
+/// later `c` whose 251st key disagrees is refused by key, as one whose 6th
+/// does; one that agrees lands, and a later write keeps it. Reference
+/// q094-r1ref 07cb5c9: the clash at `a250` commits (`_.c.a250` 7 beside
+/// `_.a250` 250). The delivery found this one.
+#[test]
+fn r8_a_later_source_is_checked_without_counting() {
+    let mut bad = Vec::new();
+    let fuel = "~%Config.fuel: 1000\n";
+    let lits: String = (0..300).map(|i| format!("a{i}: {i}\n")).collect();
+    let c = |clash: Option<usize>| {
+        let fields: Vec<String> = (0..300).map(|i| format!("a{i}: {}", if Some(i) == clash { 7 } else { i })).collect();
+        format!("{fuel}c: {{ {} }}\n", fields.join(", "))
+    };
+    for at in [5, 250] {
+        let w = Ws::new(&format!("r8-clash{at}"));
+        check(&mut bad, &format!("clash at a{at}: seed"), w.commit(&format!("{fuel}{lits}...c\n")), "");
+        let seed = w.root();
+        let o = w.commit(&c(Some(at)));
+        check(&mut bad, &format!("clash at a{at}: evolve refused"), o.starts_with("evolve rc=1").to_string(), "true");
+        check(&mut bad, &format!("clash at a{at}: names the key"), o.contains(&format!("#conflict at a{at}")).to_string(), "true");
+        check(&mut bad, &format!("clash at a{at}: root"), (w.root() == seed).to_string(), "true");
+    }
+    let w = Ws::new("r8-agree");
+    check(&mut bad, "agree: seed", w.commit(&format!("{fuel}{lits}...c\n")), "");
+    check(&mut bad, "agree: c", w.commit(&c(None)), "");
+    check(&mut bad, "agree: x", w.commit("x: 1\n"), "");
+    check(&mut bad, "agree: root", w.root(), "a77efa7c31e4ebd35a151b4f86c5cd9fcfba4335ee304199fbc14d1e7b7ce0d2");
+    for (e, want) in [("_.a250", "250"), ("_.c.a250", "250"), ("_.x", "1")] {
+        check(&mut bad, &format!("agree: {e}"), w.eval(e), want);
+    }
+    verdict(bad, 15);
+}
