@@ -242,3 +242,86 @@ fn g2_small_roots_do_not_move() {
     }
     verdict(bad, 6);
 }
+
+// ── Added at acceptance (2026-10-20), repair round R-1 ────────────────────
+//
+// Delivery ea174fa equals q094-ref. Three of the universe's own meets do not
+// go through `unify_universe` and still spend the shared fuel: refine's
+// check, a `~%Config` write staged over what is there, and a spread landed
+// over keys already staged. Whether a refinement is accepted, whether a
+// coordinate stores itself, whether a clash is refused, depends on how many
+// other coordinates there are.
+
+/// The full CAID on the `root:` line of HEAD.
+fn root_caid(w: &Ws) -> String {
+    let head = fs::read_to_string(w.ws.join(".oo").join("HEAD")).unwrap_or_default();
+    let (o, _) = w.oo(&["inspect", head.trim()]);
+    o.lines()
+        .find_map(|l| l.split_once("root:").map(|(_, r)| r.trim().to_string()))
+        .unwrap_or_default()
+}
+
+/// r5 — refine's monotonicity check is the universe's meet of two roots. A
+/// refinement by one more coordinate is accepted at 2100 coordinates as at
+/// ten; the other way round is refused at both. Delivery: accepted at 1990,
+/// refused as `new ⋢ old` from 2000 on (v0.92.0 the same).
+#[test]
+fn r5_refine_does_not_count_the_coordinates() {
+    let mut bad = Vec::new();
+    for k in [10, 2100] {
+        let w = Ws::new(&format!("r5-{k}"));
+        check(&mut bad, &format!("{k}: commit old"), w.commit(&literals(k)), "");
+        let old = root_caid(&w);
+        check(&mut bad, &format!("{k}: commit new"), w.commit("b: 5\n"), "");
+        let new = root_caid(&w);
+        let (o, rc) = w.oo(&["refine", "-s", &new, "-t", &old, "-m", "back"]);
+        check(&mut bad, &format!("{k}: old onto new: rc"), rc.to_string(), "1");
+        check(&mut bad, &format!("{k}: old onto new: refused as such"), o.contains("refinement fails geometric monotonicity").to_string(), "true");
+        let (o, rc) = w.oo(&["refine", "-s", &old, "-t", &new, "-m", "forth"]);
+        check(&mut bad, &format!("{k}: new onto old: {}", squash(&o).chars().take(80).collect::<String>()), rc.to_string(), "0");
+    }
+    verdict(bad, 10);
+}
+
+/// r6 — A `~%Config` write staged over 2100 coordinates leaves every one of
+/// them itself, and the root is the root of the literals alone (`~%Config`
+/// is session state). Delivery: `a2000` onward stored as `#fuel_exhausted`.
+#[test]
+fn r6_a_config_write_over_a_large_staging() {
+    let mut bad = Vec::new();
+    let w = Ws::new("r6");
+    check(&mut bad, "commit", w.commit(&format!("{}~%Config.fuel: 10000\n", literals(2100))), "");
+    check(&mut bad, "root", w.root(), "47a731009320466efc60440b8f0406dec948f20aa8df4a3de80d3de159a5992d");
+    for (e, want) in [("_.a1999", "1999"), ("_.a2000", "2000"), ("_.a2099", "2099")] {
+        check(&mut bad, e, w.eval(e), want);
+    }
+    verdict(bad, 5);
+}
+
+/// r7 — A spread landed over keys already staged meets each key as the
+/// universe's bookkeeping. With the staged fuel at 1000, a spread of 300
+/// agreeing keys over 300 literals leaves them themselves; a clash at the
+/// 251st key is refused by key, as one at the 6th is. Delivery: `a199`
+/// onward stored as horizons, and the clash at `a250` committed.
+#[test]
+fn r7_a_spread_over_what_is_staged() {
+    let mut bad = Vec::new();
+    let lits: String = (0..300).map(|i| format!("a{i}: {i}\n")).collect();
+    let src = |clash: Option<usize>| {
+        let fields: Vec<String> = (0..300).map(|i| format!("a{i}: {}", if Some(i) == clash { 7 } else { i })).collect();
+        format!("~%Config.fuel: 1000\n{lits}c: {{ {} }}\n...c\n", fields.join(", "))
+    };
+    let w = Ws::new("r7-agree");
+    check(&mut bad, "agree: commit", w.commit(&src(None)), "");
+    for (e, want) in [("_.a0", "0"), ("_.a199", "199"), ("_.a299", "299")] {
+        check(&mut bad, &format!("agree: {e}"), w.eval(e), want);
+    }
+    for at in [5, 250] {
+        let w = Ws::new(&format!("r7-clash{at}"));
+        let o = w.commit(&src(Some(at)));
+        check(&mut bad, &format!("clash at a{at}: evolve refused"), o.starts_with("evolve rc=1").to_string(), "true");
+        check(&mut bad, &format!("clash at a{at}: names the key"), o.contains(&format!("#conflict at a{at}")).to_string(), "true");
+        check(&mut bad, &format!("clash at a{at}: no HEAD"), w.root(), "");
+    }
+    verdict(bad, 10);
+}
