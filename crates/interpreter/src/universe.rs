@@ -873,9 +873,10 @@ impl Universe {
                     engine.invalidate_coords(&evolved_coords);
                 }
                 // Merge open partials only (no root Config in the meet).
-                let res = engine.unify(
+                let res = engine.unify_unmetered(
                     Value::Combo(self.staged.clone()),
                     Value::Combo(incoming_combo.clone()),
+                    &mut engine.eval_context(),
                 );
                 return match res {
                     Value::Combo(m) => {
@@ -1326,7 +1327,7 @@ impl Universe {
                         let present = self.staged.get_field(&k).or_else(|| self.root.get_field(&k)).cloned();
                         if let (Some(p), Some(v)) = (present, incoming.get_field(&k).cloned()) {
                             let both_there = !matches!(p, Value::Bottom(_)) && !matches!(v, Value::Bottom(_));
-                            if both_there && matches!(engine.unify_internal(p, v, &mut ctx), Value::Bottom(_)) {
+                            if both_there && matches!(engine.unify_unmetered(p, v, &mut ctx), Value::Bottom(_)) {
                                 return Err(crate::value::BottomDetail {
                                     cause: BottomCause::Conflict,
                                     path: Some(k.clone()),
@@ -1435,7 +1436,7 @@ impl Universe {
                 };
                 for (k, v) in incoming.fields() {
                     if let Some(existing) = next.get_field(&k).cloned() {
-                        let merged = engine.unify_internal(existing.clone(), v.clone(), &mut ctx);
+                        let merged = engine.unify_unmetered(existing.clone(), v.clone(), &mut ctx);
                         if clash(&existing, &v, &merged) {
                             return Err(crate::value::BottomDetail {
                                 cause: BottomCause::Conflict,
@@ -2716,7 +2717,7 @@ impl Universe {
                     }
                 };
                 if let (Some(src_val), Some(tgt_val)) = (load(src)?, load(tgt)?) {
-                    let meet = engine.unify(tgt_val.clone(), src_val.clone());
+                    let meet = engine.unify_unmetered(tgt_val.clone(), src_val.clone(), &mut engine.eval_context());
                     if meet.content_hash() != tgt_val.content_hash() {
                         return Err(anyhow::anyhow!(
                             "new ⋢ old: refinement fails geometric monotonicity"

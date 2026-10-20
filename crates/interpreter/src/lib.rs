@@ -104,6 +104,10 @@ thread_local! {
     /// 0 below a coordinate. A coordinate that reads the universe keeps the
     /// meet of its writes' syntax, read where it is read.
     pub(crate) static DEFER_RECIPES: std::cell::Cell<u8> = std::cell::Cell::new(0);
+    /// D113: set while the universe's own writes meet. Their meets are
+    /// bookkeeping and spend no fuel; a definition forced on the way is an
+    /// observation and is metered (`force_recursive` clears this).
+    pub(crate) static UNMETERED_MERGE: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
 #[derive(Debug, Clone)]
@@ -3767,6 +3771,13 @@ impl Ouroboros {
     }
 
     pub fn force_recursive(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        let merging = UNMETERED_MERGE.with(|c| c.replace(false));
+        let out = self.force_recursive_metered(val, ctx);
+        UNMETERED_MERGE.with(|c| c.set(merging));
+        out
+    }
+
+    fn force_recursive_metered(&self, val: Value, ctx: &mut EvalContext) -> Value {
         // Already-solid combos (cocoon eval forced fields after seal): avoid
         // recursively re-forcing them, but still bill the semantic subspaces
         // inspected to establish that fact.
