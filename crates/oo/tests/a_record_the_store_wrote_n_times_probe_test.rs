@@ -298,3 +298,66 @@ fn g2_readings_are_as_before() {
     check(&mut bad, "coordinate agree: _.r.b", w.eval("_.r.b"), "3");
     verdict(bad, 13);
 }
+
+// ── Added at acceptance (2026-10-21), repair round R-1 ────────────────────
+//
+// Delivery eda60b3 equals q097-ref 287fcff. Whether frames are shared was
+// set wherever a store was opened, so `~%Discovery./connect` to a local
+// peer decided the form this universe's working set is written in: an
+// encoding-7 universe connected to an encoding-8 peer writes shared frames
+// into its own member and savepoint (v0.97.0 then fails to commit them:
+// "thunk frame is not a combo"), and an encoding-8 universe connected to an
+// encoding-7 peer writes inline.
+
+/// r4 — The form a universe writes is its own store's, whatever else the
+/// same evolve opens. Own encoding 7 + a peer of 8: no shared frame in the
+/// universe; own 8 + a peer of 7: shared frames as always.
+#[test]
+fn r4_a_peer_does_not_choose_the_form() {
+    let mut bad = Vec::new();
+    for (own, peer, want) in [("7", "8", "false"), ("8", "7", "true")] {
+        let w = Ws::new(&format!("r4-{own}-{peer}"));
+        let p = w.root.join("peer");
+        for (dir, enc) in [(w.ws.join(".oo"), own), (p.join(".oo"), peer)] {
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("objects.format"), format!("encoding={enc}\n")).unwrap();
+            fs::write(dir.join("format"), "layout=9\n").unwrap();
+        }
+        let src = format!("p: ~%Discovery./connect(\"pp\", \"{}\")\nr: {{ y: 1, z: y }}\n", p.display());
+        let (rc, _) = w.evolve(&src);
+        check(&mut bad, &format!("own {own}, peer {peer}: evolve"), rc.to_string(), "0");
+        let (_, shared) = bytes_under(&w, "", "__nlang_frame");
+        check(&mut bad, &format!("own {own}, peer {peer}: universe shares frames"), shared.to_string(), want);
+        let (o, rc) = w.oo(&["commit", "-m", "a"]);
+        check(&mut bad, &format!("own {own}, peer {peer}: commit {}", squash(&o).chars().take(60).collect::<String>()), rc.to_string(), "0");
+        check(&mut bad, &format!("own {own}, peer {peer}: _.r.z"), w.eval("_.r.z"), "1");
+    }
+    verdict(bad, 8);
+}
+
+/// r5 — Reading a root by address in the same evolve does not change the
+/// form either. `ObjectStore::get_value` builds an in-memory engine for a
+/// root; its fresh ephemeral store is encoding 8. Own encoding 7: `q: _{…}.x`
+/// beside a record writes no shared frame; own 8: shared as always. The
+/// acceptor's first R-1 reference set the form there too and failed this.
+#[test]
+fn r5_reading_a_root_by_address_does_not_choose_the_form() {
+    let mut bad = Vec::new();
+    for (own, want) in [("7", "false"), ("8", "true")] {
+        let w = Ws::new(&format!("r5-{own}"));
+        let oo = w.ws.join(".oo");
+        fs::create_dir_all(&oo).unwrap();
+        fs::write(oo.join("objects.format"), format!("encoding={own}\n")).unwrap();
+        fs::write(oo.join("format"), "layout=9\n").unwrap();
+        check(&mut bad, &format!("own {own}: seed"), w.commit("x: 1\n"), "");
+        let root = w.root();
+        let (rc, _) = w.evolve(&format!("q: _{{sha256:{root}}}.x\nr: {{ y: 1, z: y }}\n"));
+        check(&mut bad, &format!("own {own}: evolve"), rc.to_string(), "0");
+        let (_, shared) = bytes_under(&w, "", "__nlang_frame");
+        check(&mut bad, &format!("own {own}: universe shares frames"), shared.to_string(), want);
+        let (o, rc) = w.oo(&["commit", "-m", "b"]);
+        check(&mut bad, &format!("own {own}: commit {}", squash(&o).chars().take(60).collect::<String>()), rc.to_string(), "0");
+        check(&mut bad, &format!("own {own}: _.q"), w.eval("_.q"), "1");
+    }
+    verdict(bad, 10);
+}
