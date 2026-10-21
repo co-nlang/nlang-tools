@@ -66,16 +66,63 @@
 
 ### 8.1 射程逐項對照
 
+`store_codec.rs`、`storage.rs`、`main.rs` 與 `q097-ref` `287fcff` 逐位元組相同。一份文件裡同一個閉包框架只寫一次：定義是 `{ ~%__nlang_frame: [n, <框架>] }`，其餘 thunk 寫 `n`；讀的時候先收齊這份文件裡的定義再按需解，還原同一份 `Arc`。只有倉宣告 `encoding ≥ 8` 才這樣寫。宣告 7 的倉照舊逐 thunk 內嵌。`oo` 仍是 `0.97.0`，解譯器 `0.2.2`。探針未改。身分位元組未改。
+
+*   **M1。** 探針 r1。400 欄字面量一次演化：成員 60103 位元組、savepoint 60030 位元組（v0.97.0 是 11943095 與 11943022），提交退出碼 0，`_.r.f399` 是 399。兩個 400 欄記錄同一座標提交，`_.r.f399` 與 `_.r.g399` 都是 399。探針 r2：200 個讀法的根仍是 `60d3f35a5b033490b1f0475e468ce324b28d444bdd793528b9104c4e4a8230f0`，根檔在 100 KB 以內，`_.q.x199` 是 3。同形的 Q2（鍵名 `r`）根檔 30135 位元組，v0.97.0 是 2993617，兩邊根都是 `3dd138529716114bf5fb953de2eb6a358348de32b6c5b0889b7a2b07358bffbd`。
+*   **M2。** 探針 g1 五個根與 v0.97.0 逐位元組同，含參照排在定義之前的 mixed。Q2 的字面量 400、兩個 400、讀法 200、讀法 400，根都與 v0.97.0 相同（`4cbecfc6…`、`400e403f…`、`3dd13852…`、`d4d3c62d…`）。`st.sh` 對 `st_97.txt`、`inb.sh` 對 `inb_97.txt`，diff 都是 0 行。
+*   **M3。** 探針 g2。`acc/q97/stale.py`、Q-095 的 `m.py`／`m2.py`／`m3.py`／`m4.py`、`acc/q93/hunt.sh`、`acc/q92/inv94.sh` 與 v0.97.0 逐行相同。
+*   **M4。** 探針 r3。新倉 `encoding=8`，文件裡有 `__nlang_frame`。宣告 7 的倉這次提交沒有 `__nlang_frame`，`_.r.z` 是 1。`oo migrate --grant migrate` 說 `oo v0.95.0 through v0.97.0`，宣告改成 `encoding=8`。之後的提交寫共用框架，`_.r.z` 仍是 1、`_.u.w` 是 2。
+*   **另一半。** 本引擎寫進宣告 7 的倉（沒有 `__nlang_frame`），v0.97.0 讀 `_.r.z` 是 1，並能再提交 `p: { k: 2, m: k }`，`_.p.m` 是 2。`migrate` 之後 v0.97.0 打開是 `object encoding version 8 is not supported by this engine (understands encoding 1 through 7); refusing to open`。新倉同樣這句。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。
+
 ### 8.4 工單指名要你回答的問題
+
+時間是 `/usr/bin/time` 直接 exec `oo` 的秒數與最大駐留（KB）。上限 `ulimit -v 6000000`。v0.97.0 是 `/home/gali/nlang-baselines/v0.97.0-verify/target/release/oo`。
+
+*   **Q1。會寫 thunk 的文件，以及它的寫入點。** 共用只在 `set_share_frames` 為真時包進 `document()`：開倉時宣告 `≥ 8` 才設。定義在文件內按指標與文字各編一次號；讀回時同一個編號解成同一份 `Arc`。
+    *   **成員。** `injections.rs` 的 `write` → `encode_injection`。40 欄字面量：5983 位元組，`__nlang_frame` 1 次、thunk 80 次（框架裡 40 個，外面 40 個指它）。`oo status` 看得到 `f0: 0`。讀 `_.r.f39` 要等提交，提交後是 39。400 欄的成員是 60103 位元組。
+    *   **savepoint。** `savepoint.rs` → `encode_savepoint`。同一格 5910 位元組，框架 1 次、thunk 80 次。400 欄 60030 位元組。
+    *   **暫存。** `encode_staged` 有同一層 `document()`，這一版沒有寫入點會產生 `.oo/staged`。40 欄演化之後該檔不存在。暫存的內容在成員裡。
+    *   **根。** `ObjectStore::encode_cas_value`（宣告 `≥ 5`）→ `encode_value`。字面量提交後欄位是值，根裡沒有 thunk：40 欄根檔 415 位元組，400 欄根檔 3895 位元組，與 v0.97.0 同一檔、同一個 CAID。讀法才把 thunk 留在根上：200 欄 30135 位元組（v0.97.0 是 2993617），CAID 相同，`_.r.x199` 是 3。
+    *   **值物件。** 同一條 `encode_value`。`~%Engine./save { z: 7 }` 寫出 21 位元組的 `{ z: 7 }`，裡面沒有 thunk。帶 thunk 的值物件就是上面的根。
+    *   **pin。** 沒有另一個編碼器。`evolve --pin --grant pin` 仍走成員：`r: { y: 2, z: y }` 的成員 434 位元組，框架 1 次、thunk 4 次。`commit --grant pin` 之後 `_.r.y` 是 2、`_.r.z` 是 2。
+    *   **refine。** 新提交走 `encode_commit`，那份文件沒有 thunk 閉包（816 位元組，`__nlang_frame` 0 次）。來源與目標都給原來的根（完整 CAID）時，根物件沒有重寫：仍是 359 位元組、框架 1 次、thunk 3 次，`_.r.z` 是 1。根若要重寫，走的是同一條 `encode_value`。
+    *   **gc。** 不重寫物件，只刪走不到的。走訪是 `refs_of_document`：先把文件解回值，再走閉包。解碼會把編號還原成框架，所以框架裡的名字還在。兩格：`~n` 放著 `engine.save` 的 CAID、`f: (x -> ~n)`，這顆 CAID 在根檔裡只出現一次，在 `%closure` 裡，不在別的欄位上；另存一顆沒被指名的 `{ z: 9 }`。`gc --grant gc` 之後被指名的還在，沒被指名的刪了，`_.f 1` 仍是那顆 CAID。另一格只量走訪、沒有留在樹上：一份文件裡摘要只出現在 `{ ~%__nlang_frame: [0, { k: "<64hex>" }] }` 的框架本體，另一個 thunk 的閉包只寫 `0`；`refs_of_document` 仍回這顆摘要。量完把 `store_codec.rs` 還原成與 `287fcff` 相同的位元組。
+    *   **migrate。** 不重寫既有物件。宣告 7 的倉提交之後，物件、成員、savepoint 共 17373 位元組，sha256 前綴 `a4384d750134ee62`，`__nlang_frame` 0 次。`migrate` 之後位元組與這顆 sha 不變，框架仍是 0，宣告改成 `encoding=8`，`_.r.z` 仍是 1。之後的寫入才共用。
+*   **Q2。** 字面量記錄的根檔兩邊一樣大（值，不是 thunk）；N² 在成員、savepoint，以及 v0.97.0 提交當下的記憶體。讀法記錄的根檔本引擎按欄位線性，提交的記憶體仍按內嵌位元組算位址。
+    *   **400 欄字面量。** 本引擎：演化 0.45 秒、25900 KB；提交 0.56 秒、43272 KB；成員 60103、savepoint 60030、根 3895；`_.r.f399` 是 399。v0.97.0：演化 1.20 秒、92732 KB；提交 13.09 秒、1777252 KB；成員 11943095、savepoint 11943022、根 3895。根都是 `4cbecfc6c345f5a639a62abd1a8162e0958673e9e2b274d48f56622de43ba359`。
+    *   **1500 欄字面量。** 本引擎：演化 6.38 秒、67576 KB；提交 7.09 秒、75440 KB；成員 228203、savepoint 228130、根 15895；`_.r.f1499` 是 1499。v0.97.0：演化 16.94 秒、774132 KB，成員 170037895；提交要配置 6442450944 位元組，失敗（信號 6，退出碼 134，27.01 秒，駐留 3498324 KB），沒有 HEAD，讀是 `_`。
+    *   **兩個 400 欄記錄。** 本引擎：演化 1.55 秒、38432 KB；提交 1.13 秒、55708 KB；成員 120091、savepoint 120018、根 7675；兩邊都讀到 399。v0.97.0：演化 3.00 秒、169240 KB；提交 25.90 秒、3511608 KB；成員 23886075、savepoint 23886002、根 7675。根都是 `400e403f71706228c0708e4bc0c52ca3dea71bf7243f8aff14754a8497596e2d`。
+    *   **讀法 200。** 本引擎：演化 0.21 秒、22664 KB；提交 0.36 秒、79620 KB；成員 30299、savepoint 30226、根 30135。v0.97.0：演化 0.36 秒、36332 KB；提交 5.12 秒、570308 KB；成員 2993755、savepoint 2993682、根 2993617。根都是 `3dd13852…`，讀是 3。
+    *   **讀法 400。** 本引擎：演化 0.63 秒、26552 KB；提交 1.16 秒、208312 KB；成員 60499、savepoint 60426、根 60335。v0.97.0：演化 1.30 秒、93388 KB；提交 20.84 秒、2167744 KB；成員 11987355、savepoint 11987282、根 11987217。根都是 `d4d3c62d6dcd3fdafa65c5344987b5ea1a814e789ffdb65ca83d81d63081601f`，讀是 3。
+    *   **讀法 1000（位址仍按內嵌位元組）。** 本引擎：演化 3.78 秒、50928 KB；提交 6.84 秒、**1121008 KB**；成員 151099、savepoint 151026、根檔只有 150935；讀是 3。根 `65e218d542659cec6d2e5c7209a65ea840102031e610cab72b14e5b74fa4879c`。v0.97.0：演化 8.41 秒、366032 KB，成員 74968155；提交同樣要配置 6442450944 位元組並失敗（信號 6，22.41 秒，駐留 3312568 KB），沒有根。
+*   **Q3。**
+    *   宣告 7 的倉，本引擎提交 `r: { y: 1, z: y }`（整棵 `.oo` 的 `__nlang_frame` 是 0）。v0.97.0 讀 `_.r.z` 是 1，再提交 `p: { k: 2, m: k }` 成功，`_.p.m` 是 2。本引擎讀同一格也是 2。
+    *   `migrate` 的全文：`Migrating this store from layout=9 to layout=9 will make it unopenable by oo v0.95.0 through v0.97.0. Object encoding advances from encoding=7 to encoding=8.` 之後 v0.97.0 的 `status` 是 `Error: object encoding version 8 is not supported by this engine (understands encoding 1 through 7); refusing to open`。
+    *   v0.97.0 自己建倉（`encoding=7`）只演化、不提交：成員沒有 `__nlang_frame`。本引擎 `migrate` 之後再提交這份成員：根 359 位元組、框架 1 次、thunk 3 次，`_.r.z` 是 1。新倉 `encoding=8`，v0.97.0 用上面同一句拒絕打開。
 
 ### 8.5 探針
 
+`a_record_the_store_wrote_n_times_probe_test` 5／5。閘門前單獨 9.97 秒，`PROBE_EXIT` 0。閘門第一輪 9.01 秒。探針檔未改。預先修訂的 12 處未改回。
+
 ### 8.6 數字
+
+*   三輪：2026-10-21 20:56:39 起 1292.73 秒、21:18:12 起 851.84 秒、21:32:24 起 867.71 秒，退出碼都是 0。正規化 3625 行，sha256 `cdb70a2220a7515f3c6fc6c536f213fc4bcb20245c73b1f32968ef521cbd8dae`，三輪相同。`test result:` 288 條，合計 2764 通過、0 失敗。以 `test ` 起算且以 ` ok` 結尾的行 2763。差的那一條是 `a_working_set_that_is_a_set` 的 `g1_a_sequential_conflict_is_still_refused`（`ok` 落在下一行）。`Running ` 285 條。原始日誌 292978／292824／292824 位元組，sha256 前綴 `1769bb67aa6ed192`、`d8ba3cde244a3b68`、`51483c5dc6dbdda4`。`^error` 0，BrokenPipe 0，panicked 0。
+*   紅線（閘門第一輪，皆通過）：本探針 5／5 9.01 秒；Q-095 3／3 22.95 秒；Q-094 10／10 201.05 秒；Q-093 11／11 9.21 秒；Q-092 25／25 43.16 秒；Q-091 13／13 7.56 秒；Q-090 4／4 2.03 秒；Q-089 6／6 2.03 秒；Q-088 8／8 4.92 秒；`caused_top` 11／11 1.09 秒；`static_cycle` 17／17 0.66 秒；`math_union` 17／17 0.92 秒；`what_an_observation_leaves` 15／15 3.86 秒；`blur_spread` 13／13 2.84 秒；`pin_probe_test` 15／15 2.18 秒；`a_store_written_in_another_language` 13／13 0.95 秒；`every_byte_or_none` 14／14 1.92 秒；`atomic_write` 8／8 1.46 秒；`an_axis_the_address_forgot` 17／17 6.23 秒（epochs 4／4 0.31 秒、union 2／2 0.00 秒、bytes 1／1 0.23 秒）；`forward_spread` 12／12 0.81 秒；`spread_collision` 25／25 0.86 秒；`spread_privacy` 11／11 0.36 秒；`spread_splice` 9／9 0.15 秒；`import_is_spread` 7／7 0.43 秒；`a_name_spread_in` 15／15 6.09 秒；`where_there_is_no_universe` 13／13 4.11 秒；`a_private_never_committed` 10／10 4.05 秒、R-1 3／3 0.48 秒。
+*   conformance 181／181，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release in 4.74s`，`WIN_EXIT` 0，`^error` 0。該目標 lib 15 則警告（`cargo fix` 會動 13 處）。linux 建置同一 lib 14 則警告（`cargo fix` 會動 12 處）。未修。
+*   釋出 `oo` 11148744 位元組，mtime 2026-10-21 20:59 +0800。閘門第一輪開始時連上的。工作區在編譯時是髒的，所以這裡不引 `--version`。
 
 ### 8.7 你認為需要改規格之處
 
+沒有。
+
 ## 9. 驗收（驗收方填）
+

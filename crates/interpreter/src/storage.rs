@@ -203,9 +203,11 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// — including every future N (`layout=10`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
 pub const STORE_LAYOUT_VERSION: u32 = 9;
-pub const OBJECT_ENCODING_VERSION: u32 = 7;
+pub const OBJECT_ENCODING_VERSION: u32 = 8;
 /// D112: the first encoding that carries a root's spread rows.
 pub const SPREAD_ROW_ENCODING: u32 = 7;
+/// D114: the first encoding whose documents write a closure frame once.
+pub const SHARED_FRAME_ENCODING: u32 = 8;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// First layout whose `refine --sign` signs the whole commit (D76).
@@ -511,6 +513,7 @@ impl ObjectStore {
                 layout_signs_the_commit(&d),
             )
         };
+        crate::store_codec::set_share_frames(encoding >= SHARED_FRAME_ENCODING);
         let root = oo.join("objects");
         if !root.exists() {
             fs::create_dir_all(&root).map_err(|e| cannot_write(root.display(), &e))?;

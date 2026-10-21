@@ -41,6 +41,73 @@ const HASH: &str = "__nlang_hash";
 /// D112: a root's spread rows, as the sources' canonical spellings. A
 /// store-only key like `__nlang_effect`: the decoder takes it off the value.
 const SPREADS: &str = "__nlang_spreads";
+/// D114: a closure frame written once per document. One appearance is
+/// `{ ~%__nlang_frame: [n, <frame>] }`; every other closure that holds it
+/// writes `n`. Rows are sorted after they are written, so a reference may
+/// come before its definition: reading collects every definition first.
+const FRAME_DEF: &str = "__nlang_frame";
+
+#[derive(Default)]
+struct FrameDefs {
+    bodies: std::collections::HashMap<usize, Expr>,
+    decoded: std::collections::HashMap<usize, Arc<ComboVal>>,
+}
+
+#[derive(Default)]
+struct FrameTable {
+    by_ptr: std::collections::HashMap<usize, usize>,
+    by_text: std::collections::HashMap<String, usize>,
+    next: usize,
+}
+
+thread_local! {
+    /// Set when the open store declares an encoding that shares frames.
+    static SHARE_FRAMES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static WRITING: std::cell::RefCell<Option<FrameTable>> = const { std::cell::RefCell::new(None) };
+    static READING: std::cell::RefCell<FrameDefs> = std::cell::RefCell::new(FrameDefs::default());
+}
+
+/// D114: the store this process writes shares closure frames (encoding 8
+/// and later). Older stores keep one frame per thunk.
+pub fn set_share_frames(on: bool) {
+    SHARE_FRAMES.with(|c| c.set(on));
+}
+
+/// One document's write: frames are numbered within it.
+fn document<R>(f: impl FnOnce() -> R) -> R {
+    if !SHARE_FRAMES.with(|c| c.get()) {
+        return f();
+    }
+    let outer = WRITING.with(|w| w.replace(Some(FrameTable::default())));
+    let r = f();
+    WRITING.with(|w| *w.borrow_mut() = outer);
+    r
+}
+
+fn write_frame(f: &Arc<ComboVal>) -> String {
+    if WRITING.with(|w| w.borrow().is_none()) {
+        return write_combo(f, 0);
+    }
+    let ptr = Arc::as_ptr(f) as usize;
+    if let Some(n) = WRITING.with(|w| w.borrow().as_ref().and_then(|t| t.by_ptr.get(&ptr).copied())) {
+        return n.to_string();
+    }
+    // Written before it is numbered: frames inside it end first.
+    let text = write_combo(f, 0);
+    WRITING.with(|w| {
+        let mut w = w.borrow_mut();
+        let t = w.as_mut().expect("frame table");
+        if let Some(&n) = t.by_text.get(&text) {
+            t.by_ptr.insert(ptr, n);
+            return n.to_string();
+        }
+        let n = t.next;
+        t.next += 1;
+        t.by_ptr.insert(ptr, n);
+        t.by_text.insert(text.clone(), n);
+        format!("{{ ~%{FRAME_DEF}: [{n}, {text}] }}")
+    })
+}
 
 #[derive(Debug)]
 pub enum StoreDocument {
@@ -152,7 +219,7 @@ pub fn named_standard_digest(bytes: &str) -> Option<String> {
 }
 
 pub fn encode_value(value: &Value) -> String {
-    format!("{FRAME}\n{}", write_value(value, 0))
+    document(|| format!("{FRAME}\n{}", write_value(value, 0)))
 }
 
 pub fn encode_commit(commit: &Commit) -> String {
@@ -182,7 +249,7 @@ pub fn commit_document_address(text: &str) -> Result<ContentHash> {
 }
 
 pub fn encode_staged(combo: &ComboVal) -> String {
-    format!("{FRAME} staged\n{}", write_combo(combo, 0))
+    document(|| format!("{FRAME} staged\n{}", write_combo(combo, 0)))
 }
 
 /// Covering predecessors (D50). Empty set is the line `parents:` with no
@@ -233,7 +300,7 @@ pub fn encode_savepoint(
         frame.push_str("point: ");
         frame.push_str(p);
     }
-    format!("{FRAME} savepoint\n{frame}\n{}", write_combo(combo, 0))
+    document(|| format!("{FRAME} savepoint\n{frame}\n{}", write_combo(combo, 0)))
 }
 
 /// Ids listed on the savepoint frame's `parents:` line. `None` if the line
@@ -367,10 +434,52 @@ fn skip_savepoint_frame_lines(body: &str) -> &str {
 /// One immutable working-set member (D48). Same combo body as staged; the
 /// kind marks a delta, not a snapshot. Identity is the filename, not a CAID.
 pub fn encode_injection(combo: &ComboVal) -> String {
-    format!("{FRAME} injection\n{}", write_combo(combo, 0))
+    document(|| format!("{FRAME} injection\n{}", write_combo(combo, 0)))
 }
 
 pub fn decode_document(bytes: &str) -> Result<StoreDocument> {
+    let outer = READING.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    let out = decode_document_framed(bytes);
+    READING.with(|r| *r.borrow_mut() = outer);
+    out
+}
+
+/// Every frame definition in a document body, by number.
+fn collect_frame_defs(e: &Expr, out: &mut std::collections::HashMap<usize, Expr>) {
+    match &e.kind {
+        ExprKind::Combo { fields, .. } => {
+            if let Ok(Some((n, body))) = frame_definition(e) {
+                out.insert(n, body.clone());
+            }
+            for f in fields {
+                collect_frame_defs(&f.value, out);
+            }
+        }
+        ExprKind::List(xs) | ExprKind::Tuple(xs) => xs.iter().for_each(|x| collect_frame_defs(x, out)),
+        ExprKind::Join(a, b) | ExprKind::Meet(a, b) => {
+            collect_frame_defs(a, out);
+            collect_frame_defs(b, out);
+        }
+        _ => {}
+    }
+}
+
+fn frame_numbered(n: usize) -> Result<Arc<ComboVal>> {
+    if let Some(f) = READING.with(|r| r.borrow().decoded.get(&n).cloned()) {
+        return Ok(f);
+    }
+    let body = READING
+        .with(|r| r.borrow().bodies.get(&n).cloned())
+        .ok_or_else(|| anyhow!("thunk frame {n} has no definition in this document"))?;
+    let Value::Combo(c) = expr_to_value(&body)? else {
+        anyhow::bail!("thunk frame {n} is not a combo");
+    };
+    let f = Arc::new(c);
+    READING.with(|r| r.borrow_mut().decoded.insert(n, f.clone()));
+    Ok(f)
+}
+
+fn decode_document_framed(bytes: &str) -> Result<StoreDocument> {
     let rest = bytes.trim_start();
     if !rest.starts_with(FRAME) {
         anyhow::bail!("not a store document");
@@ -445,7 +554,13 @@ pub fn refs_of_document_ex(bytes: &str, follow_abandoned: bool) -> Vec<String> {
 }
 
 fn parse_body(body: &str) -> Result<Expr> {
-    nlang_parser::parse_expr_only(body).map_err(|e| anyhow!("store n/ parse: {e}"))
+    let e = nlang_parser::parse_expr_only(body).map_err(|e| anyhow!("store n/ parse: {e}"))?;
+    if body.contains(FRAME_DEF) {
+        let mut bodies = std::collections::HashMap::new();
+        collect_frame_defs(&e, &mut bodies);
+        READING.with(|r| r.borrow_mut().bodies.extend(bodies));
+    }
+    Ok(e)
 }
 
 // ── write ────────────────────────────────────────────────────────────────
@@ -628,7 +743,7 @@ fn write_thunk(
     effect: EffectTag,
     indent: usize,
 ) -> String {
-    let frames: Vec<String> = closure.iter().map(|f| write_combo(f, 0)).collect();
+    let frames: Vec<String> = closure.iter().map(write_frame).collect();
     let mut fields = vec![
         (THUNK, "#true".into()),
         (EXPR, expr.to_nlang(0)),
@@ -1127,6 +1242,26 @@ fn combo_expr_to_value(fields: &[Field], closed: bool) -> Result<Value> {
     Ok(Value::Combo(combo))
 }
 
+/// D114: the number and body of `{ ~%__nlang_frame: [n, <frame>] }`, if
+/// `x` is one.
+fn frame_definition(x: &Expr) -> Result<Option<(usize, &Expr)>> {
+    if let ExprKind::Combo { fields, .. } = &x.kind {
+        if fields.len() == 1 && field_axis(&fields[0].key)? == ("system", FRAME_DEF.to_string()) {
+            if let ExprKind::List(xs) = &fields[0].value.kind {
+                if let [n, body] = xs.as_slice() {
+                    if let Value::Atom(AtomKind::Int(i), _, _) = expr_to_value(n)? {
+                        let i = num_traits::ToPrimitive::to_usize(&i)
+                            .ok_or_else(|| anyhow!("thunk frame number out of range"))?;
+                        return Ok(Some((i, body)));
+                    }
+                }
+            }
+            anyhow::bail!("thunk frame definition is not [number, frame]");
+        }
+    }
+    Ok(None)
+}
+
 fn decode_thunk(sys: &IndexMap<String, (Expr, Option<Value>)>) -> Result<Value> {
     let expr = sys
         .get(EXPR)
@@ -1137,8 +1272,16 @@ fn decode_thunk(sys: &IndexMap<String, (Expr, Option<Value>)>) -> Result<Value> 
             ExprKind::List(xs) => {
                 let mut frames = Vec::new();
                 for x in xs {
+                    if let Some((n, _)) = frame_definition(x)? {
+                        frames.push(frame_numbered(n)?);
+                        continue;
+                    }
                     match expr_to_value(x)? {
                         Value::Combo(c) => frames.push(Arc::new(c)),
+                        Value::Atom(AtomKind::Int(n), _, _) => {
+                            let i = num_traits::ToPrimitive::to_usize(&n).ok_or_else(|| anyhow!("thunk frame number out of range"))?;
+                            frames.push(frame_numbered(i)?);
+                        }
                         other => anyhow::bail!("thunk frame is not a combo: {other:?}"),
                     }
                 }
