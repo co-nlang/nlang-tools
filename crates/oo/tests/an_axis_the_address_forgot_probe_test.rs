@@ -273,7 +273,7 @@ fn r4_patterns_that_differ_by_axis_are_two_branches() {
 fn r5_a_store_this_engine_creates_declares_encoding_6() {
     let fresh = Ws::new("r5");
     fresh.commit("x: 0\n");
-    assert_eq!(fresh.objects_format(), "encoding=7"); // AMENDED 2026-10-19 for Q-093 (D112)
+    assert_eq!(fresh.objects_format(), "encoding=8"); // AMENDED 2026-10-19 for Q-093 (D112); AMENDED 2026-10-21 for Q-097 (D114): encoding 8
 }
 
 /// The new identity red lines. Each is the root the reference encoding
@@ -430,7 +430,7 @@ fn r7_a_pin_an_epoch_1_store_cannot_hold_is_refused_by_name() {
 
     let (m, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     assert_eq!(rc, 0, "migrate: {m}");
-    assert_eq!(read_decl(&w, "objects.format"), "encoding=7"); // AMENDED 2026-10-19 for Q-093 (D112)
+    assert_eq!(read_decl(&w, "objects.format"), "encoding=8"); // AMENDED 2026-10-19 for Q-093 (D112); AMENDED 2026-10-21 for Q-097 (D114): encoding 8
     if erc != 0 {
         let (o, rc) = w.oo(&["evolve", "--pin", "--grant", "pin", "b.n"]);
         assert_eq!(rc, 0, "pin evolve after migrate: {o}");

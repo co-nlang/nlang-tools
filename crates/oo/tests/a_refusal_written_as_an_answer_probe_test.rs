@@ -492,7 +492,7 @@ fn r9_a_half_migrated_store_can_still_be_completed() {
     let (_, enc) = w.declarations();
     assert_eq!(
         String::from_utf8_lossy(&enc).trim(),
-        "encoding=7", // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7
+        "encoding=8", // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7; AMENDED 2026-10-21 for Q-097 (D114): encoding 8
         "an explicit migrate left the encoding axis behind and said: {o}"
     );
 }
