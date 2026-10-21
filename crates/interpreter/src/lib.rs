@@ -1018,6 +1018,7 @@ impl Ouroboros {
             let store = ObjectStore::init(ephemeral.path())?;
             (store, Some(ephemeral))
         };
+        crate::store_codec::set_share_frames(store.shares_frames());
         let builtins = create_default_builtins();
         // Lazy identity: do not mint on init (P5 — ordinary work must not
         // create ~/.oo/identity). Loaded on first signature / `oo identity`.

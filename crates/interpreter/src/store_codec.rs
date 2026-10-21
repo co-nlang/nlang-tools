@@ -67,8 +67,10 @@ thread_local! {
     static READING: std::cell::RefCell<FrameDefs> = std::cell::RefCell::new(FrameDefs::default());
 }
 
-/// D114: the store this process writes shares closure frames (encoding 8
-/// and later). Older stores keep one frame per thunk.
+/// D114: the universe this engine is bound to shares closure frames
+/// (encoding 8 and later). Older stores keep one frame per thunk. Set where
+/// the engine binds its own store, not where any store is opened: a peer
+/// opened later must not change what this universe's working set writes.
 pub fn set_share_frames(on: bool) {
     SHARE_FRAMES.with(|c| c.set(on));
 }

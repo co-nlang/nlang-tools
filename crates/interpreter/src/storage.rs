@@ -513,7 +513,6 @@ impl ObjectStore {
                 layout_signs_the_commit(&d),
             )
         };
-        crate::store_codec::set_share_frames(encoding >= SHARED_FRAME_ENCODING);
         let root = oo.join("objects");
         if !root.exists() {
             fs::create_dir_all(&root).map_err(|e| cannot_write(root.display(), &e))?;
@@ -1207,6 +1206,11 @@ fn encode_readable_cas_json(value: &Value) -> Result<String> {
 }
 
 impl ObjectStore {
+    /// D114: this store's documents write a closure frame once.
+    pub fn shares_frames(&self) -> bool {
+        self.encoding >= SHARED_FRAME_ENCODING
+    }
+
     fn encode_cas_value(&self, value: &Value) -> Result<String> {
         if self.encoding >= 5 {
             Ok(crate::store_codec::encode_value(value))

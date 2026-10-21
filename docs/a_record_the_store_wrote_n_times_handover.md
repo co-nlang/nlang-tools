@@ -152,3 +152,49 @@
 `q097-r1ref 243040f` ⟹ 本探針 **7／7**（交付 5 綠 2 紅：r4 紅 2 格——7 的宇宙寫了共用、8 的宇宙沒共用；r5 紅 1 格——7 的宇宙寫了共用）；conformance **181／181**（空目錄，前後皆空）；17 格、位址列、身分紅線（新倉 8）、展開矩陣、`hunt`、五個根、十種形狀與 `q097-ref` 逐行同；跨引擎（`compat.sh`、`peer2.sh`、`addr.sh`）：7 的宇宙經 connect 或位址字面之後 v0.97.0 照提交。全樹 **288 target、2766 通過、0 失敗**（交付 2764 加 r4、r5）。
 
 **變異**（`acc/q97/mut_r1.py`）：`bind` 不設 ⟹ r1–r5；in-memory 引擎也設 ⟹ r5；`init` 又設（即交付）⟹ r4、r5。驗收方試過「寫進一個倉的物件依那個倉的宣告」（`encode_cas_value` 內包一層），探針與 peer 格分不出（peer 的倉在這裡只讀不寫），已從參考實作拿掉。
+
+## 9.4 修補回報（交付方填）
+
+### 9.4.1 射程
+
+`lib.rs`、`storage.rs`、`store_codec.rs` 與 `q097-r1ref` `243040f` 逐位元組相同。共用開關改在 `Ouroboros::bind`（`lib.rs` 第 1021 行）設：`set_share_frames(store.shares_frames())`，`shares_frames` 是這顆倉的 `encoding >= 8`。`ObjectStore::init` 只開倉。`new_in_memory` 走自己的建構，不設這個開關。探針未改。`oo` 仍是 `0.97.0`，解譯器 `0.2.2`。
+
+*   **R1-M1。** 探針 7／7。r4：自己宣告 7、peer 宣告 8，演化退出碼 0，自己的 `.oo` 裡 `__nlang_frame` 是 0；自己宣告 8、peer 宣告 7，演化退出碼 0，自己的 `.oo` 是 2（成員與 savepoint 各一筆定義）。r5：自己宣告 7，以位址字面讀根再寫記錄，演化退出碼 0，`__nlang_frame` 是 0；自己宣告 8，是 2，提交後 `_.q` 是 1、`_.r.z` 是 1。種子 `x: 1` 兩邊的根都是 `c9889219c55cccc569f22c0521d5954b54063702a288cf3e7452677e65749aff`。
+*   **另一半。** r1–r3、g1、g2 在這支探針裡通過。宣告 7 的 r4、r5 只演化、交給 v0.97.0 提交，見 9.4.4。
+
+### 9.4.2 順手改動
+
+沒有。
+
+### 9.4.3 工單哪裡是錯的
+
+沒有。
+
+### 9.4.4 必答
+
+開關的預設是關。整個行程裡只有 `bind` 會設它，設的是它正在綁的那顆倉。
+
+*   **R1-Q1。** `ObjectStore::init` 與 `Ouroboros` 建構子的生產呼叫點。每一格都在宣告 7 的宇宙裡經過它，再寫 `r: { y: 1, z: y }`（或該行程本來就要寫的那一份）。計數是整棵自己的 `.oo` 裡 `__nlang_frame` 出現幾次。
+    *   **`bind`，hold 為真，`lib.rs` 1015。** 開的是這個宇宙自己的倉，第 1021 行按它設。演化再提交：退出碼都是 0，計數 0，`_.r.z` 是 1。一個行程只綁自己這一次的，都走這裡：`evolve_at`（848）、`commit`（1723，以及拿到鎖之後的 1756）、`migrate`（2273、2306）、`status`（1446）、`log`（1494）、`rollback`（1641）、`squash`（1668）、`refine`（1881）、`gc`（2506）、`inspect`（2742）、有宇宙時的 `engine_for_one_shot`（794）與 `engine_keeping_settings`（799）。`commit` 的第二次 `init` 在寫入之前再設一次；上面那次提交走的就是這兩次。
+    *   **`bind`，hold 為假，`lib.rs` 1018。** 開的是暫存倉。暫存倉是新倉，宣告 8，所以第 1021 行把開關設成共用。用在沒有宇宙，或 `--ephemeral`：`without_universe`（792、801），以及 `eval`、`run`、`repl`、`test` 的 `engine_for_one_shot`。它寫的是暫存倉，不是宣告 7 的那棵 `.oo`。宣告 7 的宇宙裡 `eval --ephemeral '1 + 1'` 印 `2`，那棵 `.oo` 的檔案雜湊不變，計數仍是 0。下一個行程再演化記錄，計數仍是 0。
+    *   **`new_in_memory`，`lib.rs` 966。** 開暫存倉，不設開關。呼叫點是 `get_value`：`storage.rs` 752（format-3 的根）與 759（encoding 小於 4 才補水）。同一行程裡接著寫的：
+        *   位址字面，`lib.rs` 4620。就是 r5。宣告 7 計數 0。宣告 8 計數 2。
+        *   `~%Discovery./fetch` 的本機 peer，`disc.rs` 604（578 是自己的倉）。宣告 7 連上宣告 8 的 peer，同一演化先 `fetch` 那顆根再寫記錄：演化退出碼 0，計數 0。`status` 看得到 `g` 是 `{ x: 1 … }`、`p` 是 `#true`、`r` 是那筆記錄。
+        *   `refine` 的單調檢查，`universe.rs` 2698。宣告 7，來源與目標都給根的完整 CAID：退出碼 0，寫下 refine 提交，計數前後都是 0。
+        *   `eval` 同一條位址字面，另一個行程：印 `1`，計數不變。
+        *   `gc`，`gc.rs` 162 與 188。宣告 7 提交之後 `gc --grant gc`：`3 objects, 3 reachable, 0 collectable (0 bytes)`，計數 0。這個行程沒有再寫記錄。下一個行程再演化，計數仍是 0。
+        *   同一條 `get_value`、這次沒有另造一格的：`universe.rs` 2847（refine 的 shadow scan；上面那格沒走到）、`lib.rs` 5089（`get_live_value`）、`oodp.rs` 398（`serve`）、`main.rs` 2749（`inspect`）。`new_in_memory` 不設開關。量根的時候跑過 `inspect`，那個行程不寫記錄。
+    *   **`~%Discovery./connect` 的本機 peer，`disc.rs` 155。** 再開一顆 `ObjectStore`，`init` 不設開關。宣告 7 連宣告 8：演化退出碼 0，自己的計數 0，peer 的計數 0（peer 這次沒有寫）。宣告 8 連宣告 7：自己的計數 2。
+    *   **`evolve_where_absent`，1001。** 先綁一個新的暫存目錄（宣告 8）。Replay 才呼叫 `evolve_at`，寫目的地之前按目的地再設。沒有造出 Replay 那一格。
+*   **R1-Q2。** v0.97.0 是 `/home/gali/nlang-baselines/v0.97.0-verify/target/release/oo`。
+    *   r4 的宣告 7 那一邊，peer 宣告 8，只演化：計數 0。v0.97.0 `commit -m a` 退出碼 0。v0.97.0 讀 `_.r.z` 是 1，本引擎讀也是 1。
+    *   r5 的宣告 7 那一邊，種子 `x: 1` 的根是 `c9889219c55cccc569f22c0521d5954b54063702a288cf3e7452677e65749aff`，只演化位址讀與記錄：計數 0。v0.97.0 提交退出碼 0。v0.97.0 讀 `_.q` 是 1、`_.r.z` 是 1，本引擎讀也是。
+
+### 9.4.5 數字
+
+*   探針 `a_record_the_store_wrote_n_times_probe_test` 7／7。閘門前單獨 10.29 秒，`PROBE_EXIT` 0。閘門第一輪 10.24 秒。探針檔未改。預先修訂的 12 處未改回。
+*   三輪：2026-10-21 22:38:12 起 1302.52 秒、22:59:54 起 906.49 秒、23:15:01 起 890.60 秒，退出碼都是 0。正規化 3627 行，sha256 `9efc37b66f5a96589062ca7abd726c92806200475c51312664f66fdd3da25af8`，三輪相同。`test result:` 288 條，合計 2766 通過、0 失敗。以 `test ` 起算且以 ` ok` 結尾的行 2765。差的那一條是 `a_working_set_that_is_a_set` 的 `g1_a_sequential_conflict_is_still_refused`（`ok` 落在下一行）。`Running ` 285 條。原始日誌 293092／292938／292938 位元組，sha256 前綴 `adb4161c1b90d357`、`22c002f4a343ad43`、`afa0ddd436110933`。`^error` 0，BrokenPipe 0，panicked 0。
+*   紅線（閘門第一輪，皆通過）：本探針 7／7 10.24 秒；Q-095 3／3 36.03 秒；Q-094 10／10 210.11 秒；Q-093 11／11 9.49 秒；Q-092 25／25 45.61 秒；Q-091 13／13 7.62 秒；Q-090 4／4 2.03 秒；Q-089 6／6 2.03 秒；Q-088 8／8 4.94 秒；`caused_top` 11／11 1.13 秒；`static_cycle` 17／17 0.75 秒；`math_union` 17／17 1.00 秒；`what_an_observation_leaves` 15／15 3.92 秒；`blur_spread` 13／13 2.95 秒；`pin_probe_test` 15／15 2.45 秒；`a_store_written_in_another_language` 13／13 1.21 秒；`every_byte_or_none` 14／14 2.02 秒；`atomic_write` 8／8 1.66 秒；`an_axis_the_address_forgot` 17／17 6.39 秒（epochs 4／4 0.33 秒、union 2／2 0.00 秒、bytes 1／1 0.25 秒）；`forward_spread` 12／12 0.83 秒；`spread_collision` 25／25 0.91 秒；`spread_privacy` 11／11 0.38 秒；`spread_splice` 9／9 0.16 秒；`import_is_spread` 7／7 0.45 秒；`a_name_spread_in` 15／15 6.32 秒；`where_there_is_no_universe` 13／13 4.19 秒；`a_private_never_committed` 10／10 4.29 秒、R-1 3／3 0.62 秒。
+*   conformance 181／181，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
+*   Windows：`Finished release in 7.06s`，`WIN_EXIT` 0，`^error` 0。該目標 lib 15 則警告（`cargo fix` 會動 13 處）。linux 建置同一 lib 14 則警告（`cargo fix` 會動 12 處）。未修。
+*   釋出 `oo` 11148712 位元組，mtime 2026-10-21 22:36:06 +0800。三輪閘門沒有重連這支二進位。工作區在編譯時是髒的，所以這裡不引 `--version`。
