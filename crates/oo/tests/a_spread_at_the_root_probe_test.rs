@@ -329,7 +329,7 @@ fn r6_encoding_seven() {
     let mut bad = Vec::new();
     let w = Ws::new("r6-new");
     check(&mut bad, "new store", w.commit("x: 0\n"), "");
-    check(&mut bad, "new store declares", w.encoding(), "encoding=7");
+    check(&mut bad, "new store declares", w.encoding(), "encoding=8"); // AMENDED 2026-10-21 for Q-097 (D114)
     let w = Ws::new("r6-old");
     check(&mut bad, "seed", w.commit("c: { b: 2 }\n"), "");
     fs::write(w.ws.join(".oo/objects.format"), "encoding=6\n").unwrap();
@@ -342,8 +342,8 @@ fn r6_encoding_seven() {
     check(&mut bad, "...c on encoding=6: no member", (w.members().len() - before).to_string(), "0");
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     check(&mut bad, "migrate rc", rc.to_string(), "0");
-    check(&mut bad, "migrate names whom it locks out", o.contains("oo v0.85.0 through v0.94.0").to_string(), "true");
-    check(&mut bad, "after migrate declares", w.encoding(), "encoding=7");
+    check(&mut bad, "migrate names whom it locks out", o.contains("oo v0.85.0 through v0.97.0").to_string(), "true"); // AMENDED 2026-10-21 for Q-097 (D114)
+    check(&mut bad, "after migrate declares", w.encoding(), "encoding=8"); // AMENDED 2026-10-21 for Q-097 (D114)
     check(&mut bad, "...c after migrate", w.commit("...c\n"), "");
     check(&mut bad, "...c after migrate: _.b", w.eval("_.b"), "2");
     verdict(bad, 13);
