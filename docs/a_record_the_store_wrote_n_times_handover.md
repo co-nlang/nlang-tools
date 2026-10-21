@@ -198,3 +198,7 @@
 *   conformance 181／181，空目錄，`CONF_EXIT` 0。父目錄 `.oo/format` 前後都是 `32`。
 *   Windows：`Finished release in 7.06s`，`WIN_EXIT` 0，`^error` 0。該目標 lib 15 則警告（`cargo fix` 會動 13 處）。linux 建置同一 lib 14 則警告（`cargo fix` 會動 12 處）。未修。
 *   釋出 `oo` 11148712 位元組，mtime 2026-10-21 22:36:06 +0800。三輪閘門沒有重連這支二進位。工作區在編譯時是髒的，所以這裡不引 `--version`。
+
+## 9.5 R-1 驗收（驗收方）：**受理**
+
+交付 `d0314df` 的三檔與 `q097-r1ref 243040f` 逐位元組相同（同形——開關的位置在偵察 R-1 時已在探針外以 `peer2.sh`、`addr.sh`、`second.sh`、`compat.sh`、`shapes.py` 量過，交付的數字與它們同）。R1-Q1 收下：同一行程開第二個倉或引擎的每一處逐一量過，宣告 7 的宇宙經過後計數皆 0；`evolve_where_absent` 的 Replay 那一格交付沒造出，寫目的地前依目的地再綁——留下。R1-Q2 收下：r4、r5 宣告 7 那一邊交給 v0.97.0 提交，退出碼 0、讀數 1。數字：全樹 288／2766／0（三輪同）；本探針 7／7；conformance 181／181；交叉 0。
