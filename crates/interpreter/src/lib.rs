@@ -4221,7 +4221,7 @@ impl Ouroboros {
                 if let Some(val) = scope.get_field(name).cloned() {
                     return self.force_lexical_name(name, val, ctx, false);
                 }
-                if let Some(val) = scope.local_fields().get(name).cloned() {
+                if let Some(val) = scope.get_local_field(name).cloned() {
                     return self.force_lexical_name(name, val, ctx, false);
                 }
                 let prefixes = vec!["/", "@", "~", "~%"];

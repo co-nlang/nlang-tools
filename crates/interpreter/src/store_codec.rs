@@ -949,6 +949,10 @@ fn quote_string(s: &str) -> String {
 }
 
 fn quote_key(prefix: &str, name: &str) -> String {
+    // D115: a hidden type or logic key is `~@a` / `~/a`, not a quoted name.
+    if prefix == "~" && crate::value::hidden_facet_name(name) {
+        return format!("~{name}");
+    }
     if is_plain_ident(name) {
         format!("{prefix}{name}")
     } else if name.contains('"') || name.contains('\n') || name.contains('\r') {

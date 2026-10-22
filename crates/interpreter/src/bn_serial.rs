@@ -13,6 +13,7 @@ use std::collections::HashSet;
 // v0.84.0 encoding (no 0x80, no axis byte, union with no tag and no count).
 thread_local! {
     static LEGACY_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static HIDDEN_AS_LOCAL_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 pub fn identity_is_legacy() -> bool {
@@ -31,6 +32,39 @@ pub fn with_legacy_identity<R>(f: impl FnOnce() -> R) -> R {
     }
     let _restore = Restore;
     f()
+}
+
+// Q-099 / D115. A hidden type `~@a` and a hidden logic `~/a` are kept on the
+// local axis under the names `@a` and `/a`; their identity entry is axis 7 or
+// 8 with the bare name. `with_hidden_facets_as_local` recomputes the v0.99.0
+// rule (axis 6, prefixed name), which a store declaring encoding ≤8 receives.
+pub fn hidden_facets_as_local() -> bool {
+    HIDDEN_AS_LOCAL_DEPTH.with(|d| d.get() > 0)
+}
+
+pub fn with_hidden_facets_as_local<R>(f: impl FnOnce() -> R) -> R {
+    HIDDEN_AS_LOCAL_DEPTH.with(|d| d.set(d.get().saturating_add(1)));
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            HIDDEN_AS_LOCAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+    let _restore = Restore;
+    f()
+}
+
+/// The identity axis of a local-axis key: 7 for `@a`, 8 for `/a`, else 6.
+fn local_entry(key: &str) -> (u8, &str) {
+    if !identity_is_legacy() && !hidden_facets_as_local() {
+        if let Some(name) = key.strip_prefix('@').filter(|n| !n.is_empty()) {
+            return (7, name);
+        }
+        if let Some(name) = key.strip_prefix('/').filter(|n| !n.is_empty()) {
+            return (8, name);
+        }
+    }
+    (6, key)
 }
 
 // ── Type tags (REAL_03 §6.2) ──────────────────────────────────
@@ -622,7 +656,8 @@ fn serialize_combo(cv: &ComboVal, buf: &mut Vec<u8>) {
         entries.push((5, k.as_str(), v));
     }
     for (k, v) in &cv.local {
-        entries.push((6, k.as_str(), v));
+        let (axis, name) = local_entry(k);
+        entries.push((axis, name, v));
     }
     for (k, v) in &cv.legacy_fields {
         entries.push((5, k.as_str(), v));
