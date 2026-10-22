@@ -402,6 +402,10 @@ fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut
                 refresh_thunk_effects(engine, ctx, s);
             }
         }
+        Value::Complement { within, without } => {
+            refresh_thunk_effects(engine, ctx, within);
+            refresh_thunk_effects(engine, ctx, without);
+        }
         _ => {}
     }
 }
@@ -1845,6 +1849,11 @@ impl Universe {
                 crate::storage::SPREAD_ROW_ENCODING
             );
         }
+        // D116: a complement has no form below encoding 10. Refuse before
+        // the member is written.
+        engine
+            .store
+            .refuse_complement(&Value::Combo(self.session_delta.clone()))?;
         // Land spreads before the member is written: pending spreads do not
         // travel in the working set.
         self.land_staged_spreads(engine);

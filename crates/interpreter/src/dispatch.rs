@@ -868,6 +868,10 @@ pub fn rekey_identity_names(v: Value) -> Value {
             end: Box::new(rekey_identity_names(*end)),
             step: step.map(|s| Box::new(rekey_identity_names(*s))),
         },
+        Value::Complement { within, without } => Value::Complement {
+            within: Box::new(rekey_identity_names(*within)),
+            without: Box::new(rekey_identity_names(*without)),
+        },
         other => other,
     }
 }

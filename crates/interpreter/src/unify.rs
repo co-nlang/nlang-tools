@@ -36,6 +36,9 @@ fn caid_is_incomplete(v: &Value) -> bool {
                 || c.local.values().any(caid_is_incomplete)
         }
         Value::Union(xs) => xs.iter().any(caid_is_incomplete),
+        Value::Complement { within, without } => {
+            caid_is_incomplete(within) || caid_is_incomplete(without)
+        }
         _ => false,
     }
 }
@@ -630,6 +633,14 @@ impl Ouroboros {
             (_, Value::Bottom(c)) => return Value::Bottom(c.clone()),
             _ => {}
         }
+
+        // D116: a complement is decided by membership (a union member by member).
+        let (a, b) = match (a, b) {
+            (Value::Complement { within, without }, x) | (x, Value::Complement { within, without }) => {
+                return self.meet_complement(x, *within, *without, ctx);
+            }
+            pair => pair,
+        };
 
         // Range membership / stepless intersection (SPEC_02 §3; range_eval work order).
         // Placed after Top/Bottom identity so those arms stay automatic.

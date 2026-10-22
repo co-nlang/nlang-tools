@@ -38,6 +38,8 @@ const RANK: &str = "__nlang_rank";
 const REF: &str = "__nlang_ref";
 const TOP_CAUSE: &str = "__nlang_top_cause";
 const HASH: &str = "__nlang_hash";
+/// D116: `within & !without`, both as values on the data axis.
+const COMPLEMENT: &str = "__nlang_complement";
 /// D112: a root's spread rows, as the sources' canonical spellings. A
 /// store-only key like `__nlang_effect`: the decoder takes it off the value.
 const SPREADS: &str = "__nlang_spreads";
@@ -615,6 +617,14 @@ fn write_value(v: &Value, indent: usize) -> String {
             }
             s
         }
+        Value::Complement { within, without } => write_wrapper(
+            COMPLEMENT,
+            &[
+                ("within", write_value(within, indent)),
+                ("without", write_value(without, indent)),
+            ],
+            indent,
+        ),
     }
 }
 
@@ -1215,6 +1225,19 @@ fn combo_expr_to_value(fields: &[Field], closed: bool) -> Result<Value> {
     }
     if sys.contains_key(TOP_CAUSE) {
         return decode_top_cause(&sys, &combo);
+    }
+    if sys.contains_key(COMPLEMENT) {
+        let part = |k: &str| {
+            combo
+                .data
+                .get(k)
+                .cloned()
+                .ok_or_else(|| anyhow!("complement missing {k}"))
+        };
+        return Ok(Value::Complement {
+            within: Box::new(part("within")?),
+            without: Box::new(part("without")?),
+        });
     }
     if sys.contains_key("__nlang_atom") {
         return decode_atom_wrap(&sys);
@@ -1872,6 +1895,10 @@ pub fn refs_of_value(v: &Value, out: &mut Vec<String>) {
             if let Some(s) = step {
                 refs_of_value(s, out);
             }
+        }
+        Value::Complement { within, without } => {
+            refs_of_value(within, out);
+            refs_of_value(without, out);
         }
         _ => {}
     }

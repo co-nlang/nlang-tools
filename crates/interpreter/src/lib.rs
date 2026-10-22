@@ -474,6 +474,10 @@ fn solid_combo_expansion_cost(c: &ComboVal) -> Option<u64> {
                     pending.push(*step);
                 }
             }
+            Value::Complement { within, without } => {
+                pending.push(*within);
+                pending.push(*without);
+            }
             _ => {}
         }
     }
@@ -4148,6 +4152,10 @@ impl Ouroboros {
                 start: Box::new(self.project_for_commit(*start, None, ctx)),
                 end: Box::new(self.project_for_commit(*end, None, ctx)),
                 step: step.map(|s| Box::new(self.project_for_commit(*s, None, ctx))),
+            },
+            Value::Complement { within, without } => Value::Complement {
+                within: Box::new(self.project_for_commit(*within, None, ctx)),
+                without: Box::new(self.project_for_commit(*without, None, ctx)),
             },
             other => other,
         }

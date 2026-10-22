@@ -1,7 +1,15 @@
 use crate::observation::handle_resource_exhausted;
-use crate::value::{BottomCause, BottomDetail, ComboVal, Value};
-use crate::{mbu, EvalContext, Ouroboros};
+use crate::value::{BottomCause, BottomDetail, Value};
+use crate::{mbu, EffectTag, EvalContext, Ouroboros};
 use nlang_parser::ast::AtomKind;
+
+/// `@bool` as its two members.
+pub(crate) fn bool_members() -> Value {
+    Value::Union(vec![
+        Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+        Value::Atom(AtomKind::Tag("false".to_string()), EffectTag::Pure, None),
+    ])
+}
 
 impl Ouroboros {
     pub fn orthocomplement(&self, v: Value, ctx: &mut EvalContext) -> Value {
@@ -27,27 +35,11 @@ impl Ouroboros {
             Value::Atom(AtomKind::Top, e, _) => Value::Atom(AtomKind::Bottom, e, None),
             Value::Atom(AtomKind::Bottom, e, _) => Value::Atom(AtomKind::Top, e, None),
 
-            Value::Atom(AtomKind::Tag(ref t), e, _) if t.trim_start_matches('#') == "true" => {
-                Value::Atom(AtomKind::Tag("false".to_string()), e, None)
+            // D116: `!(w & !c)` is `!w | c`; `!!c` is `c`.
+            Value::Complement { within, without } => {
+                let w = self.orthocomplement(*within, ctx);
+                self.normalize_union_absorbing(vec![w, *without], ctx)
             }
-            Value::Atom(AtomKind::Tag(ref t), e, _) if t.trim_start_matches('#') == "false" => {
-                Value::Atom(AtomKind::Tag("true".to_string()), e, None)
-            }
-
-            Value::Atom(AtomKind::TagStart, e, _) => Value::Atom(AtomKind::TagEnd, e, None),
-            Value::Atom(AtomKind::TagEnd, e, _) => Value::Atom(AtomKind::TagStart, e, None),
-
-            Value::Atom(_, _e, _) => Value::Bottom(Box::new(BottomDetail {
-                cause: BottomCause::Conflict,
-                path: None,
-                message: Some("Orthocomplement not defined for this atom type".to_string()),
-                expected: None,
-                found: Some(forced),
-                involved: vec![],
-                ..Default::default()
-            })),
-
-            Value::Combo(cv) => self.complement_combo(cv, ctx),
 
             Value::Union(branches) => {
                 let complements: Vec<Value> = branches
@@ -76,59 +68,107 @@ impl Ouroboros {
                 self.orthocomplement(inner, ctx)
             }
 
-            _ => Value::Bottom(Box::new(BottomDetail {
-                cause: BottomCause::Conflict,
-                path: None,
-                message: Some("Orthocomplement not defined for this value type".to_string()),
-                expected: None,
-                found: Some(forced),
-                involved: vec![],
-                ..Default::default()
-            })),
+            // D116: `!` is taken in the universe. `!#true` is everything that
+            // is not `#true` (`@bool & !#true` is `#false`); `!0`, `!(..0)`,
+            // `!@str`, `!{ a: 1 }` have no closed form and stay complements.
+            other => Value::Complement {
+                within: Box::new(Value::Top),
+                without: Box::new(other),
+            },
         }
     }
 
-    fn complement_combo(&self, cv: ComboVal, ctx: &mut EvalContext) -> Value {
-        if cv.closed {
-            let mut complemented = ComboVal::default();
-            complemented.closed = true;
-            complemented.effect = cv.effect;
-            for (k, v) in cv.all_fields_iter() {
-                let c = self.orthocomplement(v, ctx);
-                if !matches!(c, Value::Bottom(_) | Value::Atom(AtomKind::Top, _, _)) {
-                    complemented.insert_field(&k, c);
+    /// D116: `x & (within & !without)`. Inside `without` is ⊥, outside it is
+    /// `x`; a part of each stays a complement. A union is decided member by
+    /// member, and `@bool` is its two members.
+    pub(crate) fn meet_complement(
+        &self,
+        x: Value,
+        within: Value,
+        without: Value,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        let x = self.unify_internal(x, within, ctx);
+        let x = match x {
+            Value::Combo(ref c) if crate::type_constraint::is_type_value_combo(c)
+                && crate::type_constraint::get_type_constraint_name(c).as_deref() == Some("bool") =>
+            {
+                bool_members()
+            }
+            other => other,
+        };
+        match x {
+            Value::Bottom(_) => x,
+            Value::Complement { within: w, without: c } => {
+                let c = self.removed_union(*c, without, ctx);
+                self.meet_complement(*w, Value::Top, c, ctx)
+            }
+            Value::Union(members) => {
+                let parts: Vec<Value> = members
+                    .into_iter()
+                    .map(|m| self.meet_complement(m, Value::Top, without.clone(), ctx))
+                    .collect();
+                self.normalize_union_absorbing(parts, ctx)
+            }
+            x => {
+                let meet = self.unify_internal(x.clone(), without.clone(), ctx);
+                if matches!(meet, Value::Bottom(_)) {
+                    x
+                } else if self.same_value(meet, x.clone(), ctx) {
+                    Value::Bottom(Box::new(BottomDetail {
+                        cause: BottomCause::Conflict,
+                        message: Some(format!(
+                            "{} is inside {}, which this complement leaves out",
+                            x.to_nlang(0),
+                            without.to_nlang(0)
+                        )),
+                        ..Default::default()
+                    }))
+                } else {
+                    Value::Complement {
+                        within: Box::new(x),
+                        without: Box::new(without),
+                    }
                 }
             }
-            Value::Combo(complemented)
-        } else {
-            let mut all_complements: Vec<Value> = Vec::new();
-            for (_, v) in cv.all_fields_iter() {
-                let c = self.orthocomplement(v, ctx);
-                if !matches!(c, Value::Atom(AtomKind::Top, _, _)) {
-                    all_complements.push(c);
-                }
-            }
-
-            if all_complements.is_empty() {
-                return Value::Atom(AtomKind::Top, cv.effect, None);
-            }
-
-            // De Morgan: !(A & B) = !A | !B for open Combos
-            crate::value::normalize_union(all_complements)
         }
     }
-}
 
-impl Value {
-    pub fn is_orthogonal_to(&self, other: &Value) -> bool {
-        match (self, other) {
-            (Value::Atom(AtomKind::Top, _, _), Value::Atom(AtomKind::Bottom, _, _)) => true,
-            (Value::Atom(AtomKind::Bottom, _, _), Value::Atom(AtomKind::Top, _, _)) => true,
-            (
-                Value::Atom(AtomKind::Tag(ref t1), _, _),
-                Value::Atom(AtomKind::Tag(ref t2), _, _),
-            ) => t1.trim_start_matches('#') != t2.trim_start_matches('#'),
-            _ => false,
+    /// `a` and `b` are one value once forced (a literal combo's fields are
+    /// thunks until a meet forces them).
+    fn same_value(&self, a: Value, b: Value, ctx: &mut EvalContext) -> bool {
+        self.force_recursive(a, ctx) == self.force_recursive(b, ctx)
+    }
+
+    /// `x` lies inside `y`: their meet is `x`.
+    fn inside(&self, x: &Value, y: &Value, ctx: &mut EvalContext) -> bool {
+        let meet = self.unify_internal(x.clone(), y.clone(), ctx);
+        !matches!(meet, Value::Bottom(_)) && self.same_value(meet, x.clone(), ctx)
+    }
+
+    /// What two complements leave out, together: a member inside another
+    /// is dropped, so `!(..10) & !(..0)` is `!(..10)`. Its own relation, not
+    /// union absorption, which a `<=` probe fences off.
+    fn removed_union(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
+        let mut flat: Vec<Value> = Vec::new();
+        for v in [a, b] {
+            match v {
+                Value::Union(items) => flat.extend(items),
+                other => flat.push(other),
+            }
+        }
+        let mut keep: Vec<Value> = Vec::new();
+        for (i, m) in flat.iter().enumerate() {
+            let covered = flat.iter().enumerate().any(|(j, o)| {
+                j != i && self.inside(m, o, ctx) && (!self.inside(o, m, ctx) || j < i)
+            });
+            if !covered {
+                keep.push(m.clone());
+            }
+        }
+        match keep.len() {
+            1 => keep.pop().unwrap(),
+            _ => Value::Union(keep),
         }
     }
 }
