@@ -74,7 +74,7 @@ fn assert_obs_bottom(src: &str, path: &str) {
 fn e4_violating_merge_is_bottom() {
     assert_obs_bottom(
         "@Adult: { age: 18.. }\nminor: { name: \"Bob\", age: 15 } & @Adult",
-        "minor",
+        "minor.age", // AMENDED 2026-10-23 for Q-101 (D117): an open record keeps the conflict in its field.
     );
 }
 
@@ -83,7 +83,7 @@ fn e4_violating_merge_is_bottom() {
 fn e4_violating_merge_mirror() {
     assert_obs_bottom(
         "@Adult: { age: 18.. }\nminor: @Adult & { name: \"Bob\", age: 15 }",
-        "minor",
+        "minor.age", // AMENDED 2026-10-23 for Q-101 (D117): an open record keeps the conflict in its field.
     );
 }
 
@@ -131,7 +131,7 @@ fn e4_projection_through_template() {
 fn e4_recursive_type_enforces_and_terminates() {
     assert_obs_bottom(
         "@Tree: { v: @int, next: @Tree | () }\nt: { v: \"s\", next: () } & @Tree",
-        "t",
+        "t.v", // AMENDED 2026-10-23 for Q-101 (D117): an open record keeps the conflict in its field.
     );
 }
 
@@ -199,7 +199,7 @@ fn guard_direct_template_merges() {
         "a.age",
         25,
     );
-    assert_obs_bottom("a: { name: \"Alice\", age: 15 } & { age: 18.. }", "a");
+    assert_obs_bottom("a: { name: \"Alice\", age: 15 } & { age: 18.. }", "a.age"); // AMENDED 2026-10-23 for Q-101 (D117): an open record keeps the conflict in its field.
     assert_obs_bottom("a: { name: \"Alice\", age: 25 } & {{ age: 18.. }}", "a");
 }
 

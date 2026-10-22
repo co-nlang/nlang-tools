@@ -271,8 +271,10 @@ fn r5_several_bodies_print_one_row_each() {
     let w = Ws::new("r5");
     let mut bad = Vec::new();
     for (t, rows) in [
-        ("{ @{ 4 }: \"f\", @{ 4 }: \"g\" }", vec!["@{ 4 }: \"f\"", "@{ 4 }: \"g\""]),
-        ("{ @{ @int }: \"n\", @{ @int }: 1, @{ @str }: \"s\" }", vec!["@{ @int }: 1", "@{ @int }: \"n\"", "@{ @str }: \"s\""]),
+        // AMENDED 2026-10-23 for Q-101 (D117 Q2): value bodies of one branch
+        // meet into one body; a set (one row each) is of deferred bodies.
+        ("{ @{ 4 }: $ + 1, @{ 4 }: $ + 2 }", vec!["@{ 4 }: $ + 1", "@{ 4 }: $ + 2"]),
+        ("{ @{ @int }: $ + 1, @{ @int }: $ * 2, @{ @str }: \"s\" }", vec!["@{ @int }: $ + 1", "@{ @int }: $ * 2", "@{ @str }: \"s\""]),
     ] {
         let printed = w.eval_raw(t);
         let lines: Vec<String> = printed.lines().map(|l| l.trim().to_string()).collect();

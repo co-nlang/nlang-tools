@@ -105,7 +105,8 @@ fn ra1_a_key_that_arrives_by_meet_meets_its_branch() {
         (r#"({ k: 5 } & { @{ "k" }: 1 }) "k""#, conflict, "#conflict"),
         (r#"({ @{ "k" }: 1 } & { "k": 5 }) "k""#, conflict, "#conflict"),
         (r#"({ @{ 1 }: 1 } & { 1: 5 }) 1"#, conflict, "#conflict"),
-        (r#"({ @{ "k" }: { y: 2 } } & { k: { y: 3 } }) "k""#, conflict, "#conflict"),
+        // AMENDED 2026-10-23 for Q-101 (D117): the conflict stays in field `y`.
+        (r#"(({ @{ "k" }: { y: 2 } } & { k: { y: 3 } }) "k").y"#, conflict, "#conflict"),
         (r#"({ @{ "k" }: { y: 2 } } & { k: { x: 1 } }) "k""#, both, "x: 1 and y: 2"),
     ]);
 }

@@ -212,6 +212,14 @@ fn r10_an_epoch_1_store_receives_epoch_1_bytes() {
     assert_ne!(new_root, old_root);
     let new_names = digest_names(&fs::read_to_string(w.object_path(&new_root)).unwrap());
     let lost: Vec<_> = old_names.difference(&new_names).collect();
+    // AMENDED 2026-10-23 for Q-101 (D117 Q2): two value bodies of one branch
+    // meet into one body, so the keys of `b`'s body set for "k" ({ a: 1 },
+    // { b: 2 }) go; no old store keeps that form. Every other name stays,
+    // and the branch still reads what it read.
+    let old_text = fs::read_to_string(w.object_path(&old_root)).unwrap();
+    let body_of_k = |n: &String| old_text.contains(&format!("\"{n}\": {{{{ %pattern: \"k\""));
+    let lost: Vec<_> = lost.into_iter().filter(|n| !body_of_k(n)).collect();
     assert!(lost.is_empty(), "the unchanged tables were rewritten with other names: {lost:?}");
+    assert_eq!(squash(&w.eval("_.b \"k\"")), "{ a: 1 b: 2 }");
 }
 

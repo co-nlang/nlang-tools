@@ -238,8 +238,8 @@ fn r3_every_later_evolve_is_kept() {
 /// Two evolves that never make the working set a table: v0.98.0's roots.
 const UNTOUCHED: [(&str, &str, &str, &str); 6] = [
     ("plain", "x: 3", "y: 4", "9f4688480a4a9ce2cf664796eaa3d8073ba7dcc656281718d69ac4f7f4389cc1"),
-    ("nested table", "t: { @{ \"b\" }: 2 }", "t.b: 3", "2fa352ca8b18f80ebc86f640b2483072eeda01879cad92402e9071c0f1e9136d"),
-    ("key then pattern", "b: 3", "@{ \"b\" }: 2", "b80f5fb08691d64667263b37687392cbafc6c313e3a02360bed1124a4e7d848e"),
+    ("nested table", "t: { @{ \"b\" }: 2 }", "t.b: 3", "b4bb219804483ccf9d0369e74fa8d77e8e6444652fee2537635b8dc4b0e74ff5"), // AMENDED 2026-10-23 for Q-101 (D117 Q2): the two value bodies of branch "b" meet into one
+    ("key then pattern", "b: 3", "@{ \"b\" }: 2", "39ea2364ad6b6851bd6670294b95cb1fe585bd89dbe9db707a78367c0815b978"), // AMENDED 2026-10-23 for Q-101 (D117 Q2): the two value bodies of branch "b" meet into one
     ("spread", "c: { b: 2 }", "r: { a: 1, ...c }", "f6be66e9989ce17b864992b6223061d8503f196a74b26c6311f2921d7e30ab13"),
     ("private", "~p: 3", "y: p", "f8b00ed33b9a22c0118f0f8176b5d89b506db8c45060e56cde7d82f2299cc166"),
     ("recipe", "n: 2", "x: n + 1", "b24cde4e3af92bc6d8d6dadf162bb0fc90027f4785e15883e9416f59dcfcb07d"),
@@ -261,7 +261,7 @@ fn g1_roots_that_never_held_a_table_do_not_move() {
 const MEMBERS: [(&str, &str, &str, &str); 3] = [
     ("plain", "x: 3", "y: 4", "{ y: 4 }"),
     ("private", "x: 1", "~p: 3\ny: p", "{ y: { ~%__nlang_thunk: #true ~%__nlang_expr: p ~%__nlang_closure: [] } ~p: 3 }"),
-    ("nested table", "t: { @{ \"b\" }: 2 }", "t.b: 3", "{ t: { %morphism: #true %rules: { \"{d53dd013218efa2667fc05d0271345858a6de19a8030731c5f780de3819461ee}\": {{ %bodies: {{ \"{70a0915b4366ca84e66fd2c6b8b5061ff74d5b003fb63f9bd94410d92a774fe2}\": {{ %pattern: \"b\" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 3 ~%__nlang_closure: [{ ~%__nlang_frame: [0, { b: { ~%__nlang_thunk: #true ~%__nlang_expr: 3 ~%__nlang_closure: [] } }] }] } _: _ }} \"{d493a417b7ba5eeccdfbc6279341cb5c8ea787cbbde39c8f99ef01c9786a07ae}\": {{ %pattern: \"b\" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 2 ~%__nlang_closure: [{ ~%__nlang_frame: [1, { %morphism: #true %rules: { \"{d53dd013218efa2667fc05d0271345858a6de19a8030731c5f780de3819461ee}\": {{ %pattern: \"b\" %val: { ~%__nlang_thunk: #true ~%__nlang_expr: 2 ~%__nlang_closure: [] } _: _ }} } }] }] } _: _ }} }} %pattern: \"b\" }} } } }"),
+    ("nested table", "t: { @{ \"b\" }: 2 }", "t.b: 3", "{ t: { %morphism: #true %rules: { \"{d53dd013218efa2667fc05d0271345858a6de19a8030731c5f780de3819461ee}\": {{ %pattern: \"b\" %val: { ~%__nlang_bottom: #conflict } _: _ }} } } }"), // AMENDED 2026-10-23 for Q-101 (D117 Q2): the two value bodies of branch "b" meet into one
 ];
 
 fn members(w: &Ws) -> Vec<(std::time::SystemTime, String)> {
