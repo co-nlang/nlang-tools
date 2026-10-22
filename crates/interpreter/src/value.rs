@@ -288,6 +288,32 @@ pub enum Value {
         end: Box<Value>,
         step: Option<Box<Value>>,
     },
+    /// D116: what is in `within` and not in `without` (`within & !without`;
+    /// `!c` is `within: Top`). `!` is taken in the universe, so a complement
+    /// has no closed form in general (`!(..0)`, `!0`, `!@str`). Symbolic like
+    /// Range: a meet decides membership, observation does not expand it.
+    Complement {
+        within: Box<Value>,
+        without: Box<Value>,
+    },
+}
+
+/// An operand of `!` or `&` in a printed complement. A tag, a string, a
+/// non-negative integer or a combo is a primary; anything else is
+/// parenthesised (`!(..0)`, `!(1 | 2)`, `(1 | 2) & !1`).
+fn complement_operand(v: &Value, indent: usize) -> String {
+    let s = v.to_nlang(indent);
+    let primary = match v {
+        Value::Atom(AtomKind::Int(n), _, _) => n.sign() != num_bigint::Sign::Minus,
+        Value::Atom(AtomKind::Tag(_) | AtomKind::Str(_), _, _) => true,
+        Value::Combo(_) => true,
+        _ => false,
+    };
+    if primary {
+        s
+    } else {
+        format!("({s})")
+    }
 }
 
 /// Mint a caused Top for a pure-reference (static) cycle.
@@ -396,6 +422,10 @@ fn contains_diagnostic_inner(v: &Value, max_depth: u32, depth: u32) -> bool {
                     .map(|s| contains_diagnostic_inner(s, max_depth, depth + 1))
                     .unwrap_or(false)
         }
+        Value::Complement { within, without } => {
+            contains_diagnostic_inner(within, max_depth, depth + 1)
+                || contains_diagnostic_inner(without, max_depth, depth + 1)
+        }
         // Thunk / Code / Ref / Atom / Top / Bottom: no nested diagnostic visible
         // without force — treat as non-diagnostic for absorption qualification.
         _ => false,
@@ -463,6 +493,16 @@ impl PartialEq for Value {
                     step: st2,
                 },
             ) => s1 == s2 && e1 == e2 && st1 == st2,
+            (
+                Value::Complement {
+                    within: w1,
+                    without: o1,
+                },
+                Value::Complement {
+                    within: w2,
+                    without: o2,
+                },
+            ) => w1 == w2 && o1 == o2,
             (Value::Ref(p1), Value::Ref(p2)) => p1 == p2,
             _ => false,
         }
@@ -2029,6 +2069,10 @@ fn collect_projected_builtins_in_value(v: &Value, out: &mut HashSet<String>) {
                 collect_projected_builtins_in_value(s, out);
             }
         }
+        Value::Complement { within, without } => {
+            collect_projected_builtins_in_value(within, out);
+            collect_projected_builtins_in_value(without, out);
+        }
         _ => {}
     }
 }
@@ -2053,6 +2097,9 @@ impl Value {
                 start.holds_meta_builtin()
                     || end.holds_meta_builtin()
                     || step.as_ref().is_some_and(|s| s.holds_meta_builtin())
+            }
+            Value::Complement { within, without } => {
+                within.holds_meta_builtin() || without.holds_meta_builtin()
             }
             Value::Blur(b) => b
                 .partial_body
@@ -2375,6 +2422,10 @@ impl Value {
                     step.materialize_effect_fields();
                 }
             }
+            Value::Complement { within, without } => {
+                within.materialize_effect_fields();
+                without.materialize_effect_fields();
+            }
             Value::Blur(blur) => {
                 if let Some(body) = blur.partial_body.as_mut() {
                     body.materialize_effect_fields();
@@ -2443,6 +2494,10 @@ impl Value {
                     step.mark_spans_unknown();
                 }
             }
+            Value::Complement { within, without } => {
+                within.mark_spans_unknown();
+                without.mark_spans_unknown();
+            }
             Value::Top | Value::TopCaused { .. } | Value::Atom(..) | Value::Blur(_) => {}
         }
     }
@@ -2473,6 +2528,10 @@ impl Value {
                 if let Some(s) = step {
                     s.persist_blur_partials(store)?;
                 }
+            }
+            Value::Complement { within, without } => {
+                within.persist_blur_partials(store)?;
+                without.persist_blur_partials(store)?;
             }
             Value::Thunk { context, .. } => {
                 if let Some(c) = context {
@@ -3093,6 +3152,7 @@ impl Value {
             Value::Range { start, end, step } => {
                 start.bits() + end.bits() + step.as_ref().map(|s| s.bits()).unwrap_or(0)
             }
+            Value::Complement { within, without } => within.bits() + without.bits(),
         }
     }
 
@@ -3101,7 +3161,11 @@ impl Value {
             Value::Top | Value::TopCaused { .. } => 0,
             Value::Bottom(_) => TROPICAL_INFINITY,
             Value::Atom(_, _, _) => 1,
-            Value::Thunk { .. } | Value::Code(_) | Value::Ref(_) | Value::Range { .. } => 1,
+            Value::Thunk { .. }
+            | Value::Code(_)
+            | Value::Ref(_)
+            | Value::Range { .. }
+            | Value::Complement { .. } => 1,
             Value::Union(branches) => branches
                 .iter()
                 .map(|b| b.tropical_weight())
@@ -3112,6 +3176,27 @@ impl Value {
                 .map(|(_, v)| v.tropical_weight())
                 .fold(0u64, |acc, w| acc.saturating_add(w)),
             Value::Blur(_) => 64,
+        }
+    }
+
+    /// D116: the first complement value inside this one, closures included.
+    pub fn first_complement(&self) -> Option<&Value> {
+        fn in_combo(c: &ComboVal) -> Option<&Value> {
+            [&c.data, &c.types, &c.rules, &c.meta, &c.system, &c.local]
+                .into_iter()
+                .find_map(|axis| axis.values().find_map(|v| v.first_complement()))
+        }
+        match self {
+            Value::Complement { .. } => Some(self),
+            Value::Combo(c) => in_combo(c),
+            Value::Union(items) => items.iter().find_map(|v| v.first_complement()),
+            Value::Thunk {
+                closure, context, ..
+            } => closure
+                .iter()
+                .find_map(|f| in_combo(f))
+                .or_else(|| context.as_deref().and_then(|c| c.first_complement())),
+            _ => None,
         }
     }
 
@@ -3234,6 +3319,10 @@ impl Value {
                 end: Box::new((*end).solidify_effects()),
                 step: step.map(|s| Box::new((*s).solidify_effects())),
             },
+            Value::Complement { within, without } => Value::Complement {
+                within: Box::new((*within).solidify_effects()),
+                without: Box::new((*without).solidify_effects()),
+            },
             Value::Thunk {
                 expr,
                 closure,
@@ -3298,6 +3387,10 @@ impl Value {
                 end: Box::new((*end).purify_effects()),
                 step: step.map(|s| Box::new((*s).purify_effects())),
             },
+            Value::Complement { within, without } => Value::Complement {
+                within: Box::new((*within).purify_effects()),
+                without: Box::new((*without).purify_effects()),
+            },
             Value::Thunk {
                 expr,
                 closure,
@@ -3346,6 +3439,7 @@ impl Value {
                 }
                 e
             }
+            Value::Complement { within, without } => within.effect().union(without.effect()),
             _ => EffectTag::Pure,
         }
     }
@@ -3427,6 +3521,7 @@ impl Value {
                 }
                 s
             }
+            Value::Complement { .. } => self.to_nlang(0),
             // Align with to_nlang — no Debug fallthrough (print_what_can_be_read).
             Value::Thunk { expr, .. } => expr.to_nlang(0),
             Value::Ref(path) => format!("<<{}>>", path),
@@ -3638,6 +3733,16 @@ impl Value {
                     s.push_str(&format!("..{}", st.to_nlang(0)));
                 }
                 s
+            }
+            // D116: `!c`, or `w & !c`. Reading it back meets the same two
+            // values, which gives this complement again.
+            Value::Complement { within, without } => {
+                let c = format!("!{}", complement_operand(without, indent));
+                if within.is_top() {
+                    c
+                } else {
+                    format!("{} & {}", complement_operand(within, indent), c)
+                }
             }
             // print_what_can_be_read (W8'-a): never fall through to Debug.
             // Unobserved thunk prints its source expression (not its answer).
@@ -3917,6 +4022,11 @@ impl Value {
                     }
                 }
             }
+            Value::Complement { within, without } => {
+                hasher.update([0x09]);
+                within.hash_recursive_with_salt(hasher, salt);
+                without.hash_recursive_with_salt(hasher, salt);
+            }
         }
     }
 }
@@ -4080,6 +4190,11 @@ fn hash_value_for_cycle_frame(v: &Value, hasher: &mut Sha256) {
                     hash_value_for_cycle_frame(s, hasher);
                 }
             }
+        }
+        Value::Complement { within, without } => {
+            hasher.update(b"complement:");
+            hash_value_for_cycle_frame(within, hasher);
+            hash_value_for_cycle_frame(without, hasher);
         }
         // Atoms / Top / Bottom / Blur / Code / Ref: store content digest.
         other => {

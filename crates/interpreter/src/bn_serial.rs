@@ -80,6 +80,10 @@ const TAG_TUPLE: u8 = 0x04;
 // Q-083 / D106. A union is `0x05`, then a count, then members. Epoch 1 wrote
 // the members back to back and left this byte unused.
 const TAG_UNION: u8 = 0x05;
+// D116: `within & !without`. A complement had no value before (it was ⊥
+// or an emptied cocoon), so no address moves; a store declares encoding
+// 10 before it holds one.
+const TAG_COMPLEMENT: u8 = 0x06;
 #[allow(dead_code)]
 const TAG_ATOM: u8 = 0x10;
 #[allow(dead_code)]
@@ -299,6 +303,11 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
                     serialize_value(s, buf);
                 }
             }
+        }
+        Value::Complement { within, without } => {
+            buf.push(TAG_COMPLEMENT);
+            serialize_value(within, buf);
+            serialize_value(without, buf);
         }
     }
 }

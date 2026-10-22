@@ -207,7 +207,7 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// — including every future N (`layout=10`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
 pub const STORE_LAYOUT_VERSION: u32 = 9;
-pub const OBJECT_ENCODING_VERSION: u32 = 9;
+pub const OBJECT_ENCODING_VERSION: u32 = 10;
 /// D112: the first encoding that carries a root's spread rows.
 pub const SPREAD_ROW_ENCODING: u32 = 7;
 /// D114: the first encoding whose documents write a closure frame once.
@@ -215,6 +215,9 @@ pub const SHARED_FRAME_ENCODING: u32 = 8;
 /// D115: hidden type and hidden logic keys take identity axes 7 and 8.
 /// A store declaring less receives the v0.99.0 rule (axis 6, prefixed name).
 pub const HIDDEN_FACET_ENCODING: u32 = 9;
+/// D116: a complement value (`!0`, `@int & !0`). A store declaring less
+/// has no form for one and refuses it by name.
+pub const COMPLEMENT_ENCODING: u32 = 10;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// First layout whose `refine --sign` signs the whole commit (D76).
@@ -624,6 +627,7 @@ impl ObjectStore {
         if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
             return crate::bn_serial::with_hidden_facets_as_local(|| self.put_value(value));
         }
+        self.refuse_complement(value)?;
         let durable = if self.encoding < 4 {
             value.for_legacy_cas_storage()
         } else {
@@ -653,6 +657,7 @@ impl ObjectStore {
         if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
             return crate::bn_serial::with_hidden_facets_as_local(|| self.put_root(root, standard));
         }
+        self.refuse_complement(&Value::Combo(root.clone()))?;
         if self.encoding < 4 {
             // O73 ② is about pre-sentinel stores, not "encoding < 4". The
             // read path already tells them apart with `has_standard`
@@ -929,6 +934,23 @@ impl ObjectStore {
 
     // O42 R-1: get_horizon_salt removed — clock salt is forbidden in blur CAID.
 
+    /// D116: below encoding 10 a complement has no form. Refused by name
+    /// before anything is written; the way out is the explicit migrate.
+    pub fn refuse_complement(&self, value: &Value) -> Result<()> {
+        if self.encoding >= COMPLEMENT_ENCODING {
+            return Ok(());
+        }
+        if let Some(c) = value.first_complement() {
+            anyhow::bail!(
+                "this store declares encoding={}; a complement (`{}`) has no form below \
+                 encoding={COMPLEMENT_ENCODING}. Run `oo migrate --grant migrate`",
+                self.encoding,
+                c.to_nlang(0)
+            );
+        }
+        Ok(())
+    }
+
     /// Epoch-1 addresses cannot tell some values apart (D106). A value whose
     /// frozen address already holds a different value is refused before it
     /// is written. The way out is the explicit migrate.
@@ -1198,6 +1220,10 @@ fn hydrate_systems_in_value(
                 hydrate_systems_in_value(step, standards, requested)?;
             }
             Ok(())
+        }
+        Value::Complement { within, without } => {
+            hydrate_systems_in_value(within, standards, requested)?;
+            hydrate_systems_in_value(without, standards, requested)
         }
         _ => Ok(()),
     }

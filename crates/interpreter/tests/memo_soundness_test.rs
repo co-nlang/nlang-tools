@@ -127,5 +127,8 @@ fn kind_of(v: &Value) -> &'static str {
         Value::Blur(_) => "Blur",
         Value::Ref(_) => "Ref",
         Value::Range { .. } => "Range",
+        // AMENDED 2026-10-22 for Q-100 (D116): a complement is a value kind.
+        #[allow(unreachable_patterns)]
+        _ => "Other",
     }
 }

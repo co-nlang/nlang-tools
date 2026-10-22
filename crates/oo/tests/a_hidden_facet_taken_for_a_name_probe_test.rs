@@ -217,7 +217,7 @@ fn r3_new_stores_declare_9_and_old_stores_keep_their_rule() {
     let mut bad = Vec::new();
     let w = Ws::new("r3-new");
     check(&mut bad, "new: commit", w.commit(P1), "");
-    check(&mut bad, "new: declares", w.decl(), "encoding=9");
+    check(&mut bad, "new: declares", w.decl(), "encoding=10"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10
     check(&mut bad, "new: root", w.root(), "21e6e90ff86296bc70ceb297610288322aa287b970f69a79ffa97879a6298621");
     check(&mut bad, "new: _.t.r", w.eval("_.t.r"), "3");
 
@@ -228,8 +228,8 @@ fn r3_new_stores_declare_9_and_old_stores_keep_their_rule() {
     check(&mut bad, "old: _.t.r", w.eval("_.t.r"), "3");
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     check(&mut bad, "migrate rc", rc.to_string(), "0");
-    check(&mut bad, "migrate names the lockout", o.contains("unopenable by oo v0.98.0 through v0.99.0").to_string(), "true");
-    check(&mut bad, "migrated declares", w.decl(), "encoding=9");
+    check(&mut bad, "migrate names the lockout", o.contains("unopenable by oo v0.98.0 through v0.100.0").to_string(), "true"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10
+    check(&mut bad, "migrated declares", w.decl(), "encoding=10"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10
     check(&mut bad, "after migrate: _.t.r", w.eval("_.t.r"), "3");
     let (_, rc) = w.oo(&["log"]);
     check(&mut bad, "after migrate: log", rc.to_string(), "0");

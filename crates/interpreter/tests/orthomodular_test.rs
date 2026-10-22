@@ -114,7 +114,9 @@ mod orthocomplement_order_anchors {
         let v = eval_expr("test: !#_|_");
         println!("!#_|_ = {:?}", v);
         println!("to_string_plain: {}", v.to_string_plain());
-        assert!(matches!(v, Value::Atom(AtomKind::TagEnd, _, _)));
+        // AMENDED 2026-10-22 for Q-100 (D116): `!` is taken in the universe; the
+        // anchor's complement is everything but the anchor, not `#_`.
+        assert_eq!(v.to_nlang(0), "!(#_|_)");
     }
 
     #[test]
@@ -124,7 +126,8 @@ mod orthocomplement_order_anchors {
         let v = eval_expr("test: !#_");
         println!("!#_ = {:?}", v);
         println!("to_string_plain: {}", v.to_string_plain());
-        assert!(matches!(v, Value::Atom(AtomKind::TagStart, _, _)));
+        // AMENDED 2026-10-22 for Q-100 (D116): `!` is taken in the universe.
+        assert_eq!(v.to_nlang(0), "!(#_)");
     }
 }
 
@@ -153,14 +156,16 @@ mod non_boolean_tags {
 
     #[test]
     fn non_boolean_tag_returns_conflict() {
+        // AMENDED 2026-10-22 for Q-100 (D116): a complement, not ⊥.
         let v = eval_expr("test: !#red");
-        assert!(matches!(v, Value::Bottom(ref d) if d.cause == BottomCause::Conflict));
+        assert_eq!(v.to_nlang(0), "!#red");
     }
 
     #[test]
     fn non_boolean_int_returns_conflict() {
+        // AMENDED 2026-10-22 for Q-100 (D116): a complement, not ⊥.
         let v = eval_expr("test: !5");
-        assert!(matches!(v, Value::Bottom(ref d) if d.cause == BottomCause::Conflict));
+        assert_eq!(v.to_nlang(0), "!5");
     }
 }
 
