@@ -257,7 +257,15 @@ fn guard_standalone_not_range_stays_bottom_not_silent() {
     // E3 scope cut: standalone `!(range)` has NO closed materialization and
     // NO residual value form under the fmt v2 freeze — it must stay ⊥
     // (message may improve; silence or a wrong concrete set is a violation).
-    assert_bottom("a: !(..0)");
+    // AMENDED 2026-10-22 for Q-100 (D116): `!(range)` is a complement value, written
+    // `!(…)` (no new surface form). Still no closed materialization: it
+    // must not become a concrete set or `_`.
+    let v = eval_one("a: !(..0)");
+    let s = v.to_nlang(0);
+    assert!(
+        s.starts_with("!(") && s.ends_with("..0)"),
+        "`!(..0)` must be the complement of the range, got {s}"
+    );
 }
 
 #[test]

@@ -415,8 +415,9 @@ fn p2_a_one_tuple_is_not_its_element() {
 #[test]
 fn c4_unary_and_operator_chains_keep_their_meaning() {
     let d = fresh("c4");
-    assert_eq!(oo(&d, &["eval", "!#true"]).trim(), "#false");
-    assert_eq!(oo(&d, &["eval", "!#false"]).trim(), "#true");
+    // AMENDED 2026-10-22 for Q-100 (D116): `!#true` is everything that is not `#true`.
+    assert_eq!(oo(&d, &["eval", "!#true"]).trim(), "!#true");
+    assert_eq!(oo(&d, &["eval", "!#false"]).trim(), "!#false");
     assert_eq!(oo(&d, &["eval", "!!#true"]).trim(), "#true");
     assert_eq!(oo(&d, &["eval", "1 + 1 + 1"]).trim(), "3");
 
@@ -434,12 +435,12 @@ fn c4_unary_and_operator_chains_keep_their_meaning() {
 #[test]
 fn p3_unary_keeps_its_semantics() {
     let d = fresh("p3");
-    assert_eq!(oo(&d, &["eval", "!#true"]).trim(), "#false");
+    // AMENDED 2026-10-22 for Q-100 (D116): `!` is taken in the universe. `!1` is a
+    // complement, and `@bool & !#true` is `#false`.
+    assert_eq!(oo(&d, &["eval", "!#true"]).trim(), "!#true");
+    assert_eq!(oo(&d, &["eval", "@bool & !#true"]).trim(), "#false");
     let bad = oo(&d, &["eval", "!1"]);
-    assert!(
-        bad.contains("#conflict"),
-        "`!1` stopped being a conflict:\n{bad}"
-    );
+    assert_eq!(bad.trim(), "!1", "`!1` is not its complement:\n{bad}");
 }
 
 // ════════════════════════════════════════════════════════════════════════

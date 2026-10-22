@@ -125,13 +125,13 @@ fn test_de_morgan_meet() {
         vec![],
     ));
     let not_a = oo.orthocomplement(a.clone(), &mut ctx);
-    match not_a {
-        Value::Union(bs) => assert!(bs.len() >= 2, "distinct complements kept: {:?}", bs),
-        other => panic!(
-            "!(open Combo) with two distinct field complements should be Union, got: {:?}",
-            other
-        ),
-    }
+    // AMENDED 2026-10-22 for Q-100 (D116): `!` of a combo is everything not in it,
+    // not the union of its fields' complements (that dropped the keys).
+    let s = not_a.to_nlang(0);
+    assert!(
+        !matches!(not_a, Value::Union(_)) && s.starts_with("!{") && s.contains("x: #true") && s.contains("y: #false"),
+        "!(open Combo) should be its complement, got: {s}"
+    );
 }
 
 #[test]
