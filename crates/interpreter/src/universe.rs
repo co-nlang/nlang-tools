@@ -1540,11 +1540,16 @@ impl Universe {
         if self.session_has_delta {
             let mut next = ComboVal::default();
             next.effect = self.session_delta.effect;
-            for (k, _) in self.session_delta.all_fields_iter() {
+            // Q-098: a working set that is a table keeps a data key as a
+            // branch (D100), not under the key. What this session wrote is
+            // still the member's; it is never dropped for not being found.
+            for (k, own) in self.session_delta.all_fields_iter() {
                 if let Some(v) = self.staged.get_field(&k).cloned() {
                     next.insert_field(&k, v);
                 } else if let Some(v) = self.staged.get_local_field(&k).cloned() {
                     next.local.insert(k, v);
+                } else {
+                    next.insert_field(&k, own);
                 }
             }
             // The local axis is a field axis too (REAL_03 §6).
