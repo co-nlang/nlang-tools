@@ -151,6 +151,10 @@ pub fn value_matches_stored_address(requested: &ContentHash, value: &Value) -> b
     if value_address_matches(requested, &value.content_hash()) {
         return true;
     }
+    let hidden = crate::bn_serial::with_hidden_facets_as_local(|| value.content_hash());
+    if value_address_matches(requested, &hidden) {
+        return true;
+    }
     let legacy = crate::bn_serial::with_legacy_identity(|| value.content_hash());
     value_address_matches(requested, &legacy)
 }
@@ -203,11 +207,14 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// — including every future N (`layout=10`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
 pub const STORE_LAYOUT_VERSION: u32 = 9;
-pub const OBJECT_ENCODING_VERSION: u32 = 8;
+pub const OBJECT_ENCODING_VERSION: u32 = 9;
 /// D112: the first encoding that carries a root's spread rows.
 pub const SPREAD_ROW_ENCODING: u32 = 7;
 /// D114: the first encoding whose documents write a closure frame once.
 pub const SHARED_FRAME_ENCODING: u32 = 8;
+/// D115: hidden type and hidden logic keys take identity axes 7 and 8.
+/// A store declaring less receives the v0.99.0 rule (axis 6, prefixed name).
+pub const HIDDEN_FACET_ENCODING: u32 = 9;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// First layout whose `refine --sign` signs the whole commit (D76).
@@ -614,6 +621,9 @@ impl ObjectStore {
                 self.put_value(&crate::dispatch::rekey_identity_names(value.clone()))
             });
         }
+        if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
+            return crate::bn_serial::with_hidden_facets_as_local(|| self.put_value(value));
+        }
         let durable = if self.encoding < 4 {
             value.for_legacy_cas_storage()
         } else {
@@ -639,6 +649,9 @@ impl ObjectStore {
                 };
                 self.put_root(&r, standard)
             });
+        }
+        if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
+            return crate::bn_serial::with_hidden_facets_as_local(|| self.put_root(root, standard));
         }
         if self.encoding < 4 {
             // O73 ② is about pre-sentinel stores, not "encoding < 4". The
@@ -786,6 +799,9 @@ impl ObjectStore {
     pub fn put_commit(&self, commit: &Commit) -> Result<ContentHash> {
         if self.encoding <= 5 && !crate::bn_serial::identity_is_legacy() {
             return crate::bn_serial::with_legacy_identity(|| self.put_commit(commit));
+        }
+        if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
+            return crate::bn_serial::with_hidden_facets_as_local(|| self.put_commit(commit));
         }
         let content;
         let hash;

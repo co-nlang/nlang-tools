@@ -656,6 +656,10 @@ fn quote_nlang_string(s: &str) -> String {
 /// `name` is the stored map key (no sigil). Non-plain names are quoted so
 /// the printed form parses back as the same coordinate (Q3).
 fn quote_nlang_field_key(prefix: &str, name: &str) -> String {
+    // D115: a hidden type or logic key is `~@a` / `~/a`, not a quoted name.
+    if prefix == "~" && hidden_facet_name(name) {
+        return format!("~{name}");
+    }
     if is_plain_ident(name) {
         format!("{prefix}{name}")
     } else if name.contains('"') || name.contains('\n') || name.contains('\r') {
@@ -663,6 +667,13 @@ fn quote_nlang_field_key(prefix: &str, name: &str) -> String {
     } else {
         format!("{prefix}\"{name}\"")
     }
+}
+
+/// `@a` or `/a` with a plain name: the local-axis name of `~@a` / `~/a`.
+pub(crate) fn hidden_facet_name(name: &str) -> bool {
+    name.strip_prefix('@')
+        .or_else(|| name.strip_prefix('/'))
+        .is_some_and(is_plain_ident)
 }
 
 /// G6: collapsed-observation projection (SYNTAX_06 §4 #6 value-context).
@@ -3916,7 +3927,8 @@ impl ComboVal {
     pub fn content_hash(&self) -> ContentHash {
         // Q-083 / D106. The memo is the current epoch only. A frozen
         // recompute must not read it or replace it.
-        let legacy = crate::bn_serial::identity_is_legacy();
+        let legacy = crate::bn_serial::identity_is_legacy()
+            || crate::bn_serial::hidden_facets_as_local();
         if !legacy {
             if let Ok(guard) = self.cache_id.read() {
                 if let Some(ref h) = *guard {
