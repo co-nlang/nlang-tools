@@ -723,7 +723,7 @@ fn r5_the_store_format_says_it_changed() {
         .expect("`.oo/objects.format` is missing — the encoding has no declaration");
     assert_eq!(
         encoding.trim(),
-        "encoding=8", // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7; AMENDED 2026-10-21 for Q-097 (D114): encoding 8
+        "encoding=9", // Q-083／D106 紀元; AMENDED 2026-10-19 for Q-093 (D112): encoding 7; AMENDED 2026-10-21 for Q-097 (D114): encoding 8; AMENDED 2026-10-22 for Q-099 (D115): encoding 9
         "the object encoding declaration reads `{}`. New objects have no \
          `span`, and an engine that opens this store without being told the \
          encoding moved will fail on a missing field instead of saying which \

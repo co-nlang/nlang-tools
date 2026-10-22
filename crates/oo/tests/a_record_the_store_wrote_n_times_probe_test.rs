@@ -215,7 +215,7 @@ fn r3_an_old_store_keeps_its_form_until_migrate() {
     let w = Ws::new("r3-new");
     check(&mut bad, "new store", w.commit("r: { y: 1, z: y }\n"), "");
     let decl = fs::read_to_string(w.ws.join(".oo").join("objects.format")).unwrap_or_default();
-    check(&mut bad, "new store declares", decl.trim().to_string(), "encoding=8");
+    check(&mut bad, "new store declares", decl.trim().to_string(), "encoding=9"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9
     let (_, shared) = bytes_under(&w, "", "__nlang_frame");
     check(&mut bad, "new store shares frames", shared.to_string(), "true");
 
@@ -230,9 +230,9 @@ fn r3_an_old_store_keeps_its_form_until_migrate() {
     check(&mut bad, "old store: _.r.z", w.eval("_.r.z"), "1");
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     check(&mut bad, "migrate rc", rc.to_string(), "0");
-    check(&mut bad, "migrate names the lockout", o.contains("v0.95.0 through v0.97.0").to_string(), "true");
+    check(&mut bad, "migrate names the lockout", o.contains("v0.95.0 through v0.99.0").to_string(), "true"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9
     let decl = fs::read_to_string(oo.join("objects.format")).unwrap_or_default();
-    check(&mut bad, "migrated declares", decl.trim().to_string(), "encoding=8");
+    check(&mut bad, "migrated declares", decl.trim().to_string(), "encoding=9"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9
     check(&mut bad, "after migrate: commit", w.commit("u: { y: 2, w: y }\n"), "");
     let (_, shared) = bytes_under(&w, "", "__nlang_frame");
     check(&mut bad, "after migrate shares frames", shared.to_string(), "true");
