@@ -290,6 +290,34 @@ fn r5_a_made_conflict_is_disjoint_when_choosing() {
     verdict(bad, cells.len());
 }
 
+/// r6 — Acceptance R-1. `<=` is `(A & B) = A` (SYNTAX_06 §2.1), and `=`
+/// does not read a ⊥'s cause, so neither does `<=`: a record whose field is
+/// ⊥ lies under any record that has a value at that field, and a union
+/// absorbs it. Choosing (r5) still treats the conflict as disjoint. The other
+/// half: a ⊥ field is not under a record that lacks it or adds a field.
+#[test]
+fn r6_the_order_agrees_with_the_meet() {
+    let mut bad = Vec::new();
+    let c = "({ x: 3 } & { x: 4 })";
+    let cells: Vec<(String, &str)> = vec![
+        (format!("{c} <= {{ x: 9 }}"), "#true"),
+        (format!("{{ x: 9 }} >= {c}"), "#true"),
+        ("{ a: 1 & 2 } <= { a: @int }".into(), "#true"),
+        (format!("({c} <= {{ x: 9 }}) = (({c} & {{ x: 9 }}) = {c})"), "#true"),
+        ("({ a: 1 & 2 } <= { a: 2 }) = (({ a: 1 & 2 } & { a: 2 }) = { a: 1 & 2 })".into(), "#true"),
+        ("{ a: 2 } | ({ a: 1 } & { a: 2 })".into(), "{ a: 2 }"),
+        ("({ a: 1, b: 2 } & { a: 2 }) | { a: 2, b: 2 }".into(), "{ a: 2 b: 2 }"),
+        ("{ a: 1 & 2 } <= { b: 1 }".into(), "#false"),
+        (format!("{c} <= ({c} & {{ y: 1 }})"), "#false"),
+        ("{ a: 1 } <= { a: 2 }".into(), "#false"),
+        ("{ a: 1 } | { a: 2 }".into(), "{ a: 1 } | { a: 2 }"),
+    ];
+    for (e, want) in &cells {
+        check(&mut bad, e, eval_here(e), want);
+    }
+    verdict(bad, cells.len());
+}
+
 /// g1 — The evolve boundary is as before (green today): with no table the
 /// second of two conflicting writes is refused by key, nested too; a write
 /// over a ⊥ already there is refused; a write elsewhere is not.
