@@ -165,6 +165,26 @@
 
 沒有。
 
+### 8.8 第一輪修補
+
+`subset_lte_inner` 的兩處比較（固化的 `<=` 家族、聯集吸收的原始比較）在比之前各取 `without_bottom_fibres()`，與 `=` 同一個判準。沒有把交會出的衝突在這裡當成不相交。探針、§8.7 以上、版本都沒有改。`eval.rs` 與 `q101-r1` 逐位元組相同。
+
+修完後（空目錄 `oo eval`）：`({ x: 3 } & { x: 4 }) <= { x: 9 }`、`{ x: 9 } >=` 同一式、`<` 都是 `#true`；`{ a: 1 & 2 } <= { a: 2 }` 是 `#true`（`(A & B) = A` 也是 `#true`）；`{ a: 2 } | ({ a: 1 } & { a: 2 })` 是 `{ a: 2 }`；`({ a: 1, b: 2 } & { a: 2 }) | { a: 2, b: 2 }` 是 `{ a: 2 b: 2 }`。`{ a: 1 & 2 } <= { b: 1 }` 是 `#false`；`({ x: 3 } & { x: 4 }) <=` 自己再交 `{ y: 1 }` 是 `#false`；`{ a: 1 } <= { a: 2 }` 是 `#false`；`{ a: 1 } | { a: 2 }` 仍是兩支。
+
+身分：`x: 0` `b74d7758…`、`1 + 1` 與 `1+1` `df91a8ad…`、`f` `258a1a08…`、`k` `420a0c9f…`、`m` `cf11d2ff…`、標準根 `c96c2937…`。新倉 `layout=9`、`encoding=10`。
+
+探針 8／8（單獨 9.76s；閘門一 10.32s），含 `r6_the_order_agrees_with_the_meet`。
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，計入的三輪退出碼都是 0。第一輪 2026-10-24T00:17:20+08:00，1363.36s。中間有一輪 00:40:03 起、931.39s、退出碼 101：`advert_persistence_probe_test` 的 `r5_the_rebuilt_index_matches_an_insertion_replay` 因 60 個節點沒有塞滿桶而自己停下（檔裡 60 筆都在；第一輪該支 19／19）。該輪不計。重跑的第二輪 00:57:21，920.80s；第三輪 01:12:41，919.32s。
+
+正規化 3675 行，sha256 `d87410f528461f1b6597a5009af8180016bc0a1d91adae7256597e25bf9145db`，三輪相同。`test result:` 294 行，加總 **2796** 通過、**0** 失敗。以 `test ` 開頭、以 ` ok` 結尾的行是 2795（仍是 `a_working_set_that_is_a_set` 那一行斷開）。原始日誌 sha 前綴 `78588df481119e8d`、`ed823256a09bc2c2`、`c178d585df755300`。`^error` 0，BrokenPipe 0，panicked 0。
+
+閘門一：本探針 8／8 10.32s；Q-100 8／8 5.07s、位元組 2／2 0.04s；Q-099 5／5 4.19s、位元組 2／2 0.00s；Q-098 5／5 9.25s；Q-097 7／7 10.82s；Q-095 3／3 24.68s；`nominal_ref` 15／15 0.56s；`a_table_that_runs_every_branch` 7／7 2.81s；`a_table_that_forgot_its_patterns_r1` 6／6 0.63s；`an_axis_the_address_forgot_bytes` 1／1 0.27s；`a_union_that_could_not_be_applied` 16／16 3.58s；`where_the_conflict_is` 9／9 1.15s；orthomodular 18／18 0.26s；oml 10／10 0.21s；`advert_persistence` 19／19 22.53s。
+
+這次編譯的 Linux `nlang-interpreter` lib 14 則警告（`cargo fix` 12）。三輪閘門沒有重編。Windows `cargo check` 4.61s，退出碼 0，`^error` 0，目標 lib 15 則（`cargo fix` 13）。都沒有修。conformance 183／183，空目錄 `/home/gali/tmp/q101r1/conf.iumb`，跑完仍空。父倉 `.oo/format` 前後都是 `32`。父倉 HEAD `7f7e388525bb3a9089576b613d7cab507e33ce90`。`oo` 11210032 位元組，mtime 2026-10-24 00:15:42 +0800，閘門與 Windows 沒有重連。不引用 `--version`。
+
+done。
+
 ## 9. 驗收（驗收方填）
 
 ### 9.1 第一輪驗收（2026-10-24）：**一項修補**

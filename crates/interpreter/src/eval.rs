@@ -804,10 +804,11 @@ impl Ouroboros {
                     if matches!(m, Value::Blur(_)) || matches!(a_s, Value::Blur(_)) {
                         return false;
                     }
-                    m == a_s
+                    // D117: `=` does not read a ⊥'s cause; neither does `<=`.
+                    m.without_bottom_fibres() == a_s.without_bottom_fibres()
                 } else {
                     // Raw-branch absorption: collapse only, no force.
-                    m.collapse() == a.collapse()
+                    m.collapse().without_bottom_fibres() == a.collapse().without_bottom_fibres()
                 }
             }
         }
