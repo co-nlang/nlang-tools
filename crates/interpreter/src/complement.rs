@@ -112,7 +112,7 @@ impl Ouroboros {
             }
             x => {
                 let meet = self.unify_internal(x.clone(), without.clone(), ctx);
-                if matches!(meet, Value::Bottom(_)) {
+                if crate::unify::conflict_made(&[&x, &without], &meet).is_some() {
                     x
                 } else if self.same_value(meet, x.clone(), ctx) {
                     Value::Bottom(Box::new(BottomDetail {
@@ -143,7 +143,7 @@ impl Ouroboros {
     /// `x` lies inside `y`: their meet is `x`.
     fn inside(&self, x: &Value, y: &Value, ctx: &mut EvalContext) -> bool {
         let meet = self.unify_internal(x.clone(), y.clone(), ctx);
-        !matches!(meet, Value::Bottom(_)) && self.same_value(meet, x.clone(), ctx)
+        crate::unify::conflict_made(&[x, y], &meet).is_none() && self.same_value(meet, x.clone(), ctx)
     }
 
     /// What two complements leave out, together: a member inside another

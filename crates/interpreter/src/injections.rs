@@ -246,6 +246,9 @@ pub fn fold(
         }
     }
     let mut acc = ComboVal::default();
+    // D117: the working set is the meet of its members in any order; whether
+    // it holds a conflict is judged on the whole, not on each step.
+    let mut members: Vec<Value> = Vec::new();
     for injection in injections {
         let mut c = injection.combo;
         for (coord, ids) in &absorbed {
@@ -254,6 +257,7 @@ pub fn fold(
                 c.local.shift_remove(coord.as_str());
             }
         }
+        members.push(Value::Combo(c.clone()));
         match engine.unify_universe(Value::Combo(acc), Value::Combo(c)) {
             Value::Combo(m) => acc = m,
             Value::Bottom(d) => return Err(*d),
@@ -264,6 +268,10 @@ pub fn fold(
                 });
             }
         }
+    }
+    let sides: Vec<&Value> = members.iter().collect();
+    if let Some(d) = crate::unify::conflict_made(&sides, &Value::Combo(acc.clone())) {
+        return Err(d);
     }
     Ok(acc)
 }

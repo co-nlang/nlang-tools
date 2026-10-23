@@ -476,6 +476,74 @@ fn normalize_table_rows(mut c: ComboVal) -> ComboVal {
 }
 
 impl Ouroboros {
+    /// D117: two bodies of one branch. Value bodies meet now, as two values
+    /// of one plain field do (`{ x: 3 } & { x: 4 }` is `x: ⊥`): meeting a
+    /// value is not evaluating it. A deferred body stays in the set until
+    /// dispatch selects the branch. So any grouping and order of the same
+    /// writes is one set of bytes.
+    pub(crate) fn join_branches(&self, a: ComboVal, b: ComboVal, ctx: &mut EvalContext) -> Value {
+        self.meet_value_bodies(join_rule_cocoons(a, b), ctx)
+    }
+
+    fn meet_value_bodies(&self, v: Value, ctx: &mut EvalContext) -> Value {
+        let Value::Combo(c) = &v else {
+            return v;
+        };
+        let (Some(pattern), Some(Value::Combo(bs))) = (c.get_field("%pattern"), c.get_field("%bodies"))
+        else {
+            return v;
+        };
+        let mut values: Vec<Value> = Vec::new();
+        let mut deferred: Vec<ComboVal> = Vec::new();
+        for (_, body) in bs.data.iter() {
+            match body {
+                Value::Combo(rc)
+                    if rc.get_field("%code").is_none()
+                        && rc.get_field("%val").is_some_and(|b| !is_deferred_body(b)) =>
+                {
+                    values.push(rc.get_field("%val").cloned().unwrap_or(Value::Top));
+                }
+                Value::Combo(rc) => deferred.push(rc.clone()),
+                _ => return v,
+            }
+        }
+        if values.len() < 2 {
+            return v;
+        }
+        let mut met = values.remove(0);
+        for x in values {
+            met = self.unify_internal(met, x, ctx);
+        }
+        if let Value::Bottom(d) = met {
+            met = Value::Bottom(Box::new(crate::unify::order_free(*d)));
+        }
+        let Value::Combo(mut acc) = branch_cocoon(pattern.clone(), met) else {
+            unreachable!()
+        };
+        for d in deferred {
+            match join_rule_cocoons(acc, d) {
+                Value::Combo(j) => acc = j,
+                _ => unreachable!(),
+            }
+        }
+        Value::Combo(acc)
+    }
+
+    /// `normalize_table`, then the value bodies of each branch meet (D117).
+    pub(crate) fn normalize_table(&self, c: ComboVal, ctx: &mut EvalContext) -> ComboVal {
+        let mut c = normalize_table(c);
+        if let Some(Value::Combo(rules)) = c.get_field("%rules").cloned() {
+            if rules_have_pattern(&rules) {
+                let mut out = rules.clone();
+                for (k, v) in rules.data.iter() {
+                    out.data.insert(k.clone(), self.meet_value_bodies(v.clone(), ctx));
+                }
+                c.insert_field("%rules", Value::Combo(out));
+            }
+        }
+        c
+    }
+
     /// Data keys that arrived beside an already-built `%rules` are
     /// constraints too. A key whose pattern already names a branch joins
     /// that branch's body set. Nothing is forced here: dispatch forces a
@@ -485,7 +553,7 @@ impl Ouroboros {
         rules: &ComboVal,
         parent: &ComboVal,
         _arg: &Value,
-        _ctx: &mut EvalContext,
+        ctx: &mut EvalContext,
     ) -> ComboVal {
         let mut out = rules.clone();
         for (k, v) in &parent.data {
@@ -494,7 +562,7 @@ impl Ouroboros {
             if let Some(existing) = out.data.get(&name).cloned() {
                 let arriving = branch_cocoon(pattern.clone(), v.clone());
                 if let (Value::Combo(e), Value::Combo(r)) = (existing, arriving) {
-                    out.data.insert(name, join_rule_cocoons(e, r));
+                    out.data.insert(name, self.join_branches(e, r, ctx));
                 }
             } else {
                 out.data.insert(name, branch_cocoon(pattern, v.clone()));
@@ -526,7 +594,9 @@ impl Ouroboros {
             };
             let unified = self.unify_internal(arg.clone(), pattern_value.clone(), ctx);
 
-            if !matches!(unified, Value::Bottom(_)) {
+            // D117: an argument whose meet with the pattern made a conflict
+            // does not match, though the conflict stays in its field.
+            if crate::unify::conflict_made(&[arg, &pattern_value], &unified).is_none() {
                 matching_branches.push((
                     pattern_key.clone(),
                     pattern_value,

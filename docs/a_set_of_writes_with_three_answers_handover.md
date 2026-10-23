@@ -78,16 +78,91 @@
 
 ### 8.1 射程逐項對照
 
+七個引擎檔與 `q101-ref 3a37879`（引擎本體同 `51549fd`）逐位元組相同。`oo` 仍是 `0.101.0`，interpreter 仍是 `0.2.2`。新倉 `layout=9`、`encoding=10`。
+
+*   **衝突留在欄位** `unify_combo` 的 `merge_axis`（`unify.rs`）：開放記錄、兩邊都有值、交會出 ⊥ 時，該欄位寫入去掉成因的 ⊥（`order_free`），其他欄位照收。Cocoon 或 `#strict` 仍把整個記錄變成 ⊥。`{{ a: 1 }} & {{ a: 2 }}` 仍是 ⊥，訊息「1 vs 2」。
+*   **怎樣才算衝突** `conflict_made`（`unify.rs`）：⊥ 葉、該座標至少兩邊都有值、而且不在 `%rules` 裡。整個交會是 ⊥ 時點名根。多個座標取路徑序最小的那一個。成因不入位址。
+*   **值本體當下交會** `join_branches`／`meet_value_bodies`（`dispatch.rs`）。`is_deferred_body` 為假的本體交會成一個；延後的本體留在以位址為鍵的集合。字面（`install_dispatch_table`、`normalize_table`）、`&`（規則繭與交會後的 `normalize_table`）、展開、`rules_with_parent_data` 都走這裡。`canonical_bodies` 沒有改：提交前值本體已經是一個，延後的本體仍是集合。
+*   **挑選** 聯集逐支（`do_unify`）、`|>` 進聯集（`pipe_apply`）、分派（`apply` 的模式交會）、補的 `inside`／成員判定：交會造出的衝突當成不相交。`=` 比 `without_bottom_fibres`（`eval.rs`），不看成因。
+*   **工作集** `injections::fold` 先交會全部成員，再對整體叫 `conflict_made`。演化各條（欄位、`~%Config`、已提交座標、模式鍵、展開、配方）把「交會整個是 ⊥」改成 `meet_clash`／`conflict_made`。`--pin` 仍是覆蓋（`replace_merge`），沒有改。
+
+*   **M1** `({ x: 3 } & { x: 4 }).x` 是 ⊥ `#conflict`；`({ a: 1, b: 2 } & { a: 2 }).b` 是 `2`；`({ a: 1 } & { a: 2, b: 2 }).b` 是 `2`；`({ a: { b: 1, c: 5 } } & { a: { b: 2 } }).a.c` 是 `5`；巢狀 `.a.b` 是 ⊥；`(({ x: 3 } & { x: 4 }) & { y: 1 }).y` 是 `1`。
+*   **M2** 五種分組的 `t: { @{ @int }: 0, x: 3, x: 4 }` 都是根 `fce318099e5621f92945b3d13c9009fd344244f3d85e95cd9bbca738bd7d58a1`。沒有表時左右分組與字面同一個根。`@{ "b" }` 與資料鍵 `b` 兩個方向同一個根。
+*   **M3** `@{ @int }: 0`、`x: 3`、`x: 4` 四種先後（含一檔）都是根 `81a42745d99c7d4c03a51f9027771c0a0f25077c94b70c8159587bde0daa0ad3`，`_.x` 是 ⊥，`(_.) 5` 是 `0`。先交 `t: { @{ @int }: 0, x: 3 }` 再 `t: { x: 4 }` 是上面那個巢狀根，`_.t 5` 是 `0`，`_.t.x` 是 ⊥。
+*   **M4** 互不相見的兩筆：有表時八次都收，根都是 `81a42745…`；沒有表時八次都拒，點名 `#conflict at x`。v0.101.0 有表那格拒，訊息也是 `#conflict at x`。
+*   **M5** `({ a: 1 } | { a: 2 }) & { a: 1, b: 2 }` 是 `{ a: 1 b: 2 }`；`{ a: 1 } |> ({ a: 2 } | { c: 3 })` 是 `{ a: 1 c: 3 }`；年齡表對 `{ age: 15 }` 是 `"minor"`；`{ a: #false } & !{ a: #true }` 是 `{ a: #false }`；`({ x: 3 } & { x: 4 }) = ({ x: 4 } & { x: 3 })` 是 `#true`；`{ x: 1 & 2 } = ({ x: 3 } & { x: 4 })` 是 `#true`（v0.101.0 是 `#false`）。
+*   **另一半** 沒有表時第二筆拒，點名 `x`、`t.x`、`b`、`b.x`；一檔表在最後也拒，點名 `x`，沒有留下宇宙。寫在別處照收。g2 五個根不動：`x: 0` `b74d7758…`、`t: { @{ @int }: 0, x: 3 }` `5d0e2999…`、`t: { a: 1 } & { b: 2 }` `ee2c382f…`、`f: (x -> 1) & (x -> 2)` `70fe0048…`、`b: 1 & 2` `fa347014…`。Cocoon 仍整個 ⊥。兩個箭頭施用仍是 ⊥。
+*   **身分** `x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`；標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。
+*   **會動的根** `t: { @{ 1.. }: (x -> x), @{ 1.. }: (x -> 2) }` 由 `add730d54945ff3e75c0bf750c68e0a54ada27f793b3317458751f7c0c471ccb` 到 `b6a66d231de12c785d5994d95b9c6f6e7f6edbc2b2341b4e73c38cb43feb6597`，`_.t 5` 兩邊都是 ⊥「2 vs 5」。同一分支兩個值本體 `@{ "b" }: 2` 再 `b: 3` 由 `b80f5fb08691d64667263b37687392cbafc6c313e3a02360bed1124a4e7d848e` 到 `39ea2364ad6b6851bd6670294b95cb1fe585bd89dbe9db707a78367c0815b978`。開放記錄 `t: { x: 3 } & { x: 4 }` 由 `13d8fecb…`（整個 ⊥）到 `31c2ac9b1a737431d7ef5027bb2cf786c1cf0037f11f9406bac96446771329a5`。延後本體 `t: { @{ @int }: $ + 1, @{ @int }: $ * 2 }` 兩邊都是 `858387adc29f894d3d854c24713b2356ae7da6502a61e217b6625258fdb20b16`。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。工單舉的 `{ name: "Bob", age: 15 } & @Adult` 在標準根沒有變成 `{ age: ⊥, name: "Bob" }`：`@Adult` 是具名型別繭，兩邊都印 `{ age: 15 name: "Bob" }`。欄位上兩個型別不合的值，實測是 `{ a: 1 } & { a: "s" }`（見 8.4 Q3）。
+
 ### 8.4 工單指名要你回答的問題
+
+舊引擎是 `/home/gali/nlang-baselines/v0.101.0-verify/target/release/oo`。
+
+**Q1** 以交會結果判衝突的地方。
+
+| 邊界 | 改成 | 一格 |
+|---|---|---|
+| 演化欄位，交會進工作集（含 `~%Config`） | 交會之後 `conflict_made`，不再以「整個是 ⊥」為準 | `x: 3` 再 `x: 4`：兩邊都是 `e0 e1`，`#conflict at x`，提交後根 `577305451101d1416bef88bd0be0f0023b173313e9628ae964221c5afb404089`，`_.x` 是 `3`。`~%Config.fuel: 40` 再 `10`：兩邊都拒，`#conflict at ~%Config.fuel`，暫存仍是 `40` |
+| 已提交座標、模式鍵對根 | `meet_clash`，路徑補回座標 | `t: { x: 3 }` 再 `t: { x: 4 }`：兩邊 `e0 e1`，`#conflict at t.x`，根留 `add8ca916885dbb6a7d235120f99714698f04f527d3e38bd2e96ded9a9272bb9` |
+| 展開：重攤、對根、對暫存 | 兩邊都有值而且 `conflict_made` 才拒 | `...{ x: 3, y: 1 }` 再 `...{ x: 4 }`：兩邊第二筆拒，`#conflict at x`，根 `58658e4332a1081146bde91eb5d54651708dc78e3121ad962358bcf00671de55`，`_.x` 是 `3`，`_.y` 是 `1` |
+| 配方 | 同上，不再把整個 ⊥ 當成衝突 | `a: { x: 3 }`、`b: a` 再 `b: { x: 4 }`：兩邊 `e0 e1`，`#conflict at b.x`，根 `bb94c4feaa2f4ae9167055138edd27c9d652960ee94f8b061de6f860cd6fdb18` |
+| 提交／`fold` | 成員先全部交會，再對整體判一次 | 互不相見、沒有表：兩邊都拒，`#conflict at x`。有表：v0.101.0 拒；本引擎收，根 `81a42745…`，回報 `#conflict at %rules.{bbbc4765e54ec48139429658b79705e6ede9e68167e30a4b1d067d2bbf40adc6}.%val` |
+| `--pin` | 沒有改，仍覆蓋 | 先提交 `x: 3`、`y: 1`，再 `--pin --grant pin` `x: 4`：兩邊 `_.x` 是 `4`、`_.y` 是 `1`。同一輪再寫衝突的 `x`：兩邊演化拒 `#conflict at x`，pin 的提交仍成功 |
+| 觀測／`status` | 沒有另加判定；交會留下 Combo 就印得出來 | 暫存 `t: { x: 3 } & { x: 4 }`：v0.101.0 印 `t: ⊥`（208 bits）；本引擎印 `t: { x: ⊥ }`（280 bits），沒有「3 vs 4」 |
+| `refine` | 沒有改，仍比 `meet(new, old)` 的位址是否等於 new；倉裡沒有那兩個值就跳過 | 兩個不在倉裡的值，兩邊都寫下 refine 提交，`Refine authority: unverified` |
+| 對等點 | 沒有以交會拒寫入的邊界；OODP 的 conflict 是協定狀態 | 沒有改 |
+| 一檔、表在最後 | 演化時就判，與先前相同 | 兩邊退出碼 1，`#conflict at x`，沒有宇宙 |
+
+**Q2** 兩個本體併進同一分支。值本體當下交會，延後的本體留到選中。
+
+| 入口 | 值本體 | 延後的本體 |
+|---|---|---|
+| 字面 | `{ @{ 1.. }: 1, @{ 1.. }: 2 } 5`：v0.101.0 ⊥「1 vs 2」；本引擎 ⊥，沒有那句 | `{ @{ @int }: $ + 1, @{ @int }: $ * 2 } 5`：兩邊都是 ⊥「10 vs 6」 |
+| `&` | `({ @{ 1.. }: 1 } & { @{ 1.. }: 2 }) 5`：同上，舊的有「1 vs 2」，新的沒有 | 同上，兩邊都印「10 vs 6」 |
+| `|>` | `{ @{ 1.. }: 1 } |> { @{ 1.. }: 2 }` 兩邊都是 `#no_matching_branch`（右表拿左表當引數，不是兩個本體交會）。`{ a: 1 } |> { a: 2, b: 3 }`：v0.101.0 整個 ⊥「1 vs 2」；本引擎 `{ a: ⊥, b: 3 }` | `5 |> ({ @{ @int }: (x -> $ + 1) } |> { @{ @int }: (x -> $ * 2) })` 兩邊都是 `#no_matching_branch` |
+| 展開 | `{ ...{ @{ 1.. }: 1 }, ...{ @{ 1.. }: 2 } } 5`：舊的 ⊥「1 vs 2」，新的 ⊥ | 延後的展開施用，兩邊都是 ⊥「10 vs 6」 |
+| `rules_with_parent_data` | `{ @{ "b" }: 2, b: 3 } "b"`：舊的 ⊥「3 vs 2」，新的 ⊥ | `{ @{ "k" }: $ + 1, k: $ * 2 } "k"`：兩邊都是 ⊥ |
+| 提交前 `canonical_bodies` | `@{ "b" }: 2` 與 `b: 3` 一檔提交：根由 `b80f5fb0…` 到 `39ea2364…`，回報那條 `%rules.{d53dd013…}.%val` | 延後本體的根兩邊都是 `858387ad…`，`canonical_bodies` 沒有把它們交會掉 |
+
+**Q3** 開放記錄交會出欄位衝突之後。v0.101.0 在前，本引擎在後。
+
+| 讀法 | 前 | 後 |
+|---|---|---|
+| `=` | `{ x: 1 & 2 } = ({ x: 3 } & { x: 4 })` 是 `#false` | `#true` |
+| `<=` | `{ a: 1 & 2 } <= _` 是 `#true`；`{ a: 1 & 2 } <= { b: 1 }` 是 `#false` | 同兩格，沒有改 |
+| 分派 | `{ @{ { a: 1 } }: "yes", _: "no" } { a: 2, b: 9 }` 是 `"no"` | `"no"` |
+| 型別 | `{ a: 1 } & { a: "s" }` 整個 ⊥「1 vs "s"」 | `{ a: ⊥ }` |
+| 展開 | `{ ...({ x: 3 } & { x: 4 }), y: 1 }` 整個 ⊥「3 vs 4」 | `{ x: ⊥, y: 1 }` |
+| `status` | 暫存印 `t: ⊥` | 暫存印 `t: { x: ⊥ }` |
+| 提交回報的座標 | `t: { x: 3 } & { x: 4 }` 報 `#conflict at t`，根 `13d8fecb…`，讀 `_.t` 是 ⊥。`t: { a: 1, b: 2 } & { a: 2 }` 也報 `t`，`_.t.b` 是 ⊥ | 前者報 `#conflict at t.x`，根 `31c2ac9b…`，`_.t` 是 `{ x: ⊥ }`，`_.t.y` 是 `_`。後者報 `#conflict at t.a`，根 `97197adecbc83536b0a979d47034fd64d3a15d855cece4b3892b3a22ca5ffcd7`，`_.t.b` 是 `2` |
+
+`{ ~@a: @int } & { ~@a: @str }`：v0.101.0 整個 ⊥「"int" vs "str"」；本引擎印 `{}`（衝突在隱藏欄位，外部顯示剝掉）。`x: 1 & 2` 的提交兩邊都報 `#conflict at x`，根都是 `e2c2b27834fac84d0a8a0ae2cdf68058c6a60994575ba051cc2ea76b213a8555`。表分支裡的 ⊥ 仍印成 `%rules.{摘要}.%val`，這次沒有改那個印法。
 
 ### 8.5 探針
 
+`a_set_of_writes_with_three_answers_probe_test` 7／7（單獨 8.99s；閘門一 8.75s）。探針檔與預先修訂的五支沒有改，`rustfmt` 沒有掃它們。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，都是退出碼 0。
+
+*   閘門一 2026-10-23T09:02:48+08:00，1334.80s；閘門二 09:25:03，937.76s；閘門三 09:40:41，946.30s。
+*   正規化 3674 行，sha256 `4871b5543c43f7b1909526cbf95f30ac13040518b743e83d152ee3153462c4fc`，三輪相同。`test result:` 294 行，加總 **2795** 通過、**0** 失敗。以 `test ` 開頭、以 ` ok` 結尾的行是 2794（`a_working_set_that_is_a_set` 的衝突訊息斷在測試名那一行）。原始日誌 sha 前綴 `25535862249e6607`、`c45cdd8412ab8397`、`804d8355dc08474d`，不是逐位元組相同。`^error` 0，BrokenPipe 0，panicked 0。
+*   閘門一：本探針 7／7 8.75s；Q-100 8／8 5.07s、位元組 2／2 0.05s；Q-099 5／5 4.09s、位元組 2／2 0.00s；Q-098 `a_write_the_table_did_not_keep` 5／5 8.83s；Q-097 `a_record_the_store_wrote_n_times` 7／7 10.20s；Q-095 `a_spread_that_landed_on_a_reading` 3／3 24.29s；`nominal_ref` 15／15 0.51s；`a_table_that_runs_every_branch` 7／7 2.83s；`a_table_that_forgot_its_patterns_r1` 6／6 0.62s；`an_axis_the_address_forgot_bytes` 1／1 0.27s；`a_union_that_could_not_be_applied` 16／16 4.10s；`where_the_conflict_is` 9／9 1.06s；orthomodular 18／18 0.25s；oml 10／10 0.19s。
+*   Linux `nlang-interpreter` lib 14 則警告（`cargo fix` 12）。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 4.82s，退出碼 0，`^error` 0，目標 lib 15 則（`cargo fix` 13）。都沒有修。
+*   conformance 183／183，空目錄 `/home/gali/tmp/q101/conf.iumb`，跑完仍空。父倉 `.oo/format` 前後都是 `32`。父倉 HEAD `7f7e388525bb3a9089576b613d7cab507e33ce90`。`oo` 11209872 位元組，mtime 2026-10-23 08:58:02 +0800，閘門與 Windows 沒有重連。那次編譯時工作樹是髒的，這裡不引用 `--version`。
+
 ### 8.7 你認為需要改規格之處
+
+沒有。
 
 ## 9. 驗收（驗收方填）
