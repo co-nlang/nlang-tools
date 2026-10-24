@@ -185,6 +185,26 @@
 
 done。
 
+### 8.9 第二輪修補
+
+`removed_union` 用的 `inside` 是序：交會等於自己即在裡面，不再問 `conflict_made`。`same_value` 在比較前各取 `without_bottom_fibres()`，與 `=` 同一個判準。`meet_complement` 對單一值的那一臂仍先問 `conflict_made`。探針、§8.8 以上、版本都沒有改。
+
+修完後（空目錄 `oo eval`）：`!{ a: 2 } & !({ a: 1 } & { a: 2 })` 是 `!{ a: 2 }`；與 `!({ a: 2 } | ({ a: 1 } & { a: 2 }))` 的 `=` 是 `#true`；`!({ a: 1, b: 2 } & { a: 2 }) & !{ a: 2, b: 2 }` 是 `!{ a: 2 b: 2 }`。`!{ a: 2 } & !{ a: 3 }` 仍是 `!({ a: 2 } | { a: 3 })`。`!({ a: 1 } & { a: 2 }) & !{ b: 1 }` 兩支都留。成員判定：`({ a: 1 } & { a: 2 }) & !{ a: 2 }` 仍是 `{ a: ⊥ }`，`{ a: #false } & !{ a: #true }` 仍是 `{ a: #false }`，`{ a: 3 }` 交上面那個補仍是 `{ a: 3 }`。
+
+身分：`x: 0` `b74d7758…`、`1 + 1` 與 `1+1` `df91a8ad…`、`f` `258a1a08…`、`k` `420a0c9f…`、`m` `cf11d2ff…`、標準根 `c96c2937…`。新倉 `layout=9`、`encoding=10`。
+
+探針 9／9（單獨 9.56s；閘門一 30.29s），含 `r7_a_complement_drops_by_the_same_order`；r5、r6 照綠。
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，退出碼都是 0。第一輪 2026-10-24T11:50:19+08:00，1484.11s；第二輪 12:15:03，960.47s；第三輪 12:31:03，915.71s。
+
+正規化 3676 行，sha256 `dd917e79cd933676aa0d31941e53fd2dad49f55a74cf474f886c25bb4172de7a`，三輪相同。`test result:` 294 行，加總 **2797** 通過、**0** 失敗。以 `test ` 開頭、以 ` ok` 結尾的行是 2796（仍是 `a_working_set_that_is_a_set` 那一行斷開）。原始日誌 sha 前綴 `eb59a64ac6dc4925`、`529a6ee42964c3f2`、`82b4ac78e7325885`。`^error` 0，BrokenPipe 0，panicked 0。
+
+閘門一：本探針 9／9 30.29s；Q-100 8／8 5.27s、位元組 2／2 0.04s；Q-099 5／5 4.12s、位元組 2／2 0.00s；Q-098 5／5 8.74s；Q-097 7／7 11.59s；Q-095 3／3 25.51s；`nominal_ref` 15／15 0.50s；`a_table_that_runs_every_branch` 7／7 2.84s；`a_table_that_forgot_its_patterns_r1` 6／6 1.03s；`an_axis_the_address_forgot_bytes` 1／1 0.27s；`a_union_that_could_not_be_applied` 16／16 5.83s；`where_the_conflict_is` 9／9 1.10s；orthomodular 18／18 0.26s；oml 10／10 0.19s；`advert_persistence` 19／19 21.23s。
+
+這次編譯的 Linux `nlang-interpreter` lib 14 則警告（`cargo fix` 12）。三輪閘門沒有重編。Windows `cargo check` 4.58s，退出碼 0，`^error` 0，目標 lib 15 則（`cargo fix` 13）。都沒有修。conformance 183／183，空目錄 `/home/gali/tmp/q101r2/conf.iumb`，跑完仍空。父倉 `.oo/format` 前後都是 `32`。父倉 HEAD `7f7e388525bb3a9089576b613d7cab507e33ce90`。`oo` 11209352 位元組，mtime 2026-10-24 11:49:35 +0800，閘門與 Windows 沒有重連。不引用 `--version`。
+
+done。
+
 ## 9. 驗收（驗收方填）
 
 ### 9.1 第一輪驗收（2026-10-24）：**一項修補**

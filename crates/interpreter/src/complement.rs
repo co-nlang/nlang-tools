@@ -135,15 +135,17 @@ impl Ouroboros {
     }
 
     /// `a` and `b` are one value once forced (a literal combo's fields are
-    /// thunks until a meet forces them).
+    /// thunks until a meet forces them). A ⊥'s cause is not the value (D117).
     fn same_value(&self, a: Value, b: Value, ctx: &mut EvalContext) -> bool {
-        self.force_recursive(a, ctx) == self.force_recursive(b, ctx)
+        self.force_recursive(a, ctx).without_bottom_fibres()
+            == self.force_recursive(b, ctx).without_bottom_fibres()
     }
 
-    /// `x` lies inside `y`: their meet is `x`.
+    /// `x` lies inside `y`: their meet is `x`. This is the order, not the
+    /// choice that treats a conflict the meet made as disjoint.
     fn inside(&self, x: &Value, y: &Value, ctx: &mut EvalContext) -> bool {
         let meet = self.unify_internal(x.clone(), y.clone(), ctx);
-        crate::unify::conflict_made(&[x, y], &meet).is_none() && self.same_value(meet, x.clone(), ctx)
+        self.same_value(meet, x.clone(), ctx)
     }
 
     /// What two complements leave out, together: a member inside another
