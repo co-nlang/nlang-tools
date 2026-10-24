@@ -803,12 +803,25 @@ pub fn project_value_context(v: Value) -> Value {
 /// frame (any hop). Twin-literal / `%id` tripwires stay green when public
 /// spelling matches (equal pre-inject frames).
 pub fn seal_defining_scope(c: &mut ComboVal) {
+    // D118: the frame is a view of this written node.
+    if c.node_id == 0 {
+        c.node_id = fresh_node_id();
+    }
     // One deep clone of this level's structure, then Arc-shared into every
     // field thunk (D1). Pre-D1 each push cloned the whole frame again.
     let frame = std::sync::Arc::new(c.clone());
     fn inject(v: &mut Value, frame: &std::sync::Arc<ComboVal>) {
         match v {
             Value::Thunk { closure, .. } => {
+                // D118: the sides of a pending meet are written here too.
+                for f in closure.iter_mut() {
+                    if is_meet_frame(f) {
+                        let m = std::sync::Arc::make_mut(f);
+                        for (_, side) in m.local.iter_mut() {
+                            inject(side, frame);
+                        }
+                    }
+                }
                 closure.push(std::sync::Arc::clone(frame));
             }
             Value::Combo(inner) => {
@@ -1166,6 +1179,127 @@ pub struct ComboVal {
     pub legacy_fields: IndexMap<String, Value>,
     #[serde(skip, default)]
     pub legacy_local: IndexMap<String, Value>,
+    /// D118: which written node this is (0: none), and the nodes met into
+    /// it. Evaluation machinery only — not identity, not equality.
+    #[serde(skip, default)]
+    pub node_id: u64,
+    #[serde(skip, default)]
+    pub merged_from: Vec<u64>,
+}
+
+static NEXT_NODE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub fn fresh_node_id() -> u64 {
+    NEXT_NODE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+const MEET_L: &str = "__nlang_meet_l";
+const MEET_R: &str = "__nlang_meet_r";
+
+/// D118: one field written on both sides of a meet, waiting for the met
+/// node: `~l & ~r` over a frame holding the two sides. Forced through the
+/// met node, each side resolves there first (`rebind_to_met`).
+/// D118: what is written down keeps resolving in the met node. The note
+/// of which nodes were met is not stored, so before a value is written its
+/// met nodes' fields take the met node as their frame.
+pub fn bake_met(v: Value) -> Value {
+    match v {
+        Value::Combo(c) => Value::Combo(bake_met_combo(c)),
+        Value::Union(items) => Value::Union(items.into_iter().map(bake_met).collect()),
+        other => other,
+    }
+}
+
+pub fn bake_met_combo(mut c: ComboVal) -> ComboVal {
+    let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
+    for axis in [&mut c.data, &mut c.local, &mut c.rules, &mut c.types, &mut c.meta, &mut c.system] {
+        for (_, fv) in axis.iter_mut() {
+            let v = std::mem::replace(fv, Value::Top);
+            let v = match &met {
+                Some(m) => rebind_to_met(m, v),
+                None => v,
+            };
+            *fv = bake_met(v);
+        }
+    }
+    c
+}
+
+pub fn pending_meet(l: Value, r: Value) -> Value {
+    let effect = l.effect().union(r.effect());
+    let mut frame = ComboVal::default();
+    frame.local.insert(MEET_L.to_string(), l);
+    frame.local.insert(MEET_R.to_string(), r);
+    let side = |n: &str| Expr {
+        kind: nlang_parser::ast::ExprKind::Path(Path {
+            anchor: PathAnchor::Bare,
+            segments: vec![format!("~{n}")],
+            span: Span::unknown(),
+        }),
+        span: Span::unknown(),
+    };
+    Value::Thunk {
+        expr: Box::new(Expr {
+            kind: nlang_parser::ast::ExprKind::Meet(Box::new(side(MEET_L)), Box::new(side(MEET_R))),
+            span: Span::unknown(),
+        }),
+        closure: vec![std::sync::Arc::new(frame)],
+        context: None,
+        effect,
+    }
+}
+
+pub fn is_meet_frame(f: &ComboVal) -> bool {
+    f.local.contains_key(MEET_L) && f.local.contains_key(MEET_R)
+}
+
+/// D118: a field of a met node resolves in the met node. A frame in the
+/// field's closure that is one of the nodes met into `c` reads as `c`, with
+/// only the private keys that frame's own literal declared, at their met
+/// values (Q2). Nothing stored changes.
+pub fn rebind_to_met(c: &ComboVal, v: Value) -> Value {
+    if c.merged_from.is_empty() {
+        return v;
+    }
+    // Only a field that reads a name of the met node needs it.
+    if !crate::unify::reads_name_in(&v, c) {
+        return v;
+    }
+    match v {
+        Value::Thunk { expr, mut closure, context, effect } => {
+            let mut views: Vec<(Vec<String>, std::sync::Arc<ComboVal>)> = Vec::new();
+            for f in closure.iter_mut() {
+                if is_meet_frame(f) {
+                    let mut m = (**f).clone();
+                    for (_, side) in m.local.iter_mut() {
+                        *side = rebind_to_met(c, std::mem::replace(side, Value::Top));
+                    }
+                    *f = std::sync::Arc::new(m);
+                    continue;
+                }
+                if f.node_id == 0 || !c.merged_from.contains(&f.node_id) {
+                    continue;
+                }
+                let keys: Vec<String> = f.local.keys().cloned().collect();
+                let view = match views.iter().find(|(k, _)| *k == keys) {
+                    Some((_, view)) => std::sync::Arc::clone(view),
+                    None => {
+                        let mut view = c.clone();
+                        view.local = keys
+                            .iter()
+                            .filter_map(|k| c.local.get(k).map(|v| (k.clone(), v.clone())))
+                            .collect();
+                        let view = std::sync::Arc::new(view);
+                        views.push((keys, std::sync::Arc::clone(&view)));
+                        view
+                    }
+                };
+                *f = view;
+            }
+            Value::Thunk { expr, closure, context, effect }
+        }
+        other => other,
+    }
 }
 
 /// Clone must **not** share `cache_id` or `cycle_frame_id`. content_hash /
@@ -1192,6 +1326,8 @@ impl Clone for ComboVal {
             cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),
             legacy_local: self.legacy_local.clone(),
+            node_id: self.node_id,
+            merged_from: self.merged_from.clone(),
         }
     }
 }
@@ -1215,6 +1351,8 @@ impl Default for ComboVal {
             cycle_frame_id: default_cache_id(),
             legacy_fields: IndexMap::new(),
             legacy_local: IndexMap::new(),
+            node_id: 0,
+            merged_from: Vec::new(),
         }
     }
 }
@@ -4092,6 +4230,8 @@ impl ComboVal {
             cycle_frame_id: default_cache_id(),
             legacy_fields: self.legacy_fields.clone(),
             legacy_local: self.legacy_local.clone(),
+            node_id: 0,
+            merged_from: Vec::new(),
         }));
         let h = ContentHash {
             algorithm: HashAlgorithm::Sha256,

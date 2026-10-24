@@ -75,16 +75,82 @@
 
 ### 8.1 射程逐項對照
 
+`eval.rs`、`injections.rs`、`lib.rs`、`unify.rs`、`value.rs` 與 `q103-ref 6e3a59f` 逐位元組相同。`oo` 仍是 `0.103.0`，interpreter 仍是 `0.2.2`。新倉 `layout=9`、`encoding=10`。交會時不改寫存著的閉包。`node_id` 與 `merged_from` 標 `#[serde(skip)]`，不進身分、不進相等。讀的時候，讀到交會後節點名字的欄位才換到那個節點；寫進倉之前才把那些欄位落實。不讀名字的欄位，框留在原處。
+
+*   **M1** `({ p: @int, s: p } & { p: 5 }).s` 與反過來都由 `@int` 變 `5`。`({ s: p } & { p: 5 }).s` 由 `_` 變 `5`。巢狀 `.s.t` 是 `5`，算術 `b.s` 是 `6`，閉包 `b.f 0` 是 `7`，經路徑 `b.s.t` 是 `5`，讀者也有同名的 `z` 是 `5`，三方是 `1`，交會後再交會 `.a.s` 是 `5`，展開 `({ ...{ j: 5 } } & { q: j }).q` 是 `5`。
+*   **M2** `({ p: @int, s: p + 1 } & { p: 5, s: @int }).s` 由 ⊥ 變 `6`。同一字面 `{ p: @int, s: p + 1, p: 5, s: @int }.s` 由 `@int` 變 `6`。`{ s: p, p: 1, s: @int }.s` 是 `1`。`{ s: p, p: 1, s: 2 }.s`、反過來、`({ p: 1, s: 2 } & { s: p }).s` 都是 `_|_ ;; %cause: #conflict`，沒有後續訊息。
+*   **M3** `@Box: { ~@T: @any, value: ~@T }, @IntBox: @Box & { ~@T: @int }` 寫在同一個字面裡。`{{ value: 42 }} & @IntBox` 是 `{ value: 42 }`。`{{ value: "hi" }} & @IntBox` 是 `{ value: _|_ ;; %cause: #conflict }`，`.value` 是 `_|_ #conflict`。
+*   **M4** `{ p: { ~s: 1, a: 2 }, q: p & { ~s: _, peek: ~s }, r: q.peek }.r` 由 `_` 變 `1`。`q.a` 是 `1`。同名公開名字蓋過：`({ ~s: 1, a: s } & { s: 2 }).a` 是 `2`。
+*   **M5** `r: { z: y } & { y: 5 }` 就地提交，根由 `1f01ed3d09cd182ff3c17e7d2020719445cff4ba5e353f9e6c5a67f1c5c8d6e6` 到 `64fe56dc6a7d29e3333ff7fb220fc1ff8d0b5ff6b2359440ac9d43bcbc30029c`。就地 `_.r` 是 `{ y: 5 z: 5 }`，`_.r.z` 是 `5`。一檔、兩次演化、兩次提交的根都是 `5fab0cf7ab9cfe3c2b7545d85ace3274fd8f7922c2ccda9a52c46bcd92bc85af`（與 v0.103.0 同），`_.r.z` 由 `_` 變 `5`。巢狀 `_.r.a.s.t` 是 `5`。同一個字面 `r: { z: y, y: 5 }` 的根是 `ac8540f1f3dc4e510051fa414a906ac1f8d7d1212134ace0bb90f1d30f7e94cf`，`_.r.z` 是 `5`（與就地不同根，工單明文不要求它們相同）。
+*   **另一半** 對方沒宣告的 `~s` 仍是 `_`。`({ a: 1 } & { a: 2 }).a` 是 `_|_ ;; %cause: #conflict`。`({ a: 1 } & { a: 1, b: 2 }).b` 是 `2`。`{ a: 1, a: 1 }` 是 `{ a: 1 }`。`{ a: 1, a: 2 }.a` 仍是 `_|_ ;; %cause: #conflict ;; Incompatible types: 1 vs 2`。Q-102 的讀數留著：`s.t` 是 `1`，閉包是 `1`，兄弟 `s` 是 `_`，與無關的 `p` 交會是 `_`，`^.y` 是 `1`。同一字面的展開 `{ ...{ s: p }, p: 5 }.s` 與反過來都是 `5`（展開落地仍當場 `unify_internal`；Q-102 已把來源封進這個字面）。Q-092 `a_recipe_that_met_a_write` 25／25。Q-102 探針 6／6。
+*   **身分** `x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`；標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。Q-097 規模格的根不動：400 欄 `4cbecfc6c345f5a639a62abd1a8162e0958673e9e2b274d48f56622de43ba359`，兩個 400 欄 `400e403f71706228c0708e4bc0c52ca3dea71bf7243f8aff14754a8497596e2d`。200 層頂層兄弟鏈的根前後都是 `38ea6baf203da3b3b9fa80b40fb94ddea64257ca69a0b63f680763ff1bbd4d30`。g2 的七個根（含 `a: 1`／`b: a`、`c: { b: 2 }` 兩次 `r: c`、`t: { a: 1 } & { b: 2 }`、`p: 1`／`s.t`）探針逐字通過。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。
+
 ### 8.4 工單指名要你回答的問題
+
+前是本工單所在提交建出來的 `oo`（v0.103.0），後是這一版。空目錄 `oo eval`。
+
+**Q1** 兩個記錄（或同一字面的兩次寫入）在哪裡交會。
+
+| 地方 | 當場或延後 | 一格 |
+|---|---|---|
+| `merge_axis` | 兩邊都有、不相等、不是宇宙自己的合併、而且任一邊讀到任一邊定義的名字：延後成 `pending_meet`。其餘當場 `unify_internal` | `({ p: @int, s: p + 1 } & { p: 5, s: @int }).s`：前 ⊥，後 `6`。`({ a: 1 } & { a: 2 }).a` 是 `_|_ ;; %cause: #conflict` |
+| `merge_field_into` | 同一字面重複的鍵，既有值不等於新值、不是宇宙自己的合併、而且任一邊讀到任何裸名：延後。其餘當場。檔的頂層字面是根，名字讀根（D110） | `{ p: @int, s: p + 1, p: 5, s: @int }.s`：前 `@int`，後 `6`。`{ a: 1, a: 1 }` 是 `{ a: 1 }`。`{ a: 1, a: 2 }.a` 是 `_|_ ;; %cause: #conflict ;; Incompatible types: 1 vs 2` |
+| `unify_universe`／`unify_unmetered` | 當場。設 `UNMETERED_MERGE`，根是交會後的節點 | Q-092 `a_recipe_that_met_a_write` 25／25，閘門第一輪 43.56 秒 |
+| `meet_coordinate` | 仍當場交會。式子是 `Meet` 的先前配方先拆成合取項，再逐項判，所以兩次演化與一檔同根 | 一檔、兩次演化、兩次提交的根都是 `5fab0cf7…`，`_.r.z` 由 `_` 變 `5` |
+| `injections::fold` | 當場，走 `unify_universe`。工作集的合併沒有改 | 同上，Q-092 的 25 支仍綠 |
+| 展開落地 | 當場 `unify_internal`（來源的鍵落進持有者）。兩個記錄的展開走 `merge_axis` | `{ ...{ s: p }, p: 5 }.s` 與 `{ p: 5, ...{ s: p } }.s` 都是 `5`。`({ ...{ j: 5 } } & { q: j }).q` 由 `_` 變 `5` |
+
+**Q2** 交會出的記錄，欄位在哪裡換到交會後的節點。視圖留該框自己宣告的私有鍵，值是交會後的；公開名字蓋過同名私有名字。
+
+| 地方 | 怎麼換 | 一格 |
+|---|---|---|
+| `navigate_segments` | 取出的欄位經 `rebind_to_met` | `{ a: { p: @int, s: { t: p } }, b: a & { p: 5 }, r: b.s.t }.r`：前 `_`，後 `5` |
+| `force_recursive` | `merged_from` 非空時，每個軸的每個欄位先換框再強制 | 就地提交後 `_.r` 是 `{ y: 5 z: 5 }`，`_.r.z` 是 `5` |
+| `force_lexical_name` | 框在時，找到的值先 `rebind_to_met` 到那一框，再走 Q-102 的 thunk 強制。`~__nlang_meet_` 開頭的名字不記循環 | `({ p: @int, s: p } & { p: 5 }).s`：前 `@int`，後 `5` |
+| 交會前取兩邊 | `merge_axis` 先把每一邊換到它自己的節點，再比。兩邊都寫而讀名字的欄位收成 `~__nlang_meet_l & ~__nlang_meet_r` | `({ p: @int, s: p + 1 } & { p: 5, s: @int }).s`：前 ⊥，後 `6`。兩邊都宣告 `~s`：`q.peek` 由 `_` 變 `1`。`({ ~s: 1, a: s } & { s: 2 }).a` 是 `2`。對方沒宣告的 `~s` 仍是 `_` |
+| 提交投影 | `expand_combo_pending` 之後 `bake_met_combo`，再走父層。落實後存的是欄位：讀到被交會節點名字的 thunk，閉包裡對上的框換成那個節點的視圖。不存「由哪些節點交會而來」 | 一檔 `_.r.z` 由 `_` 變 `5` |
+| `injections::write` | 編碼前 `bake_met_combo` | 兩次提交之後 `_.r.z` 是 `5` |
+| `force_once` | 待交會 thunk 的結果若是 Bottom，`order_free` 剝掉訊息 | `{ s: p, p: 1, s: 2 }.s`：前 `2`，後 `_|_ ;; %cause: #conflict` |
+
+**Q3** 寫進倉的是 `bake_met` 之後的欄位（配方加換過的框），然後提交投影強制那些欄位，根上是答案。`node_id` 與 `merged_from` 不進耐久位元組。規模格的根見 8.1，沒有動。兩個 400 欄一檔沒有逾時。
+
+| 格 | 前 | 後 |
+|---|---|---|
+| 400 欄一個記錄，演化 | 0.460 s | 0.461 s |
+| 400 欄一個記錄，提交 | 0.573 s | 0.576 s |
+| 兩個 400 欄記錄一檔，演化 | 1.538 s | 1.531 s |
+| 兩個 400 欄記錄一檔，提交 | 1.132 s | 1.096 s |
+| 200 層一個記錄的 `.f199` | 0.079 s，答案 `0` | 0.078 s，答案 `0` |
+| 200 層頂層 `f{i}: f{i-1}`，演化 | 2.480 s | 2.521 s |
+| 200 層頂層，提交 | 0.661 s | 0.679 s |
+| 200 層頂層，`_.f199` | 答案 `0` | 答案 `0` |
+| `r: { z: y }` 與 `r: { y: 5 }` 一檔、兩次演化、兩次提交 | 根 `5fab0cf7ab9cfe3c2b7545d85ace3274fd8f7922c2ccda9a52c46bcd92bc85af`，`_.r.z` 是 `_` | 同一根，`_.r.z` 是 `5` |
 
 ### 8.5 探針
 
+`a_name_bound_before_the_meet_probe_test` 7／7。單獨一輪 3.54 秒，閘門第一輪 3.50 秒。探針檔與預先修訂的三格沒有改。r1–r5 與 g1、g2 都綠。會移動的根是就地的 `1f01ed3d…` → `64fe56dc6a7d29e3333ff7fb220fc1ff8d0b5ff6b2359440ac9d43bcbc30029c`。一檔、兩次演化、兩次提交仍是 `5fab0cf7…`。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，都是退出碼 0。
+
+*   第一輪 2026-10-25T01:17:46+08:00，1306.00 秒。第二輪 01:39:32，913.38 秒。第三輪 01:54:45，912.10 秒。
+*   歸一 3695 行，三輪 sha256 都是 `e0c22474d8b51b9e444b272a462bc3652b47e880a490559ce355579c6d7283fd`。296 條 `test result`，加總 **2810** 通過、0 失敗。`test ` 行以 `ok` 結尾 2809。`Running` 293。`^error` 0，BrokenPipe 0，panicked 0。原始日誌 sha 前綴 `b7a436b4b0e05104`、`a0143f2442c1bf57`、`0d6676a65298863c`，三份不相等。位元組 297859／297704／297705。
+*   閘門第一輪：本探針 7／7，3.50 秒。Q-102 6／6，3.46 秒。Q-101 9／9，9.48 秒。Q-100 CLI 8／8，5.05 秒，bytes 2／2，0.04 秒。Q-099 CLI 5／5，4.09 秒，bytes 2／2，0.00 秒。Q-098 5／5，8.94 秒。Q-097 7／7，9.94 秒。Q-095 3／3，25.24 秒。Q-078 15／15，6.04 秒。`spread_privacy` 11／11，0.35 秒。nominal_ref 15／15，0.51 秒。runs_every_branch 7／7，2.79 秒。forgot_patterns_r1 6／6，0.63 秒。axis bytes 1／1，0.27 秒。`a_definition_that_kept_its_answer` 13／13，7.56 秒。`a_recipe_that_met_a_write` 25／25，43.56 秒。`a_commit_that_is_a_value` 13／13，1.56 秒。union 16／16，3.62 秒。where_the_conflict_is 9／9，1.03 秒。orthomodular 18／18，0.24 秒。oml 10／10，0.19 秒。advert_persistence 19／19，21.27 秒。
+*   Linux：造出這個 `oo` 的那次編譯，`nlang-interpreter`（lib）14 warnings，`cargo fix` 12。閘門第一輪日誌裡同一行也是 14／12，沒有重連這個 `oo`。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-25T02:09:57+08:00，Finished 4.57 秒，退出碼 0，`^error` 0。目標 lib 15 warnings，`cargo fix` 13。
+*   Conformance（新的空目錄，`nlang-spec` 的 local）退出碼 0：`185 vectors, 185 pass, 0 fail`。跑前 `ls -A | wc -l` 是 0，跑後是 0。
+*   `oo` 11265168 位元組，mtime 2026-10-25 01:14:18.852603379 +0800。閘門、Windows、conformance 沒有重連它。父倉 HEAD `e4a3a55e922544aff97e735e0fd92c0ca185a4ba`，`.oo/format` 是 `32`，前後沒有改。
+
 ### 8.7 你認為需要改規格之處
+
+沒有。規格文字、向量與 `CHANGELOG` 留給驗收方。
 
 ## 9. 驗收（驗收方填）

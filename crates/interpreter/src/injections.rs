@@ -283,6 +283,9 @@ pub fn write(
     absorbs: &BTreeMap<String, BTreeSet<String>>,
     effect_tags: EffectTag,
 ) -> Result<String> {
+    // D118: a met node's fields are written resolving in it.
+    let baked = crate::value::bake_met_combo(combo.clone());
+    let combo = &baked;
     let declaration = crate::storage::read_layout_declaration(base)?;
     let current = crate::storage::layout_has_layout5_frames(&declaration);
     let pin_frame = crate::storage::layout_writes_pin_frame(&declaration);

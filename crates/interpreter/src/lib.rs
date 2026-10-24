@@ -3467,6 +3467,18 @@ impl Ouroboros {
     /// One step of `force`: a recipe whose value is a live reference yields
     /// the reference, unread.
     pub(crate) fn force_once(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        // D117: a conflict a meet makes in a field carries no message — the
+        // message would depend on the order (a pending meet, D118, too).
+        let pending_meet = matches!(&val, Value::Thunk { closure, .. }
+            if closure.first().map(|f| crate::value::is_meet_frame(f)).unwrap_or(false));
+        let out = self.force_once_inner(val, ctx);
+        match out {
+            Value::Bottom(d) if pending_meet => Value::Bottom(Box::new(crate::unify::order_free(*d))),
+            other => other,
+        }
+    }
+
+    fn force_once_inner(&self, val: Value, ctx: &mut EvalContext) -> Value {
         match val {
             Value::Thunk {
                 expr,
@@ -3476,7 +3488,10 @@ impl Ouroboros {
             } => {
                 // D118: a thunk found on a frame resolves in that frame.
                 if let Some(f) = ctx.lexical_frame.take() {
-                    if !closure.iter().any(|l| std::sync::Arc::ptr_eq(l, &f)) {
+                    let has_node = closure.iter().any(|l| {
+                        std::sync::Arc::ptr_eq(l, &f) || (f.node_id != 0 && l.node_id == f.node_id)
+                    });
+                    if !has_node {
                         closure.push(f);
                     }
                 }
@@ -3914,25 +3929,31 @@ impl Ouroboros {
                             // or has an effect is code until dispatch chooses
                             // the branch. Observing the table does not run it.
                             let is_rule = crate::dispatch::is_rule_cocoon(&c);
+                            // D118: a met node's fields resolve in it.
+                            let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
+                            let rebind = |v: Value| match &met {
+                                Some(m) => crate::value::rebind_to_met(m, v),
+                                None => v,
+                            };
                             // Copy per axis. Flattening through insert_field
                             // re-routes a data key named `@t` onto the type
                             // axis (Q1).
                             for (k, v) in std::mem::take(&mut c.data) {
-                                let forced = self.force_recursive(v, ctx);
+                                let forced = self.force_recursive(rebind(v), ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.data.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.types) {
-                                let forced = self.force_recursive(v, ctx);
+                                let forced = self.force_recursive(rebind(v), ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.types.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.rules) {
-                                let forced = self.force_recursive(v, ctx);
+                                let forced = self.force_recursive(rebind(v), ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
@@ -3943,21 +3964,21 @@ impl Ouroboros {
                                     new_c.meta.insert(k, v);
                                     continue;
                                 }
-                                let forced = self.force_recursive(v, ctx);
+                                let forced = self.force_recursive(rebind(v), ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.meta.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.system) {
-                                let forced = self.force_recursive(v, ctx);
+                                let forced = self.force_recursive(rebind(v), ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.system.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.local) {
-                                let forced = self.force_recursive(v, ctx);
+                                let forced = self.force_recursive(rebind(v), ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
@@ -4076,7 +4097,9 @@ impl Ouroboros {
                     return Value::Combo(c);
                 }
                 match self.expand_combo_pending(c, ctx) {
-                    Value::Combo(mut c) => {
+                    Value::Combo(c) => {
+                        // D118: the stored fields of a met node resolve in it.
+                        let mut c = crate::value::bake_met_combo(c);
                         let parent_c = match parent {
                             Some(Value::Combo(p)) => Some(p),
                             _ => None,
@@ -4910,7 +4933,8 @@ impl Ouroboros {
                         .get_field(seg)
                         .or_else(|| c.get_field(&format!("/{}", seg)))
                         .or_else(|| c.get_field(&format!("@{}", seg)))
-                        .cloned();
+                        .cloned()
+                        .map(|v| crate::value::rebind_to_met(&c, v));
                     // On a table, `.k` reads the branch the key spells.
                     // `$` in that body is the constraint. No branch stays a
                     // miss: it does not read the `_:` default.
@@ -5197,15 +5221,23 @@ impl Ouroboros {
         if matches!(&val, Value::Ref(_)) {
             return val;
         }
-        if ctx.lexical_forcing.contains(name) {
+        // D118: a pending meet's two sides are not names anyone wrote; a
+        // nested pending meet uses the same two (cycles stay caught by the
+        // thunk's in-flight identity).
+        let meet_side = name.starts_with("~__nlang_meet_");
+        if !meet_side && ctx.lexical_forcing.contains(name) {
             return cycle_reentry(ctx, Some(name), name);
         }
-        let track = matches!(&val, Value::Thunk { .. });
+        let track = !meet_side && matches!(&val, Value::Thunk { .. });
         if track {
             ctx.lexical_forcing.insert(name.to_string());
             ctx.entry_hops.insert(name.to_string(), ctx.taint_hops);
             ctx.cycle_chain.push(name.to_string());
         }
+        let val = match &frame {
+            Some(f) => crate::value::rebind_to_met(f, val),
+            None => val,
+        };
         let is_thunk = matches!(&val, Value::Thunk { .. });
         if is_thunk {
             ctx.lexical_frame = frame;

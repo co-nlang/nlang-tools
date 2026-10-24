@@ -101,7 +101,7 @@ fn pattern_expr_of_param(param: &Expr) -> (Expr, Option<String>) {
 
 /// Lexically free bare names in an expression. Combo fields form a
 /// simultaneous local scope, which preserves both self- and mutual recursion.
-fn free_bare_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
+pub(crate) fn free_bare_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
     fn walk(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
         match &expr.kind {
             ExprKind::Path(p) if matches!(p.anchor, PathAnchor::Bare | PathAnchor::Parent(_)) => {
@@ -273,7 +273,7 @@ fn spread_source_reads_outside(expr: &Expr) -> bool {
         .any(|n| !n.starts_with("~%") && n != "_")
 }
 
-fn captures(free: &HashSet<String>, prefix: &str, name: &str) -> bool {
+pub(crate) fn captures(free: &HashSet<String>, prefix: &str, name: &str) -> bool {
     free.contains(name) || free.contains(&format!("{prefix}{name}"))
 }
 
@@ -730,7 +730,18 @@ impl Ouroboros {
         ctx: &mut EvalContext,
     ) {
         if let Some(existing) = map.get(&key) {
-            let merged = self.unify_internal(existing.clone(), incoming, ctx);
+            // D118: a key written twice in one literal meets in the literal,
+            // once it is whole — not before its other fields exist.
+            // A file's top literal is the root: its names read the root
+            // (D110), and the universe meets them there.
+            let merged = if *existing != incoming
+                && !crate::UNMETERED_MERGE.with(|c| c.get())
+                && (crate::unify::reads_any_name(&existing) || crate::unify::reads_any_name(&incoming))
+            {
+                crate::value::pending_meet(existing.clone(), incoming)
+            } else {
+                self.unify_internal(existing.clone(), incoming, ctx)
+            };
             map.insert(key, merged);
         } else {
             map.insert(key, incoming);
