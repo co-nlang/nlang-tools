@@ -272,8 +272,8 @@ fn g1_addresses_do_not_move() {
 }
 
 /// g2 — Reading is as before (a pruned frame changes these): a chain of
-/// sibling readings reads through; a sibling is read in its own literal
-/// only; a sibling written later is taken and the reading does not see it.
+/// sibling readings reads through; a sibling met in, in place or in a later
+/// commit, is read (D118, amended for Q-103).
 #[test]
 fn g2_readings_are_as_before() {
     let mut bad = Vec::new();
@@ -283,12 +283,14 @@ fn g2_readings_are_as_before() {
     check(&mut bad, "chain: _.r.f199", w.eval("_.r.f199"), "0");
     let w = Ws::new("g2-literal");
     check(&mut bad, "in place: commit", w.commit("r: { z: y } & { y: 5 }\n"), "");
-    check(&mut bad, "in place: _.r.z", w.eval("_.r.z"), "_");
+    // AMENDED 2026-10-24 for Q-103 (D118): `z: y` resolves in the met node.
+    check(&mut bad, "in place: _.r.z", w.eval("_.r.z"), "5");
     let w = Ws::new("g2-later");
     check(&mut bad, "later: seed", w.commit("r: { z: y }\n"), "");
     check(&mut bad, "later: sibling", w.commit("r: { y: 5 }\n"), "");
     check(&mut bad, "later: _.r.y", w.eval("_.r.y"), "5");
-    check(&mut bad, "later: _.r.z", w.eval("_.r.z"), "_");
+    // AMENDED 2026-10-24 for Q-103 (D118): the same writes in two commits.
+    check(&mut bad, "later: _.r.z", w.eval("_.r.z"), "5");
     let w = Ws::new("g2-dotted");
     check(&mut bad, "dotted: seed", w.commit("r: { z: y }\n"), "");
     check(&mut bad, "dotted: r.y", w.commit("r.y: 5\n"), "");
