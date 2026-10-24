@@ -318,6 +318,29 @@ fn r6_the_order_agrees_with_the_meet() {
     verdict(bad, cells.len());
 }
 
+/// r7 — Acceptance R-2. What two complements leave out is a union, and a
+/// member inside another is dropped by the same order as r6, so
+/// `!A & !B` and `!(A | B)` are one value. Whether a value is left out
+/// (membership) is still a choice (r5): a conflict the meet made is disjoint.
+/// The other half: members that are not under one another both stay.
+#[test]
+fn r7_a_complement_drops_by_the_same_order() {
+    let mut bad = Vec::new();
+    let cells: [(&str, &str); 7] = [
+        ("!{ a: 2 } & !({ a: 1 } & { a: 2 })", "!{ a: 2 }"),
+        ("(!{ a: 2 } & !({ a: 1 } & { a: 2 })) = !({ a: 2 } | ({ a: 1 } & { a: 2 }))", "#true"),
+        ("!({ a: 1, b: 2 } & { a: 2 }) & !{ a: 2, b: 2 }", "!{ a: 2 b: 2 }"),
+        ("!{ a: 2 } & !{ a: 3 }", "!({ a: 2 } | { a: 3 })"),
+        ("!({ a: 1 } & { a: 2 }) & !{ b: 1 }", "!({ a: _|_ ;; %cause: #conflict } | { b: 1 })"),
+        ("({ a: 1 } & { a: 2 }) & !{ a: 2 }", "{ a: _|_ ;; %cause: #conflict }"),
+        ("{ a: 3 } & (!{ a: 2 } & !({ a: 1 } & { a: 2 }))", "{ a: 3 }"),
+    ];
+    for (e, want) in cells {
+        check(&mut bad, e, eval_here(e), want);
+    }
+    verdict(bad, cells.len());
+}
+
 /// g1 — The evolve boundary is as before (green today): with no table the
 /// second of two conflicting writes is refused by key, nested too; a write
 /// over a ⊥ already there is refused; a write elsewhere is not.
