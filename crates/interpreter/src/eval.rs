@@ -636,9 +636,7 @@ impl Ouroboros {
             let name = crate::dispatch::pattern_branch_name(&pattern);
             let coc = crate::dispatch::branch_cocoon(pattern, body);
             let v = match (acc.shift_remove(&name), coc) {
-                (Some(Value::Combo(a)), Value::Combo(b)) => {
-                    crate::dispatch::join_rule_cocoons(a, b)
-                }
+                (Some(Value::Combo(a)), Value::Combo(b)) => self.join_branches(a, b, ctx),
                 (_, c) => c,
             };
             acc.insert(name, v);
@@ -806,10 +804,11 @@ impl Ouroboros {
                     if matches!(m, Value::Blur(_)) || matches!(a_s, Value::Blur(_)) {
                         return false;
                     }
-                    m == a_s
+                    // D117: `=` does not read a ⊥'s cause; neither does `<=`.
+                    m.without_bottom_fibres() == a_s.without_bottom_fibres()
                 } else {
                     // Raw-branch absorption: collapse only, no force.
-                    m.collapse() == a.collapse()
+                    m.collapse().without_bottom_fibres() == a.collapse().without_bottom_fibres()
                 }
             }
         }
@@ -1009,7 +1008,7 @@ impl Ouroboros {
                 if let Some(lit) = literal {
                     crate::value::reseal_after_spreads(&mut c, &lit);
                 }
-                Value::Combo(crate::dispatch::normalize_table(c))
+                Value::Combo(self.normalize_table(c, ctx))
             }
             other => other,
         }
@@ -1577,7 +1576,17 @@ impl Ouroboros {
         if let Value::Union(members) = rv {
             let results = members
                 .into_iter()
-                .map(|m| self.pipe_apply_value(lv.clone(), m, &mut call_ctx, ctx))
+                .map(|m| {
+                    let value = !m.is_morphism();
+                    let side = m.clone();
+                    let res = self.pipe_apply_value(lv.clone(), m, &mut call_ctx, ctx);
+                    // D117: into a value the pipe is a meet; a member it made a
+                    // conflict with does not apply.
+                    match crate::unify::conflict_made(&[&lv, &side], &res) {
+                        Some(d) if value && !matches!(res, Value::Bottom(_)) => Value::Bottom(Box::new(d)),
+                        _ => res,
+                    }
+                })
                 .collect::<Vec<_>>();
             return self.union_of_results(results, ctx);
         }
@@ -2003,7 +2012,7 @@ impl Ouroboros {
                 crate::value::seal_defining_scope(&mut combo);
                 // After the frame is sealed, so a key moved into `%rules`
                 // still resolves as a sibling inside a branch body.
-                let combo = crate::dispatch::normalize_table(combo);
+                let combo = self.normalize_table(combo, ctx);
                 let mut res = Value::Combo(combo);
                 // GUIDE_03 §11.5: cocoon is a solidification boundary — force
                 // after seal so siblings see the holder frame (inner-first).
@@ -2608,7 +2617,8 @@ impl Ouroboros {
                     _ => {}
                 }
                 let res_e = va.effect().union(vb.effect());
-                let eq = va == vb;
+                // D117 / D65: a ⊥'s cause is a fibre, not the value.
+                let eq = va.without_bottom_fibres() == vb.without_bottom_fibres();
                 Value::Atom(
                     AtomKind::Tag(if eq {
                         "true".to_string()

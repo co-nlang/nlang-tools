@@ -3179,6 +3179,33 @@ impl Value {
         }
     }
 
+    /// D117 / D65: this value with every ⊥ reduced to a bare ⊥ — its cause
+    /// is a fibre, not the value. For `=`.
+    pub fn without_bottom_fibres(&self) -> Value {
+        fn axis(m: &IndexMap<String, Value>) -> IndexMap<String, Value> {
+            m.iter().map(|(k, v)| (k.clone(), v.without_bottom_fibres())).collect()
+        }
+        match self {
+            Value::Bottom(_) => Value::Bottom(Box::new(BottomDetail::default())),
+            Value::Combo(c) => {
+                let mut c = c.clone();
+                c.data = axis(&c.data);
+                c.types = axis(&c.types);
+                c.rules = axis(&c.rules);
+                c.meta = axis(&c.meta);
+                c.system = axis(&c.system);
+                c.local = axis(&c.local);
+                Value::Combo(c)
+            }
+            Value::Union(items) => Value::Union(items.iter().map(|v| v.without_bottom_fibres()).collect()),
+            Value::Complement { within, without } => Value::Complement {
+                within: Box::new(within.without_bottom_fibres()),
+                without: Box::new(without.without_bottom_fibres()),
+            },
+            other => other.clone(),
+        }
+    }
+
     /// D116: the first complement value inside this one, closures included.
     pub fn first_complement(&self) -> Option<&Value> {
         fn in_combo(c: &ComboVal) -> Option<&Value> {

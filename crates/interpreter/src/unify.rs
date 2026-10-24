@@ -744,7 +744,14 @@ impl Ouroboros {
                 // Collect without early cap so structural dedupe can free
                 // capacity first (SPEC_01 idempotence before max_branches).
                 for branch in branches.into_iter().take(max_branches * 2) {
+                    let side = branch.clone();
                     let r = self.unify_internal(branch, other.clone(), ctx);
+                    // D117: a branch whose meet made a conflict does not
+                    // apply, though the conflict stays in its field.
+                    let r = match conflict_made(&[&side, &other], &r) {
+                        Some(d) if !matches!(r, Value::Bottom(_)) => Value::Bottom(Box::new(d)),
+                        _ => r,
+                    };
                     match r {
                         Value::Bottom(detail) => {
                             if matches!(detail.cause, BottomCause::H1Split | BottomCause::H2Split) {
@@ -798,7 +805,7 @@ impl Ouroboros {
 
     fn unify_combo(&self, a: ComboVal, b: ComboVal, ctx: &mut EvalContext) -> Value {
         match self.unify_combo_inner(a, b, ctx) {
-            Value::Combo(c) => Value::Combo(crate::dispatch::normalize_table(c)),
+            Value::Combo(c) => Value::Combo(self.normalize_table(c, ctx)),
             other => other,
         }
     }
@@ -820,7 +827,7 @@ impl Ouroboros {
         // Until then the bodies are a set keyed by content digest, so the
         // meet does not run an unselected body and does not depend on order.
         if crate::dispatch::is_rule_cocoon(&a) && crate::dispatch::is_rule_cocoon(&b) {
-            return crate::dispatch::join_rule_cocoons(a, b);
+            return self.join_branches(a, b, ctx);
         }
         // D105: two morphisms meet as one table (definition merge).
         if let Some(v) = self.meet_as_tables(&a, &b, ctx) {
@@ -925,6 +932,12 @@ impl Ouroboros {
                         .map(|p| format!("{shown}.{p}"))
                         .unwrap_or_else(|| shown.clone());
                     detail.path = Some(cp);
+                    // D117 / SPEC_06 §2: in an open record the conflict stays
+                    // in its field. A Cocoon or `#strict` collapses the whole.
+                    if !a.closed && !b.closed && ctx.strategy != crate::ObservationStrategy::Strict {
+                        out.insert(key.clone(), Value::Bottom(Box::new(order_free(*detail))));
+                        continue;
+                    }
                     return Err(*detail);
                 }
                 if !matches!(&merged, Value::Top) {
@@ -1199,4 +1212,100 @@ fn on_step(x: &Value, start: &Value, step: &Value) -> bool {
     }
     let q = (xf - sf) / stf;
     (q - q.round()).abs() < 1e-9
+}
+
+/// D117: a conflict kept in a field is a bare `#conflict` at that field.
+/// Which values met is a fibre the store does not keep (D65), so the same
+/// writes read the same whether they met in memory or came back from it.
+pub(crate) fn order_free(d: BottomDetail) -> BottomDetail {
+    BottomDetail {
+        cause: d.cause,
+        path: d.path,
+        ..Default::default()
+    }
+}
+
+/// D117: the conflicts a meet made. A ⊥ leaf of `met` is a conflict when at
+/// least two sides held a value at that coordinate (one side's own ⊥ under
+/// another side's write counts, as it did when the meet collapsed). A table
+/// branch's conflict is that branch's (SPEC_07 §1.1.2): `%rules` is not
+/// walked. A whole ⊥ is a conflict at the root. The first coordinate in
+/// order is named, so the answer does not depend on the order of the sides.
+pub(crate) fn conflict_made(sides: &[&Value], met: &Value) -> Option<BottomDetail> {
+    fn axes(c: &ComboVal) -> [(&'static str, &IndexMap<String, Value>); 6] {
+        [
+            ("", &c.data),
+            ("@", &c.types),
+            ("/", &c.rules),
+            ("%", &c.meta),
+            ("~%", &c.system),
+            ("~", &c.local),
+        ]
+    }
+    fn walk(met: &Value, sides: &[Option<&Value>], path: &str, out: &mut Vec<BottomDetail>) {
+        match met {
+            Value::Bottom(d) => {
+                let held = sides
+                    .iter()
+                    .filter(|s| matches!(s, Some(v) if !v.is_top()))
+                    .count();
+                if held >= 2 {
+                    let mut d = (**d).clone();
+                    d.path = Some(path.to_string()).filter(|p| !p.is_empty()).or(d.path);
+                    out.push(d);
+                }
+            }
+            Value::Combo(c) => {
+                for (prefix, map) in axes(c) {
+                    for (k, v) in map {
+                        if prefix == "%" && k == "rules" {
+                            continue;
+                        }
+                        let child: Vec<Option<&Value>> = sides
+                            .iter()
+                            .map(|s| match s {
+                                Some(Value::Combo(sc)) => axes(sc)
+                                    .into_iter()
+                                    .find(|(p, _)| *p == prefix)
+                                    .and_then(|(_, m)| m.get(k)),
+                                // An opaque value (a recipe, an atom) holds
+                                // every coordinate below it.
+                                Some(other) if !other.is_top() => Some(*other),
+                                _ => None,
+                            })
+                            .collect();
+                        let p = if path.is_empty() {
+                            format!("{prefix}{k}")
+                        } else {
+                            format!("{path}.{prefix}{k}")
+                        };
+                        walk(v, &child, &p, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Value::Bottom(d) = met {
+        return Some((**d).clone());
+    }
+    let mut out = Vec::new();
+    let sides: Vec<Option<&Value>> = sides.iter().map(|s| Some(*s)).collect();
+    walk(met, &sides, "", &mut out);
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out.into_iter().next()
+}
+
+impl Ouroboros {
+    /// The meet of `a` and `b`, and the conflict it made (D117).
+    pub(crate) fn meet_clash(
+        &self,
+        a: Value,
+        b: Value,
+        ctx: &mut EvalContext,
+    ) -> (Value, Option<BottomDetail>) {
+        let met = self.unify_internal(a.clone(), b.clone(), ctx);
+        let clash = conflict_made(&[&a, &b], &met);
+        (met, clash)
+    }
 }

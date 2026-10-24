@@ -884,6 +884,12 @@ impl Universe {
                 );
                 return match res {
                     Value::Combo(m) => {
+                        if let Some(d) = crate::unify::conflict_made(
+                            &[&Value::Combo(self.staged.clone()), &Value::Combo(incoming_combo.clone())],
+                            &Value::Combo(m.clone()),
+                        ) {
+                            return Err(d);
+                        }
                         self.note_session_incoming(engine, &incoming_combo);
                         self.staged = m;
                         self.is_dirty = true;
@@ -977,14 +983,14 @@ impl Universe {
                     {
                         continue;
                     }
-                    if let Value::Bottom(mut d) = engine.unify(theirs, ours) {
+                    if let (_, Some(mut d)) = engine.meet_clash(theirs, ours, &mut engine.eval_context()) {
                         let leaf = d.path.take().filter(|s| !s.is_empty());
                         d.path = Some(match leaf {
                             Some(p) if p == *c || p.starts_with(&format!("{c}.")) => p,
                             Some(p) => format!("{c}.{p}"),
                             None => c.clone(),
                         });
-                        return Err(*d);
+                        return Err(d);
                     }
                 }
             }
@@ -1006,7 +1012,9 @@ impl Universe {
                     .cloned()
                     .or_else(|| self.root.get_local_field(c).cloned())
                 {
-                    if let Value::Bottom(mut d) = engine.unify(root_val, val.clone()) {
+                    if let (_, Some(mut d)) =
+                        engine.meet_clash(root_val, val.clone(), &mut engine.eval_context())
+                    {
                         // unify ran on the *field value*, so `path` is relative
                         // to that coordinate. Absolute-ise for the operator
                         // (where_the_conflict_is R1/R3): `app` + `db.opts…`
@@ -1017,7 +1025,7 @@ impl Universe {
                             Some(p) => format!("{c}.{p}"),
                             None => c.clone(),
                         });
-                        return Err(*d);
+                        return Err(d);
                     }
                 }
             }
@@ -1099,6 +1107,12 @@ impl Universe {
         );
         match res {
             Value::Combo(m) => {
+                if let Some(d) = crate::unify::conflict_made(
+                    &[&Value::Combo(self.staged.clone()), &Value::Combo(incoming.clone())],
+                    &Value::Combo(m.clone()),
+                ) {
+                    return Err(d);
+                }
                 self.note_session_incoming(engine, &incoming);
                 self.staged = m;
                 self.is_dirty = true;
@@ -1187,14 +1201,14 @@ impl Universe {
                 let Some(val) = incoming.get_field(c).cloned() else {
                     continue;
                 };
-                if let Value::Bottom(mut d) = engine.unify(root_val, val) {
+                if let (_, Some(mut d)) = engine.meet_clash(root_val, val, &mut engine.eval_context()) {
                     let leaf = d.path.take().filter(|s| !s.is_empty());
                     d.path = Some(match leaf {
                         Some(p) if p == *c || p.starts_with(&format!("{c}.")) => p,
                         Some(p) => format!("{c}.{p}"),
                         None => c.clone(),
                     });
-                    return Err(*d);
+                    return Err(d);
                 }
             }
         }
@@ -1231,6 +1245,12 @@ impl Universe {
             Value::Combo(incoming.clone()),
         ) {
             Value::Combo(m) => {
+                if let Some(d) = crate::unify::conflict_made(
+                    &[&Value::Combo(self.staged.clone()), &Value::Combo(incoming.clone())],
+                    &Value::Combo(m.clone()),
+                ) {
+                    return Err(d);
+                }
                 self.note_session_incoming(engine, &incoming);
                 self.staged = m;
                 self.is_dirty = true;
@@ -1331,7 +1351,11 @@ impl Universe {
                         let present = self.staged.get_field(&k).or_else(|| self.root.get_field(&k)).cloned();
                         if let (Some(p), Some(v)) = (present, incoming.get_field(&k).cloned()) {
                             let both_there = !matches!(p, Value::Bottom(_)) && !matches!(v, Value::Bottom(_));
-                            if both_there && matches!(engine.unify_unmetered(p, v, &mut ctx), Value::Bottom(_)) {
+                            let clash = both_there && {
+                                let m = engine.unify_unmetered(p.clone(), v.clone(), &mut ctx);
+                                crate::unify::conflict_made(&[&p, &v], &m).is_some()
+                            };
+                            if clash {
                                 return Err(crate::value::BottomDetail {
                                     cause: BottomCause::Conflict,
                                     path: Some(k.clone()),
@@ -1422,23 +1446,24 @@ impl Universe {
                         if let Some(root_val) = self.root.get_field(&k).cloned() {
                             // D110: judged where the universe is visible; a
                             // held reading reads what it reads, not `_`.
-                            if let Value::Bottom(mut d) = engine.unify_unmetered(root_val, v.clone(), &mut ctx) {
+                            let m = engine.unify_unmetered(root_val.clone(), v.clone(), &mut ctx);
+                            if let Some(mut d) = crate::unify::conflict_made(&[&root_val, &v], &m) {
                                 let leaf = d.path.take().filter(|s| !s.is_empty());
                                 d.path = Some(match leaf {
                                     Some(p) if p == k || p.starts_with(&format!("{k}.")) => p,
                                     Some(p) => format!("{k}.{p}"),
                                     None => k.clone(),
                                 });
-                                return Err(*d);
+                                return Err(d);
                             }
                         }
                     }
                 }
                 let mut next = self.staged.clone();
                 let clash = |existing: &Value, v: &Value, merged: &Value| {
-                    matches!(merged, Value::Bottom(_))
-                        && !matches!(existing, Value::Bottom(_))
+                    !matches!(existing, Value::Bottom(_))
                         && !matches!(v, Value::Bottom(_))
+                        && crate::unify::conflict_made(&[existing, v], merged).is_some()
                 };
                 for (k, v) in incoming.fields() {
                     if let Some(existing) = next.get_field(&k).cloned() {
