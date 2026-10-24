@@ -146,6 +146,10 @@ pub struct EvalContext {
     /// chain). Soft re-entry uses cycle_reentry (static → caused Top /
     /// transform → #divergent).
     pub lexical_forcing: HashSet<String>,
+    /// D118: the frame a bare name was found on. The next thunk forced
+    /// resolves its own names there (after its closure), not in the frames
+    /// of whoever forced it.
+    pub lexical_frame: Option<std::sync::Arc<ComboVal>>,
     /// SPEC_12 §1.1: true if any hop on the current force chain is a
     /// non-pure-reference expression (arithmetic, apply, …). Pure-ref
     /// re-entry → caused Top; tainted re-entry → ⊥ #divergent.
@@ -228,6 +232,7 @@ impl EvalContext {
             call_history: HashMap::new(),
             in_flight: HashSet::new(),
             lexical_forcing: HashSet::new(),
+            lexical_frame: None,
             chain_transform_taint: false,
             taint_hops: 0,
             entry_hops: std::collections::HashMap::new(),
@@ -3465,10 +3470,16 @@ impl Ouroboros {
         match val {
             Value::Thunk {
                 expr,
-                closure,
+                mut closure,
                 context,
                 effect,
             } => {
+                // D118: a thunk found on a frame resolves in that frame.
+                if let Some(f) = ctx.lexical_frame.take() {
+                    if !closure.iter().any(|l| std::sync::Arc::ptr_eq(l, &f)) {
+                        closure.push(f);
+                    }
+                }
                 let fuel_before = ctx.fuel;
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
@@ -3606,14 +3617,9 @@ impl Ouroboros {
                 // frames from the thunk still push innermost (rev-search).
                 // Outside lexical force, preserve historical replace semantics
                 // (capture isolation; cycle_test / L2-17 ambient-free).
-                if ctx.lexical_forcing.is_empty() {
-                    call_ctx.scopes = closure;
-                } else {
-                    call_ctx.scopes = ctx.scopes.clone();
-                    for frame in &closure {
-                        call_ctx.scopes.push(frame.clone());
-                    }
-                }
+                // D118: a name resolves where it is written, never in the
+                // frames of whoever forced it.
+                call_ctx.scopes = closure;
                 // SPEC_12 §1.1: non-pure-ref hop taints the whole force chain.
                 // Lattice join/meet/diff are structural (see
                 // `expr_is_lattice_structural`) — not transform hops.
@@ -4227,10 +4233,10 @@ impl Ouroboros {
                 // Scope frames: lexical force (parameter rebinding is not a
                 // coordinate cycle — force_coord here false-triggers HOFs).
                 if let Some(val) = scope.get_field(name).cloned() {
-                    return self.force_lexical_name(name, val, ctx, false);
+                    return self.force_lexical_name(name, val, ctx, false, Some(ctx.scopes[i].clone()));
                 }
                 if let Some(val) = scope.get_local_field(name).cloned() {
-                    return self.force_lexical_name(name, val, ctx, false);
+                    return self.force_lexical_name(name, val, ctx, false, Some(ctx.scopes[i].clone()));
                 }
                 let prefixes = vec!["/", "@", "~", "~%"];
                 for p in prefixes {
@@ -4240,10 +4246,10 @@ impl Ouroboros {
                         format!("{}{}", p, name)
                     };
                     if let Some(val) = scope.get_field(&alt_name).cloned() {
-                        return self.force_lexical_name(&alt_name, val, ctx, false);
+                        return self.force_lexical_name(&alt_name, val, ctx, false, Some(ctx.scopes[i].clone()));
                     }
                     if let Some(val) = scope.get_local_field(&alt_name).cloned() {
-                        return self.force_lexical_name(&alt_name, val, ctx, false);
+                        return self.force_lexical_name(&alt_name, val, ctx, false, Some(ctx.scopes[i].clone()));
                     }
                 }
             }
@@ -4393,6 +4399,9 @@ impl Ouroboros {
                     ""
                 };
                 let mut found = None;
+                // D118: a hit on a scope frame is a lexical read — the same
+                // force as the single-segment name, in the frame it was on.
+                let mut lexical_hit: Option<(String, std::sync::Arc<ComboVal>)> = None;
                 // A table frame answers a bare name from the branch its key
                 // spells — the same read as `.name` on that table.
                 let mut table_hit: Option<(Value, Value, String)> = None;
@@ -4400,14 +4409,17 @@ impl Ouroboros {
                     .rev()
                     .map(|i| ctx.scopes[i].clone())
                     .collect();
-                for scope in views.into_iter().map(|f| self.scope_view(f, ctx)) {
+                for frame in views.into_iter() {
+                    let scope = self.scope_view(frame.clone(), ctx);
                     let scope = &scope;
                     if let Some(val) = scope.get_field(name) {
                         found = Some(val.clone());
+                        lexical_hit = Some((name.to_string(), frame.clone()));
                         break;
                     }
                     if let Some(val) = scope.get_local_field(name) {
                         found = Some(val.clone());
+                        lexical_hit = Some((name.to_string(), frame.clone()));
                         break;
                     }
                     if let Some(hit) = dispatch::table_branch_for_name(scope, name) {
@@ -4423,10 +4435,12 @@ impl Ouroboros {
                         };
                         if let Some(val) = scope.get_field(&alt_name) {
                             found = Some(val.clone());
+                            lexical_hit = Some((alt_name.clone(), frame.clone()));
                             break;
                         }
                         if let Some(val) = scope.get_local_field(&alt_name) {
                             found = Some(val.clone());
+                            lexical_hit = Some((alt_name.clone(), frame.clone()));
                             break;
                         }
                     }
@@ -4565,6 +4579,14 @@ impl Ouroboros {
                             );
                         }
                         minted
+                    }
+                    Some(v) if lexical_hit.is_some() => {
+                        let (hit, frame) = lexical_hit.unwrap();
+                        let forced = self.force_lexical_name(&hit, v, ctx, false, Some(frame));
+                        if path.segments.len() > 1 {
+                            return self.navigate_segments(forced, &path.segments[1..], ctx, name);
+                        }
+                        forced
                     }
                     Some(v) => {
                         // force_coord only for public root/staged coordinates;
@@ -5170,6 +5192,7 @@ impl Ouroboros {
         val: Value,
         ctx: &mut EvalContext,
         use_coord: bool,
+        frame: Option<std::sync::Arc<ComboVal>>,
     ) -> Value {
         if matches!(&val, Value::Ref(_)) {
             return val;
@@ -5183,11 +5206,16 @@ impl Ouroboros {
             ctx.entry_hops.insert(name.to_string(), ctx.taint_hops);
             ctx.cycle_chain.push(name.to_string());
         }
+        let is_thunk = matches!(&val, Value::Thunk { .. });
+        if is_thunk {
+            ctx.lexical_frame = frame;
+        }
         let res = if use_coord {
             self.force_coord(name, val, ctx)
         } else {
             self.force(val, ctx)
         };
+        ctx.lexical_frame = None;
         if track {
             if ctx.cycle_chain.last().map(|s| s == name).unwrap_or(false) {
                 ctx.cycle_chain.pop();
