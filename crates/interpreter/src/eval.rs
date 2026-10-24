@@ -115,6 +115,9 @@ fn free_bare_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
             ExprKind::Morphism { param, body } => {
                 let mut nested = bound.clone();
                 nested.extend(morphism_parameter_names(param));
+                // D118: the names a parameter pattern reads (`x @Pos ->`)
+                // are free in the arrow, like the body's.
+                walk(param, &nested, out);
                 walk(body, &nested, out);
             }
             ExprKind::Combo { fields, .. } => {
@@ -125,6 +128,10 @@ fn free_bare_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
                     }
                 }
                 for field in fields {
+                    // D118: a pattern key is a value read where it is written.
+                    if let FieldKey::Pattern(pe) = &field.key {
+                        walk(pe, &nested, out);
+                    }
                     walk(&field.value, &nested, out);
                 }
             }
