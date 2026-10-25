@@ -246,6 +246,55 @@ pub fn default_cache_id() -> Arc<RwLock<Option<ContentHash>>> {
     Arc::new(RwLock::new(None))
 }
 
+/// D118 / Q-104: a reference's path, and the frames it was written in.
+/// The frames are not its identity (the CAID is the path's syntax, SYNTAX_07
+/// §2 #4), not its equality, and not stored: a reference read back from the
+/// store takes the nodes its read walked through.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RefPath {
+    pub path: Path,
+    #[serde(skip)]
+    pub frames: Vec<std::sync::Arc<ComboVal>>,
+}
+
+impl From<Path> for RefPath {
+    fn from(path: Path) -> Self {
+        RefPath { path, frames: Vec::new() }
+    }
+}
+
+impl PartialEq for RefPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+
+impl std::fmt::Debug for RefPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.path.fmt(f)
+    }
+}
+
+impl std::fmt::Display for RefPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.path.fmt(f)
+    }
+}
+
+impl std::ops::Deref for RefPath {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::ops::DerefMut for RefPath {
+    fn deref_mut(&mut self) -> &mut Path {
+        &mut self.path
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Top,
@@ -278,7 +327,7 @@ pub enum Value {
         context: Option<Box<Value>>,
         effect: EffectTag,
     },
-    Ref(Path),
+    Ref(RefPath),
     Bottom(Box<BottomDetail>),
     Blur(BlurDetail),
     /// Closed interval set [start, end] (optionally stepped). Symbolic lattice

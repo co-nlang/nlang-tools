@@ -3779,7 +3779,19 @@ impl Ouroboros {
                 // SPEC_07 §4.2.1 P3 判例: a stored open term is its definition;
                 // reading it through a reference evaluates it here, as `_.`
                 // does — under this frame's `$`, or none.
-                let read = self.resolve_path_internal(&path, ctx);
+                // D118 / Q-104: the names resolve in the frames the
+                // reference was written in, not the observer's.
+                // A reference is a live read: what holds one is a reading of
+                // the universe as it is (D110), wherever its names resolve.
+                crate::READ_WORLD.with(|c| c.set(true));
+                let read = if path.frames.is_empty() {
+                    self.resolve_path_internal(&path, ctx)
+                } else {
+                    let observer = std::mem::replace(&mut ctx.scopes, path.frames.clone());
+                    let read = self.resolve_path_internal(&path, ctx);
+                    ctx.scopes = observer;
+                    read
+                };
                 let open = matches!(&read, Value::Thunk { expr, context: None, .. }
                     if nlang_parser::tier::has_free_dollar(expr));
                 if open {

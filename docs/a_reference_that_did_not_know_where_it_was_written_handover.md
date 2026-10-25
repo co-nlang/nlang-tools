@@ -70,16 +70,68 @@
 
 ### 8.1 射程逐項對照
 
+`eval.rs`、`lib.rs`、`store_codec.rs`、`value.rs` 與 `q104-ref ce8bd9e` 逐位元組相同。`oo` 仍是 `0.104.0`，interpreter 仍是 `0.2.2`。新倉 `layout=9`、`encoding=10`。`Ref` 帶著寫下處的框。框不進身分、不進相等、不進序列化。
+
+建構 `<<path>>` 時，根路徑與位址路徑不留框，其餘把當時的 `ctx.scopes` 留下。解參照把那些框換成這次查找的作用域，找不到再走原來的根。每一次解參照都設 `READ_WORLD`。導航與 `force_recursive` 沒有另把讀出的節點接到 thunk 閉包。倉裡的欄位是帶閉包的 thunk，讀回時重新求值，框由那次求值留下。`store_codec` 從式子造出的 `Ref` 框是空的。
+
+*   **M1** `{ k: 3, r: <<k>> }.r` 由 `_` 變 `3`，`.r + 1` 是 `4`。巢狀 `.s.r` 是 `3`，`<<^.k>>` 由 ⊥ `#out_of_horizon` 變 `3`，`<<s.k>>` 是 `3`，閉包 `f 0` 是 `3`，呼叫端有同名的 `k` 仍是 `3`，`z: r` 是 `3`，`(y -> <<y>>) { a: 7 }` 是 `{ a: 7 }`。
+*   **M2** `({ r: <<k>> } & { k: 3 }).r` 由 `_` 變 `3`。兩邊都寫 `({ k: @int, r: <<k>> } & { k: 3 }).r` 由 `_` 變 `3`。`({ k: 3 } & { r: <<k>> + 1 }).r` 前後都是 `4`。
+*   **M3** `h: { k: 5, r: <<k>> }` 提交後 `_.h.r` 由 `_` 變 `5`，`_.h` 是 `{ k: 5 r: 5 }`。根上也有 `k: 1` 時 `_.h.r` 由 `1` 變 `5`，`_.h.r + 1` 由 `2` 變 `6`。巢狀、`<<^.k>>`、別名 `g: h`、就地交會、箭頭本體 `_.h.f 0` 都是 `5`。這些根與 v0.104.0 同：沒有根上 `k` 的是 `d7e8706b765f14a72b0df0884eb7f2e31fc35be7b40b3bef6490cd02342e006e`，有 `k: 1` 的是 `f5b524cfda7816dd57d27f54fb24992a5f474ebe959b51b324b5964c3103b462`。
+*   **M4** `h: { k: @int, r: <<k>> }` 再交 `h: { k: 5 }`，一檔、兩次演化、兩次提交的根都是 `006795a829d98b4c4d5fcfd0cf7a66b2f8c823289276d62652248049c68ba09a`，`_.h.r` 由 `_` 變 `5`，兩次提交後 `_.h` 是 `{ k: 5 r: 5 }`。
+*   **另一半** `{ k: 3, r: <<_.k>> }.r` 仍是 `_`。寫下處沒有 `k` 的 `h: { r: <<k>> }` 再提交 `k: 2`，`_.h.r` 是 `2`。頂層 `c.r.a` 是 `1`。管道 `{ b: 1 } |> { z: c.r.a }` 是 `{ b: 1 z: 2 }`。巢在轉換器裡的 `<<t>>` 仍是 `#no_context`。離開寫下處的引用照舊：`_.z` 是 `1`，`_.g` 是 `_`。
+*   **身分** `x: 0` 根 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` 根 `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` 根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` 根 `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` 根 `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`；標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。g2 的六個引用根逐字通過。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。
+
 ### 8.4 工單指名要你回答的問題
+
+前是本工單所在提交建出來的 `oo`（v0.104.0），後是這一版。
+
+**Q1** 引用從哪裡拿到寫下處。
+
+| 地方 | 怎麼拿 | 一格 |
+|---|---|---|
+| 建構 `<<path>>` | `eval` 的 `Structural(Path)` 留下當時的 `ctx.scopes`。錨是根或位址時留空框 | `{ k: 3, r: <<k>> }.r`：前 `_`，後 `3` |
+| 從倉裡讀回 | 欄位是帶閉包的 thunk，重新求值時再走上一列。`store_codec` 從式子造出的 `Ref` 只有路徑，框是空的。導航與 `force_recursive` 不另接框 | `h: { k: 5, r: <<k>> }` 提交後 `_.h.r`：前 `_`，後 `5`。根仍是 `d7e8706b…` |
+| 交會 | 沒有另改 `unify`。Q-103 把 thunk 換到交會後的節點，求值 `<<k>>` 時留下的就是那個節點的框 | `({ r: <<k>> } & { k: 3 }).r`：前 `_`，後 `3` |
+| `<<_.k>>` | 錨是根，不留框，解在根上 | `{ k: 3, r: <<_.k>> }.r` 前後都是 `_` |
+| `^.` | 錨是父，留下寫下處的框，跳的是那一串 | `{ k: 3, s: { r: <<^.k>> } }.s.r`：前 ⊥ `#out_of_horizon`，後 `3` |
+
+**Q2** 解參照。框非空時，`resolve_path_internal` 用那些框當 `ctx.scopes`，由內往外找；空框用觀測那一方的框。框裡沒有，接著找根、staged、標準根（原來的裸名路徑）。解參照一開始就設 `READ_WORLD`，所以拿著引用的值是在讀宇宙，存的是配方，之後的提交重讀。r4 一檔、兩次演化、兩次提交的根都是 `006795a829d98b4c4d5fcfd0cf7a66b2f8c823289276d62652248049c68ba09a`，`_.h.r` 是 `5`。
+
+**Q3** 寫下處不進身分：`encode_path` 只編路徑。不相等：`RefPath` 的 `PartialEq` 只比路徑。不進序列化：`#[serde(transparent)]`，`frames` 是 `#[serde(skip)]`，JSON 舊倉的形狀仍是路徑。g2 的根見 8.1，逐字沒動。規模（同一台，前／後）：
+
+| 格 | 前 | 後 | 根 |
+|---|---|---|---|
+| 400 欄一個記錄，演化／提交 | 0.511 s／0.622 s | 0.474 s／0.600 s | `4cbecfc6c345f5a639a62abd1a8162e0958673e9e2b274d48f56622de43ba359`，`_.r.f399` 是 `399` |
+| 200 層頂層兄弟鏈，演化／提交 | 2.812 s／0.737 s | 2.866 s／0.716 s | `38ea6baf203da3b3b9fa80b40fb94ddea64257ca69a0b63f680763ff1bbd4d30`，`_.f199` 是 `0` |
+| 400 個 `<<k>>` 的記錄，演化／提交 | 0.656 s／1.127 s | 0.648 s／1.150 s | `08fead49dcca3bacb70d702e3522afb236c2e14de46d12ca1febb00089b3bad0`，`_.r.q399` 是 `1` |
+
+400 個引用那一格先跑了一次，前的提交是 2.747 s、後是 1.167 s；上表是接著各重測一次。
 
 ### 8.5 探針
 
+`a_reference_that_did_not_know_where_it_was_written_probe_test` 6／6。單獨一輪 5.62 秒，閘門第一輪 5.28 秒。探針檔沒有改。r1–r4 與 g1、g2 都綠。r4 的根仍是 `006795a8…`。
+
 ### 8.6 數字
 
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，都是退出碼 0。
+
+*   第一輪 2026-10-25T17:44:10+08:00，1375.16 秒。第二輪 18:07:05，984.66 秒。第三輪 18:23:29，977.09 秒。
+*   歸一 3706 行，三輪 sha256 都是 `892b38149bebf9bafa8817182b4cfed984839ecc7db86217e4bc686d7ad4a4ed`。297 條 `test result`，加總 **2818** 通過、0 失敗。`test ` 行以 ` ok` 結尾 2817。`Running` 294。`^error` 0，BrokenPipe 0，panicked 0。原始日誌 sha 前綴 `6ddab9f4e99c7918`、`875a403d96d236de`、`df57579d5a13a892`，三份不相等。位元組 298576／298421／298423。
+*   閘門第一輪：本探針 6／6，5.28 秒。Q-103 9／9，5.71 秒。Q-102 6／6，3.43 秒。Q-101 9／9，9.85 秒。Q-100 CLI 8／8，5.44 秒，bytes 2／2，0.07 秒。Q-099 CLI 5／5，4.16 秒，bytes 2／2，0.00 秒。Q-098 5／5，9.10 秒。Q-097 7／7，10.54 秒。Q-095 3／3，25.45 秒。Q-090 4／4，2.13 秒。Q-089 6／6，2.05 秒。`forward_ref` 10／10，0.34 秒；CLI 7／7，0.25 秒。Q-078 15／15，6.20 秒。`spread_privacy` 11／11，0.38 秒。nominal_ref 15／15，0.46 秒。runs_every_branch 7／7，2.82 秒。forgot_patterns_r1 6／6，0.70 秒。axis bytes 1／1，0.27 秒。`a_definition_that_kept_its_answer` 13／13，7.68 秒。`a_recipe_that_met_a_write` 25／25，45.12 秒。`a_commit_that_is_a_value` 13／13，1.75 秒。`print_what_can_be_read` 12／12，1.06 秒。union 16／16，3.80 秒。where_the_conflict_is 9／9，1.07 秒。orthomodular 18／18，0.26 秒。oml 10／10，0.20 秒。advert_persistence 19／19，22.79 秒。
+*   Linux：造出這個 `oo` 的那次編譯，`nlang-interpreter`（lib）14 warnings，`cargo fix` 12。三輪閘門沒有重連它。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-25T18:39:47+08:00，Finished 4.87 秒，退出碼 0，`^error` 0。目標 lib 15 warnings，`cargo fix` 13。
+*   Conformance（新的空目錄，`nlang-spec` 的 local）退出碼 0：`186 vectors, 186 pass, 0 fail`。跑前 `ls -A | wc -l` 是 0，跑後是 0。
+*   `oo` 11289688 位元組，mtime 2026-10-25 17:42:59.446858397 +0800。閘門、Windows、conformance 沒有重連它。父倉 HEAD `bdc2f5b7e279b29adca6ab8950b31ffa063880b0`，`.oo/format` 是 `32`，前後沒有改。
+
 ### 8.7 你認為需要改規格之處
+
+沒有。規格文字、向量與 `CHANGELOG` 留給驗收方。
 
 ## 9. 驗收（驗收方填）

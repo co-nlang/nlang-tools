@@ -1075,16 +1075,19 @@ fn expr_to_value(expr: &Expr) -> Result<Value> {
         }),
         ExprKind::Structural(inner) => {
             if let ExprKind::Path(p) = &inner.kind {
-                Ok(Value::Ref(p.clone()))
+                Ok(Value::Ref(p.clone().into()))
             } else {
-                Ok(Value::Ref(Path {
-                    anchor: nlang_parser::ast::PathAnchor::Bare,
-                    segments: vec![inner.to_nlang(0)],
-                    span: inner.span,
-                }))
+                Ok(Value::Ref(
+                    Path {
+                        anchor: nlang_parser::ast::PathAnchor::Bare,
+                        segments: vec![inner.to_nlang(0)],
+                        span: inner.span,
+                    }
+                    .into(),
+                ))
             }
         }
-        ExprKind::Path(p) => Ok(Value::Ref(p.clone())),
+        ExprKind::Path(p) => Ok(Value::Ref(p.clone().into())),
         ExprKind::Context
         | ExprKind::Lens(_, _)
         | ExprKind::Unary { .. }
