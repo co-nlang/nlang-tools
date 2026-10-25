@@ -112,6 +112,7 @@ impl Ouroboros {
             }
             x => {
                 let meet = self.unify_internal(x.clone(), without.clone(), ctx);
+                let meet = self.settle_pending(meet, ctx);
                 if crate::unify::conflict_made(&[&x, &without], &meet).is_some() {
                     x
                 } else if self.same_value(meet, x.clone(), ctx) {

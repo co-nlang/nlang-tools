@@ -365,7 +365,8 @@ fn g1_caret_counts_containers() {
 
 /// Lexical scope stays lexical: a spread-in field keeps the scope it was
 /// written in; a private field of a spread source does not leak (SPEC_03
-/// §3.1 spread isolation); `&` does not share scope; an outer name is still
+/// §3.1 spread isolation); `&` shares the met node's names (D118, amended
+/// for Q-103); an outer name is still
 /// found when nothing nearer defines it; mutual references stay as they are.
 /// (Mutation: spread a source's private fields regardless of where the spread
 /// is written ⟹ red.)
@@ -377,7 +378,9 @@ fn g2_lexical_scope_stays_lexical() {
         ("{ ...{ ~h: 3, k: h } }.k", is, "3"),
         ("{ ...{ ~h: 3, k: 1 }, q: h }.q", is, "_"),
         ("{ ...{ ~h: 3 } }", is, "{}"),
-        ("({ ...{ j: 5 } } & { q: j }).q", is, "_"),
+        // AMENDED 2026-10-24 for Q-103 (D118): a name resolves in the node
+        // it is written in as it is after the meet, so `&` shares scope.
+        ("({ ...{ j: 5 } } & { q: j }).q", is, "5"),
         ("{ j: 100, t: { ...{ k: 5 }, q: j } }.t.q", is, "100"),
         ("{ j: k, k: j }.j", is, "_"),
         ("{ ...{ j: k }, ...{ k: j } }.j", is, "_"),

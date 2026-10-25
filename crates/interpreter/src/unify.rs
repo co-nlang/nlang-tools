@@ -342,6 +342,12 @@ impl Ouroboros {
         let mut kept: Vec<nlang_parser::ast::Expr> = Vec::new();
         let mut answers: Vec<Value> = Vec::new();
         for ((v, read), own) in [(&a, reads[0]), (&b, reads[1])].into_iter().zip(own) {
+            // D118: a recipe an earlier meet of this coordinate kept is its
+            // conjuncts, judged one by one like the other write's — whether
+            // it reads the universe as a whole depends on which write it met.
+            let own = own
+                || matches!(v, Value::Thunk { expr, .. }
+                    if matches!(expr.kind, nlang_parser::ast::ExprKind::Meet(..)));
             if !read && !own {
                 answers.push(v.clone());
                 continue;
@@ -746,6 +752,7 @@ impl Ouroboros {
                 for branch in branches.into_iter().take(max_branches * 2) {
                     let side = branch.clone();
                     let r = self.unify_internal(branch, other.clone(), ctx);
+                    let r = self.settle_pending(r, ctx);
                     // D117: a branch whose meet made a conflict does not
                     // apply, though the conflict stays in its field.
                     let r = match conflict_made(&[&side, &other], &r) {
@@ -804,8 +811,20 @@ impl Ouroboros {
     }
 
     fn unify_combo(&self, a: ComboVal, b: ComboVal, ctx: &mut EvalContext) -> Value {
+        // D118: the met node remembers the nodes met into it.
+        let mut from: Vec<u64> = a.merged_from.iter().chain(b.merged_from.iter()).copied().collect();
+        from.extend([a.node_id, b.node_id].into_iter().filter(|id| *id != 0));
         match self.unify_combo_inner(a, b, ctx) {
-            Value::Combo(c) => Value::Combo(self.normalize_table(c, ctx)),
+            Value::Combo(c) => {
+                let mut c = self.normalize_table(c, ctx);
+                if !from.is_empty() {
+                    from.sort_unstable();
+                    from.dedup();
+                    c.node_id = crate::value::fresh_node_id();
+                    c.merged_from = from;
+                }
+                Value::Combo(c)
+            }
             other => other,
         }
     }
@@ -879,8 +898,9 @@ impl Ouroboros {
             keys.extend(left.keys());
             keys.extend(right.keys());
             for key in keys {
-                let va = left.get(key).cloned().unwrap_or(Value::Top);
-                let vb = right.get(key).cloned().unwrap_or(Value::Top);
+                // D118: each side's field resolves in its own met node first.
+                let va = left.get(key).cloned().map(|v| crate::value::rebind_to_met(&a, v)).unwrap_or(Value::Top);
+                let vb = right.get(key).cloned().map(|v| crate::value::rebind_to_met(&b, v)).unwrap_or(Value::Top);
                 let va_is_top = va.is_top();
                 let vb_is_top = vb.is_top();
                 let shown = format!("{display}{key}");
@@ -919,6 +939,19 @@ impl Ouroboros {
                         involved: vec![],
                         ..Default::default()
                     });
+                }
+                // D118: a field both sides write, read by a name of the met
+                // node, meets there — not before the met node exists.
+                // The universe's own meets (a working set, a write over the
+                // root) meet at once: the root is the met node (D110).
+                if !va_is_top
+                    && !vb_is_top
+                    && va != vb
+                    && !crate::UNMETERED_MERGE.with(|c| c.get())
+                    && (reads_names_of(&va, &a, &b) || reads_names_of(&vb, &a, &b))
+                {
+                    out.insert(key.clone(), crate::value::pending_meet(va, vb));
+                    continue;
                 }
                 let merged = engine.unify_internal(va, vb, ctx);
                 if let Value::Bottom(mut detail) = merged {
@@ -1298,6 +1331,31 @@ pub(crate) fn conflict_made(sides: &[&Value], met: &Value) -> Option<BottomDetai
 
 impl Ouroboros {
     /// The meet of `a` and `b`, and the conflict it made (D117).
+    /// D118 / D117: a meet left for the met node is a meet already made.
+    /// Whatever asks whether a meet made a conflict (a choice, the evolve
+    /// gate) reads those fields as a read of them would, in their node.
+    pub(crate) fn settle_pending(&self, v: Value, ctx: &mut EvalContext) -> Value {
+        match v {
+            Value::Combo(mut c) => {
+                let snap = c.clone();
+                for map in [&mut c.data, &mut c.types, &mut c.local] {
+                    for (_, f) in map.iter_mut() {
+                        let cur = std::mem::replace(f, Value::Top);
+                        let pend = matches!(&cur, Value::Thunk { closure, .. }
+                            if closure.first().map(|fr| crate::value::is_meet_frame(fr)).unwrap_or(false));
+                        *f = if pend {
+                            self.force(crate::value::rebind_to_met(&snap, cur), ctx)
+                        } else if matches!(cur, Value::Combo(_)) {
+                            self.settle_pending(cur, ctx)
+                        } else { cur };
+                    }
+                }
+                Value::Combo(c)
+            }
+            other => other,
+        }
+    }
+
     pub(crate) fn meet_clash(
         &self,
         a: Value,
@@ -1305,7 +1363,56 @@ impl Ouroboros {
         ctx: &mut EvalContext,
     ) -> (Value, Option<BottomDetail>) {
         let met = self.unify_internal(a.clone(), b.clone(), ctx);
+        let met = self.settle_pending(met, ctx);
         let clash = conflict_made(&[&a, &b], &met);
         (met, clash)
     }
+}
+
+
+/// D118: the bare names an unforced value reads (through pending meets).
+fn read_names(v: &Value, out: &mut std::collections::HashSet<String>) {
+    if let Value::Thunk { expr, closure, .. } = v {
+        out.extend(crate::eval::free_bare_names(expr, &std::collections::HashSet::new()));
+        for f in closure {
+            for side in f.local.values() {
+                if matches!(side, Value::Thunk { .. }) && f.local.contains_key("__nlang_meet_l") {
+                    read_names(side, out);
+                }
+            }
+        }
+    }
+}
+
+/// D118: whether an unforced value reads any bare name at all.
+pub(crate) fn reads_any_name(v: &Value) -> bool {
+    let mut names = std::collections::HashSet::new();
+    read_names(v, &mut names);
+    names.iter().any(|n| !n.starts_with("~__nlang_meet"))
+}
+
+/// D118: whether an unforced value reads a name `c` defines.
+pub(crate) fn reads_name_in(v: &Value, c: &ComboVal) -> bool {
+    let mut free = std::collections::HashSet::new();
+    read_names(v, &mut free);
+    !free.is_empty()
+        && (c.data.keys().any(|k| crate::eval::captures(&free, "", k))
+            || c.types.keys().any(|k| crate::eval::captures(&free, "@", k))
+            || c.rules.keys().any(|k| crate::eval::captures(&free, "/", k))
+            || c.local.keys().any(|k| crate::eval::captures(&free, "~", k)))
+}
+
+/// D118: whether an unforced value reads a name either side defines.
+fn reads_names_of(v: &Value, a: &ComboVal, b: &ComboVal) -> bool {
+    let mut free = std::collections::HashSet::new();
+    read_names(v, &mut free);
+    if free.is_empty() {
+        return false;
+    }
+    [a, b].iter().any(|c| {
+        c.data.keys().any(|k| crate::eval::captures(&free, "", k))
+            || c.types.keys().any(|k| crate::eval::captures(&free, "@", k))
+            || c.rules.keys().any(|k| crate::eval::captures(&free, "/", k))
+            || c.local.keys().any(|k| crate::eval::captures(&free, "~", k))
+    })
 }

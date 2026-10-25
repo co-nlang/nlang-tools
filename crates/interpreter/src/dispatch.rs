@@ -593,6 +593,7 @@ impl Ouroboros {
                 _ => Value::Top,
             };
             let unified = self.unify_internal(arg.clone(), pattern_value.clone(), ctx);
+            let unified = self.settle_pending(unified, ctx);
 
             // D117: an argument whose meet with the pattern made a conflict
             // does not match, though the conflict stays in its field.
