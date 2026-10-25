@@ -2446,7 +2446,14 @@ impl Ouroboros {
                 // structural-view so G6 observation does not peel %val
                 // (SYNTAX_07 §2.2 / §4 #6 duality).
                 if let ExprKind::Path(p) = &e.kind {
-                    Value::Ref(p.clone())
+                    // D118 / Q-104: the reference's names resolve where it is
+                    // written. A root path (`_.x`) has no frames to keep.
+                    let frames = match p.anchor {
+                        nlang_parser::ast::PathAnchor::Root
+                        | nlang_parser::ast::PathAnchor::Address { .. } => Vec::new(),
+                        _ => ctx.scopes.clone(),
+                    };
+                    Value::Ref(crate::value::RefPath { path: p.clone(), frames })
                 } else {
                     mark_structural_view(self.eval(e, ctx))
                 }
