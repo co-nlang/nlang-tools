@@ -322,3 +322,83 @@ fn g2_roots_without_a_meet_of_names_do_not_move() {
     }
     verdict(bad, 7);
 }
+
+// ── Added at acceptance, round 1 (2026-10-25) ───────────────────────────
+//
+// R-1: a meet left for the met node is a meet already made. Whatever asks
+// whether a meet made a conflict — a choice (dispatch, a union distributing,
+// a complement, a pipe into a union, a typed parameter) or the evolve gate —
+// sees the same answer a read of that field sees. v0.103.0 chose right for a
+// field that reads its own literal and wrong for a met node; round 0 chose
+// wrong for both, and committed a branch it made a conflict with.
+//
+// R-2: a meet left for the met node met again, in any grouping, gives the
+// answer the read of the three writes gives.
+
+/// The three values r6 chooses on: a literal whose field reads its own
+/// sibling, a met node, a field both sides write. Each reads `s` as `5`.
+const R6_VALUES: [&str; 3] = [
+    "{ p: 5, s: p }",
+    "({ s: p } & { p: 5 })",
+    "({ p: @int, s: p } & { p: 5, s: @int })",
+];
+
+/// r6 — A choice sees the answer a read sees (R-1).
+#[test]
+fn r6_a_choice_sees_what_a_read_sees() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    for v in R6_VALUES {
+        let cells = [
+            (format!("{{ @{{ {{ s: 6 }} }}: \"y\", _: \"n\" }} {v}"), "\"n\""),
+            (format!("{{ @{{ {{ s: 5 }} }}: \"y\", _: \"n\" }} {v}"), "\"y\""),
+            (format!("{{ @S: {{ s: 6 }}, t: {{ @{{ @S }}: \"y\", _: \"n\" }}, r: t {v} }}.r"), "\"n\""),
+            (format!("{{ @S: {{ s: 6 }}, f: (x @S -> \"y\") | (x -> \"n\"), r: f {v} }}.r"), "\"n\""),
+            (format!("({v} & ({{ s: 6, k: 2 }} | {{ s: 5, k: 1 }})).k"), "1"),
+            (format!("({v} |> ({{ s: 6, k: 2 }} | {{ s: 5, k: 1 }})).k"), "1"),
+            (format!("({v} & !{{ s: 6 }}).s"), "5"),
+            (format!("{v} & !{{ s: 5 }}"), "_|_ #conflict"),
+        ];
+        for (e, want) in &cells {
+            check(&mut bad, e, eval_here(e), want);
+        }
+        n += cells.len();
+    }
+    let nested = [
+        ("{ @{ { t: { s: 6 } } }: \"y\", _: \"n\" } { t: { p: 5, s: p } }", "\"n\""),
+        ("({ t: { p: 5, s: p } } & ({ t: { s: 6 } } | { t: { s: 5 }, k: 1 })).k", "1"),
+    ];
+    table(&mut bad, &nested);
+    n += nested.len();
+    for (label, first) in [("own literal", "r: { p: 5, s: p }"), ("met node", "r: ({ s: p } & { p: 5 })")] {
+        let w = Ws::new("r6-gate");
+        check(&mut bad, &format!("gate, {label}: first"), w.writes(&[first]), "e0 c0");
+        check(&mut bad, &format!("gate, {label}: a conflicting write is refused"), w.writes(&["r: { s: 6 }"]), "e1 c1");
+        check(&mut bad, &format!("gate, {label}: _.r"), w.eval("_.r"), "{ p: 5 s: 5 }");
+        let w = Ws::new("r6-commit");
+        let src = format!("r: {} & ({{ s: 6, k: 2 }} | {{ s: 5, k: 1 }})", &first[3..]);
+        check(&mut bad, &format!("commit, {label}: {src}"), w.writes(&[&src]), "e0 c0");
+        check(&mut bad, &format!("commit, {label}: _.r"), w.eval("_.r"), "{ k: 1 p: 5 s: 5 }");
+        n += 5;
+    }
+    verdict(bad, n);
+}
+
+/// r7 — Three writes, one left for the met node, read one answer in any
+/// grouping and in one literal (R-2).
+#[test]
+fn r7_a_meet_left_for_the_node_met_again() {
+    let mut bad = Vec::new();
+    let cells = [
+        ("(({ p: @int, s: p } & { p: 5, s: @int }) & { s: 6 }).s", "_|_ #conflict"),
+        ("({ p: @int, s: p } & ({ p: 5, s: @int } & { s: 6 })).s", "_|_ #conflict"),
+        ("(({ p: @int, s: p } & { s: 6 }) & { p: 5, s: @int }).s", "_|_ #conflict"),
+        ("{ p: @int, s: p, p: 5, s: @int, s: 6 }.s", "_|_ #conflict"),
+        ("(({ p: @int, s: p } & { s: @int }) & ({ p: 5, s: @int } & { s: 6 })).s", "_|_ #conflict"),
+        ("(({ p: 5, s: p } & { s: @int }) & { s: 6 }).s", "_|_ #conflict"),
+        ("(({ p: @int, s: p + 1 } & { s: @int }) & { p: 5, s: @int }).s", "6"),
+        ("(({ p: @int, s: p } & { p: 5, s: @int }) & { s: 5 }).s", "5"),
+    ];
+    table(&mut bad, &cells);
+    verdict(bad, cells.len());
+}
