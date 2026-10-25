@@ -752,6 +752,7 @@ impl Ouroboros {
                 for branch in branches.into_iter().take(max_branches * 2) {
                     let side = branch.clone();
                     let r = self.unify_internal(branch, other.clone(), ctx);
+                    let r = self.settle_pending(r, ctx);
                     // D117: a branch whose meet made a conflict does not
                     // apply, though the conflict stays in its field.
                     let r = match conflict_made(&[&side, &other], &r) {
@@ -1330,6 +1331,31 @@ pub(crate) fn conflict_made(sides: &[&Value], met: &Value) -> Option<BottomDetai
 
 impl Ouroboros {
     /// The meet of `a` and `b`, and the conflict it made (D117).
+    /// D118 / D117: a meet left for the met node is a meet already made.
+    /// Whatever asks whether a meet made a conflict (a choice, the evolve
+    /// gate) reads those fields as a read of them would, in their node.
+    pub(crate) fn settle_pending(&self, v: Value, ctx: &mut EvalContext) -> Value {
+        match v {
+            Value::Combo(mut c) => {
+                let snap = c.clone();
+                for map in [&mut c.data, &mut c.types, &mut c.local] {
+                    for (_, f) in map.iter_mut() {
+                        let cur = std::mem::replace(f, Value::Top);
+                        let pend = matches!(&cur, Value::Thunk { closure, .. }
+                            if closure.first().map(|fr| crate::value::is_meet_frame(fr)).unwrap_or(false));
+                        *f = if pend {
+                            self.force(crate::value::rebind_to_met(&snap, cur), ctx)
+                        } else if matches!(cur, Value::Combo(_)) {
+                            self.settle_pending(cur, ctx)
+                        } else { cur };
+                    }
+                }
+                Value::Combo(c)
+            }
+            other => other,
+        }
+    }
+
     pub(crate) fn meet_clash(
         &self,
         a: Value,
@@ -1337,6 +1363,7 @@ impl Ouroboros {
         ctx: &mut EvalContext,
     ) -> (Value, Option<BottomDetail>) {
         let met = self.unify_internal(a.clone(), b.clone(), ctx);
+        let met = self.settle_pending(met, ctx);
         let clash = conflict_made(&[&a, &b], &met);
         (met, clash)
     }

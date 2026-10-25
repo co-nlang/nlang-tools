@@ -5239,7 +5239,10 @@ impl Ouroboros {
             None => val,
         };
         let is_thunk = matches!(&val, Value::Thunk { .. });
-        if is_thunk {
+        // A pending meet's side is found on its synthetic frame, which is
+        // no node: appending it would let a nested pending meet read the
+        // outer one's sides as its own.
+        if is_thunk && !meet_side {
             ctx.lexical_frame = frame;
         }
         let res = if use_coord {

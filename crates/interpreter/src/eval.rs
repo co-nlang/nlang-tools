@@ -1598,6 +1598,7 @@ impl Ouroboros {
                     let value = !m.is_morphism();
                     let side = m.clone();
                     let res = self.pipe_apply_value(lv.clone(), m, &mut call_ctx, ctx);
+                    let res = if value { self.settle_pending(res, ctx) } else { res };
                     // D117: into a value the pipe is a meet; a member it made a
                     // conflict with does not apply.
                     match crate::unify::conflict_made(&[&lv, &side], &res) {

@@ -153,6 +153,32 @@
 
 沒有。規格文字、向量與 `CHANGELOG` 留給驗收方。
 
+### 8.8 第一輪修補
+
+`complement.rs`、`dispatch.rs`、`eval.rs`、`unify.rs`、`lib.rs` 與 `q103-r1ref 4c37472` 逐位元組相同。`oo` 仍是 `0.103.0`，interpreter 仍是 `0.2.2`。探針、§8.7 以上、版本都沒有改。
+
+問「這次交會做出衝突沒有」之前，`settle_pending` 把交會結果裡的待交會欄位在它的節點裡強制，往下走巢狀記錄。不讀名字的欄位不在這裡強制。五處：`unify.rs` 聯集分配、`meet_clash`（演化閘門）、`dispatch.rs`、`complement.rs`、`eval.rs` 管線送進聯集。
+
+只放這五處時，r6 還有 6 格錯，都是「兩邊都寫」的那個值：內層待交會在外層合成框上找到，被接上那一框，讀到外層自己的兩邊。`force_lexical_name` 對 `~__nlang_meet_` 開頭的名字不設 `lexical_frame`。合成框不是寫下的節點。這一處是 §9.3 的 R-2，r6 的那 6 格要它，r7 因此也綠。
+
+修完後（空目錄 `oo eval`）：`{ @{ { s: 6 } }: "y", _: "n" } { p: 5, s: p }` 是 `"n"`；`({ p: 5, s: p } & ({ s: 6, k: 2 } | { s: 5, k: 1 })).k` 與 `|>` 都是 `1`；`{ p: 5, s: p } & !{ s: 6 }` 是 `{ p: 5 s: 5 }`；`{ @S: { s: 6 }, f: (x @S -> "y") | (x -> "n"), r: f { p: 5, s: p } }.r` 是 `"n"`。交會出的節點 `{ @{ { s: 6 } }: "y", _: "n" } ({ s: p } & { p: 5 })` 由 `"y"` 變 `"n"`。兩邊都寫的值交聯集，`.k` 是 `1`。`r: { p: 5, s: p }` 提交後再演化 `r: { s: 6 }`：退出碼 1，`Error: Evolution Conflict in "b.n": #conflict at r.s`，`_.r` 仍是 `{ p: 5 s: 5 }`。一檔 `r: { p: 5, s: p } & ({ s: 6, k: 2 } | { s: 5, k: 1 })` 提交後 `_.r` 是 `{ k: 1 p: 5 s: 5 }`。
+
+r7：三個寫入的六種分組都是 `_|_ ;; %cause: #conflict`；`(({ p: @int, s: p + 1 } & { s: @int }) & { p: 5, s: @int }).s` 是 `6`。`{ a: 1, a: 2 }.a` 仍是 `_|_ ;; %cause: #conflict ;; Incompatible types: 1 vs 2`。`({ a: 1 } & { a: 2 }).a` 仍是 `_|_ ;; %cause: #conflict`。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`1 + 1` 與 `1+1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k` `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m` `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`；標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。就地根仍是 `64fe56dc6a7d29e3333ff7fb220fc1ff8d0b5ff6b2359440ac9d43bcbc30029c`。一檔、兩次演化、兩次提交仍是 `5fab0cf7ab9cfe3c2b7545d85ace3274fd8f7922c2ccda9a52c46bcd92bc85af`，`_.r.z` 是 `5`。Q-097：400 欄根 `4cbecfc6c345f5a639a62abd1a8162e0958673e9e2b274d48f56622de43ba359`（演化 0.460 s，提交 0.576 s），兩個 400 欄根 `400e403f71706228c0708e4bc0c52ca3dea71bf7243f8aff14754a8497596e2d`（演化 1.535 s，提交 1.098 s），`_.r.f399` 與 `_.r.g399` 都是 `399`。200 層頂層兄弟鏈根仍是 `38ea6baf203da3b3b9fa80b40fb94ddea64257ca69a0b63f680763ff1bbd4d30`（演化 2.579 s，提交 0.651 s），`_.f199` 是 `0`。新倉 `layout=9`、`encoding=10`。
+
+探針 9／9（單獨 5.83 秒；閘門第一輪 6.21 秒），含 `r6_a_choice_sees_what_a_read_sees` 與 `r7_a_meet_left_for_the_node_met_again`。r1–r5、g1、g2 照綠。
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，退出碼都是 0。第一輪 2026-10-25T10:51:35+08:00，1381.97 秒。第二輪 11:14:37，930.32 秒。第三輪 11:30:07，915.45 秒。
+
+歸一 3697 行，sha256 `6d2a3544b2c069f0713de4267feb0ce784b966fbd3ea64d640c8d3d588a9bb73`，三輪相同。`test result:` 296 行，加總 **2812** 通過、0 失敗。以 `test ` 開頭、以 ` ok` 結尾的行是 2811。`Running` 293。原始日誌 sha 前綴 `e64ce7322c9cf525`、`db1281c38b09596c`、`fcb494405d810327`，三份不相等。位元組 297956／297801／297800。`^error` 0，BrokenPipe 0，panicked 0。
+
+閘門第一輪：本探針 9／9，6.21 秒。Q-102 6／6，3.42 秒。Q-101 9／9，9.79 秒。Q-100 CLI 8／8，5.07 秒，bytes 2／2，0.04 秒。Q-099 CLI 5／5，4.38 秒，bytes 2／2，0.00 秒。Q-098 5／5，9.14 秒。Q-097 7／7，11.41 秒。Q-095 3／3，26.59 秒。Q-078 15／15，6.38 秒。`spread_privacy` 11／11，0.37 秒。nominal_ref 15／15，0.50 秒。runs_every_branch 7／7，2.84 秒。forgot_patterns_r1 6／6，0.76 秒。axis bytes 1／1，0.27 秒。`a_definition_that_kept_its_answer` 13／13，7.80 秒。`a_recipe_that_met_a_write` 25／25，48.31 秒。`a_commit_that_is_a_value` 13／13，1.68 秒。union 16／16，3.67 秒。where_the_conflict_is 9／9，1.04 秒。orthomodular 18／18，0.25 秒。oml 10／10，0.21 秒。advert_persistence 19／19，21.89 秒。
+
+造出這個 `oo` 的編譯，`nlang-interpreter`（lib）14 warnings，`cargo fix` 12。三輪閘門沒有重連它。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-25T11:45:23+08:00，Finished 4.65 秒，退出碼 0，`^error` 0。目標 lib 15 warnings，`cargo fix` 13。都沒有修。Conformance 185／185，空目錄 `/home/gali/tmp/q103r1/conf.iumb`，跑前 `ls -A | wc -l` 是 0，跑後是 0。父倉 `.oo/format` 前後都是 `32`。父倉 HEAD `e4a3a55e922544aff97e735e0fd92c0ca185a4ba`。`oo` 11267600 位元組，mtime 2026-10-25 10:49:13.065329483 +0800。不引用 `--version`。
+
+done。
+
 ## 9. 驗收（驗收方填）
 
 ### 9.1 第一輪驗收（2026-10-25）：**兩項修補**
