@@ -3317,6 +3317,25 @@ impl Ouroboros {
                             ..Default::default()
                         }));
                     }
+                    // D119: an arithmetic builtin given `_` or an operand not
+                    // yet a value answers `_` (`~%Math./add (_, 1)` as `_ + 1`).
+                    // `str.concat` is `math.add` under another name. `math.random`
+                    // draws; it is not a function of an operand.
+                    if (builtin_id.starts_with("math.")
+                        || builtin_id.starts_with("complex.")
+                        || builtin_id == "str.concat")
+                        && builtin_id != "math.random"
+                    {
+                        if let Value::Combo(ref ac) = unified_arg {
+                            let open = ac.data.iter().filter(|(k, _)| k.parse::<usize>().is_ok()).any(|(_, v)| {
+                                let v = self.force(v.clone(), ctx);
+                                v.is_top() || crate::eval::not_yet_a_value(&v)
+                            });
+                            if open {
+                                return Value::Top;
+                            }
+                        }
+                    }
                     if let Some(func) = self.builtin_registry.get(builtin_id) {
                         // O76 / O78 ②: declared keys live in the registry.
                         // Missing required keys reuse the existing Top → cocoon

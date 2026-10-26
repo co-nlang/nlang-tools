@@ -75,17 +75,66 @@
 
 ### 8.1 射程逐項對照
 
+`eval.rs` 的 `not_yet_a_value`：摺疊之後是區間、補，或封閉且帶 `%kind: #type` 與 `%name` 的組合（`is_type_value_combo`）。算術在聯集分配之後、剝 `%val` 之前：任一邊是錨點就答 `_|_ #arithmetic_on_anchor`；否則任一邊還沒是值就答 `_`。`==`／`!=` 在同一處：任一邊還沒是值就答 `_`。`math.*`（`math.random` 除外）、`complex.*`，以及 `math.add` 的別名 `str.concat`，在呼叫前看已經寫上的數字鍵，鍵是 `_` 或還沒是值就答 `_`。演化原有的規則把這個 `_` 收成配方（字面 `_` 除外），提交只在強制結果是 ⊥ 時才把 ⊥ 寫進歷史。
+
+*   **M1** `@int + 1`、`@num * 2`、`(1..) - 1`、`(1..9) / 2`、`!0 + 1`、`@int == 5`、`(1..) == 5`、`~%Math./add (@int, 1)`、`~%Math./add (_, 1)`、`~%Math./sqrt (@num)`、`~%Math./lt (@int, 3)` 都是 `_`。`(@int | 3) + 1` 逐支之後型別那支是 `_`，`_` 吸收旁邊的 `4`，整式是 `_`。使用者型別 `@T: @int` 之後的 `@T + 1` 是 `_`；`n: @T`、`r: n + 1`、`n: 5` 讀 `6`。`~%Math./bits (@int)` 從 `264` 改為 `_`（`bits (7)` 仍是 `3`）。`~%Math./eml (@int, 1)` 與 `~%Complex./real (@int)` 是 `_`；`eml (1, 2)` 仍算出複數，`real (1)` 仍是 `1`。`~%Str./concat (@str, "a")` 從 ⊥ 改為 `_`，`"a"` 與 `"b"` 仍是 `"ab"`。
+*   **M2** `5 + 1`、`"a" + "b"`、`(1 | 2) + 1`、`_ + 1`、`5 == 5`、`5 != 5`、`"a" + 1`、`{ a: 1 } + 1`、`5 & 7`、交會後的 `n & 7` 與 `n + "a"`、`#_ + 1`、`1 / 0`、`~%Math./add (1)` 的態射，探針 r2 照舊。`math.random` 仍抽一個數（`random (@int)` 也是，效果 `#nondet`）。
+*   **M3／M4／M5** 探針 r3–r6 綠。一檔 `n: @int`、`r: n + 1`、`n: 5` 從 ⊥、根 `fba672c8…` 改為 `6`、根 `f6dc16ae…`（與 `n: 5` 寫在前面同一個根）。兩次提交同一讀數、同一根。記錄 `h: { k: @int, r: k + 1 }` 再寫 `h: { k: 5 }`：一檔本來就是 `6`、根 `bcb96b88…`；兩次提交從 `61b0ca48…` 移到這顆。真矛盾仍寫入並回報：`r: 1 + "a"`、`n + "a"`、`c: c + 1`、`h: { k: 1 & 2 }`。型別上的衍生提交不再報矛盾。
+*   **M6** r7 四格都在 60 秒內讀到 `404`。見 8.6。
+*   **文法寫不出的算術一元** `Neg` 臂對還沒是值的運算元與 `_` 答 `_`，對錨點答 `#arithmetic_on_anchor`。表面的一元只有 `!`；`-5` 是負數原子。`!@int` 仍是那個型別的補。
+*   **明文外，照工單留著** 第一層箭頭 `h: { k: @int, f: (x -> k) }` 再提交 `h: { k: 5 }`，`_.h.f 0` 仍是 `@int`，根 `2328fb6b…`。先提交 `r: 7`，再交一檔 `n: @int`、`r: n + 1`、`n: 5`：v0.106.0 在演化拒，讀數留 `7`、根 `f5a4efba…`；本卡演化與提交都收下，提交印 `#conflict at r` 並成功，讀數是 ⊥，根 `fba672c8…`。行序對調仍在演化拒（`#conflict at r`），根留 `f5a4efba…`。序關係未改。
+*   **舊倉** v0.106.0 寫下的 `n: @int`、`r: n + 1`（根 `3c77b384…`，`_.r` 是 ⊥）：新引擎讀得到，再交 `n: 5` 仍 ⊥，提交仍印 `#conflict at r`。新引擎寫下的 `n: @int`、`r: n + 1`、`n: 5`（讀 `6`）：舊引擎讀得到 `6`。
+
 ### 8.2 順手改動（逐項指名）
+
+引擎只動 `crates/interpreter/src/eval.rs`、`crates/interpreter/src/lib.rs`。探針、版本（`oo` `0.106.0`，interpreter／parser `0.2.2`）、`STORE_LAYOUT_VERSION` 9、`OBJECT_ENCODING_VERSION` 10、規格、向量、`CHANGELOG` 都沒動。
+
+相對 `q106-ref 0174ab8` 多三處，都在 8.1 的射程裡：錨點在剝 `%val` 之前就密封（否則 `#_ + @int` 會先被型別拒成 `#conflict`）；`str.concat`；算術一元 `Neg`。提交投影與演化關卡沒改。
 
 ### 8.3 工單哪裡是錯的
 
+工單把 `5 <= #_` 寫成 `#true`。v0.106.0 與本卡都讀到 `#false`。`@{ a: @int }` 解析失敗；`@{ { a: @int } } + 1` 透明成記錄相加，仍是 ⊥ `#conflict`。
+
 ### 8.4 工單指名要你回答的問題
+
+*   **Q1** 還沒是值：摺疊後的區間、補，或封閉的 `%kind: #type` 加 `%name`。使用者型別 `@T` 是這種型別值，`@T + 1` 是 `_`，填成 `5` 之後衍生是 `6`。`(@int | 3) + 1` 先分配，型別支的 `_` 吸收 `4`，所以是 `_`。記錄形 `@{ a: @int }` 不是合法表達式；透明之後的記錄沒有型別標記，算術仍是 ⊥ `#conflict`。一般記錄 `{ a: 1 }` 同。
+*   **Q2** 判在內建呼叫前，只看已經出現的數字鍵。蓋了 `math.*`（除 `math.random`）、`complex.*`、`str.concat`，所以 `math.bits`、`math.eml`、`math.lt` 都在裡面。`math.random` 不看引數，自己抽數。`<`、`<=`、`>`、`>=` 是序關係，不在這條；`~%Math./lt` 在。缺掉的引數不進這個判斷，`~%Math./add (1)` 仍走原契約，留下態射。寫上的 `_` 或型別才答 `_`。
+*   **Q3** `#_ + @int` 是 `_|_ #arithmetic_on_anchor`：錨點先於「還沒是值」。`@int == #_` 是 `_`：相等沒有錨點這條原因，型別還沒是值。`#_ == 5` 與 `5 == #_` 仍是 `#false`。
+*   **Q4** 動的是存過型別、區間或補上的算術／相等之 ⊥ 的根：那個 ⊥ 改成留下的配方。`n: @int`、`r: n + 1`、`n: 5` 從 `fba672c829ec60c00b70cb6090e8b95ba38b16c96cd99eb6773bad45a146822f` 到 `f6dc16ae774bef4a5fb10d214847b2c84718d416654e9e11f3570fd92ef10db9`。只寫前兩行、還沒填 `5`：從 `3c77b3849441ddf5ca4f4ce50d4c17ad9593ba15e863fa426ef8cf6edc6a7288`（⊥）到 `d37ad4d199afb50b117d4b1ed25ad64a145862f7689144b4db8bc9dcb9130e4a`（讀 `_`）。記錄兩次提交從 `61b0ca48…` 到一檔原有的 `bcb96b882977ae9d757df79203c77c816533425241393a1341161503f56eda37`。r7 記錄兩次提交從 `8f48642c…` 到一檔原有的 `7d7239f7…`；根上 400 個衍生從 `7370c9d3…` 到 `b55bf351cabcee4f49f55186ce3ded2939209b29da6440a0d54215f03e6ecc59`。g1 的九顆沒有這種 ⊥：`n: 5`、`r: n + 1` 本來就是 `6`，`h: { k: @int, r: k }` 是型別本身，`r: 1 + "a"` 與 `c: c + 1` 是真矛盾。
+*   **Q5** 見 8.6。四格 r7 前後都在數秒內；填滿之後的兩次提交變貴，因為要算出 400 個值。Q-097 三顆根不動。Q-105 r4 的根 `2063cd89…` 不動，讀數仍是 `5`。
 
 ### 8.5 探針
 
+`a_contradiction_computed_before_the_meet` 8／8。單獨跑 44.26 秒，閘門一 44.10 秒。檔未改，`rustfmt` 沒掃它。Q-105 探針 10／10，閘門一 44.92 秒。`math_union` 17／17，0.95 秒。
+
 ### 8.6 數字
 
+r7，演化／提交，讀 `_.h.f399` 或 `_.r399`：
+
+| 格 | v0.106.0 | 本卡 |
+| --- | --- | --- |
+| 記錄，一檔 | 1.56 s／1.77 s，讀 `404`，根 `7d7239f7…` | 1.67 s／1.80 s，讀 `404`，根同 |
+| 記錄，兩次提交 | 0.78＋1.16 s／0.13＋0.17 s，讀 ⊥，根 `8f48642c…` | 0.83＋1.83 s／1.32＋2.14 s，讀 `404`，根 `7d7239f76598bb53c547f87af2764056ef060b937fd78f2770a3a3aa4e0c011b` |
+| 根上，一檔 | 2.83 s／0.11 s，讀 ⊥，根 `7370c9d3…` | 2.78 s／0.14 s，讀 `404`，根 `b55bf351…` |
+| 根上，兩次提交 | 3.05＋0.11 s／0.08＋0.13 s，讀 ⊥，根同 `7370c9d3…` | 2.79＋0.16 s／0.08＋0.15 s，讀 `404`，根同 `b55bf351…` |
+
+Q-097：400 欄 0.72 s／0.95 s → 0.48 s／0.64 s，根 `4cbecfc6c345f5a639a62abd1a8162e0958673e9e2b274d48f56622de43ba359`，`_.r.f399` 是 `399`。兩個 400 欄 1.72 s／1.28 s → 1.62 s／1.15 s，根 `400e403f71706228c0708e4bc0c52ca3dea71bf7243f8aff14754a8497596e2d`。200 層頂層兄弟鏈 2.77 s／0.66 s → 2.75 s／0.70 s，根 `38ea6baf203da3b3b9fa80b40fb94ddea64257ca69a0b63f680763ff1bbd4d30`，`_.f199` 是 `0`。
+
+Q-105 r4：一檔 1.04＋1.56 s → 1.05＋1.15 s；兩次提交 0.93＋1.90 s／0.96＋3.45 s → 0.52＋1.15 s／0.76＋1.33 s。根都是 `2063cd89591a44e5e7e36dbe34b9db8c6a14f0486e4514c559d2098f5e12773c`，`_.h.f399` 是 `5`。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在新倉裡。`layout=9`，`encoding=10`。
+
+閘門：GATE 1 2026-10-27T04:12:07+08:00 WALL 1407.89 s；GATE 2 04:35:35 1011.24 s；GATE 3 04:52:26 1010.94 s。正規化 3730 行，sha `65ece8885ba09b94b9a517748ab476bd3023b5c8f6cc584e751003b18c59796a`，299 個結果，加總 **2836** 通過、0 失敗，`test ` 行 `ok` 2835，`Running` 296。三輪正規化相同。原始 sha 前綴 `81110d097fddd3d3`、`61d43b23fc15a64c`、`5a248e0a5e3a388f`。位元組 300209／300054／300054。`^error` 0，BrokenPipe 0，panicked 0。
+
+閘門一：本探針 8／8 44.10 s；Q-105 10／10 44.92 s；Q-104 6／6 5.18 s；Q-103 9／9 5.72 s；Q-102 6／6 3.46 s；Q-101 9／9 9.43 s；Q-100 8／8 5.11 s、位元組 2／2 0.03 s；Q-099 5／5 4.13 s、位元組 2／2 0.00 s；Q-098 5／5 8.74 s；Q-097 7／7 10.08 s；Q-095 3／3 23.69 s；Q-078 15／15 6.06 s；`a_success_that_was_a_bottom` 5／5 0.54 s；`depth_belongs_to_the_savepoint` 9／9 1.46 s；`the_address_names_the_point` 11／11 1.28 s；`an_open_term_that_did_not_survive_commit` 8／8 4.92 s；`a_definition_that_kept_its_answer` 13／13 7.64 s；`a_recipe_that_met_a_write` 25／25 43.97 s；`a_commit_that_is_a_value` 13／13 1.54 s；`print_what_can_be_read` 12／12 0.97 s；`math_union` 17／17 0.95 s；union 16／16 3.58 s；`forward_ref` 10／10 0.32 s，CLI 7／7 0.21 s；`spread_privacy` 11／11 0.39 s；nominal_ref 15／15 0.43 s；runs_every_branch 7／7 2.78 s；forgot_patterns_r1 6／6 0.62 s；axis bytes 1／1 0.27 s；where_the_conflict_is 9／9 1.02 s；orthomodular 18／18 0.24 s；oml 10／10 0.20 s；advert_persistence 19／19 21.13 s。
+
+Linux `cargo build --release --offline -p oo` Finished 23.23 s，lib 14 則警告，`cargo fix` 12，`store_codec.rs:1120` 的不可達樣式留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-27T05:09:17+08:00 Finished 4.66 s，EXIT 0，`^error` 0，target lib 15 則、`cargo fix` 13，留著。
+
+conformance **188／188**，空目錄 `/home/gali/tmp/q106/conf.iumb`，前後 `ls -A | wc -l` 都是 0。父倉 `d9859703a68359953031a1e27b713f1a384422d8`，`.oo/format` 一個位元組 `32`。`oo` 11293120 位元組，mtime 2026-10-27 04:05:23.774722378 +0800。閘門沒有重編它。
+
 ### 8.7 你認為需要改規格之處
+
+D119 要寫進值語境：型別、區間、補答 `_`；聯集先分配，`_` 吸收兄弟；算術遇上錨點仍是 `#arithmetic_on_anchor`，相等沒有這條原因。`!` 是補，序關係不在這條。已經寫進倉的 ⊥ 留在歷史裡。`CHANGELOG` 記這次根的移動，由驗收方收尾。先提交 `r: 7` 再交會一個會算出別的數的衍生，這張卡收下並提交出 ⊥；那是關卡上既有的洞，另裁。
 
 ---
 
