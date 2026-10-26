@@ -371,6 +371,47 @@ fn r6_a_large_record_with_meets_left_reads_the_met_node_in_time() {
     verdict(bad, 6);
 }
 
+/// r7 — (R-2) A later write that also writes a field the node has, read by
+/// the node's names, meets it in the met node — in the universe's own meet
+/// too (one file, two evolves), not in the frames before the meet: a
+/// collision is refused at evolve every way (as on the root), a conflict a
+/// meet makes reads `_|_` every way, and every way reads the met node.
+#[test]
+fn r7_a_later_write_to_a_field_meets_in_the_met_node() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    for (w1, w2, q, want) in [
+        ("h: { k: @int, r: k }", "h: { k: 5, r: 6 }", "_.h.r", ["e1 c1 | _", "e0 e1 c0 | {{ %kind: #type %name: \"int\" }}", "e0 c0 e1 c1 | {{ %kind: #type %name: \"int\" }}"]),
+        ("h: { k: @int, r: k } & { r: @int }", "h: { k: 5, r: 6 }", "_.h.r", ["e1 c1 | _", "e0 e1 c0 | {{ %kind: #type %name: \"int\" }}", "e0 c0 e1 c1 | {{ %kind: #type %name: \"int\" }}"]),
+        ("k: @int\nr: k", "k: 5\nr: 6", "_.r", ["e1 c1 | _", "e0 e1 c0 | {{ %kind: #type %name: \"int\" }}", "e0 c0 e1 c1 | {{ %kind: #type %name: \"int\" }}"]),
+    ] {
+        let (got, _) = three_ways(w1, w2, q);
+        for ((way, g), w) in ["one file", "two evolves", "two commits"].iter().zip(got).zip(want) {
+            check(&mut bad, &format!("{w1} / {w2}, {way}: {q}"), g, w);
+            n += 1;
+        }
+    }
+    for (w1, w2, q, want, root) in [
+        ("h: { k: @int, r: k }\nh: { r: 6 }", "h: { k: 5 }", "_.h.r", "_|_ #conflict", "61b0ca48ad9bf0a397d86660a89884597bd132caa5fec56756311a3326829ed5"),
+        ("h: { k: @int, r: k }", "h: { r: 6 }", "_.h.r", "6", "42b704016598e2393bef30aa0beaaaabe8e2de9d6bfe8fcbad4dccfb07abcdea"),
+        ("h: { k: @int, s: { j: @int, r: k + 0, q: j } }", "h: { k: 5, s: { j: 6 } }", "[_.h.s.r, _.h.s.q]", "[5, 6]", "25f13cb104d9a99e8bdab6a95deca3d900c05988f551869975df7ed48bc7060d"),
+        ("h: { k: @int, r: k } & { r: @int }\nh: { r: 1.. }", "h: { k: 5 }", "_.h.r", "5", "72e7754b0906017e34c1ff743863274d0941fda0f34f9d6e68f40878ca3cce5b"),
+        ("r: { p: @int, s: p }", "r: { p: 5, s: @int }", "_.r", "{ p: 5 s: 5 }", "b1796986895c0655587e95d21688d56b4cd1f7f762d4d8037dc2270a8c1a1d5a"),
+    ] {
+        let (got, roots) = three_ways(w1, w2, q);
+        for (way, g) in ["one file", "two evolves", "two commits"].iter().zip(got) {
+            let rc = if *way == "two evolves" { "e0 e0 c0" } else if *way == "one file" { "e0 c0" } else { "e0 c0 e0 c0" };
+            check(&mut bad, &format!("{w1} / {w2}, {way}: {q}"), g, &format!("{rc} | {want}"));
+            n += 1;
+        }
+        for (way, r) in ["one file", "two evolves", "two commits"].iter().zip(roots) {
+            check(&mut bad, &format!("{w1} / {w2}, {way}: root"), r, root);
+            n += 1;
+        }
+    }
+    verdict(bad, n);
+}
+
 /// g1 — What a later write does not reach reads as before (green today): a
 /// write that does not touch the name, a nested literal with its own name,
 /// a spread source's names (Q-078 g2), the root, a name the record did not
