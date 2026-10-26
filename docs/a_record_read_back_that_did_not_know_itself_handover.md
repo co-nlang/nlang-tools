@@ -165,6 +165,40 @@ r4 後的提交尖峰約 200 MB（一檔 204436 KB，兩次提交 205012 KB／20
 
 沒有。規格文字、向量與 `CHANGELOG` 留給驗收方。
 
+### 8.8 第一輪修補
+
+`value.rs`、`unify.rs` 與 `q105-ref 64733a0` 逐位元組相同。`lib.rs`、`store_codec.rs` 仍與 `f5cebf3` 逐位元組相同。`oo` 仍是 `0.105.0`，interpreter 與 parser 仍是 `0.2.2`。探針、§8.7 以上、版本都沒有改。`node_id` 與 `merged_from` 仍是 `serde(skip)`。
+
+視圖拿掉這個節點的各個版本時，走進欄位裡待交會框的兩邊。只拿掉會讀這個節點名字的欄位，以及那一邊本身也讀這個節點名字的。不讀名字的那一邊留著它寫下處的框。宇宙自己的合併裡，兩邊都是待交會框的同一個欄位逐邊比，留左那一份。計費的交會仍把讀節點名字的欄位延後成待交會。
+
+`h: { k: @int, r: k } & { r: @int }` 再寫 `h: { k: 5 }`。修補前是本工單交付的 `oo`：三條路都讀 `5`，一檔與兩次提交的根 `f06386971f6d117c9df22ee00baaf790113626759bc588b78cc4303ec18bb260`，兩次演化的根 `a7d9395b4c242005a247f181aa7c7661c9c7f5a52b15ca44f3e6272c955235f0`。修補後三條路都讀 `5`，根都是 `a218d7ccd07c2b72485b025d7fe4804ba2ae2f497243b50190859f8a5934a112`。點號寫 `h.k: 5` 同一顆。一檔的根也從 `f0638697…` 移到這一顆。
+
+| 形 | 讀數 | 後根（一檔與兩次提交；探針鎖三條路） |
+|---|---|---|
+| 同一字面 `r` 寫兩次 | `5` | `22c9eea3230cdcb23c99885864e0679cbf0e86b7baaa0aa4dce28d230f3c1796` |
+| `r: [k]` 與 `r: [@int]` | `[5]` | `e2cebad690e753f40fc791f4afbd2dd906c5e32cc29985bb948e256afc8b43b1` |
+| 兩邊都寫 `k` 與 `r` | `5` | `0a34b1f2b05c7c380bf097b93039d8cd6425f957314f54a505ef444a160bebda` |
+| 巢狀 `s: { r: k } & { r: @int }` | `_.h.s.r` 是 `5` | `39793070c6811e2ec786573078b7d7347ff500202247cf6d4b8df4d396e6e0d6` |
+
+探針 r5 的 eval 格：已提交之後 `(_.h & { k: 5 }).r` 是 `5`。
+
+規模，同一台，`/usr/bin/time` 的最大常駐集。50 欄、每欄兩邊都寫，再寫 `k: 5`。一檔演化 0.47 秒、提交 0.98 秒，尖峰 189132 KB。兩次提交演化 0.07 秒＋0.64 秒、提交 1.00 秒＋1.12 秒，尖峰 192848 KB／191164 KB。`_.h.f49` 是 `5`，兩條路的根都是 `b9d41f754c84801ed35a198175ee437c0abff078ac3da6c067fceaf18de804cc`。工單記的 v0.105.0 兩次提交是 4.9 秒，讀 `@int`；第一輪交付兩次提交是 51 秒、14.8 GB。
+
+100 欄同一形。一檔演化 3.18 秒、提交 7.10 秒，尖峰 1175348 KB。兩次提交第一次演化 0.14 秒、提交 6.93 秒，第二次演化 4.03 秒、提交 7.13 秒，尖峰 1171836 KB／1178696 KB。`_.h.f99` 是 `5`，兩條路的根都是 `b1a0b2362bb07c9a4f817bbf862e2320c2d935812b75ae0c3d26b5dbabd85d53`。工單記的 v0.105.0 兩次提交是 13.3 秒＋20.2 秒、2.27 GB，讀 `@int`。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`1 + 1` 與 `1+1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k` `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m` `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`；標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。g2 的 `9247b8a3…`、`9c089093d7b40ed4d49f159b90814536abaf32aaa97a7211c331e099968e702b`、`2e6e0abd…` 仍在。Q-104 r4 一檔與兩次提交的根仍是 `006795a829d98b4c4d5fcfd0cf7a66b2f8c823289276d62652248049c68ba09a`，`_.h.r` 是 `5`。新倉 `layout=9`、`encoding=10`。r1–r4 與 g1、g2 照綠。
+
+探針 8／8（單獨 32.91 秒；閘門第一輪 32.98 秒），含 `r5_a_meet_left_for_the_node_read_back` 與 `r6_a_large_record_with_meets_left_reads_the_met_node_in_time`。
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，退出碼都是 0。第一輪 2026-10-26T12:35:44+08:00，1420.95 秒。第二輪 12:59:25，1001.46 秒。第三輪 13:16:06，1013.89 秒。
+
+歸一 3717 行，sha256 `0c29576256a33e16bb6407b7375b4b8457228c7e8ce4709a90feeeb0146bb01e`，三輪相同。`test result:` 298 行，加總 **2826** 通過、0 失敗。以 `test ` 開頭、以 ` ok` 結尾的行是 2825。`Running` 295。原始日誌 sha 前綴 `e6bd303e5b41c848`、`e653e5a842120756`、`ff92faf9474723d2`，三份不相等。位元組 299343／299187／299188。`^error` 0，BrokenPipe 0，panicked 0。
+
+閘門第一輪：本探針 8／8，32.98 秒。Q-104 6／6，5.36 秒。Q-103 9／9，6.06 秒。Q-102 6／6，3.46 秒。Q-101 9／9，10.14 秒。Q-100 CLI 8／8，5.05 秒，bytes 2／2，0.04 秒。Q-099 CLI 5／5，4.07 秒，bytes 2／2，0.00 秒。Q-098 5／5，9.21 秒。Q-097 7／7，10.52 秒。Q-095 3／3，24.18 秒。Q-090 4／4，2.10 秒。Q-089 6／6，2.03 秒。`forward_ref` 10／10，0.35 秒；CLI 7／7，0.22 秒。Q-078 15／15，6.39 秒。`spread_privacy` 11／11，0.41 秒。nominal_ref 15／15，0.63 秒。runs_every_branch 7／7，2.79 秒。forgot_patterns_r1 6／6，0.66 秒。axis bytes 1／1，0.29 秒。`a_definition_that_kept_its_answer` 13／13，8.14 秒。`a_recipe_that_met_a_write` 25／25，46.65 秒。`a_commit_that_is_a_value` 13／13，1.60 秒。`print_what_can_be_read` 12／12，0.99 秒。union 16／16，3.72 秒。where_the_conflict_is 9／9，1.05 秒。orthomodular 18／18，0.24 秒。oml 10／10，0.21 秒。advert_persistence 19／19，22.46 秒。
+
+造出這個 `oo` 的編譯 Finished 22.73 秒，`nlang-interpreter`（lib）14 warnings，`cargo fix` 12。不可達樣式仍在 `store_codec.rs:1120`。三輪閘門沒有重連它。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-26T13:33:00+08:00，Finished 5.17 秒，退出碼 0，`^error` 0。目標 lib 15 warnings，`cargo fix` 13。都沒有修。Conformance 187／187，空目錄 `/home/gali/tmp/q105r1/conf.iumb`，跑前 `ls -A | wc -l` 是 0，跑後是 0。父倉 `.oo/format` 前後都是 `32`。父倉 HEAD `0a39fc86c0fe9cab8807a7b39d5db7b9b6524aeb`。`oo` 11288376 位元組，mtime 2026-10-26 12:33:11.363010762 +0800。不引用 `--version`。
+
+done。
 
 ---
 

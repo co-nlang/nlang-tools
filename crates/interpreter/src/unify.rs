@@ -1429,11 +1429,20 @@ fn same_field_of(va: &Value, vb: &Value) -> bool {
         return false;
     };
     let node = |f: &ComboVal| f.node_id != 0 && MEETING.with(|m| m.borrow().contains(&f.node_id));
+    // A meet waiting for this node is one field when its sides are.
+    let meet = |f: &ComboVal, g: &ComboVal| {
+        crate::value::is_meet_frame(f)
+            && crate::value::is_meet_frame(g)
+            && f.local.len() == g.local.len()
+            && f.local.iter().zip(g.local.iter()).all(|((kf, sf), (kg, sg))| {
+                kf == kg && (same_field_of(sf, sg) || sf.content_hash() == sg.content_hash())
+            })
+    };
     c1.len() == c2.len()
-        && c1.iter().any(|f| node(f))
+        && c1.iter().any(|f| node(f) || crate::value::is_meet_frame(f))
         && e1.to_nlang(0) == e2.to_nlang(0)
         && c1.iter().zip(c2.iter()).all(|(f, g)| {
-            std::sync::Arc::ptr_eq(f, g) || (node(f) && node(g)) || f.content_hash() == g.content_hash()
+            std::sync::Arc::ptr_eq(f, g) || (node(f) && node(g)) || meet(f, g) || f.content_hash() == g.content_hash()
         })
 }
 

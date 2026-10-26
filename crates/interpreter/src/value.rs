@@ -1354,12 +1354,7 @@ pub fn rebind_in(c: &ComboVal, v: Value, views: &mut MetViews) -> Value {
                         // views of N fields of N.
                         for axis in [&mut view.data, &mut view.local, &mut view.rules, &mut view.types, &mut view.meta, &mut view.system] {
                             for (_, fv) in axis.iter_mut() {
-                                if !crate::unify::reads_name_in(fv, c) {
-                                    continue;
-                                }
-                                if let Value::Thunk { closure, .. } = fv {
-                                    closure.retain(|g| g.node_id == 0 || !(g.node_id == c.node_id || c.merged_from.contains(&g.node_id)));
-                                }
+                                strip_versions(fv, c);
                             }
                         }
                         let view = std::sync::Arc::new(view);
@@ -1372,6 +1367,26 @@ pub fn rebind_in(c: &ComboVal, v: Value, views: &mut MetViews) -> Value {
             Value::Thunk { expr, closure, context, effect }
         }
         other => other,
+    }
+}
+
+/// A field of a met node's view that reads the node's names, without the
+/// versions of the node it reads in — on the field and on the sides of a
+/// meet it waits on. What reads none of them keeps what it was written in.
+fn strip_versions(v: &mut Value, c: &ComboVal) {
+    if !crate::unify::reads_name_in(v, c) {
+        return;
+    }
+    if let Value::Thunk { closure, .. } = v {
+        closure.retain(|g| g.node_id == 0 || !(g.node_id == c.node_id || c.merged_from.contains(&g.node_id)));
+        for f in closure.iter_mut() {
+            if is_meet_frame(f) {
+                let m = std::sync::Arc::make_mut(f);
+                for (_, side) in m.local.iter_mut() {
+                    strip_versions(side, c);
+                }
+            }
+        }
     }
 }
 
