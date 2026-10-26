@@ -395,7 +395,8 @@ fn r7_a_later_write_to_a_field_meets_in_the_met_node() {
         ("h: { k: @int, r: k }\nh: { r: 6 }", "h: { k: 5 }", "_.h.r", "_|_ #conflict", "61b0ca48ad9bf0a397d86660a89884597bd132caa5fec56756311a3326829ed5"),
         ("h: { k: @int, r: k }", "h: { r: 6 }", "_.h.r", "6", "42b704016598e2393bef30aa0beaaaabe8e2de9d6bfe8fcbad4dccfb07abcdea"),
         ("h: { k: @int, s: { j: @int, r: k + 0, q: j } }", "h: { k: 5, s: { j: 6 } }", "[_.h.s.r, _.h.s.q]", "[5, 6]", "25f13cb104d9a99e8bdab6a95deca3d900c05988f551869975df7ed48bc7060d"),
-        ("h: { k: @int, r: k } & { r: @int }\nh: { r: 1.. }", "h: { k: 5 }", "_.h.r", "5", "72e7754b0906017e34c1ff743863274d0941fda0f34f9d6e68f40878ca3cce5b"),
+        // R-3: one meet `k & 1..`, not `(k & @int) & 1..` (r8).
+        ("h: { k: @int, r: k } & { r: @int }\nh: { r: 1.. }", "h: { k: 5 }", "_.h.r", "5", "e2f0ce7e4a539510575048cab53ee08aef732468270351813c1758bc5ec571fc"),
         ("r: { p: @int, s: p }", "r: { p: 5, s: @int }", "_.r", "{ p: 5 s: 5 }", "b1796986895c0655587e95d21688d56b4cd1f7f762d4d8037dc2270a8c1a1d5a"),
     ] {
         let (got, roots) = three_ways(w1, w2, q);
@@ -406,6 +407,66 @@ fn r7_a_later_write_to_a_field_meets_in_the_met_node() {
         }
         for (way, r) in ["one file", "two evolves", "two commits"].iter().zip(roots) {
             check(&mut bad, &format!("{w1} / {w2}, {way}: root"), r, root);
+            n += 1;
+        }
+    }
+    verdict(bad, n);
+}
+
+/// r8 — A meet left for the node is one value, however it is spelled and
+/// however the writes are grouped (R-3): a literal spread into a record and
+/// written alike is not the record (its names stay its own); a field that
+/// reads the node through `<<k>>` collides at evolve every way, as `k`
+/// does; three writes — the middle one not reading a name — commit one root
+/// in every grouping, not one per grouping (R-2 left `(k & @int) & 5` in one
+/// grouping and `k & 5` in another, and a view of the met node holding a
+/// lazy `1` in one and the built `1` in another).
+#[test]
+fn r8_a_meet_left_for_the_node_is_one_value_every_way() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    let int = "{{ %kind: #type %name: \"int\" }}";
+    for (w1, w2, q, want) in [
+        ("h: { ...{ k: @int, r: k } }", "h: { k: 5, r: 6 }", "_.h.r", ["e0 c0 | 6".to_string(), "e0 e0 c0 | 6".into(), "e0 c0 e0 c0 | 6".into()]),
+        ("h: { ...{ k: @int, r: k } }", "h: { r: 6 }", "_.h.r", ["e0 c0 | 6".to_string(), "e0 e0 c0 | 6".into(), "e0 c0 e0 c0 | 6".into()]),
+        ("h: { k: @int, r: <<k>> }", "h: { k: 5, r: 6 }", "_.h.r", ["e1 c1 | _".to_string(), format!("e0 e1 c0 | {int}"), format!("e0 c0 e1 c1 | {int}")]),
+    ] {
+        let (got, roots) = three_ways(w1, w2, q);
+        for ((way, g), w) in ["one file", "two evolves", "two commits"].iter().zip(got).zip(want.iter()) {
+            check(&mut bad, &format!("{w1} / {w2}, {way}: {q}"), g, w);
+            n += 1;
+        }
+        let first = if want[0].starts_with("e1") { 1 } else { 0 };
+        for (way, r) in ["one file", "two evolves", "two commits"].iter().zip(roots.iter()).skip(first + 1) {
+            check(&mut bad, &format!("{w1} / {w2}, {way}: root as {}", ["one file", "two evolves"][first]), r.clone(), &roots[first]);
+            n += 1;
+        }
+    }
+    for (a, b, c) in [
+        ("h: { k: @int, r: k }", "h: { j: 1 }", "h: { k: 5 }"),
+        ("h: { k: @int, r: k }", "h: { r: @int, j: 1 }", "h: { k: 5, r: 5 }"),
+        ("h: { k: @int, r: k } & { r: @int }", "h: { j: 1 }", "h: { k: 5 }"),
+    ] {
+        let groupings: Vec<(&str, Vec<Vec<String>>)> = vec![
+            ("one file", vec![vec![format!("{a}\n{b}\n{c}")]]),
+            ("three evolves", vec![vec![a.into(), b.into(), c.into()]]),
+            ("three commits", vec![vec![a.into()], vec![b.into()], vec![c.into()]]),
+            ("one, then two", vec![vec![a.into()], vec![format!("{b}\n{c}")]]),
+            ("two, then one", vec![vec![format!("{a}\n{b}")], vec![c.into()]]),
+        ];
+        let mut roots = Vec::new();
+        for (label, commits) in &groupings {
+            let w = Ws::new("r8");
+            for commit in commits {
+                let srcs: Vec<&str> = commit.iter().map(|s| s.as_str()).collect();
+                w.writes(&srcs);
+            }
+            check(&mut bad, &format!("{a} / {b} / {c}, {label}: _.h"), w.eval("_.h"), "{ j: 1 k: 5 r: 5 }");
+            n += 1;
+            roots.push((label, w.root()));
+        }
+        for (label, r) in &roots[1..] {
+            check(&mut bad, &format!("{a} / {b} / {c}, {label}: root as one file"), r.clone(), &roots[0].1);
             n += 1;
         }
     }
