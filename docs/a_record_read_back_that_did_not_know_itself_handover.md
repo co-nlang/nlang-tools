@@ -200,6 +200,44 @@ r4 後的提交尖峰約 200 MB（一檔 204436 KB，兩次提交 205012 KB／20
 
 done。
 
+### 8.9 第二輪修補
+
+`unify.rs` 與 `q105-ref 11e3ef4` 逐位元組相同。`value.rs`、`lib.rs`、`store_codec.rs` 仍與 `64733a0` 逐位元組相同。`oo` 仍是 `0.105.0`，interpreter 與 parser 仍是 `0.2.2`。探針、§8.8 以上、版本都沒有改。
+
+座標以下（`meet_coordinate`），宇宙自己的合併把兩邊都寫、又讀這個節點名字的欄位留成待交會，並記下欄位。交會後的節點一建好，就在那個節點裡強制，只用來判有沒有做出衝突：是 ⊥ 就放 ⊥，否則留下待交會本身。先判「同一個寫下的欄位」，留一份。待交會已經含著同一個欄位的一邊時，吸收它。根上的座標仍在根上當場交會。計費的交會仍把讀名字的欄位延後。
+
+`h: { k: @int, r: k }` 再寫 `h: { k: 5, r: 6 }`。修補前是 R-1 的 `oo`：一檔與兩次演化 `e0 c0`／`e0 e0 c0`，讀 `6`，根 `3e81e317b1c96f9587f78ce1e8571291b26206eb63c5153f9639873fbd5e7f82`；兩次提交 `e0 c0 e1 c1`，`Error: Evolution Conflict in "f1.n": #conflict at h.r`，留下的根是 `9247b8a3…`，`_.h.r` 是 `@int`。修補後一檔 `e1 c1`，`Error: Evolution Conflict in "f0.n": #conflict at h.r`，沒有宇宙，讀 `_`。兩次演化 `e0 e1 c0`、兩次提交 `e0 c0 e1 c1`，同一句衝突，留下的根是 `9247b8a31920ff61cd5ae14c35c682bdf0d372d28c68e53d5036a6b80de3043e`，讀 `@int`。
+
+`h: { k: @int, r: k } & { r: @int }` 再寫 `h: { k: 5, r: 6 }`。修補前一檔與兩次演化也讀 `6`、根 `3e81e317…`；兩次提交拒，留下 `8997942f44f3c305e3e10587f29e1b57943a9382df955af20bba63119d48b9e9`。修補後一檔拒、沒有宇宙；兩次演化與兩次提交拒在 `h.r`，留下的根是 `8997942f…`，讀 `@int`。
+
+根上 `k: @int`、`r: k` 再寫 `k: 5`、`r: 6`，前後都拒。一檔沒有宇宙。兩次演化與兩次提交留下 `9b104d2763e9e0d575f8256b2858b729d50d89caea71222fa9e580740b8905e9`，衝突在 `r`，讀 `@int`。純 eval `({ k: @int, r: k } & { k: 5, r: 6 }).r` 是 `_|_ #conflict`。
+
+| 形 | 前（三條路） | 後（三條路） | 後根 |
+|---|---|---|---|
+| `h: { r: 6 }` | `6`，`32da21fb…` | `6` | `42b704016598e2393bef30aa0beaaaabe8e2de9d6bfe8fcbad4dccfb07abcdea` |
+| 再寫 `h: { k: 5 }` | `6`，`3e81e317…` | `_|_ #conflict` | `61b0ca48ad9bf0a397d86660a89884597bd132caa5fec56756311a3326829ed5` |
+| `s` 裡 `k + 0` 與 `j` | `[⊥, 6]`，`738ad2dc…` | `[5, 6]` | `25f13cb104d9a99e8bdab6a95deca3d900c05988f551869975df7ed48bc7060d` |
+| `r: 1..` 再寫 `k: 5` | `1..#_`，`01176dd8…` | `5` | `72e7754b0906017e34c1ff743863274d0941fda0f34f9d6e68f40878ca3cce5b` |
+| `r: { p: @int, s: p }` 再寫 `r: { p: 5, s: @int }` | `s` 是 `@int`，`8d53f980…` | `{ p: 5 s: 5 }` | `b1796986895c0655587e95d21688d56b4cd1f7f762d4d8037dc2270a8c1a1d5a` |
+
+§9.8 那一格仍是：一檔與兩次演化讀 `{ p: 5 s: 6 }`，根 `e143fa78c49883decc18107b7ac954607bb4c010dc3b7a4d1c22034d6f475a56`；兩次提交第二次拒，`#conflict at r.s`，留下 `ca7dd749bcd3b6132a6cb3ccc9ef56083ad81600841e50335ddebf1bf30ef9a7`。
+
+R-1 的 `a218d7cc…`、Q-104 r4 的 `006795a8…`、身分五顆、標準根 `c96c2937…`、g2 的 `9247b8a3…`、`9c089093…`、`2e6e0abd…` 都在。r1–r6 與 g1、g2 照綠。
+
+50 欄待交會（r6）一檔演化 0.64 秒、提交 1.01 秒，尖峰 189260 KB。兩次提交演化 0.07 秒＋0.70 秒、提交 1.09 秒＋1.31 秒，尖峰 192676 KB。`_.h.f49` 是 `5`，根仍是 `b9d41f75…`。聯集 N=50 兩次都是 0.20 秒，約 27900 KB；N=200 是 0.84 秒與 0.60 秒，約 48400 KB。四次都是 `#blur`，`%cause: #fuel_exhausted`。
+
+探針 9／9（單獨 38.69 秒；閘門第一輪 38.15 秒），含 `r7_a_later_write_to_a_field_meets_in_the_met_node`。
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，退出碼都是 0。第一輪 2026-10-26T14:38:54+08:00，1403.05 秒。第二輪 15:02:17，974.73 秒。第三輪 15:18:31，956.26 秒。
+
+歸一 3718 行，sha256 `87f66ca276b8ea6b7e216690e4d8865647db94035df284a5c17aa99b5d7bdd6f`，三輪相同。`test result:` 298 行，加總 **2827** 通過、0 失敗。以 `test ` 開頭、以 ` ok` 結尾的行是 2826。`Running` 295。原始日誌 sha 前綴 `ebd0bf50f56bd33f`、`60ae821f0735d393`、`459248d926b9b78e`，三份不相等。位元組 299404／299249／299248。`^error` 0，BrokenPipe 0，panicked 0。
+
+閘門第一輪：本探針 9／9，38.15 秒。Q-104 6／6，5.24 秒。Q-103 9／9，5.77 秒。Q-102 6／6，3.44 秒。Q-101 9／9，9.84 秒。Q-100 CLI 8／8，5.11 秒，bytes 2／2，0.04 秒。Q-099 CLI 5／5，4.17 秒，bytes 2／2，0.00 秒。Q-098 5／5，8.88 秒。Q-097 7／7，10.26 秒。Q-095 3／3，25.42 秒。Q-090 4／4，2.09 秒。Q-089 6／6，2.05 秒。`forward_ref` 10／10，0.33 秒；CLI 7／7，0.23 秒。Q-078 15／15，6.24 秒。`spread_privacy` 11／11，0.44 秒。nominal_ref 15／15，0.51 秒。runs_every_branch 7／7，2.80 秒。forgot_patterns_r1 6／6，0.63 秒。axis bytes 1／1，0.27 秒。`a_definition_that_kept_its_answer` 13／13，7.66 秒。`a_recipe_that_met_a_write` 25／25，44.78 秒。`a_commit_that_is_a_value` 13／13，1.58 秒。`print_what_can_be_read` 12／12，1.00 秒。union 16／16，3.70 秒。where_the_conflict_is 9／9，1.08 秒。orthomodular 18／18，0.25 秒。oml 10／10，0.20 秒。advert_persistence 19／19，21.97 秒。
+
+造出這個 `oo` 的編譯 Finished 24.24 秒，`nlang-interpreter`（lib）14 warnings，`cargo fix` 12。不可達樣式仍在 `store_codec.rs:1120`。三輪閘門沒有重連它。Windows 2026-10-26T15:34:28+08:00，Finished 4.75 秒，退出碼 0，`^error` 0。目標 lib 15 warnings，`cargo fix` 13。都沒有修。Conformance 187／187，空目錄 `/home/gali/tmp/q105r2/conf.iumb`，跑前 `ls -A | wc -l` 是 0，跑後是 0。父倉 `.oo/format` 前後都是 `32`。父倉 HEAD `0a39fc86c0fe9cab8807a7b39d5db7b9b6524aeb`。`oo` 11296544 位元組，mtime 2026-10-26 14:36:55.313374046 +0800。不引用 `--version`。
+
+done。
+
 ---
 
 ## 9. 驗收（驗收方填）
