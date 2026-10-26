@@ -309,6 +309,68 @@ fn r4_a_large_record_met_reads_the_met_node_in_time() {
     verdict(bad, 6);
 }
 
+/// r5 — (R-1) A record read back that holds a meet waiting for the node (a
+/// field written on both sides of one literal's meet, or twice in it): a
+/// later write meets it there — one reading, one root, three ways.
+#[test]
+fn r5_a_meet_left_for_the_node_read_back() {
+    let mut bad = Vec::new();
+    let cases = [
+        ("h: { k: @int, r: k } & { r: @int }", "h: { k: 5 }", "_.h.r", "5", "a218d7ccd07c2b72485b025d7fe4804ba2ae2f497243b50190859f8a5934a112"),
+        ("h: { k: @int, r: k } & { r: @int }", "h.k: 5", "_.h.r", "5", "a218d7ccd07c2b72485b025d7fe4804ba2ae2f497243b50190859f8a5934a112"),
+        ("h: { k: @int, r: k, r: @int }", "h: { k: 5 }", "_.h.r", "5", "22c9eea3230cdcb23c99885864e0679cbf0e86b7baaa0aa4dce28d230f3c1796"),
+        ("h: { k: @int, r: [k] } & { r: [@int] }", "h: { k: 5 }", "_.h.r", "[5]", "e2cebad690e753f40fc791f4afbd2dd906c5e32cc29985bb948e256afc8b43b1"),
+        ("h: { k: @int, r: k } & { k: @int, r: @int }", "h: { k: 5 }", "_.h.r", "5", "0a34b1f2b05c7c380bf097b93039d8cd6425f957314f54a505ef444a160bebda"),
+        ("h: { k: @int, s: { r: k } & { r: @int } }", "h: { k: 5 }", "_.h.s.r", "5", "39793070c6811e2ec786573078b7d7347ff500202247cf6d4b8df4d396e6e0d6"),
+    ];
+    let mut n = 0;
+    for (w1, w2, q, want, root) in cases {
+        let (got, roots) = three_ways(w1, w2, q);
+        for (way, g) in ["one file", "two evolves", "two commits"].iter().zip(got) {
+            let rc = if *way == "two evolves" { "e0 e0 c0" } else if *way == "one file" { "e0 c0" } else { "e0 c0 e0 c0" };
+            check(&mut bad, &format!("{w1} / {w2}, {way}: {q}"), g, &format!("{rc} | {want}"));
+            n += 1;
+        }
+        for (way, r) in ["one file", "two evolves", "two commits"].iter().zip(roots) {
+            check(&mut bad, &format!("{w1} / {w2}, {way}: root"), r, root);
+            n += 1;
+        }
+    }
+    let w = Ws::new("r5-eval");
+    check(&mut bad, "committed, then met in eval: commit", w.writes(&["h: { k: @int, r: k } & { r: @int }"]), "e0 c0");
+    check(&mut bad, "committed, then met in eval: (_.h & { k: 5 }).r", w.eval("(_.h & { k: 5 }).r"), "5");
+    verdict(bad, n + 2);
+}
+
+/// r6 — (R-1) Scale: 50 fields each written on both sides of one literal's
+/// meet, met by a later write, as one file and as two commits, reads the met
+/// node in time (v0.105.0: one file 91 s and 14.8 GB; two commits 4.9 s,
+/// reading `@int`; the first delivery: two commits 51 s and 14.8 GB).
+#[test]
+fn r6_a_large_record_with_meets_left_reads_the_met_node_in_time() {
+    let mut bad = Vec::new();
+    let left = (0..50).map(|i| format!("f{i}: k")).collect::<Vec<_>>().join(", ");
+    let right = (0..50).map(|i| format!("f{i}: @int")).collect::<Vec<_>>().join(", ");
+    let big = format!("h: {{ k: @int, {left} }} & {{ {right} }}");
+    for (label, ways) in [
+        ("one file", vec![vec![format!("{big}\nh: {{ k: 5 }}")]]),
+        ("two commits", vec![vec![big.clone()], vec!["h: { k: 5 }".to_string()]]),
+    ] {
+        let w = Ws::new("r6");
+        let start = Instant::now();
+        let mut rc = Vec::new();
+        for commit in &ways {
+            let srcs: Vec<&str> = commit.iter().map(|s| s.as_str()).collect();
+            rc.push(w.writes(&srcs));
+        }
+        let took = start.elapsed();
+        check(&mut bad, &format!("{label}: writes"), rc.join(" "), if ways.len() == 1 { "e0 c0" } else { "e0 c0 e0 c0" });
+        check(&mut bad, &format!("{label}: _.h.f49"), w.eval("_.h.f49"), "5");
+        check(&mut bad, &format!("{label}: within 60 s"), (took < Duration::from_secs(60)).to_string(), "true");
+    }
+    verdict(bad, 6);
+}
+
 /// g1 — What a later write does not reach reads as before (green today): a
 /// write that does not touch the name, a nested literal with its own name,
 /// a spread source's names (Q-078 g2), the root, a name the record did not
