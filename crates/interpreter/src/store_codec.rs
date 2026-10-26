@@ -1271,6 +1271,7 @@ fn combo_expr_to_value(fields: &[Field], closed: bool) -> Result<Value> {
     if let Some((expr, _)) = sys.get(EFFECT) {
         combo.effect = value_as_effect(&expr_to_value(expr)?);
     }
+    crate::value::own_its_frames(&mut combo);
     Ok(Value::Combo(combo))
 }
 

@@ -814,7 +814,15 @@ impl Ouroboros {
         // D118: the met node remembers the nodes met into it.
         let mut from: Vec<u64> = a.merged_from.iter().chain(b.merged_from.iter()).copied().collect();
         from.extend([a.node_id, b.node_id].into_iter().filter(|id| *id != 0));
-        match self.unify_combo_inner(a, b, ctx) {
+        let depth = MEETING.with(|m| {
+            let mut m = m.borrow_mut();
+            let d = m.len();
+            m.extend(from.iter().copied());
+            d
+        });
+        let inner = self.unify_combo_inner(a, b, ctx);
+        MEETING.with(|m| m.borrow_mut().truncate(depth));
+        match inner {
             Value::Combo(c) => {
                 let mut c = self.normalize_table(c, ctx);
                 if !from.is_empty() {
@@ -897,10 +905,11 @@ impl Ouroboros {
             let mut keys = IndexSet::new();
             keys.extend(left.keys());
             keys.extend(right.keys());
+            let (mut views_a, mut views_b) = (crate::value::MetViews::new(), crate::value::MetViews::new());
             for key in keys {
                 // D118: each side's field resolves in its own met node first.
-                let va = left.get(key).cloned().map(|v| crate::value::rebind_to_met(&a, v)).unwrap_or(Value::Top);
-                let vb = right.get(key).cloned().map(|v| crate::value::rebind_to_met(&b, v)).unwrap_or(Value::Top);
+                let va = left.get(key).cloned().map(|v| crate::value::rebind_in(&a, v, &mut views_a)).unwrap_or(Value::Top);
+                let vb = right.get(key).cloned().map(|v| crate::value::rebind_in(&b, v, &mut views_b)).unwrap_or(Value::Top);
                 let va_is_top = va.is_top();
                 let vb_is_top = vb.is_top();
                 let shown = format!("{display}{key}");
@@ -951,6 +960,13 @@ impl Ouroboros {
                     && (reads_names_of(&va, &a, &b) || reads_names_of(&vb, &a, &b))
                 {
                     out.insert(key.clone(), crate::value::pending_meet(va, vb));
+                    continue;
+                }
+                // D118: the same field written once, read in two versions of
+                // the node being met, is one field; the met node reads it.
+                // (A metered meet has deferred such a field above.)
+                if crate::UNMETERED_MERGE.with(|c| c.get()) && same_field_of(&va, &vb) {
+                    out.insert(key.clone(), va);
                     continue;
                 }
                 let merged = engine.unify_internal(va, vb, ctx);
@@ -1400,6 +1416,30 @@ pub(crate) fn reads_name_in(v: &Value, c: &ComboVal) -> bool {
             || c.types.keys().any(|k| crate::eval::captures(&free, "@", k))
             || c.rules.keys().any(|k| crate::eval::captures(&free, "/", k))
             || c.local.keys().any(|k| crate::eval::captures(&free, "~", k)))
+}
+
+/// D118: two lazy fields that are one written field: the same source, read
+/// in the same frames but for versions of the nodes being met.
+fn same_field_of(va: &Value, vb: &Value) -> bool {
+    let (
+        Value::Thunk { expr: e1, closure: c1, context: None, .. },
+        Value::Thunk { expr: e2, closure: c2, context: None, .. },
+    ) = (va, vb)
+    else {
+        return false;
+    };
+    let node = |f: &ComboVal| f.node_id != 0 && MEETING.with(|m| m.borrow().contains(&f.node_id));
+    c1.len() == c2.len()
+        && c1.iter().any(|f| node(f))
+        && e1.to_nlang(0) == e2.to_nlang(0)
+        && c1.iter().zip(c2.iter()).all(|(f, g)| {
+            std::sync::Arc::ptr_eq(f, g) || (node(f) && node(g)) || f.content_hash() == g.content_hash()
+        })
+}
+
+thread_local! {
+    /// D118: the nodes the meets under way are meeting, outermost first.
+    static MEETING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// D118: whether an unforced value reads a name either side defines.

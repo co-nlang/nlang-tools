@@ -1261,11 +1261,12 @@ pub fn bake_met(v: Value) -> Value {
 
 pub fn bake_met_combo(mut c: ComboVal) -> ComboVal {
     let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
+    let mut views = MetViews::new();
     for axis in [&mut c.data, &mut c.local, &mut c.rules, &mut c.types, &mut c.meta, &mut c.system] {
         for (_, fv) in axis.iter_mut() {
             let v = std::mem::replace(fv, Value::Top);
             let v = match &met {
-                Some(m) => rebind_to_met(m, v),
+                Some(m) => rebind_in(m, v, &mut views),
                 None => v,
             };
             *fv = bake_met(v);
@@ -1307,6 +1308,15 @@ pub fn is_meet_frame(f: &ComboVal) -> bool {
 /// only the private keys that frame's own literal declared, at their met
 /// values (Q2). Nothing stored changes.
 pub fn rebind_to_met(c: &ComboVal, v: Value) -> Value {
+    rebind_in(c, v, &mut Vec::new())
+}
+
+/// The views of a met node, one per set of declared private keys. The
+/// fields of one node share them: a view per field made a meet of an N
+/// field record write N views of N fields.
+pub type MetViews = Vec<(Vec<String>, std::sync::Arc<ComboVal>)>;
+
+pub fn rebind_in(c: &ComboVal, v: Value, views: &mut MetViews) -> Value {
     if c.merged_from.is_empty() {
         return v;
     }
@@ -1316,12 +1326,11 @@ pub fn rebind_to_met(c: &ComboVal, v: Value) -> Value {
     }
     match v {
         Value::Thunk { expr, mut closure, context, effect } => {
-            let mut views: Vec<(Vec<String>, std::sync::Arc<ComboVal>)> = Vec::new();
             for f in closure.iter_mut() {
                 if is_meet_frame(f) {
                     let mut m = (**f).clone();
                     for (_, side) in m.local.iter_mut() {
-                        *side = rebind_to_met(c, std::mem::replace(side, Value::Top));
+                        *side = rebind_in(c, std::mem::replace(side, Value::Top), views);
                     }
                     *f = std::sync::Arc::new(m);
                     continue;
@@ -1338,6 +1347,21 @@ pub fn rebind_to_met(c: &ComboVal, v: Value) -> Value {
                             .iter()
                             .filter_map(|k| c.local.get(k).map(|v| (k.clone(), v.clone())))
                             .collect();
+                        // The view is the node as written: a field of it that
+                        // reads its names does not hold the versions of it the
+                        // view stands for (a name found on the view reads in
+                        // the view). Holding them wrote an N field record as N
+                        // views of N fields of N.
+                        for axis in [&mut view.data, &mut view.local, &mut view.rules, &mut view.types, &mut view.meta, &mut view.system] {
+                            for (_, fv) in axis.iter_mut() {
+                                if !crate::unify::reads_name_in(fv, c) {
+                                    continue;
+                                }
+                                if let Value::Thunk { closure, .. } = fv {
+                                    closure.retain(|g| g.node_id == 0 || !(g.node_id == c.node_id || c.merged_from.contains(&g.node_id)));
+                                }
+                            }
+                        }
                         let view = std::sync::Arc::new(view);
                         views.push((keys, std::sync::Arc::clone(&view)));
                         view
@@ -1348,6 +1372,96 @@ pub fn rebind_to_met(c: &ComboVal, v: Value) -> Value {
             Value::Thunk { expr, closure, context, effect }
         }
         other => other,
+    }
+}
+
+/// D118: a record read back from the store is the node its fields were
+/// written in. The frame a field's closure holds for it is not stored as
+/// such, so it is the frame that reads as this record before its fields
+/// were sealed: same keys on every axis, same values. That frame takes
+/// this record's node, so a later meet of the record is a meet of it.
+pub fn own_its_frames(c: &mut ComboVal) {
+    let mut own: Vec<(*const ComboVal, Option<std::sync::Arc<ComboVal>>)> = Vec::new();
+    fn visit(
+        v: &mut Value,
+        c: &ComboVal,
+        id: &mut u64,
+        own: &mut Vec<(*const ComboVal, Option<std::sync::Arc<ComboVal>>)>,
+    ) {
+        match v {
+            Value::Thunk { closure, .. } => {
+                for f in closure.iter_mut() {
+                    if is_meet_frame(f) {
+                        let m = std::sync::Arc::make_mut(f);
+                        for (_, side) in m.local.iter_mut() {
+                            visit(side, c, id, own);
+                        }
+                        continue;
+                    }
+                    let ptr = std::sync::Arc::as_ptr(f);
+                    let slot = match own.iter().position(|(p, _)| *p == ptr) {
+                        Some(i) => i,
+                        None => {
+                            let stamped = if f.node_id == 0 && reads_as(c, f) {
+                                if *id == 0 {
+                                    *id = fresh_node_id();
+                                }
+                                let mut g = (**f).clone();
+                                g.node_id = *id;
+                                Some(std::sync::Arc::new(g))
+                            } else {
+                                None
+                            };
+                            own.push((ptr, stamped));
+                            own.len() - 1
+                        }
+                    };
+                    if let Some(g) = &own[slot].1 {
+                        *f = std::sync::Arc::clone(g);
+                    }
+                }
+            }
+            Value::Combo(inner) => {
+                for axis in [&mut inner.data, &mut inner.local, &mut inner.rules, &mut inner.types, &mut inner.meta, &mut inner.system] {
+                    for (_, fv) in axis.iter_mut() {
+                        visit(fv, c, id, own);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let probe = c.clone();
+    let mut id = c.node_id;
+    for axis in [&mut c.data, &mut c.local, &mut c.rules, &mut c.types, &mut c.meta, &mut c.system] {
+        for (_, fv) in axis.iter_mut() {
+            visit(fv, &probe, &mut id, &mut own);
+        }
+    }
+    c.node_id = id;
+}
+
+/// Whether frame `f` reads as record `c` (its fields before sealing).
+fn reads_as(c: &ComboVal, f: &ComboVal) -> bool {
+    let pairs = [
+        (&c.data, &f.data),
+        (&c.local, &f.local),
+        (&c.rules, &f.rules),
+        (&c.types, &f.types),
+        (&c.meta, &f.meta),
+        (&c.system, &f.system),
+    ];
+    pairs.iter().all(|(a, b)| {
+        a.len() == b.len()
+            && a.iter().zip(b.iter()).all(|((ka, va), (kb, vb))| ka == kb && same_written(va, vb))
+    })
+}
+
+fn same_written(a: &Value, b: &Value) -> bool {
+    let print = |v: &Value| v.to_nlang(0).split_whitespace().collect::<Vec<_>>().join(" ");
+    match (a, b) {
+        (Value::Thunk { expr: ea, .. }, Value::Thunk { expr: eb, .. }) => ea.to_nlang(0) == eb.to_nlang(0),
+        _ => print(a) == print(b),
     }
 }
 
