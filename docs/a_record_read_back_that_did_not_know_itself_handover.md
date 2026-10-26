@@ -238,6 +238,44 @@ R-1 的 `a218d7cc…`、Q-104 r4 的 `006795a8…`、身分五顆、標準根 `c
 
 done。
 
+### 8.10 第三輪修補
+
+`unify.rs`、`universe.rs`、`value.rs` 與 `q105-ref 171be60` 逐位元組相同。`lib.rs`、`store_codec.rs` 仍與 `11e3ef4` 逐位元組相同。`oo` 仍是 `0.105.0`，interpreter 與 parser 仍是 `0.2.2`。探針、§8.9 以上、版本都沒有改。
+
+記錄自己的框是閉包裡最外面那個讀起來像它的框，不看它自己解碼時拿到的編號。留成待交會時把兩邊攤平成各個邊：讀節點名字的邊留著，同一個寫下的欄位留一份，其餘當場交會成一個值。交會後節點的視圖取自提交會寫下的那個節點：純的字面原子建成原子，遞迴進子記錄。演化關卡把既有的一邊與新寫的另外在交會後的節點判一次。
+
+`h: { ...{ k: @int, r: k } }` 再寫 `h: { k: 5, r: 6 }`。修補前是 R-2 的 `oo`：一檔 `e0 c0`，讀 `6`，根 `dd37764104b57798002794d6a7578dd93c2c0302a39b84eef659c26073f411da`；兩次演化 `e0 e1 c0`、兩次提交 `e0 c0 e1 c1`，`#conflict at h.r`，留下 `3cfc582a…`，讀 `@int`。修補後三條路都 `e0` 收，讀 `6`，根都是 `dd377641…`。再寫 `h: { r: 6 }`，前後都讀 `6`。修補前一檔 `7f910559…`，兩次演化與兩次提交 `1e3c34dc…`。修補後三條路都是 `7f9105592a9f4b982759f58911254aa754e5085f1a4bdebf368b58d02afe044e`。
+
+`h: { k: @int, r: <<k>> }` 再寫 `h: { k: 5, r: 6 }`。修補前一檔與兩次演化收，讀 `_|_ #conflict`，根 `f4c37dd2…`；兩次提交拒，留下 `846fd102…`，讀 `@int`。修補後一檔 `e1 c1`，`Error: Evolution Conflict in "f0.n": #conflict at h.r`，沒有宇宙。兩次演化與兩次提交拒在 `h.r`，留下 `846fd102524a33b5a6195074e976dd7deed240b94d439523a13b42bb58e93cc0`，讀 `@int`。根上 `k: @int`、`r: <<k>>` 再寫 `k: 5`、`r: 6`，前後都拒，留下 `6f5d3c4495be79ac75cde35ed8e89714acd5d9bc9075ffc8dfabd808c0c2e4e9`。
+
+`h: { k: @int, r: k } & { r: @int }` 再寫 `h: { r: 1.. }`、然後 `h: { k: 5 }`，讀數仍是 `5`。根由 `72e7754b0906017e34c1ff743863274d0941fda0f34f9d6e68f40878ca3cce5b` 移到 `e2f0ce7e4a539510575048cab53ee08aef732468270351813c1758bc5ec571fc`，三條路同一顆。
+
+三個寫入、五種分組，讀數都是 `{ j: 1 k: 5 r: 5 }`。
+
+| 中間那筆 | 前 | 後，五種分組 |
+|---|---|---|
+| `h: { j: 1 }` | 一檔、三次演化、一然後二是 `0a1725f5…`；三次提交、二然後一是 `625acdfa…` | `625acdfa66bf08d995dc20bfb49f9d7a9f3ab00687c7eb4792d1fc6f89c9d862` |
+| `h: { r: @int, j: 1 }` | 一檔與三次演化 `ff0f93c2…`；一然後二 `eaacb72e…`；三次提交與二然後一 `cc7e311a…` | `8287dc6f4e868c4de45d1abbf0a5c45988e21f95bfac6d6cb3e60ef0e79c5b7e` |
+| `h: { k: @int, r: k } & { r: @int }` 再 `h: { j: 1 }` | 一檔、三次演化、一然後二是 `ef88dfa7…`；三次提交、二然後一是 `a88ed8d2…` | `a88ed8d2c0c84b18d08f00e5fbfb9e06c0a0b254216476cb7cb556835d8bf8dd` |
+
+§9.12 那一格前後相同。`h: { k: 2, ...{ k: 1, q: k } }` 再寫 `h: { q: 1 }`：一檔與兩次提交讀 `1`，根 `14f8b0d56bb9eacb22cb9b597a870b4d12b2acef321c261d487bdc14029225f0`；兩次演化在提交時拒，`Evolution Conflict: #conflict at h.k`。`h: { k: 2, ...{ k: 1 } }` 再寫 `h: { q: 1 }`：一檔與兩次提交收，讀 `{ k: _|_ ;; %cause: #conflict q: 1 }`，根 `9431b02b91811b1a6eb9934bb9a774764a04062a0877ae015e1a7e016b787837`；兩次演化在提交時同樣拒。`h: { k: 1 & 2 }` 再寫 `h: { q: 1 }` 三條路收，同一顆根。
+
+R-1 的 `a218d7cc…`、Q-104 r4 的 `006795a8…`、`x: 0` 的 `b74d7758…`、標準根 `c96c2937…`、g2 的 `9247b8a3…` 與 `2e6e0abd…` 都在。r1–r7 與 g1、g2 照綠。
+
+50 欄待交會一檔演化 0.55 秒、提交 0.98 秒，尖峰 189612 KB。兩次提交演化 0.07 秒＋0.63 秒、提交 1.01 秒＋1.13 秒，尖峰 192936 KB。`_.h.f49` 是 `5`，根仍是 `b9d41f75…`。聯集 N=50 是 0.19 秒、28016 KB；N=200 是 0.60 秒、48208 KB。兩邊都是 `#blur`，`%cause: #fuel_exhausted`。
+
+探針 10／10（單獨 46.44 秒；閘門第一輪 46.38 秒），含 `r8_a_meet_left_for_the_node_is_one_value_every_way`。
+
+三輪 `cargo test --workspace --release --offline --no-fail-fast --jobs 1 -- --test-threads=1`，退出碼都是 0。第一輪 2026-10-26T20:39:01+08:00，1400.02 秒。第二輪 21:02:21，960.64 秒。第三輪 21:18:22，972.81 秒。
+
+歸一 3719 行，sha256 `c8a60e1a6a29d9b9c6904ae4727d11bda605e1ae9faa8239436e75568535cb19`，三輪相同。`test result:` 298 行，加總 **2828** 通過、0 失敗。以 `test ` 開頭、以 ` ok` 結尾的行是 2827。`Running` 295。原始日誌 sha 前綴 `5064ea7321af0e4e`、`c451c2adcc1b0745`、`5f1ff29510849c62`，三份不相等。位元組 299469／299314／299314。`^error` 0，BrokenPipe 0，panicked 0。
+
+閘門第一輪：本探針 10／10，46.38 秒。Q-104 6／6，5.29 秒。Q-103 9／9，5.68 秒。Q-102 6／6，3.46 秒。Q-101 9／9，9.64 秒。Q-100 CLI 8／8，5.13 秒，bytes 2／2，0.04 秒。Q-099 CLI 5／5，4.23 秒，bytes 2／2，0.00 秒。Q-098 5／5，8.74 秒。Q-097 7／7，10.34 秒。Q-095 3／3，24.68 秒。Q-090 4／4，2.06 秒。Q-089 6／6，2.15 秒。`forward_ref` 10／10，0.35 秒；CLI 7／7，0.22 秒。Q-078 15／15，6.18 秒。`spread_privacy` 11／11，0.38 秒。nominal_ref 15／15，0.55 秒。runs_every_branch 7／7，2.85 秒。forgot_patterns_r1 6／6，0.65 秒。axis bytes 1／1，0.27 秒。`a_definition_that_kept_its_answer` 13／13，7.76 秒。`a_recipe_that_met_a_write` 25／25，45.12 秒。`a_commit_that_is_a_value` 13／13，1.63 秒。`print_what_can_be_read` 12／12，0.97 秒。union 16／16，3.62 秒。where_the_conflict_is 9／9，1.01 秒。orthomodular 18／18，0.26 秒。oml 10／10，0.20 秒。advert_persistence 19／19，21.06 秒。
+
+造出這個 `oo` 的編譯 Finished 25.12 秒，`nlang-interpreter`（lib）14 warnings，`cargo fix` 12。不可達樣式仍在 `store_codec.rs:1120`。三輪閘門沒有重連它。Windows 2026-10-26T21:34:34+08:00，Finished 4.62 秒，退出碼 0，`^error` 0。目標 lib 15 warnings，`cargo fix` 13。都沒有修。Conformance 187／187，空目錄 `/home/gali/tmp/q105r3/conf.iumb`，跑前 `ls -A | wc -l` 是 0，跑後是 0。父倉 `.oo/format` 前後都是 `32`。父倉 HEAD `0a39fc86c0fe9cab8807a7b39d5db7b9b6524aeb`。`oo` 11286352 位元組，mtime 2026-10-26 20:37:37.062284049 +0800。不引用 `--version`。
+
+done。
+
 ---
 
 ## 9. 驗收（驗收方填）

@@ -1018,7 +1018,27 @@ impl Ouroboros {
                             }
                         });
                     }
-                    out.insert(key.clone(), crate::value::pending_meet(va, vb));
+                    // One meet left for the node, whatever the grouping of
+                    // the writes: what reads none of its names meets now.
+                    let mut sides = Vec::new();
+                    meet_sides(&va, &mut sides);
+                    meet_sides(&vb, &mut sides);
+                    let (reading, rest): (Vec<Value>, Vec<Value>) =
+                        sides.into_iter().partition(|s| reads_names_of(s, &a, &b));
+                    let mut kept: Vec<Value> = Vec::new();
+                    for s in reading {
+                        if !kept.iter().any(|k| same_field_of(k, &s) || k.content_hash() == s.content_hash()) {
+                            kept.push(s);
+                        }
+                    }
+                    let left = kept.into_iter().reduce(crate::value::pending_meet);
+                    let rest = rest.into_iter().reduce(|x, y| engine.unify_internal(x, y, ctx)).filter(|r| !r.is_top());
+                    let met = match (left, rest) {
+                        (Some(l), Some(r)) => crate::value::pending_meet(l, r),
+                        (Some(l), None) => l,
+                        _ => crate::value::pending_meet(va, vb),
+                    };
+                    out.insert(key.clone(), met);
                     continue;
                 }
                 let merged = engine.unify_internal(va, vb, ctx);
@@ -1496,6 +1516,19 @@ fn same_field_of(va: &Value, vb: &Value) -> bool {
         && c1.iter().zip(c2.iter()).all(|(f, g)| {
             std::sync::Arc::ptr_eq(f, g) || (node(f) && node(g)) || meet(f, g) || f.content_hash() == g.content_hash()
         })
+}
+
+/// The sides of a meet waiting for the node, at any depth, in order.
+fn meet_sides(v: &Value, out: &mut Vec<Value>) {
+    if let Value::Thunk { closure, .. } = v {
+        if let Some(f) = closure.first().filter(|f| crate::value::is_meet_frame(f)) {
+            for side in f.local.values() {
+                meet_sides(side, out);
+            }
+            return;
+        }
+    }
+    out.push(v.clone());
 }
 
 /// Whether `big`, a meet waiting for the node, has `small` as one of its

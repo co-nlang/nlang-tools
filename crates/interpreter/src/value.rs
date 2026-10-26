@@ -1260,7 +1260,7 @@ pub fn bake_met(v: Value) -> Value {
 }
 
 pub fn bake_met_combo(mut c: ComboVal) -> ComboVal {
-    let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
+    let met = if c.merged_from.is_empty() { None } else { Some(as_written(c.clone())) };
     let mut views = MetViews::new();
     for axis in [&mut c.data, &mut c.local, &mut c.rules, &mut c.types, &mut c.meta, &mut c.system] {
         for (_, fv) in axis.iter_mut() {
@@ -1270,6 +1270,33 @@ pub fn bake_met_combo(mut c: ComboVal) -> ComboVal {
                 None => v,
             };
             *fv = bake_met(v);
+        }
+    }
+    c
+}
+
+/// The met node as a commit writes it, for the views its fields resolve
+/// in: an atom written lazily is written as the atom (D46: forcing it is
+/// construction, `project_for_commit`). Another grouping of the same
+/// writes reads it back already built.
+fn as_written(mut c: ComboVal) -> ComboVal {
+    for axis in [&mut c.data, &mut c.local, &mut c.rules, &mut c.types, &mut c.meta, &mut c.system] {
+        for (_, fv) in axis.iter_mut() {
+            let built = match &*fv {
+                Value::Thunk { expr, context: None, effect, .. } if effect.is_pure() => match &expr.kind {
+                    nlang_parser::ast::ExprKind::Atom(AtomKind::Top | AtomKind::Bottom) => None,
+                    nlang_parser::ast::ExprKind::Atom(AtomKind::MultilineStr(s)) => {
+                        Some(Value::Atom(AtomKind::Str(s.clone()), EffectTag::Pure, None))
+                    }
+                    nlang_parser::ast::ExprKind::Atom(k) => Some(Value::Atom(k.clone(), EffectTag::Pure, None)),
+                    _ => None,
+                },
+                Value::Combo(inner) => Some(Value::Combo(as_written(inner.clone()))),
+                _ => None,
+            };
+            if let Some(b) = built {
+                *fv = b;
+            }
         }
     }
     c
@@ -1405,7 +1432,11 @@ pub fn own_its_frames(c: &mut ComboVal) {
     ) {
         match v {
             Value::Thunk { closure, .. } => {
-                for f in closure.iter_mut() {
+                // The record's own frame is the outermost that reads as it,
+                // whatever node its own read-back gave it: a literal spread
+                // into it, written alike, sits inside.
+                let own_at = closure.iter().position(|f| !is_meet_frame(f) && reads_as(c, f));
+                for (at, f) in closure.iter_mut().enumerate() {
                     if is_meet_frame(f) {
                         let m = std::sync::Arc::make_mut(f);
                         for (_, side) in m.local.iter_mut() {
@@ -1417,7 +1448,7 @@ pub fn own_its_frames(c: &mut ComboVal) {
                     let slot = match own.iter().position(|(p, _)| *p == ptr) {
                         Some(i) => i,
                         None => {
-                            let stamped = if f.node_id == 0 && reads_as(c, f) {
+                            let stamped = if Some(at) == own_at {
                                 if *id == 0 {
                                     *id = fresh_node_id();
                                 }
