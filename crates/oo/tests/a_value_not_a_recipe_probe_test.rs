@@ -408,11 +408,13 @@ fn r1_a_committed_expression_is_stored_forced() {
 // ── R2 ── the closure carries only what the body needs ───────────────────
 #[test]
 fn r2_the_closure_captures_only_free_variables() {
+    // 〔2026-10-27 預先修訂，Q-107／D120〕`f` reads its node's name `v1`, so
+    // the commit stores it as the node stores its other such fields — its
+    // syntax in the node's frame (D120). The MUST holds where an operator is
+    // a value: here, `f` forced when it is read back.
     let d = committed("r2", SPREAD);
-    let (_, root) = root_object(&d);
-    let app = app_slice(&root);
-
-    let f = field_slice(&app, "f", 0).expect("no `f` in the store — fixture drifted");
+    let f = oo(&d, &["eval", "_.app.f"]);
+    assert!(f.contains("%closure"), "`_.app.f` is not a morphism with a closure: {f}");
 
     // Existence half: `v1` IS a free variable of `x -> x + v1` and MUST stay.
     assert!(

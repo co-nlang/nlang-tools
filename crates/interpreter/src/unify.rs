@@ -1554,6 +1554,11 @@ thread_local! {
     static MEETING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// D120: whether an unforced field reads a name its own node defines.
+pub(crate) fn reads_its_node(v: &Value, node: &ComboVal) -> bool {
+    reads_names_of(v, node, node)
+}
+
 /// D118: whether an unforced value reads a name either side defines.
 fn reads_names_of(v: &Value, a: &ComboVal, b: &ComboVal) -> bool {
     let mut free = std::collections::HashSet::new();

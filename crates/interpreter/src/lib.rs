@@ -4132,6 +4132,15 @@ impl Ouroboros {
                     Value::Combo(c) => {
                         // D118: the stored fields of a met node resolve in it.
                         let mut c = crate::value::bake_met_combo(c);
+                        // D120: an arrow that reads its node's names is stored
+                        // as the node's other such fields are, as its syntax in
+                        // the node's frame; forced, it would keep a snapshot.
+                        let node = c.clone();
+                        let reads_node = |v: &Value| {
+                            matches!(v, Value::Thunk { expr, effect, .. }
+                                if effect.is_pure() && matches!(expr.kind, ExprKind::Morphism { .. }))
+                                && crate::unify::reads_its_node(v, &node)
+                        };
                         let parent_c = match parent {
                             Some(Value::Combo(p)) => Some(p),
                             _ => None,
@@ -4147,7 +4156,7 @@ impl Ouroboros {
                         let is_rule = crate::dispatch::is_rule_cocoon(&c);
                         for (k, v) in std::mem::take(&mut c.data) {
                             let p = parent_c.and_then(|pc| pc.data.get(&k));
-                            let projected = self.project_for_commit(v, p, ctx);
+                            let projected = if reads_node(&v) { v } else { self.project_for_commit(v, p, ctx) };
                             if !closed {
                                 new_c.effect = new_c.effect.union(projected.effect());
                             }
@@ -4155,7 +4164,7 @@ impl Ouroboros {
                         }
                         for (k, v) in std::mem::take(&mut c.types) {
                             let p = parent_c.and_then(|pc| pc.types.get(&k));
-                            let projected = self.project_for_commit(v, p, ctx);
+                            let projected = if reads_node(&v) { v } else { self.project_for_commit(v, p, ctx) };
                             if !closed {
                                 new_c.effect = new_c.effect.union(projected.effect());
                             }
@@ -4163,7 +4172,7 @@ impl Ouroboros {
                         }
                         for (k, v) in std::mem::take(&mut c.rules) {
                             let p = parent_c.and_then(|pc| pc.rules.get(&k));
-                            let projected = self.project_for_commit(v, p, ctx);
+                            let projected = if reads_node(&v) { v } else { self.project_for_commit(v, p, ctx) };
                             if !closed {
                                 new_c.effect = new_c.effect.union(projected.effect());
                             }
@@ -4175,7 +4184,7 @@ impl Ouroboros {
                                 continue;
                             }
                             let p = parent_c.and_then(|pc| pc.meta.get(&k));
-                            let projected = self.project_for_commit(v, p, ctx);
+                            let projected = if reads_node(&v) { v } else { self.project_for_commit(v, p, ctx) };
                             if !closed {
                                 new_c.effect = new_c.effect.union(projected.effect());
                             }
@@ -4183,7 +4192,7 @@ impl Ouroboros {
                         }
                         for (k, v) in std::mem::take(&mut c.system) {
                             let p = parent_c.and_then(|pc| pc.system.get(&k));
-                            let projected = self.project_for_commit(v, p, ctx);
+                            let projected = if reads_node(&v) { v } else { self.project_for_commit(v, p, ctx) };
                             if !closed {
                                 new_c.effect = new_c.effect.union(projected.effect());
                             }
@@ -4191,7 +4200,7 @@ impl Ouroboros {
                         }
                         for (k, v) in std::mem::take(&mut c.local) {
                             let p = parent_c.and_then(|pc| pc.local.get(&k));
-                            let projected = self.project_for_commit(v, p, ctx);
+                            let projected = if reads_node(&v) { v } else { self.project_for_commit(v, p, ctx) };
                             if !closed {
                                 new_c.effect = new_c.effect.union(projected.effect());
                             }

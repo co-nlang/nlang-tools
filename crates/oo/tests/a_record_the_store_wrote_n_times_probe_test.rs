@@ -260,7 +260,7 @@ fn g1_addresses_do_not_move() {
         ("lit 50", format!("r: {}\n", record(50, "f")), "b8d6b5ce6e077004e1076117d72e9f1f808af34f787d4f27fe39c9e0876856bd"),
         ("readings 50", readings(50), "2ea74a11c8cbd90a62c021f918c80668693a65f9c6b7ee5da75a53f1ae7bc452"),
         ("chain 50", chain, "336a3085d16e367fd059a150d568b6522ec819ce5338cf4e77cbc88b636b2728"),
-        ("mixed", "d: { b: 3 }\nc: { b: 3, k: 1 }\n...c\nr: { y: 1, z: y, w: d.b, f: (x -> x + y) }\nq: r.z + 1\n".to_string(), "0e3d2ca3313acda02873703785fc4c90bd5cc5f779c0972fc0e09cf7b7224b88"),
+        ("mixed", "d: { b: 3 }\nc: { b: 3, k: 1 }\n...c\nr: { y: 1, z: y, w: d.b, f: (x -> x + y) }\nq: r.z + 1\n".to_string(), "ccd4b230a94929a80277173f305f0ed8f31d8720da8f836e157a576748808447"),
         ("readings 200", readings(200), "3dd138529716114bf5fb953de2eb6a358348de32b6c5b0889b7a2b07358bffbd"),
     ];
     for (name, src, root) in cases {
