@@ -639,6 +639,74 @@ impl Expr {
             ExprKind::Structural(e) => format!("Structural({})", e.shape()),
         }
     }
+    /// The node printed first: down a subscript's object and an annotation's value.
+    fn leftmost(&self) -> &Expr {
+        match &self.kind {
+            ExprKind::Lens(e, _) | ExprKind::TypeAnnotation(e, _) => e.leftmost(),
+            _ => self,
+        }
+    }
+    /// This printed as the right side of a juxtaposition (apply binds at 9;
+    /// its argument demands tighter).
+    fn argument_text(&self, indent: usize) -> String {
+        let as_ = self.to_nlang_prec(indent, 10);
+        // Leading `-` → binary Sub (`f -1`); leading `/ident` → logic_infix
+        // (`f /g` incomplete). Force grouping (SYNTAX_02 §4.3 / SYNTAX_09 §4.9).
+        // Also: `f @int` is a type annotation (`@{…}` is not), `f [x]` a
+        // subscript (`[x, y]` is not), `f <<x>>` a comparison, `f ...x` the next field.
+        let one_item_list = matches!(&self.leftmost().kind, ExprKind::List(items) if items.len() == 1);
+        if as_.starts_with(['-', '/', '<', '.'])
+            || (as_.starts_with('@') && !as_.starts_with("@{"))
+            || one_item_list
+        {
+            format!("({as_})")
+        } else {
+            as_
+        }
+    }
+    /// A lone primary that `field_key` also matches (`1`, `x.y`, `_.x`, `#a`,
+    /// `"s"`, `@{…}` — not `^.x`).
+    fn reads_as_a_key(&self) -> bool {
+        match &self.kind {
+            ExprKind::Atom(_) | ExprKind::AnonSet(_) => true,
+            ExprKind::Path(p) => !matches!(p.anchor, PathAnchor::Parent(_)),
+            _ => false,
+        }
+    }
+    /// Whether, printed bare, this ends in an argument or a range bound that
+    /// ` :` after it would turn into a field key (n.pest: `apply_expr` and
+    /// `range` look for `field_start` before those operands).
+    fn ends_before_a_colon(&self) -> bool {
+        let tail = |e: &Expr, demand: u8| e.precedence() >= demand && e.ends_before_a_colon();
+        match &self.kind {
+            ExprKind::Range { .. } => true,
+            ExprKind::Apply(_, a) => {
+                !a.argument_text(0).starts_with('(')
+                    && (a.reads_as_a_key() || a.ends_before_a_colon())
+            }
+            ExprKind::Pipe(_, r)
+            | ExprKind::Meet(_, r)
+            | ExprKind::Join(_, r)
+            | ExprKind::Diff(_, r)
+            | ExprKind::Add(_, r)
+            | ExprKind::Sub(_, r)
+            | ExprKind::Mul(_, r)
+            | ExprKind::Div(_, r)
+            | ExprKind::Rem(_, r)
+            | ExprKind::Eq(_, r)
+            | ExprKind::Ne(_, r)
+            | ExprKind::Lt(_, r)
+            | ExprKind::Gt(_, r)
+            | ExprKind::Lte(_, r)
+            | ExprKind::Gte(_, r)
+            | ExprKind::LatticeEq(_, r)
+            | ExprKind::Probe(_, r) => tail(r, self.precedence() + 1),
+            ExprKind::TypeAnnotation(_, t) => tail(t, self.precedence() + 2) && !t.reads_as_a_key(),
+            ExprKind::Unary { expr, .. } | ExprKind::Complement(expr) => tail(expr, self.precedence()),
+            ExprKind::Spread(e) => tail(e, self.precedence() + 1),
+            _ => false,
+        }
+    }
     /// Binding strength: higher = tighter. Matches SPEC_14 / n.pest levels.
     pub fn precedence(&self) -> u8 {
         match &self.kind {
@@ -681,13 +749,7 @@ impl Expr {
             ExprKind::Apply(f, a) => {
                 // juxtaposition: parenthesize either side when looser than apply
                 let fs = f.to_nlang_prec(indent, own);
-                let mut as_ = a.to_nlang_prec(indent, own + 1); // right side: tighter demand
-                                                                // Leading `-` → binary Sub (`f -1`); leading `/ident` → logic_infix
-                                                                // (`f /g` incomplete). Force grouping (SYNTAX_02 §4.3 / SYNTAX_09 §4.9).
-                if as_.starts_with('-') || as_.starts_with('/') {
-                    as_ = format!("({as_})");
-                }
-                format!("{fs} {as_}")
+                format!("{fs} {}", a.argument_text(indent))
             }
             ExprKind::Pipe(l, r) => {
                 format!(
@@ -761,7 +823,13 @@ impl Expr {
             } => format!(
                 "{} ? {} : {}",
                 cond.to_nlang_prec(indent, own + 1),
-                then_branch.to_nlang_prec(indent, own + 1),
+                // `c ? f 1 : 2`: an argument or a range's end followed by ` :` reads as
+                // the next field (field_start), so such a branch is grouped
+                if then_branch.precedence() > own && then_branch.ends_before_a_colon() {
+                    format!("({})", then_branch.to_nlang_prec(indent, 0))
+                } else {
+                    then_branch.to_nlang_prec(indent, own + 1)
+                },
                 else_branch.to_nlang_prec(indent, own + 1)
             ),
             ExprKind::Add(a, b) => format!(
@@ -832,10 +900,11 @@ impl Expr {
                 b.to_nlang_prec(indent, own + 1)
             ),
             // type_ann_op = "@" (not ":"); colon is field assignment only.
+            // Both sides are postfix_expr (n.pest), tighter than `!`/`...`: `(!x) @ T`, `x @ (!T)`.
             ExprKind::TypeAnnotation(v, t) => format!(
                 "{} @ {}",
-                v.to_nlang_prec(indent, own + 1),
-                t.to_nlang_prec(indent, own + 1)
+                v.to_nlang_prec(indent, own + 2),
+                t.to_nlang_prec(indent, own + 2)
             ),
             ExprKind::Unary { op, expr } => {
                 let s = match op {
@@ -909,7 +978,8 @@ impl Expr {
                 res
             }
             ExprKind::Context => "$".to_string(),
-            ExprKind::Spread(e) => format!("...{}", e.to_nlang_prec(indent, own)),
+            // spread_expr = "..." ~ type_ann_expr: `...(!x)`
+            ExprKind::Spread(e) => format!("...{}", e.to_nlang_prec(indent, own + 1)),
             ExprKind::Structural(e) => format!("<<{}>>", e.to_nlang_prec(indent, 0)),
         };
         // Parenthesize when this node binds looser than what the parent expects.

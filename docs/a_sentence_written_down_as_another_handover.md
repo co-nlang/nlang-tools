@@ -75,17 +75,60 @@
 
 ### 8.1 射程逐項對照
 
+只動 `crates/parser/src/ast.rs` 的 `Expr::to_nlang_prec`（+81／−11，與 `q108-ref d8eb081` 同一段）。優先序表沒有對調。外層仍是「自己的優先序低於父層要求才加括號」。多出來的括號只在四種樹形上：
+
+*   並置的引數（`argument_text`）：印出的文字以 `-`、`/`、`<`、`.` 起頭，或以 `@` 起頭且不是 `@{`，或最左節點是單元素清單。`g [1, 2]`、`g @{ … }`、`g (-1)`、`g []` 不加。
+*   型別註記兩邊的要求是 own+2，比 `!` 與 `...`（優先序 11）緊：`(!n) @ #false`、`n @ (!n)`。
+*   展開的要求是 own+1：`...(!n)`。
+*   三元的 then 分支，優先序高於三元、而且裸印時尾端是施用引數或區間端點（`ends_before_a_colon`），後面的 ` :` 會被讀成欄位，這種分支加括號。`c ? 2 : 1..n`、`c ? n + 1 : 2`、`c ? g [n, 2] : 2` 的 then 不加。
+
+`Program`／`Field`／模式鍵、`Value` 的 thunk 與 `Code`、倉的 `EXPR` 與 `Code` 包裝、thunk 身分（`expr.to_nlang(0)`），都呼叫這一個印表機。`oo fmt` 走 `Program::to_nlang`。`oo status` 與 `oo eval` 走 `Value::to_nlang`；欄位還是 thunk 時就印出這次的括號。沒有第二套算子印表機。
+
+*   **M1** 探針 r1 的格子，以及 r1 之外的語料：32 個運算元 × 20 個運算子 × 11 種處境，剖得出的 **225,503** 句。v0.108.0 有 3,507 句讀不回去（1,071 讀成另一棵樹、2,436 剖析不了）。本卡 0 句。再印一次是同一段文字。舊印法已經讀得回去的 **221,996** 句，新印法逐字相同。
+*   **M2** 倉裡的配方讀回來是寫下的那句。`g (@int)`：eval 與提交都讀 `{ k: @int }`，根 `f5bade3db85932d6f85dadae72f7291079cb1ad587a16c25f5ce3aa4aab68e6b`，`oo fmt` 再提交同根。`g ([1])` 讀 `[1]`、根 `c7329d65f4dfbdeb8374d6cd9d48aa2e4a095c372cde271927b3ac7d300404a7`。`g (<<n>>)` 讀 `3`、根 `deeba23a3e397b23f81c59ad71af73f3ac603c577dc94f5a03b1eeec8f56e21c`。`g ([1]).0` 讀 `1`、根 `4b515c162373fdfe080ad7cffdfc547cc8f978aeaf9ae19bf49939c9783537f7`（`fmt` 印 `r: g ([1]["0"])`，同根）。`g (@int @ @int)` 讀 `@int`、根 `db5c7c8950395d062753377faa83ebe5fc0f5b8bedae53bf9e808dd1725d1cd3`。`(!n) @ #false` 讀 `#false`、根 `dc856d10e4af2deaadecb470739adfefaaf3b4b60a3753f7476c05d6554cce56`。`n @ (!n)` 讀 `_|_ #conflict`，根仍是 `630a321b8f78d666bd5041f4da4a83fecfd8aa50f667a5cf9aca77cbbe23fa4c`，`fmt` 現在是 `r: n @ (!n)`，同根。`n == 3 ? (1..n) : 2` 讀 `1..3`、根 `23a7f532e3c96769dafc90796f301161ba11192e561b2597802d372aa4d73781`。`n == 3 ? (g n) : 2` 讀 `3`、根 `d9174e8410ce404d218e9a1a758a9f6989e3b9b0b06a0bb1c6031cc7ee6d9131`。`{ ...(!n) }` 讀 `{}`、根 `0798cd86e1288457c1b172bb47f996e34e0f54be0406e6908a532ea78d639e15`；`fmt` 是多行，值那行是 `"...": ...(!n)`，再提交同根。
+*   **M3** `g (@int)` 根 `f5bade3d…`，照字寫的 `g @int` 仍是 `e3de7e9088fcd1dc83ad8b2fdb44a65e5bc353431c8eb8e665ba27b20c6b3c0e`。`(y -> g) ([1])` 讀 `[7, 8]`、根 `a3a180963a21b39b5a3a48c8cbc859feca01bae8a294e4cc5623d4b52de6cf7f`；下標 `(y -> g) [1]` 仍是 `a0ef3ebde1b0f7b2a19755f5725db9d7a9876818e6c3a4e38f521a6e6e02b9c5`。`(!n) @ #true` 的提交根仍是 `630a321b…`（讀 `_|_ #conflict`）；`!(n @ #true)` 仍是 g1 的 `4334d51009098f035df247ff73c5dc6811d6e05c4ce4ec566ecfcdfd1cad7149`。
+*   **M4** `h: (y -> { k: y, f: (x -> k) }) (@int)` 再 `h: { k: 5 }`，三條路都讀 `5`，根 `186b2cbbd94a59c7a1bbf3fd3f7323c3b5d71cae63a5619d4ce2091075630ec8`。`h: g (@int)` 再 `h: { k: 5 }`，三條路讀 `5`，根 `e4f2e25ab3f011b1d3e35df3a00389bbaf13ec141dc69d52c8f9640241555447`。`h: g ([{ k: @int }])` 再 `h: [{ k: 5 }]`，三條路讀 `5`，根 `6ac39785e3c572420fc1838e07006f89ebd0c2d722a0ea716ac5d3cf7dce0f16`。
+*   **M5** r5：上述十句 `oo fmt` 兩次相同，印出的程式與原文同一棵樹。status 在提交前印 `r: g (@int)`。
+
+g1 的十六個印法與十六顆根逐字停在探針釘的那一列（`g (-1)` `2e5c1ed4…` 到 `g [n, 2]` `ee5b9d9f…`）。身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`k: { a: 1, _: 9 }` `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`；`m: (_ -> 1)` `cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6`。標準根物件 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在新倉裡。`layout=9`，`encoding=10`。
+
+工單 §6 那一列，本卡前後同讀同根：`h: (y -> { k: y, r: k + 1 }) (@int)` 再 `h: { k: 5 }`，一檔與兩次提交讀 `6`、根 `37d7d380a5c6d5e1755a4cfd3b81036b788184ee820bd2c8dad0e3f3318080e4`；兩次演化讀 `6`、根 `898db5c04b212c973ef7a5bbcb8e46f465d9a62ae814531d6bc192ee8207cb43`。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。探針、版本（`oo` 0.108.0，interpreter 與 parser 0.2.2）、`STORE_LAYOUT_VERSION`、`OBJECT_ENCODING_VERSION`、`CHANGELOG`、規格與向量都沒動。`fuzz_roundtrip` 的產生器仍不產生施用、型別路徑、單元素清單、下標、記錄；量這洞的是上面那 225,503 句，產生器留著。`rustfmt --check --edition 2021` 會改既有的 `Address` 欄位換行，也會折這次新的兩行；檔案留在參考實作的拼法。
 
 ### 8.3 工單哪裡是錯的
 
+*   `g (<<n>>)`、`n == 3 ? (1..n) : 2`、`{ ...(!n) }` 在 v0.108.0 不是「提交存 `_`」。演化 rc 0，提交 rc 1，錯誤是 `store n/ parse`（`g <<n>>` 期望 `unary_expr`；`1..n : 2` 期望 `postfix_op`；`...!n` 期望 `primary`），沒有 `HEAD`。
+*   已提交的 `g @int` 上再演化 `r: g (@int)`，演化拒絕 `Evolution Conflict: #missing_key at r.k`（rc 1），讀數仍是箭頭，根仍是 `e3de7e90…`。新宇宙裡寫 `g (@int)` 才讀 `{ k: @int }`，根 `f5bade3d…`。
+*   v0.108.0 的 `g ([1])`、`g ([1]).0`、`g (@int @ @int)` 三筆，`inspect` 印出的根十六進位都是 `058ceee8e81499d530477b37f48204dc3c0feb4893e5c30762d830fd9b4538c1`。前兩筆物件正文是 `r: { ~%__nlang_bottom: #missing_key path: "1" }`（286 B），第三筆是 `r: { ~%__nlang_bottom: #conflict }`（273 B）。本卡之後三顆根分開，見 8.1。
+
 ### 8.4 工單指名要你回答的問題
+
+*   **Q1** 括號按樹決定，不按印出的字串重剖一次來決定加不加。父層給一個要求的優先序；子節點比它鬆才由既有的外層規則加括號。四種陷阱是樹上的額外規則：並置引數看最左節點是不是單元素清單、以及印出文字的起頭（`-` `/` `<` `.`，還有不是 `@{` 的 `@`）；註記兩邊要求 own+2；展開要求 own+1；then 分支只有 `ends_before_a_colon` 為真才加。重剖是 r1 與 225,503 句的檢查。已經讀得回去的 221,996 句逐字沒變，所以沒有多加的括號。優先序表維持原樣（`!` 比 `@` 緊）；對調那張表會把 `!(n @ #true)` 印成 `!n @ #true`，g1 的根會動。
+*   **Q2** 式子印成 n/ 的地方是一個：`Expr::to_nlang_prec`。進倉的是 `store_codec` 寫的 `expr.to_nlang(0)`（讀時 `parse_expr_only`）。進身分的是 thunk 對同一段文字的雜湊。進 `oo fmt` 的是 `Program::to_nlang`。進 `status`／`eval` 的是 `Value::to_nlang`；thunk 與 `Code` 轉呼叫式子印表機，所以提交前的 status 印 `r: g (@int)`。v0.108.0 把那一格強制成註記之後，status 印的是值 `r: g @ int`。原子、記錄、清單的值印法印的是值。這次蓋的是式子印表機。
+*   **Q3** 語料是 `acc/q108/q108_recon.rs` 那一格：32 運算元、20 運算子、11 處境，外加每個運算元 7 個形，剖得出 225,503。v0.108.0：3,507 失敗（MISMATCH 1,071、REPARSE-ERR 2,436）。本卡：0。舊印法讀得回去的 221,996 句逐字相同。r1 是探針裡較小的那格（少了若干運算元、運算子，九種處境），7／7。r1 之外的那 225,503 句在本卡也是 0 失敗。
+*   **Q4** 根會動，是因為倉把配方存成印出的文字，印法變了，位址就變。動的是 8.1 那些含並置引數 `@`／單元素清單／`<<`／`...`、註記一側是 `!` 或 `...`、then 分支以引數或區間收尾的配方：`f5bade3d…`、`c7329d65…`、`deeba23a…`、`4b515c16…`、`db5c7c89…`、`dc856d10…`、`23a7f532…`、`d9174e84…`、`0798cd86…`、`a3a18096…`，以及 M4 的三顆。`n @ (!n)` 與 `(!n) @ #true` 的提交根停在 `630a321b…`，因為存下來的是同一個 `_|_ #conflict`。`g @int`、下標 `(y -> g) [1]`、g1 的十六顆、身分六顆、標準根都不動：那些印法本來就讀得回去，新規則不在它們身上加括號。
+*   **Q5** v0.108.0 寫下的那筆（根 `e3de7e9088fcd1dc83ad8b2fdb44a65e5bc353431c8eb8e665ba27b20c6b3c0e`），新引擎讀到的是箭頭本身（`%kind: #logic` 的態射），根不變。在那顆根上再寫 `r: g (@int)` 被拒，見 8.3。舊引擎讀本卡的新倉，讀到 `{ k: @int }`，根 `f5bade3d…`。
 
 ### 8.5 探針
 
+`a_sentence_written_down_as_another_probe_test` **7／7**。單獨一輪 62.30 s；閘門內 62.92 s。檔案未改。
+
+同輪閘門裡：`fuzz_roundtrip` 5／5（0.21 s）、`golden_ast` 21／21（0.03 s）、`roundtrip` 3／3（0.04 s）、`spec14_sync` 13／13（0.01 s）、Q-107 7／7（39.25 s）、Q-106 8／8（44.31 s）、Q-105 10／10（45.14 s）、Q-104 6／6（5.26 s）、Q-103 9／9（5.67 s）、`a_name_the_printer_could_not_write` 11／11（0.90 s）、`print_what_can_be_read` 12／12（1.03 s）、`a_commit_that_is_a_value` 13／13（1.60 s）。
+
 ### 8.6 數字
 
+閘門：GATE 1 2026-10-27T20:57:48+08:00 WALL 1587 s；GATE 2 21:24:15 1115 s；GATE 3 21:42:50 1116 s。正規化 3750 行，sha `e83355a349d9ae05a6b81c5d6bab1ed19fd84e33440f4fb2f7ee5959d7e88fd2`，301 個結果，加總 **2850** 通過、0 失敗，`test ` 行 `ok` 2849，`Running` 298，`running` 301。三輪正規化相同。原始 sha 前綴 `06d8ae076361ff37`、`2c16b221dce8c171`、`45217caf500b55d7`。位元組 301577／301343／301343。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux `cargo build --release --offline -p oo` Finished 23.34 s，lib 14 則警告，`cargo fix` 12，`store_codec.rs:1120` 的不可達樣式留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-27T22:01:26+08:00 Finished 5.52 s，EXIT 0，`^error` 0，target lib 15 則、`cargo fix` 13，留著。
+
+conformance **189／189**，空目錄 `/home/gali/tmp/q108/conf.iumb`，前後 `ls -A | wc -l` 都是 0，22.64 s。父倉 `16d0f86a804edd129530442a2f958f38aa88d771`，`.oo/format` 一個位元組 `32`。`oo` 11296240 位元組，mtime 2026-10-27 20:53:56.034336992 +0800。閘門沒有重編它。
+
 ### 8.7 你認為需要改規格之處
+
+`REAL_01` §1.3 第三款要落到印表機：並置的引數若以 `@`（非 `@{`）、單元素清單、`<<`、`...`、`-`、`/` 起頭，印出來就帶括號；型別註記的兩側比 `!` 與 `...` 更緊，所以 `(!x) @ T` 與 `x @ (!T)` 帶括號；展開比註記緊一級，`...(!x)` 帶括號；三元 then 分支若尾端會讓後面的 ` :` 變成欄位鍵，該分支帶括號。已經讀得回去的句子維持原印法。倉繼續把配方存成這段文字；v0.108.0 已經寫進倉的 `g @int` 是當時寫下的文字，讀回來仍是那個註記的值。`CHANGELOG` 記根的移動，由驗收方收尾。`fuzz_roundtrip` 的產生器還沒蓋到施用與單元素清單。關卡的晚到相撞、離開寫下處的引用，仍是該兩列的事。
 
 ---
 
