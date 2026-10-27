@@ -317,6 +317,14 @@ impl Ouroboros {
     /// deduplicated by their printed form, and every other conjunct met
     /// now into one answer.
     fn meet_coordinate(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
+        // Below a coordinate the universe's meet is a meet of that node.
+        let outer = IN_COORDINATE.with(|c| c.replace(true));
+        let r = self.meet_coordinate_(a, b, ctx);
+        IN_COORDINATE.with(|c| c.set(outer));
+        r
+    }
+
+    fn meet_coordinate_(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
         if matches!(a, Value::Bottom(_) | Value::Top | Value::TopCaused { .. })
             || matches!(b, Value::Bottom(_) | Value::Top | Value::TopCaused { .. })
         {
@@ -814,7 +822,17 @@ impl Ouroboros {
         // D118: the met node remembers the nodes met into it.
         let mut from: Vec<u64> = a.merged_from.iter().chain(b.merged_from.iter()).copied().collect();
         from.extend([a.node_id, b.node_id].into_iter().filter(|id| *id != 0));
-        match self.unify_combo_inner(a, b, ctx) {
+        let depth = MEETING.with(|m| {
+            let mut m = m.borrow_mut();
+            let d = m.len();
+            m.extend(from.iter().copied());
+            d
+        });
+        SETTLE.with(|t| t.borrow_mut().push(Vec::new()));
+        let inner = self.unify_combo_inner(a, b, ctx);
+        let settle = SETTLE.with(|t| t.borrow_mut().pop()).unwrap_or_default();
+        MEETING.with(|m| m.borrow_mut().truncate(depth));
+        match inner {
             Value::Combo(c) => {
                 let mut c = self.normalize_table(c, ctx);
                 if !from.is_empty() {
@@ -822,6 +840,30 @@ impl Ouroboros {
                     from.dedup();
                     c.node_id = crate::value::fresh_node_id();
                     c.merged_from = from;
+                }
+                // D118: a field both writes put in a coordinate's node, read
+                // by its names, meets in the met node — now that it exists.
+                // The universe's meet decides at once, as it always has.
+                if !settle.is_empty() {
+                    let met = c.clone();
+                    for (display, key) in settle {
+                        let axis = match display.as_str() {
+                            "@" => &mut c.types,
+                            "/" => &mut c.rules,
+                            "%" => &mut c.meta,
+                            "~%" => &mut c.system,
+                            "~" => &mut c.local,
+                            _ => &mut c.data,
+                        };
+                        if let Some(v) = axis.get(&key).cloned() {
+                            // Kept as the meet it is (as a metered meet keeps
+                            // it); a conflict it makes is made here.
+                            let forced = self.force_recursive(crate::value::rebind_to_met(&met, v), ctx);
+                            if forced.bottom_leaves().into_iter().next().is_some() || matches!(forced, Value::Bottom(_)) {
+                                axis.insert(key, forced);
+                            }
+                        }
+                    }
                 }
                 Value::Combo(c)
             }
@@ -897,10 +939,11 @@ impl Ouroboros {
             let mut keys = IndexSet::new();
             keys.extend(left.keys());
             keys.extend(right.keys());
+            let (mut views_a, mut views_b) = (crate::value::MetViews::new(), crate::value::MetViews::new());
             for key in keys {
                 // D118: each side's field resolves in its own met node first.
-                let va = left.get(key).cloned().map(|v| crate::value::rebind_to_met(&a, v)).unwrap_or(Value::Top);
-                let vb = right.get(key).cloned().map(|v| crate::value::rebind_to_met(&b, v)).unwrap_or(Value::Top);
+                let va = left.get(key).cloned().map(|v| crate::value::rebind_in(&a, v, &mut views_a)).unwrap_or(Value::Top);
+                let vb = right.get(key).cloned().map(|v| crate::value::rebind_in(&b, v, &mut views_b)).unwrap_or(Value::Top);
                 let va_is_top = va.is_top();
                 let vb_is_top = vb.is_top();
                 let shown = format!("{display}{key}");
@@ -944,13 +987,58 @@ impl Ouroboros {
                 // node, meets there — not before the met node exists.
                 // The universe's own meets (a working set, a write over the
                 // root) meet at once: the root is the met node (D110).
+                // D118: the same field written once, read in two versions of
+                // the node being met, is one field; the met node reads it.
+                if crate::UNMETERED_MERGE.with(|c| c.get()) && same_field_of(&va, &vb) {
+                    out.insert(key.clone(), va);
+                    continue;
+                }
+                // A meet already holding the same field absorbs it (a member
+                // written over an earlier one carries that one in it).
+                if crate::UNMETERED_MERGE.with(|c| c.get()) {
+                    if holds_field(&vb, &va) {
+                        out.insert(key.clone(), vb);
+                        continue;
+                    }
+                    if holds_field(&va, &vb) {
+                        out.insert(key.clone(), va);
+                        continue;
+                    }
+                }
                 if !va_is_top
                     && !vb_is_top
                     && va != vb
-                    && !crate::UNMETERED_MERGE.with(|c| c.get())
+                    && (!crate::UNMETERED_MERGE.with(|c| c.get()) || IN_COORDINATE.with(|c| c.get()))
                     && (reads_names_of(&va, &a, &b) || reads_names_of(&vb, &a, &b))
                 {
-                    out.insert(key.clone(), crate::value::pending_meet(va, vb));
+                    if crate::UNMETERED_MERGE.with(|c| c.get()) {
+                        SETTLE.with(|t| {
+                            if let Some(top) = t.borrow_mut().last_mut() {
+                                top.push((display.to_string(), key.clone()));
+                            }
+                        });
+                    }
+                    // One meet left for the node, whatever the grouping of
+                    // the writes: what reads none of its names meets now.
+                    let mut sides = Vec::new();
+                    meet_sides(&va, &mut sides);
+                    meet_sides(&vb, &mut sides);
+                    let (reading, rest): (Vec<Value>, Vec<Value>) =
+                        sides.into_iter().partition(|s| reads_names_of(s, &a, &b));
+                    let mut kept: Vec<Value> = Vec::new();
+                    for s in reading {
+                        if !kept.iter().any(|k| same_field_of(k, &s) || k.content_hash() == s.content_hash()) {
+                            kept.push(s);
+                        }
+                    }
+                    let left = kept.into_iter().reduce(crate::value::pending_meet);
+                    let rest = rest.into_iter().reduce(|x, y| engine.unify_internal(x, y, ctx)).filter(|r| !r.is_top());
+                    let met = match (left, rest) {
+                        (Some(l), Some(r)) => crate::value::pending_meet(l, r),
+                        (Some(l), None) => l,
+                        _ => crate::value::pending_meet(va, vb),
+                    };
+                    out.insert(key.clone(), met);
                     continue;
                 }
                 let merged = engine.unify_internal(va, vb, ctx);
@@ -1400,6 +1488,70 @@ pub(crate) fn reads_name_in(v: &Value, c: &ComboVal) -> bool {
             || c.types.keys().any(|k| crate::eval::captures(&free, "@", k))
             || c.rules.keys().any(|k| crate::eval::captures(&free, "/", k))
             || c.local.keys().any(|k| crate::eval::captures(&free, "~", k)))
+}
+
+/// D118: two lazy fields that are one written field: the same source, read
+/// in the same frames but for versions of the nodes being met.
+fn same_field_of(va: &Value, vb: &Value) -> bool {
+    let (
+        Value::Thunk { expr: e1, closure: c1, context: None, .. },
+        Value::Thunk { expr: e2, closure: c2, context: None, .. },
+    ) = (va, vb)
+    else {
+        return false;
+    };
+    let node = |f: &ComboVal| f.node_id != 0 && MEETING.with(|m| m.borrow().contains(&f.node_id));
+    // A meet waiting for this node is one field when its sides are.
+    let meet = |f: &ComboVal, g: &ComboVal| {
+        crate::value::is_meet_frame(f)
+            && crate::value::is_meet_frame(g)
+            && f.local.len() == g.local.len()
+            && f.local.iter().zip(g.local.iter()).all(|((kf, sf), (kg, sg))| {
+                kf == kg && (same_field_of(sf, sg) || sf.content_hash() == sg.content_hash())
+            })
+    };
+    c1.len() == c2.len()
+        && c1.iter().any(|f| node(f) || crate::value::is_meet_frame(f))
+        && e1.to_nlang(0) == e2.to_nlang(0)
+        && c1.iter().zip(c2.iter()).all(|(f, g)| {
+            std::sync::Arc::ptr_eq(f, g) || (node(f) && node(g)) || meet(f, g) || f.content_hash() == g.content_hash()
+        })
+}
+
+/// The sides of a meet waiting for the node, at any depth, in order.
+fn meet_sides(v: &Value, out: &mut Vec<Value>) {
+    if let Value::Thunk { closure, .. } = v {
+        if let Some(f) = closure.first().filter(|f| crate::value::is_meet_frame(f)) {
+            for side in f.local.values() {
+                meet_sides(side, out);
+            }
+            return;
+        }
+    }
+    out.push(v.clone());
+}
+
+/// Whether `big`, a meet waiting for the node, has `small` as one of its
+/// sides (at any depth): the same written field.
+fn holds_field(big: &Value, small: &Value) -> bool {
+    let Value::Thunk { closure, .. } = big else {
+        return false;
+    };
+    let Some(f) = closure.first().filter(|f| crate::value::is_meet_frame(f)) else {
+        return false;
+    };
+    f.local.values().any(|side| {
+        same_field_of(side, small) || side.content_hash() == small.content_hash() || holds_field(side, small)
+    })
+}
+
+thread_local! {
+    /// D118: fields a universe's meet left for the met node, per meet.
+    static SETTLE: std::cell::RefCell<Vec<Vec<(String, String)>>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// D118: the universe's meet is deciding a coordinate (below the root).
+    static IN_COORDINATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// D118: the nodes the meets under way are meeting, outermost first.
+    static MEETING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// D118: whether an unforced value reads a name either side defines.

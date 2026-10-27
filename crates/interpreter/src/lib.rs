@@ -3943,8 +3943,9 @@ impl Ouroboros {
                             let is_rule = crate::dispatch::is_rule_cocoon(&c);
                             // D118: a met node's fields resolve in it.
                             let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
+                            let views = std::cell::RefCell::new(crate::value::MetViews::new());
                             let rebind = |v: Value| match &met {
-                                Some(m) => crate::value::rebind_to_met(m, v),
+                                Some(m) => crate::value::rebind_in(m, v, &mut views.borrow_mut()),
                                 None => v,
                             };
                             // Copy per axis. Flattening through insert_field

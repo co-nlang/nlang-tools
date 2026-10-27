@@ -974,6 +974,18 @@ impl Universe {
                             return Err(*d);
                         }
                     }
+                    // D118: a field that reads the node's names reads it in
+                    // the met node, where each side's own reading above does
+                    // not look (`r: <<k>>`, then `k: 5, r: 6`).
+                    if let (_, Some(mut d)) = engine.meet_clash(existing.clone(), val.clone(), &mut engine.eval_context()) {
+                        let leaf = d.path.take().filter(|s| !s.is_empty());
+                        d.path = Some(match leaf {
+                            Some(p) if p == *c || p.starts_with(&format!("{c}.")) => p,
+                            Some(p) => format!("{c}.{p}"),
+                            None => c.clone(),
+                        });
+                        return Err(d);
+                    }
                     // A side that cannot be read here (an open term with no
                     // frame reads as ⊥ #no_context) is not a collision.
                     if matches!(theirs, Value::Bottom(_) | Value::Thunk { .. })
