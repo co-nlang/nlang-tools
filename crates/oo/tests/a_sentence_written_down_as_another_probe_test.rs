@@ -14,6 +14,8 @@
 //   prints `g <<n>>` (does not parse: the commit stores `_`), `(!n) @ T`
 //   prints `!n @ T` (`!(n @ T)`), `n @ (!n)`, `c ? (1..n) : 2`,
 //   `c ? (g n) : 2` and `{ ...(!n) }` print what does not parse.
+//   (R-1, the acceptance side) `g (@{ ...x })` prints `g @{ ...x }`: after
+//   `@`, `{ ...x }` is a record — a type annotation again.
 //
 // The delivery may NOT edit this file. `rustfmt` must not touch it.
 
@@ -184,7 +186,7 @@ fn three_ways(w1: &str, w2: &str, q: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// Sentences the store keeps as text (each reads a name), and what each reads.
-const STORED: [(&str, &str); 10] = [
+const STORED: [(&str, &str); 11] = [
     ("g: (y -> { k: y })\nr: g (@int)", "{ k: {{ %kind: #type %name: \"int\" }} }"),
     ("g: (y -> y)\nr: g ([1])", "[1]"),
     ("g: (y -> y)\nn: 3\nr: g (<<n>>)", "3"),
@@ -195,6 +197,7 @@ const STORED: [(&str, &str); 10] = [
     ("n: 3\nr: n == 3 ? (1..n) : 2", "1..3"),
     ("g: (y -> y)\nn: 3\nr: n == 3 ? (g n) : 2", "3"),
     ("n: { a: 1 }\nr: { ...(!n) }", "{}"),
+    ("g: (y -> y)\nh: { a: 1 }\nr: g (@{ ...h })", "{ a: 1 }"),
 ];
 
 // ── r1: every expression the parser produces prints back to itself ─────
@@ -202,7 +205,7 @@ const STORED: [(&str, &str); 10] = [
 const ATOMS: &[&str] = &[
     "1", "-1", "\"s\"", "#a", "_", "x", "x.y", "_.x", "@int", "@{ 4.. }", "[1]", "[x, 2]",
     "{ a: 1 }", "(1, 2)", "<<x>>", "$", "1..5", "..5", "!x", "~%Math", "(y -> y)", "x @int",
-    "x[0]", "/f",
+    "x[0]", "/f", "@{ ...x }",
 ];
 const OPS: &[&str] = &[
     " ", " + ", " - ", " * ", " / ", " & ", " | ", " \\ ", " == ", " < ", " <= ", " = ", " <=> ",
