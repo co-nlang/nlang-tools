@@ -3,8 +3,9 @@
 // Queue: nlang-spec/meta/WORK_QUEUE.md — Q-108.  `REAL_01` §1.3 (iii): what is
 // printed MUST read back — an unobserved value prints its source, and the
 // source read back is the same sentence. The store keeps a recipe as its
-// printed text (`store_codec`) and hashes that text into its identity; the
-// working set, `fmt` and `status` print the same way.
+// printed text (`store_codec`) and parses it back, so a misprinted recipe is
+// committed as another sentence (the address is that sentence's node table,
+// Q-052); the working set, `fmt` and `status` print the same way.
 //
 // ── What is wrong (v0.108.0) ────────────────────────────────────────────
 //
