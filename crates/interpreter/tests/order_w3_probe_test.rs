@@ -165,8 +165,12 @@ fn pin_extremes_nonatom_unchanged() {
 fn pin_eq_families_untouched() {
     assert_obs("out: (1 | 2) = (2 | 1)", "#true");
     assert_obs("out: {a: 1} = {a: 1}", "#true");
-    let got = observe_nlang("out: ({a: 1} == {a: 1}).%cause", "out");
-    assert_eq!(got, "#conflict", "== family misuse stays loud: {got:?}");
+    // D121 (Q-109 pre-revision, was `.%cause` #conflict): a record without
+    // %val is not yet a value; `==` answers `_`, and a list stays loud.
+    let got = observe_nlang("out: {a: 1} == {a: 1}", "out");
+    assert_eq!(got, "_", "== on records is not yet a value: {got:?}");
+    let got = observe_nlang("out: ([1] == [1]).%cause", "out");
+    assert_eq!(got, "#conflict", "== family misuse on a list stays loud: {got:?}");
 }
 
 #[test]

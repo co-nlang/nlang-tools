@@ -212,7 +212,8 @@ fn pin_plain_combo_observe_unchanged() {
 }
 
 #[test]
-fn pin_plain_combo_math_stays_conflict() {
-    // Peel recognizes %val ONLY — plain combos stay ⊥ in math.
-    assert_bottom_conflict("out: { a: 1 } + 1");
+fn pin_plain_combo_math_is_not_yet_a_value() {
+    // Peel recognizes %val ONLY. D121 (Q-109 pre-revision, was ⊥ #conflict):
+    // a record without %val meets a value into a hybrid — not yet a value, `_`.
+    assert_obs("out: { a: 1 } + 1", "_");
 }
