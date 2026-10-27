@@ -657,6 +657,7 @@ impl Expr {
         let one_item_list = matches!(&self.leftmost().kind, ExprKind::List(items) if items.len() == 1);
         if as_.starts_with(['-', '/', '<', '.'])
             || (as_.starts_with('@') && !as_.starts_with("@{"))
+            || matches!(&self.leftmost().kind, ExprKind::AnonSet(e) if matches!(e.kind, ExprKind::Spread(_)))
             || one_item_list
         {
             format!("({as_})")
