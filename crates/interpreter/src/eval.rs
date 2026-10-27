@@ -463,6 +463,16 @@ fn value_context_operand(v: &Value) -> Result<Value, ()> {
     }
 }
 
+/// D119: an operand that still refines (a type, a range, a complement)
+/// is not yet a value; a value context answers `_` for it, not ⊥.
+pub(crate) fn not_yet_a_value(v: &Value) -> bool {
+    match v.collapse() {
+        Value::Range { .. } | Value::Complement { .. } => true,
+        Value::Combo(c) => crate::type_constraint::is_type_value_combo(c),
+        _ => false,
+    }
+}
+
 /// SPEC_03 §3.1 / SPEC_04 §3.1 #5: spread target is an *insider* when it
 /// appears in the current evaluation scope chain (defining-combo frames
 /// from `seal_defining_scope`). Full `PartialEq` first; if seal left a
@@ -2466,18 +2476,39 @@ impl Ouroboros {
                 }
                 match op {
                     nlang_parser::ast::UnaryOp::Not => self.orthocomplement(v, ctx),
-                    nlang_parser::ast::UnaryOp::Neg => match v {
-                        Value::Atom(AtomKind::Int(i), e, _) => {
-                            Value::Atom(AtomKind::Int(-i), e, None)
+                    nlang_parser::ast::UnaryOp::Neg => {
+                        // D119: unary minus is a value context. `!` is the
+                        // complement, not this arm.
+                        if self.is_order_anchor(&v) {
+                            return Value::Bottom(Box::new(BottomDetail {
+                                cause: BottomCause::ArithmeticOnAnchor,
+                                path: None,
+                                message: Some(
+                                    "Arithmetic operations on order anchors (#_, #_|_) are prohibited"
+                                        .to_string(),
+                                ),
+                                expected: None,
+                                found: Some(v),
+                                involved: vec![],
+                                ..Default::default()
+                            }));
                         }
-                        Value::Atom(AtomKind::Float(f), e, _) => {
-                            Value::Atom(AtomKind::Float(-f), e, None)
+                        if v.is_top() || not_yet_a_value(&v) {
+                            return Value::Top;
                         }
-                        Value::Atom(AtomKind::Complex(r, i), e, _) => {
-                            Value::Atom(AtomKind::Complex(-r, -i), e, None)
+                        match v {
+                            Value::Atom(AtomKind::Int(i), e, _) => {
+                                Value::Atom(AtomKind::Int(-i), e, None)
+                            }
+                            Value::Atom(AtomKind::Float(f), e, _) => {
+                                Value::Atom(AtomKind::Float(-f), e, None)
+                            }
+                            Value::Atom(AtomKind::Complex(r, i), e, _) => {
+                                Value::Atom(AtomKind::Complex(-r, -i), e, None)
+                            }
+                            _ => BottomCause::Conflict.into(),
                         }
-                        _ => BottomCause::Conflict.into(),
-                    },
+                    }
                 }
             }
             ExprKind::Spread(e) => self.eval(e, ctx),
@@ -2845,6 +2876,30 @@ impl Ouroboros {
                 .eval_math_distribute_branches(branches, false, va, ctx, op, op_i, op_f, op_s);
         }
 
+        // D119: an operand not yet a value answers `_`. An anchor is sealed
+        // first (SPEC_01 §2.6), before a type operand would be refused as a
+        // conflict (`#_ + @int`).
+        if self.is_order_anchor(&va.collapse()) || self.is_order_anchor(&vb.collapse()) {
+            let found = if self.is_order_anchor(&va.collapse()) {
+                va.collapse()
+            } else {
+                vb.collapse()
+            };
+            return Value::Bottom(Box::new(BottomDetail {
+                cause: BottomCause::ArithmeticOnAnchor,
+                path: None,
+                message: Some(
+                    "Arithmetic operations on order anchors (#_, #_|_) are prohibited".to_string(),
+                ),
+                expected: None,
+                found: Some(found.clone()),
+                involved: vec![],
+                ..Default::default()
+            }));
+        }
+        if not_yet_a_value(&va) || not_yet_a_value(&vb) {
+            return Value::Top;
+        }
         // G6: value-context peels hybrid %val (and pure wrappers); plain
         // combos without %val stay on the Conflict path below.
         let va = match value_context_operand(&va) {
@@ -3106,6 +3161,11 @@ impl Ouroboros {
                 _ => {}
             }
             let res_e = va.effect().union(vb.effect());
+            // D119: as in arithmetic. Equality has no anchor cause; a type
+            // beside `#_` is still not yet a value (`@int == #_` is `_`).
+            if not_yet_a_value(&va) || not_yet_a_value(&vb) {
+                return Value::Top;
+            }
             // G1 #12: peel hybrid %val into the atomic family; non-collapsible
             // combo (no %val) → ⊥ #conflict (never silent #false). Local to
             // this family — does not change collapse() used by Probe / set.
