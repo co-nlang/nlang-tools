@@ -491,7 +491,7 @@ fn g1_what_a_later_write_does_not_reach_reads_as_before() {
         (vec!["h: { r: k }", "h: { k: 5 }"], "_.h.r", "5"),
         (vec!["h: { s: { k: @int, r: k } }", "h: { s: { k: 5 } }"], "_.h.s.r", "5"),
         (vec!["h: { k: @int, r: <<k>> }", "h: { k: 5 }"], "_.h.r", "5"),
-        (vec!["h: { k: @int, f: (x -> k) }", "h: { k: 5 }"], "_.h.f 0", "{{ %kind: #type %name: \"int\" }}"),
+        (vec!["h: { k: @int, f: (x -> k) }", "h: { k: 5 }"], "_.h.f 0", "5"),
         (vec!["h: { k: @int, r: k + 1 }", "h: { k: 5 }"], "_.h.r", "6"),
         (vec!["n: @int\nr: n + 1", "n: 5"], "_.r", "6"),
     ] {
