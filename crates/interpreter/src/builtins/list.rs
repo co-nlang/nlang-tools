@@ -219,17 +219,19 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             };
             let fv = oo.force(v, ctx).collapse().clone();
             if let Value::Combo(c) = fv {
+                // G6: compared by the value each element reads as, kept whole.
                 let mut items = Vec::new();
                 let mut i = 0;
                 while let Some(v) = c.get_field(&i.to_string()) {
-                    items.push(oo.force(v.clone(), ctx));
+                    let item = oo.force(v.clone(), ctx);
+                    let Some(key) = super::value_of(oo, item.clone(), ctx) else {
+                        return Value::Top;
+                    };
+                    items.push((key.to_string_plain(), item));
                     i += 1;
                 }
-                items.sort_by(|a, b| {
-                    let sa = a.to_string_plain();
-                    let sb = b.to_string_plain();
-                    sa.cmp(&sb)
-                });
+                items.sort_by(|a, b| a.0.cmp(&b.0));
+                let items: Vec<Value> = items.into_iter().map(|(_, v)| v).collect();
                 let mut res = IndexMap::new();
                 for (idx, v) in items.into_iter().enumerate() {
                     res.insert(idx.to_string(), v);
@@ -344,7 +346,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 let item = oo.force(v.clone(), ctx);
                                 let pred = oo.apply_morphism(f.clone(), item.clone(), ctx);
                                 max_e = max_e.union(pred.effect());
-                                match super::pred_is_true(&pred) {
+                                match super::pred_is_true(oo, &pred, ctx) {
                                     Err(bottom) => return bottom,
                                     Ok(true) => {
                                         res.insert(count.to_string(), item);
@@ -461,7 +463,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let items = extract_list_items(&list);
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item, ctx);
-                        match super::pred_is_true(&result) {
+                        match super::pred_is_true(oo, &result, ctx) {
                             Err(bottom) => return bottom,
                             Ok(true) => {
                                 return Value::Atom(
@@ -495,7 +497,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let items = extract_list_items(&list);
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item, ctx);
-                        match super::pred_is_true(&result) {
+                        match super::pred_is_true(oo, &result, ctx) {
                             Err(bottom) => return bottom,
                             Ok(true) => {}
                             Ok(false) => {
@@ -530,7 +532,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let items = extract_list_items(&list);
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item.clone(), ctx);
-                        match super::pred_is_true(&result) {
+                        match super::pred_is_true(oo, &result, ctx) {
                             Err(bottom) => return bottom,
                             Ok(true) => {
                                 let mut fields = IndexMap::new();
@@ -677,7 +679,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let mut count: usize = 0;
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item, ctx);
-                        match super::pred_is_true(&result) {
+                        match super::pred_is_true(oo, &result, ctx) {
                             Err(bottom) => return bottom,
                             Ok(true) => count += 1,
                             Ok(false) => {}
@@ -744,7 +746,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let mut no_items: Vec<Value> = Vec::new();
                     for item in items {
                         let result = oo.apply_morphism(pred_f.clone(), item.clone(), ctx);
-                        match super::pred_is_true(&result) {
+                        match super::pred_is_true(oo, &result, ctx) {
                             Err(bottom) => return bottom,
                             Ok(true) => yes_items.push(item),
                             Ok(false) => no_items.push(item),
@@ -816,7 +818,10 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let mut float_sum: f64 = 0.0;
             let mut has_float = false;
             for item in items {
-                match oo.force(item, ctx).collapse().clone() {
+                let Some(item) = super::value_of(oo, item, ctx) else {
+                    return Value::Top;
+                };
+                match item {
                     Value::Atom(AtomKind::Int(n), _, _) => {
                         if has_float {
                             float_sum += n.to_f64().unwrap_or(0.0);
@@ -857,8 +862,11 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let mut best_key: f64 = f64::INFINITY;
                     for item in items {
                         let k = oo.apply_morphism(key_f.clone(), item.clone(), ctx);
-                        let kf = match k.collapse() {
-                            Value::Atom(AtomKind::Float(f), _, _) => *f,
+                        let Some(k) = super::value_of(oo, k, ctx) else {
+                            return Value::Top;
+                        };
+                        let kf = match k {
+                            Value::Atom(AtomKind::Float(f), _, _) => f,
                             Value::Atom(AtomKind::Int(n), _, _) => {
                                 n.to_f64().unwrap_or(f64::INFINITY)
                             }
@@ -891,8 +899,11 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let mut best_key: f64 = f64::NEG_INFINITY;
                     for item in items {
                         let k = oo.apply_morphism(key_f.clone(), item.clone(), ctx);
-                        let kf = match k.collapse() {
-                            Value::Atom(AtomKind::Float(f), _, _) => *f,
+                        let Some(k) = super::value_of(oo, k, ctx) else {
+                            return Value::Top;
+                        };
+                        let kf = match k {
+                            Value::Atom(AtomKind::Float(f), _, _) => f,
                             Value::Atom(AtomKind::Int(n), _, _) => {
                                 n.to_f64().unwrap_or(f64::NEG_INFINITY)
                             }
@@ -1004,6 +1015,8 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         ));
                         acc = oo.apply_morphism(func.clone(), pair_val, ctx);
                     }
+                    // The function answered `_`: that is the answer, not a partial.
+                    ctx.builtin_not_yet |= acc.is_top();
                     return acc;
                 }
             }
@@ -1027,7 +1040,11 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     for item in items {
                         let item_forced = oo.force(item, ctx);
                         let key = oo.apply_morphism(key_fn.clone(), item_forced.clone(), ctx);
-                        let key_str = key.collapse().to_string_plain();
+                        // G6: a key is read as a value.
+                        let Some(key) = super::value_of(oo, key, ctx) else {
+                            return Value::Top;
+                        };
+                        let key_str = key.to_string_plain();
                         groups
                             .entry(key_str)
                             .or_insert_with(Vec::new)
@@ -1270,7 +1287,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let mut result: Vec<Value> = Vec::new();
                     for item in items {
                         let p = oo.apply_morphism(pred.clone(), item.clone(), ctx);
-                        match super::pred_is_true(&p) {
+                        match super::pred_is_true(oo, &p, ctx) {
                             Err(bottom) => return bottom,
                             Ok(true) => result.push(item),
                             Ok(false) => break,
@@ -1300,7 +1317,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     for item in items {
                         if dropping {
                             let p = oo.apply_morphism(pred.clone(), item.clone(), ctx);
-                            match super::pred_is_true(&p) {
+                            match super::pred_is_true(oo, &p, ctx) {
                                 Err(bottom) => return bottom,
                                 Ok(true) => continue,
                                 Ok(false) => dropping = false,
@@ -1339,7 +1356,10 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let mut float_prod: f64 = 1.0;
             let mut has_float = false;
             for item in items {
-                match oo.force(item, ctx).collapse().clone() {
+                let Some(item) = super::value_of(oo, item, ctx) else {
+                    return Value::Top;
+                };
+                match item {
                     Value::Atom(AtomKind::Int(n), _, _) => {
                         if has_float {
                             float_prod *= n.to_f64().unwrap_or(0.0);

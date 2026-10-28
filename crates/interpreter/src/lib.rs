@@ -198,6 +198,9 @@ pub struct EvalContext {
     pub max_pattern_nodes: usize,
     pub max_lifting_depth: usize,
     pub refine_map_active: bool,
+    /// G6: a builtin read an element or operand not yet a value
+    /// (`builtins::value_of`); its `Top` is `_`, not a partial application.
+    pub builtin_not_yet: bool,
     pub had_nondistrib_event: bool,
     pub disc_routing_visited: std::collections::HashSet<String>,
     pub disc_routing_hops: u32,
@@ -255,6 +258,7 @@ impl EvalContext {
             max_pattern_nodes: 1024,
             max_lifting_depth: 32,
             refine_map_active: false,
+            builtin_not_yet: false,
             had_nondistrib_event: false,
             disc_routing_visited: std::collections::HashSet::new(),
             disc_routing_hops: 0,
@@ -3254,7 +3258,7 @@ impl Ouroboros {
                         nf.insert(k.clone(), forced);
                     }
                 }
-                let unified_arg = Value::Combo(ComboVal::new(
+                let mut unified_arg = Value::Combo(ComboVal::new(
                     nf,
                     true,
                     IndexMap::new(),
@@ -3317,24 +3321,33 @@ impl Ouroboros {
                             ..Default::default()
                         }));
                     }
-                    // D119: an arithmetic builtin given `_` or an operand not
-                    // yet a value answers `_` (`~%Math./add (_, 1)` as `_ + 1`).
-                    // `str.concat` is `math.add` under another name. `math.random`
-                    // draws; it is not a function of an operand.
-                    if (builtin_id.starts_with("math.")
-                        || builtin_id.starts_with("complex.")
-                        || builtin_id == "str.concat")
-                        && builtin_id != "math.random"
-                    {
-                        if let Value::Combo(ref ac) = unified_arg {
-                            let open = ac.data.iter().filter(|(k, _)| k.parse::<usize>().is_ok()).any(|(_, v)| {
-                                let v = self.force(v.clone(), ctx);
-                                v.is_top() || crate::eval::not_yet_a_value(&v)
-                            });
-                            if open {
-                                return Value::Top;
+                    // G6: a builtin's operand is read in a value context unless the
+                    // builtin carries it (`builtins::carries`) — a hybrid gives its
+                    // `%val`; one not yet a value answers `_` (D119; `~%Math./add (_, 1)`
+                    // as `_ + 1`), and so does a record without `%val` that is an
+                    // operand of a pack (D121). A record that is the argument itself
+                    // is named parameters (SPEC_08 §3.5).
+                    if let Value::Combo(ref ac) = unified_arg {
+                        let mut read = ac.clone();
+                        let mut open = false;
+                        for (k, v) in ac.data.iter().filter(|(k, _)| k.parse::<usize>().is_ok()) {
+                            if crate::builtins::carries(builtin_id, k) {
+                                continue;
                             }
+                            let v = self.read_value_context(v.clone(), ctx);
+                            let named = !is_arg_pack
+                                && matches!(&v, Value::Combo(rc) if rc.get_field("%val").is_none()
+                                    && crate::value::carries_a_value(rc));
+                            if named {
+                                continue;
+                            }
+                            open |= v.is_top() || crate::eval::not_yet_a_value(&v);
+                            read.data.insert(k.clone(), v);
                         }
+                        if open {
+                            return Value::Top;
+                        }
+                        unified_arg = Value::Combo(read);
                     }
                     if let Some(func) = self.builtin_registry.get(builtin_id) {
                         // O76 / O78 ②: declared keys live in the registry.
@@ -3343,11 +3356,16 @@ impl Ouroboros {
                         let keys_ready = crate::builtins::contract_for(builtin_id)
                             .map(|c| c.satisfied(&unified_arg))
                             .unwrap_or(true);
+                        let outer_not_yet = std::mem::replace(&mut ctx.builtin_not_yet, false);
                         let res = if keys_ready {
                             func(unified_arg.clone(), self, ctx)
                         } else {
                             Value::Top
                         };
+                        let not_yet = std::mem::replace(&mut ctx.builtin_not_yet, outer_not_yet);
+                        if not_yet && res.is_top() {
+                            return Value::Top;
+                        }
                         if let Value::Top = res {
                             let mut partial_fields = c.fields().clone();
                             if let Value::Combo(ref ac) = unified_arg {
@@ -3400,9 +3418,10 @@ impl Ouroboros {
                 }
 
                 // Lookup is only for an atom. A combo's printed form is
-                // `"{...}"` and is not a key (D97).
-                let lookup_key = match arg.collapse() {
-                    Value::Atom(_, _, _) => Some(arg.collapse().to_string_plain()),
+                // `"{...}"` and is not a key (D97); a hybrid's key is its `%val` (G6).
+                let read = self.read_value_context(arg.clone(), ctx);
+                let lookup_key = match &read {
+                    Value::Atom(_, _, _) => Some(read.to_string_plain()),
                     _ => None,
                 };
                 if let Some(ks) = lookup_key {

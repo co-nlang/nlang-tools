@@ -296,3 +296,49 @@ pub fn contract_for(id: &str) -> Option<BuiltinContract> {
 pub fn contract_ids() -> impl Iterator<Item = &'static str> {
     table().keys().copied()
 }
+
+/// G6: the operands a builtin carries rather than reads as a value — it
+/// applies them, hands them back, or compares them as `=` does (sets share
+/// `=`'s one equality, SYNTAX_06 §4 #11). Every other
+/// positional operand is a value context: a hybrid gives its `%val`, and one
+/// not yet a value answers `_` (D119, D121).
+const CARRIED_FAMILIES: &[&str] = &[
+    "cond.", "option.", "diff.", "refl.", "engine.", "disc.", "effect.", "env.", "io.",
+    "process.", "query.", "result.", "set.",
+];
+
+const CARRIED: &[(&str, &[&str])] = &[
+    ("csv.stringify", &["0"]),
+    ("json.get", &["1"]),
+    ("json.keys", &["0"]),
+    ("list.all", &["0"]),
+    ("list.any", &["0"]),
+    ("list.count", &["0"]),
+    ("list.drop_while", &["0"]),
+    ("list.filter", &["0"]),
+    ("list.find", &["0"]),
+    ("list.flat_map", &["0"]),
+    ("list.fold", &["0"]),
+    ("list.group_by", &["0"]),
+    ("list.intersperse", &["0"]),
+    ("list.map", &["0"]),
+    ("list.max_by", &["0"]),
+    ("list.min_by", &["0"]),
+    ("list.partition", &["0"]),
+    ("list.reduce", &["0"]),
+    ("list.scan", &["0", "1"]),
+    ("list.sort_by", &["0"]),
+    ("list.take_while", &["0"]),
+    ("list.zip_with", &["0"]),
+    ("str.format", &["1"]),
+    ("toml.stringify", &["0"]),
+];
+
+/// Does builtin `id` carry its operand at `key` (G6)?
+pub fn carries(id: &str, key: &str) -> bool {
+    // A key the builtin does not bind is not read (`~%Time.now _`).
+    contract_for(id).is_some_and(|c| !c.required.contains(&key))
+        || id == "math.random"
+        || CARRIED_FAMILIES.iter().any(|f| id.starts_with(f))
+        || CARRIED.iter().any(|(b, ks)| *b == id && ks.contains(&key))
+}

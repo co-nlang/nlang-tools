@@ -13,7 +13,7 @@ fn extract_floats(list: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Option
         for i in 0u32.. {
             match c.get_field(&i.to_string()) {
                 Some(v) => {
-                    let v = oo.force(v.clone(), ctx);
+                    let v = super::value_of(oo, v.clone(), ctx)?;
                     let f = match v {
                         Value::Atom(AtomKind::Float(f), _, _) => f,
                         Value::Atom(AtomKind::Int(ref n), _, _) => n.to_f64()?,
@@ -63,7 +63,7 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let v = oo.force(arg, ctx);
             let nums = match extract_floats(&v, oo, ctx) {
                 Some(n) => n,
-                None => return conflict(),
+                None => return if ctx.builtin_not_yet { Value::Top } else { conflict() },
             };
             if nums.is_empty() {
                 return conflict();
@@ -78,7 +78,7 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let v = oo.force(arg, ctx);
             let nums = match extract_floats(&v, oo, ctx) {
                 Some(n) => n,
-                None => return conflict(),
+                None => return if ctx.builtin_not_yet { Value::Top } else { conflict() },
             };
             if nums.is_empty() {
                 return conflict();
@@ -95,7 +95,7 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let v = oo.force(arg, ctx);
             let nums = match extract_floats(&v, oo, ctx) {
                 Some(n) => n,
-                None => return conflict(),
+                None => return if ctx.builtin_not_yet { Value::Top } else { conflict() },
             };
             if nums.is_empty() {
                 return conflict();
@@ -112,7 +112,7 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let v = oo.force(arg, ctx);
             let mut nums = match extract_floats(&v, oo, ctx) {
                 Some(n) => n,
-                None => return conflict(),
+                None => return if ctx.builtin_not_yet { Value::Top } else { conflict() },
             };
             if nums.is_empty() {
                 return conflict();
@@ -144,7 +144,7 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             };
             let mut nums = match extract_floats(&list_v, oo, ctx) {
                 Some(n) => n,
-                None => return conflict(),
+                None => return if ctx.builtin_not_yet { Value::Top } else { conflict() },
             };
             if nums.is_empty() {
                 return conflict();
@@ -174,7 +174,7 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             };
             let nums = match extract_floats(&list_v, oo, ctx) {
                 Some(n) => n,
-                None => return conflict(),
+                None => return if ctx.builtin_not_yet { Value::Top } else { conflict() },
             };
             if nums.is_empty() {
                 let empty_bins: Vec<Value> = (0..bins).map(|_| build_list_vals(vec![])).collect();

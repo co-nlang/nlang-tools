@@ -134,29 +134,30 @@ fn red_lattice_eq_rules_axis_span_blind() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn red_eqeq_combo_literal_is_conflict() {
-    // L1-35. Today: silent #false — that is a lie ("compared, unequal").
-    assert_bottom_conflict("out: { a: 1 } == { a: 1 }");
+// D121 (Q-109 pre-revision; these four were ⊥ #conflict): a record without
+// %val is not yet a value — met with one it is a hybrid — so the atomic
+// family answers `_` for it, never a silent #false (L1-35 moves with them).
+fn red_eqeq_combo_literal_is_not_yet_a_value() {
+    // L1-35.
+    assert_obs("out: { a: 1 } == { a: 1 }", "_");
 }
 
 #[test]
-fn red_neq_combo_literal_is_conflict() {
-    // `!=` mirrors: family misuse is ⊥, NOT #true.
-    assert_bottom_conflict("out: { a: 1 } != { a: 1 }");
+fn red_neq_combo_literal_is_not_yet_a_value() {
+    // `!=` mirrors: `_`, NOT #true.
+    assert_obs("out: { a: 1 } != { a: 1 }", "_");
 }
 
 #[test]
-fn red_eqeq_same_binding_flips_to_conflict() {
-    // BOUNDARY MOVES: today #true (same-span thunks). Ruled ⊥ #conflict —
-    // combo operands are family misuse regardless of instance identity.
-    assert_bottom_conflict("x: { a: 1 }\nout: x == x");
+fn red_eqeq_same_binding_is_not_yet_a_value() {
+    // Instance identity does not make a record a value.
+    assert_obs("x: { a: 1 }\nout: x == x", "_");
 }
 
 #[test]
-fn red_eqeq_meet_result_flips_to_conflict() {
-    // BOUNDARY MOVES: today #true (meet solidified the fields). Still a
-    // non-collapsible combo → ruled ⊥ #conflict.
-    assert_bottom_conflict("x: { a: 1 }\nz: { a: 1 }\nout: (x & z) == x");
+fn red_eqeq_meet_result_is_not_yet_a_value() {
+    // A meet of two records is still a record without %val.
+    assert_obs("x: { a: 1 }\nz: { a: 1 }\nout: (x & z) == x", "_");
 }
 
 #[test]

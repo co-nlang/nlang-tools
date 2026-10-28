@@ -1,10 +1,12 @@
 use crate::lattice_sketch;
 use crate::observation::handle_resource_exhausted;
 use crate::type_constraint::{
-    get_type_constraint_name, is_type_value_combo, type_constraint_meet, TypeConstraint,
+    constrains_an_atom, get_type_constraint_name, is_type_value_combo, type_constraint_meet,
+    TypeConstraint,
 };
 use crate::value::{
-    normalize_union, primary_bottom_from_culled, BlurDetail, BottomCause, BottomDetail, ComboVal,
+    carries_a_value, normalize_union, primary_bottom_from_culled, BlurDetail, BottomCause,
+    BottomDetail, ComboVal,
     EffectTag, MasaRef, Value,
 };
 use crate::{mbu, EvalContext, Ouroboros};
@@ -564,8 +566,8 @@ impl Ouroboros {
             }
         }
 
-        let a = self.force(a, ctx).collapse().clone();
-        let b = self.force(b, ctx).collapse().clone();
+        let a = self.force_collapsed(a, ctx);
+        let b = self.force_collapsed(b, ctx);
         let id_a = a.content_hash();
         let id_b = b.content_hash();
         if id_a == id_b && !caid_is_incomplete(&a) && !caid_is_incomplete(&b) {
@@ -595,11 +597,18 @@ impl Ouroboros {
         if let (Value::Combo(ac), Value::Combo(bc)) = (&a, &b) {
             if is_type_value_combo(ac) && !is_type_value_combo(bc) {
                 if let Some(type_name) = get_type_constraint_name(ac) {
+                    // A record met with an atom type carries it in `%val`.
+                    if constrains_an_atom(&type_name) && carries_a_value(bc) {
+                        return self.meet_into_val(a.clone(), bc.clone(), ctx);
+                    }
                     return type_constraint_meet(b.clone(), &type_name);
                 }
             }
             if is_type_value_combo(bc) && !is_type_value_combo(ac) {
                 if let Some(type_name) = get_type_constraint_name(bc) {
+                    if constrains_an_atom(&type_name) && carries_a_value(ac) {
+                        return self.meet_into_val(b.clone(), ac.clone(), ctx);
+                    }
                     return type_constraint_meet(a.clone(), &type_name);
                 }
             }
@@ -708,6 +717,30 @@ impl Ouroboros {
         result
     }
 
+    /// Force, collapse a pure wrapper, and force what it held (a written
+    /// `{ %val: 5 }` keeps its `%val` lazy).
+    fn force_collapsed(&self, v: Value, ctx: &mut EvalContext) -> Value {
+        let mut v = self.force(v, ctx).collapse().clone();
+        for _ in 0..32 {
+            if !matches!(v, Value::Thunk { .. }) {
+                break;
+            }
+            v = self.force(v, ctx).collapse().clone();
+        }
+        v
+    }
+
+    /// SYNTAX_06 §4 #6: a value met with a record goes into its `%val`.
+    fn meet_into_val(&self, side: Value, mut cv: ComboVal, ctx: &mut EvalContext) -> Value {
+        let existing = cv.get_field("%val").cloned().unwrap_or(Value::Top);
+        let merged = self.unify_internal(side, existing, ctx);
+        if let Value::Bottom(c) = merged {
+            return Value::Bottom(c);
+        }
+        cv.insert_field("%val", merged);
+        Value::Combo(cv)
+    }
+
     fn do_unify(&self, a: Value, b: Value, ctx: &mut EvalContext) -> Value {
         match (a, b) {
             (Value::Atom(AtomKind::Tag(ta), ae, ra), Value::Atom(AtomKind::Tag(tb), be, rb))
@@ -740,6 +773,12 @@ impl Ouroboros {
                 Value::Combo(cv)
             }
             (Value::Combo(ac), Value::Combo(bc)) => self.unify_combo(ac, bc, ctx),
+            // A range met with a record is carried in its `%val`, as an atom is.
+            (r @ Value::Range { .. }, Value::Combo(cv)) | (Value::Combo(cv), r @ Value::Range { .. })
+                if carries_a_value(&cv) =>
+            {
+                self.meet_into_val(r, cv, ctx)
+            }
             (Value::Union(mut branches), other) | (other, Value::Union(mut branches)) => {
                 let max_branches = ctx.max_branches;
                 // Preserve source / navigate encounter order among survivors

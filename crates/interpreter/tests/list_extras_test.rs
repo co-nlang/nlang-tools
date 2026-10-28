@@ -79,25 +79,9 @@ fn test_list_partition_mixed() {
     let list = make_list(vec![int_val(1), int_val(2), int_val(3)]);
     let arg = make_combo_2(Value::Top, list);
     let r = call(&oo, &mut ctx, "list.partition", arg);
-    if let Value::Combo(ref cv) = r {
-        assert!(
-            cv.get_field("yes").is_some(),
-            "partition should have 'yes' field"
-        );
-        assert!(
-            cv.get_field("no").is_some(),
-            "partition should have 'no' field"
-        );
-        let yes_len = list_len(cv.get_field("yes").unwrap());
-        let no_len = list_len(cv.get_field("no").unwrap());
-        assert_eq!(
-            yes_len + no_len,
-            3,
-            "yes+no should equal original list length"
-        );
-    } else {
-        panic!("expected Combo with yes/no fields, got {:?}", r);
-    }
+    // Q-109 R-1 (pre-revised by acceptance): the predicate `_` answers `_` for
+    // each element — not yet a value, not `#false` (D119; SPEC_12 §2.1).
+    assert!(r.is_top(), "a predicate not yet a value answers _, got {:?}", r);
 }
 
 #[test]
@@ -122,12 +106,8 @@ fn test_list_partition_pred_routing() {
     let list = make_list(vec![int_val(10), int_val(20)]);
     let arg = make_combo_2(Value::Top, list.clone());
     let r = call(&oo, &mut ctx, "list.partition", arg);
-    if let Value::Combo(ref cv) = r {
-        let total = list_len(cv.get_field("yes").unwrap()) + list_len(cv.get_field("no").unwrap());
-        assert_eq!(total, 2, "total items must be preserved");
-    } else {
-        panic!("expected Combo");
-    }
+    // Q-109 R-1 (pre-revised by acceptance): as in test_list_partition_mixed.
+    assert!(r.is_top(), "a predicate not yet a value answers _, got {:?}", r);
 }
 
 // ── list.flatten ────────────────────────────────────────────────
