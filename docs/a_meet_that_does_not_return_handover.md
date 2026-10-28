@@ -73,16 +73,47 @@
 
 ### 8.1 射程逐項對照
 
+`dispatch.rs` 與 `q110-ref 6a65b7f` 逐位元組相同（+9／−1）。探針未改。版本未動（`oo` 0.110.0，interpreter 與 parser 0.2.2）。
+
+兩個內建交會時，`as_table_morphism` 仍把內建放進 `_` 列的 `%val`。`meet_value_bodies` 不再把帶 `%builtin` 的 `%val` 當成值分支體當下交會。`join_branches`、`Ouroboros::normalize_table`、`rules_with_parent_data` 都進這一支，所以 `normalize_table` 那條入口是同一刀，沒有第二個環。
+
+*   **M1** 交會返回。r1、r4 綠。量到 `(~%Math./add (1)) & (~%Math./add (2))` 返回一張兩列的表；套 `3` 是 ⊥ `#conflict`（`Incompatible types: 5 vs 4`）。`(~%Math./add) & (~%Math./sub)` 套 `(1, 2)` 同樣是衝突（`-1 vs 3`）。
+*   **M2** 同答者交會那個值。`((~%Math./add) & (~%Math./mul)) (2, 2)` 讀 `4`。`((~%Math./add) & (~%Math./mul) & (~%Math./pow)) (2, 2)` 讀 `4`。`((~%Math./add) & (~%Math./mul)) (1, 2)` 是 ⊥ `#conflict`。
+*   **M3** r2 綠：同一組態射，每種排列與分組印出同一個值。三種分組把 `add (1)`、`add (2)`、`add (3)` 套上 `0`，衝突全文都是 `Incompatible types: 2 vs 1`。
+*   **M4** r3 綠。一檔寫入與兩次演化都提交在 `f75357508bb64080073f0d1ef9164ad046f2f9e7693caba29135d02a18ffdbc9`，`_.f 3` 是 ⊥ `#conflict`（`5 vs 4`）。
+*   **另一半** g1 綠，七顆根由探針釘住。重測 `(~%Str./len) & (~%Str./len)` 仍是 `28931d9d9302af33c9d85a62516564b35cf27f4958ff7675fc38fb455882132c`。同一個部分施用交會自己，印出那一個部分施用。`({ @{ _ }: ~%Math./add (1) } & { @{ _ }: 4 }) 3` 讀 `4`。`({ @{ _ }: ~%Math./add (1) } & { @{ _ }: (x -> x + 1) }) 3` 讀 `4`。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `x: 0` 那顆完整 root 的 inspect 裡。新倉 `layout=9`，`encoding=10`。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。探針、版本、`CHANGELOG`、規格與向量都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+重測過的讀數與工單一致。缺陷那裡的 187 是 `ns.json` 印出來的名字（`process.exit` 的部分施用不交，所以是 186）；探針的登錄表是 `contract_ids()` 的 245 個 id。工單兩處各自這樣寫。
+
 ### 8.4 工單指名要你回答的問題
+
+*   **Q1** 舊的環沒有一個在變小的量：兩個內建進 `meet_as_tables`，兩張表的 `_` 列進 `join_branches`，`meet_value_bodies` 把兩個 `%val` 當下 `unify`，又是這兩個內建。本卡拿掉這一步。帶 `%builtin` 的 `%val` 留在集合裡；值分支體少於兩個就返回接合後的集合，不再呼叫 `unify_internal`。集合以內容摘要為鍵，有限。施用時 `apply_single_rule` 對每個本體走一次，回答是數或 ⊥。`unify_internal` 碰到 Bottom 就返回那個 Bottom，第三個回答不把兩個內建再送回去。
+*   **Q2** 分類在 `meet_value_bodies`，看規則繭。繭上有 `%code`：選中才 eval。`%val` 是延後 thunk（效果不是 pure、有自由 `$`、或式子會施用）：留在集合；表格字面的分支體以 thunk 進來，走這裡。`%val` 是帶 `%builtin` 的 combo：本卡改成留在集合。`as_table_morphism` 把內建與部分施用作 `_` 列的 `%val`，就是這種；選中時 E2 看見態射就施用到引數上。其餘有 `%val` 的當下交會，包括已經是值的箭頭（沒有 `%builtin`）。兩個箭頭當下交會成一張表，列的本體是 `%code`，不會回到這個環。
+*   **Q3** 一個分支有幾個本體時，`apply_single_rule` 依 `%bodies` 逐一施用，從 ⊤ 開始把回答 `unify_internal`。`%bodies` 的鍵是內容摘要，`BTreeMap` 序，來源的先後不在位元組裡。三個以上因此是同一顆集合。量到三種分組的衝突全文都是 `Incompatible types: 2 vs 1`：訊息是摘要序裡第一對衝突的兩個回答，之後的 ⊥ 交會不再改那句。值分支體當下交會出的 ⊥ 另外走 `order_free`，欄位裡只留 `#conflict`。
+*   **Q4** 新根是以前不返回或堆疊溢位的格子。`f: ~%Math./add (1)` 再 `f: ~%Math./add (2)`，一檔與兩次演化都是 `f75357508bb64080073f0d1ef9164ad046f2f9e7693caba29135d02a18ffdbc9`。g1 七顆不動。自己與自己在 `unify_internal` 回傳那一個，進不了 `meet_as_tables`。值分支體與箭頭值分支體的分類沒改。內建旁邊只有一個值、或配上箭頭時，當下交會的值分支體不足兩個，返回的是接合後的那顆集合，分類不改寫它。
 
 ### 8.5 探針
 
+`a_meet_that_does_not_return_probe_test` **5／5**，0 失敗。單獨一輪 12.11 s（編譯 Finished 1 m 16 s）；閘門內 11.44 s。檔案未改。五支：g1、r1、r2、r3、r4。Linux interpreter lib 14 則警告，`cargo fix` 12，留著。
+
 ### 8.6 數字
 
+閘門：GATE 1 2026-10-28T23:23:10+08:00 WALL 1661 s；GATE 2 23:50:51 1308 s；GATE 3 2026-10-29T00:12:39+08:00 1229 s。正規化 3772 行，sha `efecf311b92077799b626f35f18c8f032649d9a9e411e9897998c7039d3bec4a`，303 個結果，加總 **2866** 通過、0 失敗，`test ` 行 `ok` 2865，`Running` 300，`running` 303。三輪正規化相同。原始 sha 前綴 `aad1c9efeaba67e2`、`373e4e160660a205`、`61f296c74299434d`。位元組 303306／303149／303149。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 7 m 08 s，interpreter lib 14 則警告，`cargo fix` 12，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-29T00:33:08+08:00 Finished 4.84 s，EXIT 0，`^error` 0，target lib 15 則、`cargo fix` 13，留著。
+
+conformance **194／194**，空目錄 `/home/gali/tmp/q110/conf.empty`，前後 `ls -A | wc -l` 都是 0，23 s。`oo` 11313592 位元組，mtime 2026-10-28 23:20:01.805502667 +0800。閘門沒有重編它。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_07` §5.3 與 E2 已經寫了施用時的答案。要補的一句在 D117：帶 `%builtin` 的分支體跟 `%code` 一樣，選中才施用，不當下交會。寫成「所有態射分支體都等」會讓箭頭分支體的兩次寫入走出三個根（變異 m1）。兩個內建的交會印成沒有外層 `%morphism` 的邏輯表，探針不釘這句文字，依 §6 另議。規格文字、新向量與 `CHANGELOG` 未改。
 
 ## 9. 驗收（驗收方填）
