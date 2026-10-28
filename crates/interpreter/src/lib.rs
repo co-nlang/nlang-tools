@@ -3254,7 +3254,7 @@ impl Ouroboros {
                         nf.insert(k.clone(), forced);
                     }
                 }
-                let unified_arg = Value::Combo(ComboVal::new(
+                let mut unified_arg = Value::Combo(ComboVal::new(
                     nf,
                     true,
                     IndexMap::new(),
@@ -3320,20 +3320,34 @@ impl Ouroboros {
                     // D119: an arithmetic builtin given `_` or an operand not
                     // yet a value answers `_` (`~%Math./add (_, 1)` as `_ + 1`).
                     // `str.concat` is `math.add` under another name. `math.random`
-                    // draws; it is not a function of an operand.
+                    // draws; it is not a function of an operand. G6: each operand
+                    // is read in a value context — a hybrid gives its `%val`; a
+                    // record without one is not yet a value (D121) when it is an
+                    // operand of a pack, and named parameters (SPEC_08 §3.5) when
+                    // it is the argument itself.
                     if (builtin_id.starts_with("math.")
                         || builtin_id.starts_with("complex.")
                         || builtin_id == "str.concat")
                         && builtin_id != "math.random"
                     {
                         if let Value::Combo(ref ac) = unified_arg {
-                            let open = ac.data.iter().filter(|(k, _)| k.parse::<usize>().is_ok()).any(|(_, v)| {
-                                let v = self.force(v.clone(), ctx);
-                                v.is_top() || crate::eval::not_yet_a_value(&v)
-                            });
+                            let mut read = ac.clone();
+                            let mut open = false;
+                            for (k, v) in ac.data.iter().filter(|(k, _)| k.parse::<usize>().is_ok()) {
+                                let v = self.read_value_context(v.clone(), ctx);
+                                let named = !is_arg_pack
+                                    && matches!(&v, Value::Combo(rc) if rc.get_field("%val").is_none()
+                                        && crate::value::carries_a_value(rc));
+                                if named {
+                                    continue;
+                                }
+                                open |= v.is_top() || crate::eval::not_yet_a_value(&v);
+                                read.data.insert(k.clone(), v);
+                            }
                             if open {
                                 return Value::Top;
                             }
+                            unified_arg = Value::Combo(read);
                         }
                     }
                     if let Some(func) = self.builtin_registry.get(builtin_id) {

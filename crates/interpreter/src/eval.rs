@@ -464,11 +464,15 @@ fn value_context_operand(v: &Value) -> Result<Value, ()> {
 }
 
 /// D119: an operand that still refines (a type, a range, a complement)
-/// is not yet a value; a value context answers `_` for it, not ⊥.
+/// is not yet a value; a value context answers `_` for it, not ⊥. D121: so
+/// is a record without `%val` — met with a value it is a hybrid.
 pub(crate) fn not_yet_a_value(v: &Value) -> bool {
     match v.collapse() {
         Value::Range { .. } | Value::Complement { .. } => true,
-        Value::Combo(c) => crate::type_constraint::is_type_value_combo(c),
+        Value::Combo(c) => {
+            crate::type_constraint::is_type_value_combo(c)
+                || (c.get_field("%val").is_none() && crate::value::carries_a_value(c))
+        }
         _ => false,
     }
 }
@@ -634,6 +638,29 @@ fn mark_structural_view(inner: Value) -> Value {
 }
 
 impl Ouroboros {
+    /// G6: what a value context reads — forced, a hybrid's `%val` however it
+    /// was written (`5 & { a: 1 }`, or `{ %val: 5, a: 1 }` whose `%val` is
+    /// still lazy), a structural view's node.
+    pub(crate) fn read_value_context(&self, v: Value, ctx: &mut EvalContext) -> Value {
+        let mut v = v;
+        for _ in 0..64 {
+            v = self.force(v, ctx);
+            let next = match v.collapse() {
+                Value::Combo(cv) if crate::value::is_structural_view(cv) => {
+                    crate::value::structural_node(cv).cloned()
+                }
+                Value::Combo(cv) => cv.get_field("%val").cloned(),
+                t @ Value::Thunk { .. } => Some(t.clone()),
+                _ => None,
+            };
+            match next {
+                Some(n) => v = n,
+                None => return v.collapse().clone(),
+            }
+        }
+        v
+    }
+
     /// SPEC_03 §3.1 / §1.1: collision-aware field write — key already present
     /// → force both sides and `unify_internal` (intersect `&`); absent → insert
     /// as-is (preserves Thunk laziness on non-colliding keys).
@@ -2832,19 +2859,10 @@ impl Ouroboros {
         FF: Fn(f64, f64) -> f64,
         FS: Fn(&str, &str) -> String,
     {
-        // Force residual thunks (field projections may still be lazy).
-        let mut va = va;
-        let mut peel = 0u32;
-        while matches!(&va, Value::Thunk { .. }) && peel < 32 {
-            va = self.force(va, ctx);
-            peel += 1;
-        }
-        let mut vb = vb;
-        peel = 0;
-        while matches!(&vb, Value::Thunk { .. }) && peel < 32 {
-            vb = self.force(vb, ctx);
-            peel += 1;
-        }
+        // Force residual thunks (field projections may still be lazy) and
+        // read a hybrid's `%val` (G6).
+        let va = self.read_value_context(va, ctx);
+        let vb = self.read_value_context(vb, ctx);
 
         // Branch-level ⊥ / Blur (same order as operand-level: ⊥ then Blur).
         if let Value::Bottom(_) = &va {
@@ -3119,6 +3137,12 @@ impl Ouroboros {
         let vb = self.force_recursive(self.eval(b, ctx), ctx);
 
         // ── Atomic family (`==` / `!=`): absorbing ⊥/⊤ (SYNTAX_06 §4.1) ──
+        // G6: both sides read in a value context (a hybrid gives its `%val`).
+        let (va, vb) = if matches!(op, CmpOp::Eq | CmpOp::Ne) {
+            (self.read_value_context(va, ctx), self.read_value_context(vb, ctx))
+        } else {
+            (va, vb)
+        };
         // Policy unchanged from pre-split path: ⊥ before ⊤; return the lattice
         // extreme, never a clean boolean when either side is extreme.
         if matches!(op, CmpOp::Eq | CmpOp::Ne) {

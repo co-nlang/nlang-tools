@@ -561,6 +561,15 @@ impl PartialEq for Value {
 /// G6: `%structural: #true` mark on a structural-view wrapper (`<<…>>`
 /// non-path). Payload lives in `%node` (not `%val`) so lattice `collapse()`
 /// does not erase the mark during evolve unify.
+/// A data record a value can be met into — its `%val` holds that value
+/// (SYNTAX_06 §4 #6). Not a type, a list or a morphism.
+pub fn carries_a_value(cv: &ComboVal) -> bool {
+    let kind = cv.get_field("%kind").map(|k| k.to_string_plain().trim_start_matches('#').to_string());
+    matches!(kind.as_deref(), None | Some("data"))
+        && !Value::Combo(cv.clone()).is_morphism()
+        && !crate::type_constraint::is_type_value_combo(cv)
+}
+
 pub fn is_structural_view(cv: &ComboVal) -> bool {
     match cv.get_field("%structural") {
         Some(Value::Atom(AtomKind::Tag(t), _, _)) => t.trim_start_matches('#') == "true",

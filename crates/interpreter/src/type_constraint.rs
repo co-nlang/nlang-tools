@@ -231,6 +231,20 @@ pub enum ValidationResult {
     Unknown(String),
 }
 
+/// The builtin types whose values are atoms. A record met with one carries
+/// it in `%val` (SYNTAX_06 §4 #6: a hybrid is an atom `&` a record).
+pub fn constrains_an_atom(type_name: &str) -> bool {
+    matches!(
+        TypeConstraint::from_name(type_name),
+        TypeConstraint::Num
+            | TypeConstraint::Complex
+            | TypeConstraint::Float
+            | TypeConstraint::Int
+            | TypeConstraint::Str
+            | TypeConstraint::Bool
+    )
+}
+
 pub fn type_constraint_meet(value: Value, type_name: &str) -> Value {
     let constraint = TypeConstraint::from_name(type_name);
     let result = constraint.validate_value(&value);

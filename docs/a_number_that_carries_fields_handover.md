@@ -74,17 +74,63 @@
 
 ### 8.1 射程逐項對照
 
+引擎五個檔與 `q109-ref 69f78c8` 逐位元組相同：`eval.rs`、`lib.rs`、`type_constraint.rs`、`unify.rs`、`value.rs`（+125／−25）。探針未改。版本未動（`oo` 0.109.0，interpreter 與 parser 0.2.2）。
+
+*   **M1** 值語境讀 `%val`。算術兩邊在 `eval_math_values` 呼叫 `read_value_context`（先 `force`，再至多 64 次剝結構視圖的 `%node`、記錄的 `%val`、或殘留 thunk）。`==`／`!=` 同一支。字面 `{ %val: 5, a: 1 } + 1` 讀 `6`（v0.109.0 是 ⊥）；`== 5` 仍是 `#true`。`{ a: 1 } & { %val: 5 }` 與 `@int & { %val: 5, a: 1 }` 讀 `5`。交會在 `unify` 入口改走 `force_collapsed`（`force`、`collapse`、再至多 32 次強制塌出來的 thunk），所以字面的 `%val` 在交會時也被強制。管道沒有另一支剝殼：`{ %val: 5, a: 1 } |> (x -> x * 2)` 讀 `10`，是本體的算術在讀。`~%Math./add (5 & { a: 1 }, 1)` 讀 `6`，`~%Math./sqrt (4 & { a: 1 })` 讀 `2`，`~%Str./concat ("a" & { a: 1 }, "b")` 讀 `"ab"`。
+*   **M2** 還不是值的答 `_`。`not_yet_a_value` 在原有的型別、區間、補之外，把「沒有 `%val`、而且 `carries_a_value`」的記錄也算進去（開放 `{ a: 1 }`、封閉 `{{ a: 1 }}` 都是）。`{ a: 1 } + 1`、`{ a: 1 } == 5`、`{ a: 1 } == { a: 1 }`、`{{ a: 1 }} + 1`、`{{ a: 1 }} == {{ a: 1 }}` 都讀 `_`。`{ %val: @int, a: 1 } + 1` 讀 `_`。
+*   **M3** 三個 `@int` 分組都讀 `5`：`(@int & 5) & { a: 1 }`、`@int & ({ a: 1 } & 5)`、`(@int & { a: 1 }) & 5`。v0.109.0 後兩式是 ⊥ `Value is not an integer`。`(1..) & { a: 1 }` 觀測 `1..#_`（原 ⊥）。`@float & (5 & { a: 1 })` 讀 `5`。記錄 × 記錄：`{ %val: 5 } & { %val: @int }` 與反向都讀 `5`，結構形 `<< >>` 也是 `5`；再交 `{ a: 1 }` 的兩種分組都讀 `5`。探針 r3 綠。
+*   **M4** `x: @int` 再 `x: 5 & { note: "n" }`，問 `_.x + 1`。v0.109.0：一檔演化 rc 1、提交 rc 1、`NO_HEAD`；兩次演化第二步 rc 1，根停在 `x: @int` 的 `53922aa4a79553dc425d46ca84de6e368b53ab9992195ca389b9fbf4d54a565c`，讀 `_`；兩次提交第二步演化 rc 1、提交 rc 1，根同樣停著。本卡三條路都是演化 rc 0、提交 rc 0，一根 `74ee2bb6a2a94d5ebf07c93507a972276ae43e3c38cb9822bed365f6a719e9fb`，讀 `6`。`h: { a: 1 }`、`r: h + 1` 再 `h: 5`：v0.109.0 三條路都提交在 `ae387c4c7f4e51079d9049d9d0f53e3957402088826727362b3fac120b4975c2`，`_.r` 是 ⊥；未提交的 `({ h: { a: 1 }, r: h + 1 } & { h: 5 }).r` 在兩個引擎都讀 `6`。本卡三條路一根 `65a78e6eb49f340ef94c001f2a7be3724bd67e396759e20d3cb06c1e6cbf6873`，讀 `6`。先寫 `h: 5` 再寫記錄與 `r`：v0.109.0 一檔與兩次演化已是 `65a78e6e…` 讀 `6`，兩次提交落在 `ae387c4c…` 讀 ⊥；本卡三條路都是 `65a78e6e…` 讀 `6`。
+*   **M5** 探針 r5 綠（三個寫入、五種分組、一個根）。
+
+g1 保持：`@str & (5 & { a: 1 })`、`(6..) & …`、`{ %val: 5, a: 1 } & 6`、`("a" & { a: 1 }) + 1`、`[1] + 1`、`(x -> x) + 1`、`@int & [1]`、`@list & { a: 1 }` 仍 ⊥；`#_ + { a: 1 }` 仍先封；`(3 & { note: "n" }) = 3` 兩個引擎都是 `#false`；`(x -> x.a) (5 & { a: 1 })` 讀 `1`；`<<@combo & { a: 1 }>>` 兩個引擎都是 `{ a: 1 }`；`~%Math./add { x: 7, y: 17 }` 兩個引擎都是同一顆部分施用。`((1 | 2) & { a: 1 }) + 1` 讀 `2 | 3`。`(!0 & { a: 1 }) + 1` 讀 `_`。`5 & {{ a: 1 }}` 讀 `5`；結構形兩個引擎都是 `{{ %val: 5 a: 1 }}`。
+
+另外量到、本卡沒有改機制的三處：
+
+*   **補**仍是未化簡的交會。`!0 & { a: 1 }` 與反向，兩個引擎都印 `{ a: 1 } & !0`，`+ 1` 讀 `_`。再交 `@int`：v0.109.0 兩種分組都 ⊥；本卡兩種都印 `{ %val: {{ %kind: #type %name: "int" }} a: 1 } & !0`。讀數一致，節點仍是補。化成 `{ %val: !0, a: 1 }` 留給 §6。
+*   **聯集**的分配臂是舊的。`<<(1 | 2) & { a: 1 }>>` 兩個引擎都是 `{ %val: 1 a: 1 } | { %val: 2 a: 1 }`，`+ 1` 讀 `2 | 3`。再交 `@int`：v0.109.0 兩種分組 ⊥；本卡兩種都讀 `1 | 2`。
+*   **內建的其餘家族。** 讀 `%val` 的只有 `math.*`（`math.random` 除外）、`complex.*`、`str.concat`。`~%Math./abs (5 & { a: 1 })` 讀 `5`，`~%Complex./real (1+2i & { a: 1 })` 讀 `1`。`~%Str./len ("ab" & { a: 1 })` 與字面 `%val` 都還是部分施用（槽位印出來是 `"ab"`，沒有算出 `2`）；`~%Str./contains ("ab" & { a: 1 }, "b")` 同樣沒有算出 `#true`。沒有把這一家加進那支 `if`：加進去就不再是參考實作那五個檔，探針與十一個變異也沒有這一家。
+
+文法的 `unary_op` 只有 `!`。`-5` 是整數字面。`Neg` 臂先看 `not_yet_a_value`，然後只匹配原子，不呼叫 `read_value_context`。`-x`、`-(5 & { a: 1 })` 剖析失敗（`expected unary_expr`）。否定一個混血數的句子是 `0 - x`：`{ x: { %val: 5, a: 1 }, r: 0 - x }.r` 讀 `-5`。沒有改 `Neg` 臂。
+
+模式鍵不走值語境。`( { 5: "hit", _: "miss" } ) (5)` 讀 `"hit"`；同一張表套 `5 & { a: 1 }` 或 `{ %val: 5, a: 1 }` 讀 `"miss"`。`( (x @int) -> x ) (5 & { a: 1 })` 的結構形是 `{ %val: 5 a: 1 }`，`.a` 讀 `1`，`x + 1` 讀 `6`。這和 g1 的座標導航是同一件事：引數本體留著混血節點，值語境在本體裡讀 `%val`。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` 與 `1+1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`x: @int` `53922aa4a79553dc425d46ca84de6e368b53ab9992195ca389b9fbf4d54a565c`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `x: 0` 那顆完整 root 的 inspect 裡。新倉 `layout=9`，`encoding=10`。兩個引擎相同。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。探針、七支預先修訂的守衛、版本、`STORE_LAYOUT_VERSION`、`OBJECT_ENCODING_VERSION`、`CHANGELOG`、規格與向量都沒動。`rustfmt` 未跑。`ast.rs` 未動。
 
 ### 8.3 工單哪裡是錯的
 
+重測過的讀數與工單一致，含「提交出 ⊥、未提交的交會讀 `6`」與「`h: 5` 在前時兩次提交 ⊥、另兩條 `6`」。
+
+工單沒有分開寫的一點：v0.109.0 上 `x: @int & { a: 1 }` 與 `x: { a: 1 } == { a: 1 }` 提交成同一顆根 `e2c2b27834fac84d0a8a0ae2cdf68058c6a60994575ba051cc2ea76b213a8555`。物件正文都是 143 位元組的 `{ x: { ~%__nlang_bottom: #conflict } … }`，系統摘要仍是標準根。不是兩段不同的 ⊥ 共用一個十六進位。本卡之後分開：型別混血 `61ef1da3c5bb36313a478481f648523790d2d790d744c246fe0c6374c78f84e0`（觀測是整數型別），記錄比較 `4611f9b189b631c52b4f5a3e949f3c0f65b02423697dce64103daef37ed123c7`（讀 `_`）。
+
 ### 8.4 工單指名要你回答的問題
+
+*   **Q1** `carries_a_value`：`%kind` 缺席或是 `data`，而且不是態射、也不是型別值。`constrains_an_atom` 只有 `num`、`complex`、`float`、`int`、`str`、`bool`。這六個與記錄交會進 `%val`：`<<@int & { a: 1 }>>` 是 `{ %val: {{ %kind: #type %name: "int" }} a: 1 }`，`@float`、`@str`、`@bool`、`@num`、`@complex` 同形。`@int & { %kind: #data, a: 1 }` 是帶 `#data` 的混血。`<<@int & {{ a: 1 }}>>` 是封閉混血 `{{ %val: {{ %kind: #type %name: "int" }} a: 1 }}`；觀測 `@int & {{ a: 1 }}` 讀型別標記本身。不進這條臂的：`@list`、`@option`、`@result`、`@morphism`、`(x -> x) & { a: 1 }`、`@int & [1]` 都是 ⊥；`<<[1] & { a: 1 }>>` 是 `[1]`；`<<@combo & { a: 1 }>>` 與 `<<@any & { a: 1 }>>` 都是 `{ a: 1 }`（`@any` 不在 `constrains_an_atom`）。`{ %kind: #type, a: 1 }` 不是 `carries_a_value`（kind 是 `type`），`<<@int & { %kind: #type, a: 1 }>>` 是 ⊥ `Value is not an integer`。原子**值**走的是舊的原子 × 非態射 combo 臂，根不動：`<<{ %kind: #type, a: 1 } & 5>>` 兩個引擎都是 `{ %kind: #type %val: 5 a: 1 }`，`#logic`、`#data` 同形，`<<5 & {{ a: 1 }}>>` 兩個引擎都是 `{{ %val: 5 a: 1 }}`。
+*   **Q2** 值語境的入口是這些。算術 `+ - * / %`：`eval_math_values` 兩邊 `read_value_context`。`==`／`!=`：比較前同一支，接著 `not_yet_a_value`，然後舊的 `value_context_operand`。一元 `!` 是補，不剝。一元 `-` 的 `Neg` 臂不呼叫 `read_value_context`；源碼寫不出把混血節點放進 `-`（見 8.1），`0 - x` 走算術。內建：`lib.rs` 施用路徑裡，上述三族的數字鍵呼叫 `read_value_context`。管道是施用，剝殼在本體。模式約束與集合家族 `<` `<=` `>` `>=` 不呼叫 `read_value_context`。量到 `(5 & { a: 1 }) < 6` 為 `#false`，`(5 & { a: 1 }) <= 5` 為 `#true`，`{ a: 1 } < 5` 為 `#false`。`%val` 還沒強制時，交會由 `force_collapsed` 強制，值語境由 `read_value_context` 裡的 `force` 強制。
+*   **Q3** `is_arg_pack`：引數 combo 有 `%arg`，或有鍵 `"0"` 且沒有 `%kind`。打包引數的數字鍵讀 `%val`；讀出來是 ⊤ 或 `not_yet_a_value` 時內建答 `_`。記錄本身當引數時 `is_arg_pack` 為假，而且讀出來的 combo 沒有 `%val`、又 `carries_a_value`，這支鍵 `continue`：不換成別的值，也不標成未定。具名欄位仍在部分施用上，所以 `~%Math./add { x: 7, y: 17 }` 保持部分施用，D121 不會把它收成裸的 `_`。型別值不是 `carries_a_value`，走 `not_yet_a_value`，`~%Math./sqrt (@num)` 仍是 `_`。收窄成「只看沒有 `%val`」會把這個型別值也 `continue` 掉，那是驗收方已經擋下的錯。
+*   **Q4** 根移動是因為提交的值從 ⊥ 或拒絕變成混血、數字或 `_`。印表機沒動。`x: @int & { a: 1 }`：`e2c2b278…`（⊥）→ `61ef1da3…`。`x: { a: 1 } == { a: 1 }`：同一顆 `e2c2b278…` → `4611f9b1…`（`_`）。`x: { %val: 5, a: 1 }`、`r: x + 1`：`af483268e28e37a5262fa9f85d70060c0d5799dc1431d4352fa078b20f018cc2`（⊥）→ `4105d5f1f2db920bf504ed4a2b3c60a3f725d0ae852c7ab27f06903e20e3fc23`（讀 `6`）。這顆就是 g2 裡 `x: 5 & { a: 1 }`、`r: x + 1` 原本的根，那一格前後都是 `4105d5f1…`。`x: { a: 1 }`、`r: x + 1`：`be366e06ce82ec2ce358a377a796cc49eb2e38df312715e8d90bca98b08e1266`（⊥）→ `a4cf5ff887f5290567e6cc0a8060787814247ffe9e7d74ed650d029397bd6db2`（`_`）。M4 的兩組見 8.1。g2 不動的還有：`x: 0` `b74d7758…`，聯集 `x: (1 | 2) & { a: 1 }` `a5df9de542dd2fda9b09f7258f6d748f81c52288675dc22cd45844063b01ff26`（`_.x + 1` 讀 `2 | 3`），`x: { a: 1 } & !0` `e84bbb9b4a1094d3d12078c4ec6bfc650592345788cdb7da2faadfef665963cd`。這些句子在 v0.109.0 已經讀成數、聯集、未化簡的補、整數、箭頭或 `0`。
+*   **Q5** 補：見 8.1。兩種分組印同一句，沒有拆開的結合律；節點留著補。聯集：分配是舊的，再交 `@int` 的兩種分組本卡都讀 `1 | 2`。記錄 × 記錄：`{ %val: 5 } & { %val: @int }` 與反向，v0.109.0 都是 ⊥，本卡都讀 `5`；與 `{ a: 1 }` 的兩種分組都讀 `5`，`({ %val: 5, a: 1 } & { b: 2 })` 的值語境仍是 `5`。這三組量過的句子沒有一種分組讀成另一個值。
 
 ### 8.5 探針
 
+`a_number_that_carries_fields_probe_test` **7／7**，0 失敗。單獨一輪 20.88 s；閘門內 20.68 s。檔案未改。七支：g1、g2、r1、r2、r3、r4、r5。
+
+同輪閘門裡：`hybrid_collapse` 19／19（0.60 s）、`combo_equality` 24／24（0.69 s）、`order_w3` 10／10（1.96 s）、`a_contract_that_lives_in_rust` 15／15（0.68 s）、`named_arg_reachability` 14／14（0.51 s）、Q-106 `a_contradiction_computed_before_the_meet` 8／8（44.18 s）、Q-107 `an_arrow_snapshotted_at_commit` 7／7（39.53 s）、Q-108 `a_sentence_written_down_as_another` 7／7（66.97 s）。
+
 ### 8.6 數字
 
+閘門：GATE 1 2026-10-28T08:27:01+08:00 WALL 1548 s；GATE 2 08:52:49 1141 s；GATE 3 09:11:50 1167 s。正規化 3760 行，sha `d979e058e35d289f2fcbe1de35070af0ad8675b510356868b8c8024fdd441144`，302 個結果，加總 **2857** 通過、0 失敗，`test ` 行 `ok` 2856，`Running` 299，`running` 302。三輪正規化相同。原始 sha 前綴 `720e01f997e9e10d`、`ea0a4e39b5a53471`、`8e6601051639e66c`。位元組 302552／302396／302396。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 6 m 44 s，interpreter lib 14 則警告，`cargo fix` 12，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-28T09:31:17+08:00 Finished 4.90 s，EXIT 0，`^error` 0，target lib 15 則、`cargo fix` 13，留著。
+
+conformance **189／189**，空目錄 `/home/gali/tmp/q109/conf.empty`，前後 `ls -A | wc -l` 都是 0，21 s。父倉 `8bf1bdbb539bdd70cb734dc50e7e4142bc9298b0`。`oo` 11299456 位元組，mtime 2026-10-28 08:19:25.007261886 +0800。閘門沒有重編它。
+
 ### 8.7 你認為需要改規格之處
+
+`SYNTAX_06` §4 #6 的值語境要寫上 D121：沒有 `%val` 的記錄答 `_`，與一個值交會之後才是混血節點。#5／#12 那句「`==` 用於不可塌縮的 combo 得 ⊥」改成這種記錄答 `_`。原子型別（`@int`、`@float`、`@str`、`@bool`、`@num`、`@complex`）與區間跟這種記錄交會時，型別或區間進 `%val`。字面 `{ %val: … }` 就是混血節點，值語境與交會都要強制那個欄位。`math.*`（除 `math.random`）、`complex.*`、`str.concat` 的打包引數讀 `%val`；記錄本身當引數仍是 `SPEC_08` §3.5 的具名參數。`str.len`、`str.contains` 這次量到還沒讀 `%val`（8.1），要不要算進 G6 的「態射引數」請驗收方裁。補 `!0 & { a: 1 }` 維持未化簡。`=` 與 `<` `<=` `>` `>=` 不讀 `%val`。`CHANGELOG` 記根的移動，由驗收方收尾。規格文字、新向量未改。
 
 ---
 
