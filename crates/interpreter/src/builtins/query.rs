@@ -153,7 +153,7 @@ pub fn register_query_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             for item in items {
                 let result = oo.apply_morphism(pred.clone(), item.clone(), ctx);
                 max_effect = max_effect.union(result.effect());
-                match super::pred_is_true(&result) {
+                match super::pred_is_true(oo, &result, ctx) {
                     Err(bottom) => return bottom,
                     Ok(true) => kept.push(item),
                     Ok(false) => {}

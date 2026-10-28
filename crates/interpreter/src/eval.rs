@@ -641,10 +641,14 @@ impl Ouroboros {
     /// G6: what a value context reads — forced, a hybrid's `%val` however it
     /// was written (`5 & { a: 1 }`, or `{ %val: 5, a: 1 }` whose `%val` is
     /// still lazy), a structural view's node.
+    /// What it peels keeps its effect: reading `%val` does not discard an
+    /// obstruction.
     pub(crate) fn read_value_context(&self, v: Value, ctx: &mut EvalContext) -> Value {
         let mut v = v;
+        let mut e = crate::value::EffectTag::Pure;
         for _ in 0..64 {
             v = self.force(v, ctx);
+            e = e.union(v.effect());
             let next = match v.collapse() {
                 Value::Combo(cv) if crate::value::is_structural_view(cv) => {
                     crate::value::structural_node(cv).cloned()
@@ -655,7 +659,7 @@ impl Ouroboros {
             };
             match next {
                 Some(n) => v = n,
-                None => return v.collapse().clone(),
+                None => return v.collapse().clone().with_effect(e),
             }
         }
         v
@@ -2331,7 +2335,9 @@ impl Ouroboros {
                 then_branch,
                 else_branch,
             } => {
-                let cv = self.eval(cond, ctx).collapse().clone();
+                // G6: the condition is a value context — a hybrid gives its `%val`.
+                let cv = self.eval(cond, ctx);
+                let cv = self.read_value_context(cv, ctx);
                 // D116: `? :` dispatches on `#true` / `#false` (SYNTAX_12 §3),
                 // so a complement condition is its meet with `@bool`.
                 let cv = match cv {
@@ -2470,7 +2476,10 @@ impl Ouroboros {
                             let val = self.eval(expr, ctx);
                             let solidified = self.force_recursive(val, ctx);
                             max_e = max_e.union(solidified.effect());
-                            res.push_str(&solidified.to_string_plain());
+                            // G6: interpolation shows the collapsed state, as
+                            // observation does — a hybrid shows its `%val`.
+                            let shown = self.read_value_context(solidified, ctx);
+                            res.push_str(&shown.to_string_plain());
                         }
                     }
                 }
@@ -2627,17 +2636,21 @@ impl Ouroboros {
             // Closed interval set [start, end] (SPEC_02 §3 / SYNTAX_04 §4.5).
             // Bounds evaluated at observation time (variable bounds free).
             ExprKind::Range { start, end, step } => {
-                let vs = self.force(self.eval(start, ctx), ctx);
+                // G6: a bound is a value context — a hybrid bound gives its `%val`.
+                let vs = self.eval(start, ctx);
+                let vs = self.read_value_context(vs, ctx);
                 if let Value::Bottom(_) = &vs {
                     return vs;
                 }
-                let ve = self.force(self.eval(end, ctx), ctx);
+                let ve = self.eval(end, ctx);
+                let ve = self.read_value_context(ve, ctx);
                 if let Value::Bottom(_) = &ve {
                     return ve;
                 }
                 let vst = match step {
                     Some(s) => {
-                        let v = self.force(self.eval(s, ctx), ctx);
+                        let v = self.eval(s, ctx);
+                        let v = self.read_value_context(v, ctx);
                         if let Value::Bottom(_) = &v {
                             return v;
                         }

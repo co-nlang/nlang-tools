@@ -25,19 +25,38 @@ mod toml;
 mod url;
 
 use crate::value::Value;
-use crate::BuiltinFn;
+use crate::{BuiltinFn, EvalContext, Ouroboros};
 use nlang_parser::ast::AtomKind;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub use contract::{contract_for, contract_ids, BuiltinContract};
+pub use contract::{carries, contract_for, contract_ids, BuiltinContract};
 
 /// O77: only the atom `#true` is true. A collapsed predicate is
 /// distinguishable — the `Err` arm carries the `_|_`. The STRING `"true"`
 /// is not the atom (same line of code that used to print-then-compare).
-pub fn pred_is_true(v: &Value) -> Result<bool, Value> {
-    match v.collapse() {
-        Value::Bottom(_) => Err(v.clone()),
+/// G6: an element or operand a builtin reads as a value. A hybrid gives its
+/// `%val`; one not yet a value (D119, D121) gives `None`, and the builtin
+/// answers `Value::Top` — which the dispatch reads as `_`, not a partial.
+pub fn value_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value> {
+    let v = oo.read_value_context(v, ctx);
+    if v.is_top() || crate::eval::not_yet_a_value(&v) {
+        ctx.builtin_not_yet = true;
+        return None;
+    }
+    Some(v)
+}
+
+pub fn pred_is_true(oo: &Ouroboros, v: &Value, ctx: &mut EvalContext) -> Result<bool, Value> {
+    // G6: a predicate's answer is read as a value — a hybrid `#true` is true,
+    // and one not yet a value makes the builtin answer `_`.
+    let v = oo.read_value_context(v.clone(), ctx);
+    match &v {
+        Value::Bottom(_) => Err(v),
+        _ if v.is_top() || crate::eval::not_yet_a_value(&v) => {
+            ctx.builtin_not_yet = true;
+            Err(Value::Top)
+        }
         Value::Atom(AtomKind::Tag(t), _, _) if t.trim_start_matches('#') == "true" => Ok(true),
         _ => Ok(false),
     }

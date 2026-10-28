@@ -132,6 +132,56 @@ conformance **189／189**，空目錄 `/home/gali/tmp/q109/conf.empty`，前後 
 
 `SYNTAX_06` §4 #6 的值語境要寫上 D121：沒有 `%val` 的記錄答 `_`，與一個值交會之後才是混血節點。#5／#12 那句「`==` 用於不可塌縮的 combo 得 ⊥」改成這種記錄答 `_`。原子型別（`@int`、`@float`、`@str`、`@bool`、`@num`、`@complex`）與區間跟這種記錄交會時，型別或區間進 `%val`。字面 `{ %val: … }` 就是混血節點，值語境與交會都要強制那個欄位。`math.*`（除 `math.random`）、`complex.*`、`str.concat` 的打包引數讀 `%val`；記錄本身當引數仍是 `SPEC_08` §3.5 的具名參數。`str.len`、`str.contains` 這次量到還沒讀 `%val`（8.1），要不要算進 G6 的「態射引數」請驗收方裁。補 `!0 & { a: 1 }` 維持未化簡。`=` 與 `<` `<=` `>` `>=` 不讀 `%val`。`CHANGELOG` 記根的移動，由驗收方收尾。規格文字、新向量未改。
 
+### 8.8 R-1
+
+八個檔與 `q109-r1ref be4f378` 逐位元組相同：`lib.rs`、`eval.rs`、`builtins/contract.rs`、`builtins/mod.rs`、`builtins/list.rs`、`builtins/string.rs`、`builtins/stat.rs`、`builtins/query.rs`（+183／−78）。`query.rs` 是述詞那一處改呼叫 `pred_is_true`。探針 r6–r8、g3 與 `list_extras_test` 兩支是驗收方預先修訂，本輪未改。版本未動。
+
+派發處不再只剝 `math.*`、`complex.*`、`str.concat`。每個內建的位置鍵，凡是 `carries` 為假，都走 `read_value_context`：混血給 `%val`，還不是值（⊤、型別、沒有 `%val` 的記錄）整支答 `_`，不包成部分施用。`carries` 為真的鍵留著：沒綁定的鍵（`~%Time.now _`）、`math.random`、下面整族、以及表裡點名的鍵。記錄本身當引數仍是具名參數（`~%Str./len { a: 1 }`、`~%Math./add { x: 7, y: 17 }` 都還是部分施用）。本體裡讀成值的元素走 `value_of`，述詞與鍵函式的回答走 `pred_is_true`；讀到還不是值時設 `builtin_not_yet`，本體回的 ⊤ 就當 `_`，不收成部分施用。`read_value_context` 把剝下來的效果併回結果。
+
+鍵查找先讀 `%val`，讀出來是原子才當鍵；沒有 `%val` 的記錄與 `_` 落到 `_:`（D97）。`{ 5: "hit", _: "miss" } (5 & { a: 1 })` 讀 `"hit"`，`{ a: 1 }` 與 `_` 讀 `"miss"`。清單施用同一條：`[10, 20] (1 & { n: 1 })` 讀 `20`。三元條件讀 `%val`：`(#true & { n: 1 }) ? 1 : 2` 讀 `1`，既不是 `#true` 也不是 `#false` 的答 `_`。區間端點讀 `%val`：`x: 5 & { a: 1 }` 的 `x .. 7` 讀 `5..7`。內插與 `str.format` 的顯示讀 `%val`，`_` 印成 `_`：`` `v=${5 & { a: 1 }}` `` 讀 `"v=5"`，`` `v=${_}` `` 讀 `"v=_"`。
+
+量過、第一輪還讀錯的句子：`~%Str./len ("ab" & { n: 1 })` 與字面 `%val` 都讀 `2`（原是部分施用）。`~%Str./from_int (5 & { a: 1 })` 讀 `"5"`（原 `"{...}"`），`~%Str./from_int (_)` 讀 `_`（原字串 `"_"`）。`~%List./sum ([1 & { n: 1 }, 2, 3])` 讀 `6`（原 `5`），`~%List./sum ([_, 2])` 讀 `_`（原 `2`）。`~%List./sort ([(1 & { n: 1 }), 2, 3])` 讀 `[1, 2, 3]`（原 `[2, 3, 1]`）。`~%Str./join ("ab", ["a" & { n: 1 }, "b"])` 讀 `"aabb"`（原 `"b"`）。`~%List./filter ((x -> #true & { n: 1 }), [1, 2])` 讀 `[1, 2]`，`(x -> _)` 讀 `_`。`~%List./dedup (_)` 讀 `_`，`~%List./dedup ([1 & { a: 1 }, 1])` 讀 `[1, 1]`。`~%Set./contains ([1, 2], 1 & { a: 1 })` 讀 `#false`。
+
+g3 四顆根前後相同：`r: ~%Str./len ("ab")` `b9d2a36282ad0226c11f8dadb920193b012a7c42411ed0e0344ad8a3d57f7d64`，`r: [10, 20] (1)` `5456b1535b980c55bdb0490c1b9e459bc43450090714afaffb4bbb9a169ff81a`，`r: #true ? 1 : 2` `04f389b7b5b4af1bca66bdf05e0ac406f47d3aff4a54b2b0a8c7884a0fc09c2c`，`` r: `v=${5}` `` `cd63b4211b2ad56c587b162e2cbfd642e93b1ae73dd2f22ea6f4695bf9e361b5`。身分根也沒動：`x: 0` `b74d7758…`，`v: 1 + 1` 與 `1+1` `df91a8ad…`，`f: (x -> x + 1)` `258a1a08…`，`x: @int` `53922aa4…`。新倉 `layout=9`，`encoding=10`。
+
+登錄表 245 支（`contract.rs` 的 `RAW`）。沒綁定的鍵一律不讀。其餘：
+
+| 族 | 綁定的位置鍵 | 為什麼 |
+| --- | --- | --- |
+| `bytes` `complex` `path` `regex` `url`；`math` 除 `math.random`；`time` 除 `time.now`；`str` 除下表；`csv.parse` `csv.parse_with_headers` `csv.read_csv`；`json.parse` `json.stringify`；`stat.histogram` `stat.percentile`；`list` 裡沒有點名交還的鍵 | 讀成值 | 運算元是值。混血給 `%val`，還不是值答 `_` |
+| `math.random` | 不讀 | 抽籤，沒有運算元 |
+| `time.now`；`stat.mean` `stat.median` `stat.std_dev` `stat.variance`；`set.from_list` 與其他契約是空的 | 不讀 | 契約沒綁鍵。`~%Time.now _` 不把 `_` 讀成值。那四支 `stat` 的裸運算元本來就讀錯，工單列在射程外；本體的 `extract_floats` 仍走 `value_of` |
+| `set.*` `diff.*` | 交還 | 照 `=` 比，不剝 `%val`（§4 #6、#11） |
+| `cond.*` `option.*` `result.*` | 交還 | 運算元留在本體裡。裸運算元在 v0.109.0 就不是一個值 |
+| `refl.*` `query.*` | 交還 | 讀的是結構。`query.where` 的述詞**回答**仍讀 `%val` |
+| `engine.*` `disc.*` `effect.*` `env.*` `io.*` `process.*` | 交還 | 反射、網路、效果、宿主 |
+
+點名的鍵（同名其餘鍵讀成值）：
+
+| 內建 | 交還的鍵 | 為什麼 |
+| --- | --- | --- |
+| `list.all` `any` `count` `drop_while` `filter` `find` `flat_map` `fold` `group_by` `map` `max_by` `min_by` `partition` `reduce` `sort_by` `take_while` `zip_with` | `0` | 態射，施用，不讀 |
+| `list.scan` | `0` `1` | 態射與起步值。清單在鍵 `2`，讀成值 |
+| `list.intersperse` | `0` | 分隔元交還，欄位留著。`(~%List./at (1, ~%List./intersperse (5 & { a: 1 }, [1, 2]))).a` 讀 `1` |
+| `str.format` | `1` | 引數清單交還；元素照內插顯示（`~%Str./format ("{}", [1 & { n: 1 }])` 讀 `"1"`） |
+| `json.get` | `1` | 文件是結構。鍵 `0` 讀成值 |
+| `json.keys` | `0` | 讀欄位名。`~%Json./keys (5 & { a: 1 })` 讀 `["a"]` |
+| `csv.stringify` `toml.stringify` | `0` | 讀結構。`csv.stringify` 的裸呼叫在 v0.109.0 沒有值 |
+
+清單裡另外三條，不在 `carries` 的鍵上：
+
+*   **交還元素**：`list.at` `reverse` `sort` `map` `head`，以及 `intersperse` 插進去的那個。排序鍵讀 `%val`，交還的是原來的元素。`~%List./sort ([5 & { a: 1 }, 1])` 觀測 `[1, 5]`，`.a` 讀 `1`。
+*   **元素讀成值**：`list.sum` `list.product` 的元素，`list.sort` 的排序鍵，`max_by` `min_by` `group_by` 的鍵函式回答，`str.join` 的每段。還不是值就整支答 `_`。
+*   **`list.dedup` `list.unique`**：清單引數是值語境（`_` 答 `_`）。元素比的是 `to_nlang(0)`，不讀 `%val`，所以 `1 & { a: 1 }` 與 `1` 都留著。`list.len ([5 & { a: 1 }, _])` 讀 `2`：長度不把元素當值讀。
+
+探針 **11／11**，單獨一輪 56.45 s，閘門內 55.70 s。`list_extras` **12／12**（閘門內 0.24 s），含 `test_list_partition_mixed` 與 `test_list_partition_pred_routing`。
+
+閘門：GATE 1 2026-10-28T17:11:25+08:00 WALL 1623 s；GATE 2 17:38:28 1190 s；GATE 3 17:58:18 1222 s。正規化 3764 行，sha `36bef5a2326eb5cb71507c9307c97481ef26f2e7b6881197a36d6f798503057b`，302 個結果，加總 **2861** 通過、0 失敗，`test ` 行 `ok` 2860，`Running` 299，`running` 302。三輪正規化相同。原始 sha 前綴 `2a5d201b3162c278`、`934c9be6afdb4877`、`537c9ac772feceac`。位元組 302808／302653／302653。`^error` 0，BrokenPipe 0，panicked 0。Linux 編譯 Finished 7 m 02 s，interpreter lib 14 則警告，`cargo fix` 12，留著。
+
+Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-28T18:18:40+08:00 Finished 5.58 s，EXIT 0，`^error` 0，target lib 15 則、`cargo fix` 13，留著。
+
+conformance **189／189**，空目錄 `/home/gali/tmp/q109-r1/conf.empty`，前後 `ls -A | wc -l` 都是 0，22 s。父倉 `8bf1bdbb539bdd70cb734dc50e7e4142bc9298b0`。`oo` 11305384 位元組，mtime 2026-10-28 17:07:46.714226664 +0800。閘門沒有重編它。
+
 ---
 
 ## 9. 驗收（驗收方填）

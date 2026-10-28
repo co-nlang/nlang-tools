@@ -91,11 +91,12 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         let mut max_e = e1;
                         for (k, v) in &lc.fields() {
                             if k.parse::<usize>().is_ok() {
-                                if let Value::Atom(AtomKind::Str(s), e, _) =
-                                    oo.force(v.clone(), ctx).collapse()
-                                {
+                                let Some(part) = super::value_of(oo, v.clone(), ctx) else {
+                                    return Value::Top;
+                                };
+                                if let Value::Atom(AtomKind::Str(s), e, _) = part {
                                     parts.push(s.clone());
-                                    max_e = max_e.union(*e);
+                                    max_e = max_e.union(e);
                                 }
                             }
                         }
@@ -343,7 +344,8 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             match &list_forced {
                                 Value::Combo(ref lc) => match lc.get_field(&i.to_string()) {
                                     Some(v) => {
-                                        items.push(oo.force(v.clone(), ctx).to_string_plain());
+                                        // G6: shown as interpolation shows it — a hybrid shows its `%val`.
+                                        items.push(oo.read_value_context(v.clone(), ctx).to_string_plain());
                                         i += 1;
                                     }
                                     None => break,
@@ -392,7 +394,7 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                             if let Value::Combo(ref nc) = list_forced {
                                                 if let Some(v) = nc.get_field(name) {
                                                     result.push_str(
-                                                        &oo.force(v.clone(), ctx).to_string_plain(),
+                                                        &oo.read_value_context(v.clone(), ctx).to_string_plain(),
                                                     );
                                                 } else {
                                                     result.push('{');
