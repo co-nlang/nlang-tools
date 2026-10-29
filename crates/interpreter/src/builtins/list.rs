@@ -137,13 +137,31 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     {
                         let mut res = IndexMap::new();
                         let mut count = 0;
-                        let mut i = s.clone();
-                        while i < e {
+                        // The elements are the index keys inside the interval.
+                        // Walking every integer up to a key that is itself
+                        // huge does not return, and the missing ones are not
+                        // elements. A key is an index only in canonical
+                        // decimal (`i.to_string()`), which is how the walk
+                        // used to look them up.
+                        let lower = s.max(BigInt::from(0));
+                        let mut idxs: Vec<BigInt> = lc
+                            .data
+                            .keys()
+                            .filter_map(|k| {
+                                let i = k.parse::<BigInt>().ok()?;
+                                if i >= lower && i < e && k == &i.to_string() {
+                                    Some(i)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        idxs.sort();
+                        for i in idxs {
                             if let Some(v) = lc.get_field(&i.to_string()) {
                                 res.insert(count.to_string(), v.clone());
                                 count += 1;
                             }
-                            i += 1;
                         }
                         res.insert(
                             "%kind".to_string(),
@@ -967,6 +985,9 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         Value::Atom(AtomKind::Int(end), _, _),
                     ) = (fs.collapse(), fe.collapse())
                     {
+                        if let Err(h) = super::bill_output(ctx, super::units_of(&(end - start))) {
+                            return h;
+                        }
                         let mut items = Vec::new();
                         let mut i = start.clone();
                         while i < *end {

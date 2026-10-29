@@ -313,7 +313,11 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         Value::Atom(AtomKind::Str(s), e, _),
                     ) = (fn_v, fs)
                     {
-                        let count = n.to_usize().unwrap_or(0);
+                        let units = super::units_of(&n).saturating_mul(s.chars().count() as u128);
+                        if let Err(h) = super::bill_output(ctx, units) {
+                            return h;
+                        }
+                        let count = if s.is_empty() { 0 } else { n.to_usize().unwrap_or(0) };
                         return Value::Atom(AtomKind::Str(s.repeat(count)), e, None);
                     }
                 }
@@ -539,6 +543,10 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         Value::Atom(AtomKind::Str(s), _, _),
                     ) = (fw.collapse(), fs.collapse())
                     {
+                        let units = super::units_of(&(w - BigInt::from(s.chars().count())));
+                        if let Err(h) = super::bill_output(ctx, units) {
+                            return h;
+                        }
                         if let Some(width) = w.to_usize() {
                             let char_count = s.chars().count();
                             if char_count >= width {
@@ -575,6 +583,10 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         Value::Atom(AtomKind::Str(s), _, _),
                     ) = (fw.collapse(), fs.collapse())
                     {
+                        let units = super::units_of(&(w - BigInt::from(s.chars().count())));
+                        if let Err(h) = super::bill_output(ctx, units) {
+                            return h;
+                        }
                         if let Some(width) = w.to_usize() {
                             let char_count = s.chars().count();
                             if char_count >= width {

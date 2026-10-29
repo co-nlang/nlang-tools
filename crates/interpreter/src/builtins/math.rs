@@ -27,6 +27,68 @@ fn bigint_factorial(n: BigInt) -> BigInt {
     result
 }
 
+/// D122: how many digits a result will have, to bill before computing it.
+/// A logarithm too big to be a number bills everything; `+ 1` saturates.
+fn digits(log10: f64) -> u128 {
+    if log10.is_finite() {
+        (log10.max(0.0) as u128).saturating_add(1)
+    } else {
+        u128::MAX
+    }
+}
+
+/// log10 |x| of any integer: past the f64 range, from its bit length.
+fn log10_of(x: &BigInt) -> f64 {
+    match x.abs().to_f64() {
+        Some(f) if f.is_finite() => f.log10(),
+        _ => x.bits() as f64 * std::f64::consts::LOG10_2,
+    }
+}
+
+fn digits_of_pow(x: &BigInt, e: &BigInt) -> u128 {
+    if x.abs() <= BigInt::one() {
+        return 1;
+    }
+    digits(e.to_f64().unwrap_or(f64::INFINITY) * log10_of(x))
+}
+
+/// Stirling: ln n! ≈ n ln n − n + ½ ln(2πn).
+fn ln_factorial(n: f64) -> f64 {
+    if n < 2.0 {
+        return 0.0;
+    }
+    n * n.ln() - n + 0.5 * (2.0 * std::f64::consts::PI * n).ln()
+}
+
+fn digits_of_factorial(n: &BigInt) -> u128 {
+    digits(ln_factorial(n.to_f64().unwrap_or(f64::INFINITY)) / std::f64::consts::LN_10)
+}
+
+/// C(n, k) = n! / (k! (n − k)!): the k! comes off, or the bill is the
+/// digits of n^k and a result well inside the fuel is refused. ln n! −
+/// ln (n − k)! is taken as k ln n − (n − k) ln(1 − k/n) − k − ½ ln(1 − k/n),
+/// which does not cancel when n is large and k small; past the f64 range of
+/// n the last three terms are 0.
+fn digits_of_choose(n: &BigInt, k: &BigInt) -> u128 {
+    if k.is_negative() || k > n {
+        return 1;
+    }
+    let k = k.min(&(n - k)).clone();
+    if k.is_zero() {
+        return 1;
+    }
+    let kf = k.to_f64().unwrap_or(f64::INFINITY);
+    let ln_n = log10_of(n) * std::f64::consts::LN_10;
+    let top = match n.to_f64() {
+        Some(nf) if nf.is_finite() => {
+            let l = (-kf / nf).ln_1p();
+            kf * ln_n - (nf - kf) * l - kf - 0.5 * l
+        }
+        _ => kf * ln_n,
+    };
+    digits((top - ln_factorial(kf)) / std::f64::consts::LN_10)
+}
+
 fn bigint_choose(n: &BigInt, k: &BigInt) -> BigInt {
     if k.is_negative() || k > n {
         return BigInt::zero();
@@ -486,9 +548,11 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         ) => {
                             if iy < BigInt::zero() {
                                 BottomCause::Conflict.into()
+                            } else if let Err(h) = super::bill_output(ctx, digits_of_pow(&ix, &iy)) {
+                                h
                             } else {
                                 Value::Atom(
-                                    AtomKind::Int(ix.pow(iy.to_u32().unwrap_or(0))),
+                                    AtomKind::Int(num_traits::Pow::pow(&ix, iy.magnitude())),
                                     res_e,
                                     None,
                                 )
@@ -1121,6 +1185,10 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         }
                     };
                     if let (Some(flo), Some(fhi), Some(fx)) = (to_f(&lo), to_f(&hi), to_f(&x)) {
+                        // An empty interval holds no value: `(3..1) & 2` is ⊥.
+                        if !(flo <= fhi) {
+                            return BottomCause::Conflict.into();
+                        }
                         let clamped = fx.clamp(flo, fhi);
                         return match &x {
                             Value::Atom(AtomKind::Int(ix), _, _) => {
@@ -1303,6 +1371,9 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if n.is_negative() {
                     return BottomCause::Conflict.into();
                 }
+                if let Err(h) = super::bill_output(ctx, digits_of_factorial(n)) {
+                    return h;
+                }
                 return Value::Atom(
                     AtomKind::Int(bigint_factorial(n.clone())),
                     EffectTag::Pure,
@@ -1328,6 +1399,9 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     {
                         if n.is_negative() {
                             return BottomCause::Conflict.into();
+                        }
+                        if let Err(h) = super::bill_output(ctx, digits_of_choose(n, k)) {
+                            return h;
                         }
                         return Value::Atom(
                             AtomKind::Int(bigint_choose(n, k)),
