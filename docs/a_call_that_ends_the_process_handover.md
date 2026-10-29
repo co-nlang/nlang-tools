@@ -127,6 +127,24 @@ conformance **196／196**，空目錄 `/home/gali/tmp/q111/conf.empty`，前後 
 
 ### 8.8 R-1（交付方填）
 
+`math.rs` 與 `q111-r1ref b92297b` 逐位元組相同（+48／−9）。探針是驗收方在 `081c736` 預先修訂的，本回合沒有再改。`list.rs` 的切片、其餘內建、版本都沒動（`oo` 0.111.0，interpreter 與 parser 0.2.2）。`rustfmt` 未跑。規格文字、向量、`CHANGELOG` 未改。
+
+位數先收成一個數：對數不是有限數就整筆 `u128::MAX`；是有限數就截成整數再飽和加 1。以前 `(inf) as u128 + 1` 在 release 繞回 0，帳單只剩 1 MBU。`log10_of` 在整數放得進有限 f64 時用那個對數，放不進就用位元長度乘 `log10(2)`。底數不先換成 f64，所以 `pow (10^400, 2)` 不會因為底數變成 inf 而被整筆擋下。
+
+`choose` 的帳是 C(n, k) 的位數，不是 n^k 的。`ln n! − ln (n−k)!` 寫成 `k ln n − (n−k) ln(1−k/n) − k − ½ ln(1−k/n)`，再扣 `ln k!`。n 很大、k 很小的時候兩份 Stirling 不會相消；n 超出 f64 時後面三項是 0，剩下 `k ln n`。估與實際：`2^100` 31＝31，`2^10000` 3011＝3011，`20!` 19＝19，`1000!` 2568＝2568，`choose (10, 3)` 3＝3（上一輪估 4，帳都是 2 MBU），`C(100000, 50000)` 30101＝30101，`C(100000, 25000)` 24420＝24420，`pow (10^400, 2)` 801＝801，`choose (10^400, 3)` 1200＝1200。n ≤ 10^6 再抽 402 格，差 0，沒有少估。差 1 位只在跨過 10 的倍數時讓帳差 1 MBU。
+
+燃料以內照答：`C(100000, 50000)` 帳 `1 + ⌈30101 / 10⌉ = 3012`，長度 30101；`C(100000, 25000)` 帳 2443，長度 24420；`pow (10^400, 2)` 長 801；`choose (10^400, 3)` 長 1200。太大是視界，而且是同一顆沒有 partial 的 CAID `hash:sha256:v1:afc1a3df5c1f6919044700bbc58d164d2bf66c8d0d5988b7ac23ba249aa7253e`：`factorial (10^400)`、`pow (2, 10^400)`、`choose (10^400, 10^200)`（對數有限但超過 u128，轉整數時飽和）、`choose (10^300, 100000)`（估 29,543,427 位，帳 2,954,344）。`range (0, 200000)` 仍是這顆。`histogram ("ab", 2^63−1)` 仍是 ⊥ `#conflict`。
+
+新根是以前被高估擋下、現在答出值的那格。單一欄位 `r: ~%Math./choose (100000, 50000)` 是 `9bf78ebc1ca08bde156ba38d5f0b0c096d3a01d263722a4a3c80bfc35378e4b1`。g1 十二顆重測都在，含 `range (0, 5)` `da3121211313c07a3d880bd144b85e18c9b6d419a122ae7500a8357f60725b91`、`choose (10, 3)` `873b93d90e1f1ee29dd83b718585cf266cae7084c4d3528a4325a22ac08f8549`。單一欄位的視界仍是 `9541a828380272d609675b6e1e5adf1be8e3fa86484e0699143f605b1fc7dfe4`。身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`，`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`，`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在這顆 `x: 0` 的倉物件裡。新倉 `layout=9`，`encoding=10`。
+
+探針 `a_call_that_ends_the_process_probe_test` **6／6**，0 失敗。單獨一輪 787.53 s（這輪測試編譯 Finished 4.06 s，二進位先前已編好）。閘門內 670.72 s。六支：g1、r1、r2、r3、r4、r5。
+
+閘門：GATE 1 2026-10-29T20:14:06+08:00 WALL 3282 s；GATE 2 21:08:48 2630 s；GATE 3 21:52:38 2870 s。正規化 3781 行，sha `d720b32fa98de24e254c24e78a8b8b54bc4ab50d5f449c4cc13685a851064e77`，304 個結果，加總 **2872** 通過、0 失敗，`test ` 行 `ok` 2871，`Running` 301，`running` 304。三輪正規化相同。原始 sha 前綴 `5c7ed9f910fb7ab0`、`88122712854c7a26`、`c7d2381ebff05293`。位元組 303865／303709／303713。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 12 m 25 s，interpreter lib 14 則警告，`cargo fix` 12，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-29T22:40:28+08:00 Finished 9.95 s，EXIT 0，`^error` 0，target lib 15 則、`cargo fix` 13，留著。
+
+conformance **196／196**，空目錄 `/home/gali/tmp/q111-r1/conf.empty`，前後 `ls -A | wc -l` 都是 0，73 s。`oo` 11357352 位元組，mtime 2026-10-29 19:59:24.184963796 +0800。閘門沒有重編它。
+
 ## 9. 驗收（驗收方填）
 
 ### 第一輪驗收（2026-10-29，交付 `cc9449c`）：**R-1，起因在驗收方**
