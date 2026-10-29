@@ -299,6 +299,10 @@ pub(crate) fn as_table_morphism(c: &ComboVal) -> Option<ComboVal> {
     Some(ComboVal::new(fields, true, IndexMap::new(), effect, vec![]))
 }
 
+fn is_builtin_body(v: &Value) -> bool {
+    matches!(v, Value::Combo(c) if c.get_field("%builtin").is_some())
+}
+
 pub(crate) fn is_morphism_combo(c: &ComboVal) -> bool {
     c.get_field("%morphism").is_some()
         || c.get_field("%builtin").is_some()
@@ -497,9 +501,13 @@ impl Ouroboros {
         let mut deferred: Vec<ComboVal> = Vec::new();
         for (_, body) in bs.data.iter() {
             match body {
+                // A builtin body is applied when its branch is chosen (E2),
+                // so it waits with the code: two builtins meet as a table
+                // whose row is each builtin, and meeting those rows now
+                // would be that meet again.
                 Value::Combo(rc)
                     if rc.get_field("%code").is_none()
-                        && rc.get_field("%val").is_some_and(|b| !is_deferred_body(b)) =>
+                        && rc.get_field("%val").is_some_and(|b| !is_deferred_body(b) && !is_builtin_body(b)) =>
                 {
                     values.push(rc.get_field("%val").cloned().unwrap_or(Value::Top));
                 }
