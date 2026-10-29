@@ -151,7 +151,8 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             }
             nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let n = nums.len();
-            let rank = p / 100.0 * (n - 1) as f64;
+            // Past either end the answer is that end (p = 101 is the maximum).
+            let rank = (p / 100.0 * (n - 1) as f64).clamp(0.0, (n - 1) as f64);
             let lo = rank.floor() as usize;
             let hi = rank.ceil() as usize;
             let frac = rank - lo as f64;
@@ -169,13 +170,17 @@ pub fn register_stat_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let list_v = oo.force(c.get_field("0").cloned().unwrap_or(Value::Top), ctx);
             let bins_v = oo.force(c.get_field("1").cloned().unwrap_or(Value::Top), ctx);
             let bins = match bins_v {
-                Value::Atom(AtomKind::Int(ref n), _, _) => n.to_usize().unwrap_or(1).max(1),
+                Value::Atom(AtomKind::Int(ref n), _, _) => n.clone(),
                 _ => return conflict(),
             };
             let nums = match extract_floats(&list_v, oo, ctx) {
                 Some(n) => n,
                 None => return if ctx.builtin_not_yet { Value::Top } else { conflict() },
             };
+            if let Err(h) = super::bill_output(ctx, super::units_of(&bins)) {
+                return h;
+            }
+            let bins = bins.to_usize().unwrap_or(1).max(1);
             if nums.is_empty() {
                 let empty_bins: Vec<Value> = (0..bins).map(|_| build_list_vals(vec![])).collect();
                 return build_list_vals(empty_bins);

@@ -27,6 +27,29 @@ fn bigint_factorial(n: BigInt) -> BigInt {
     result
 }
 
+/// D122: how many digits a result will have, to bill before computing it.
+fn digits_of_pow(x: &BigInt, e: &BigInt) -> u128 {
+    if x.abs() <= BigInt::one() {
+        return 1;
+    }
+    let e = e.to_f64().unwrap_or(f64::INFINITY);
+    (e * x.abs().to_f64().unwrap_or(f64::INFINITY).log10()) as u128 + 1
+}
+
+fn digits_of_factorial(n: &BigInt) -> u128 {
+    let n = n.to_f64().unwrap_or(f64::INFINITY);
+    if n < 2.0 {
+        return 1;
+    }
+    // Stirling: ln n! ≈ n ln n − n + ½ ln(2πn).
+    ((n * n.ln() - n + 0.5 * (2.0 * std::f64::consts::PI * n).ln()) / std::f64::consts::LN_10) as u128 + 1
+}
+
+fn digits_of_choose(n: &BigInt, k: &BigInt) -> u128 {
+    let k = k.min(&(n - k)).to_f64().unwrap_or(f64::INFINITY).max(0.0);
+    (k * n.to_f64().unwrap_or(f64::INFINITY).max(1.0).log10()) as u128 + 1
+}
+
 fn bigint_choose(n: &BigInt, k: &BigInt) -> BigInt {
     if k.is_negative() || k > n {
         return BigInt::zero();
@@ -486,9 +509,11 @@ pub fn register_math_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         ) => {
                             if iy < BigInt::zero() {
                                 BottomCause::Conflict.into()
+                            } else if let Err(h) = super::bill_output(ctx, digits_of_pow(&ix, &iy)) {
+                                h
                             } else {
                                 Value::Atom(
-                                    AtomKind::Int(ix.pow(iy.to_u32().unwrap_or(0))),
+                                    AtomKind::Int(num_traits::Pow::pow(&ix, iy.magnitude())),
                                     res_e,
                                     None,
                                 )
@@ -1121,6 +1146,10 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                         }
                     };
                     if let (Some(flo), Some(fhi), Some(fx)) = (to_f(&lo), to_f(&hi), to_f(&x)) {
+                        // An empty interval holds no value: `(3..1) & 2` is ⊥.
+                        if !(flo <= fhi) {
+                            return BottomCause::Conflict.into();
+                        }
                         let clamped = fx.clamp(flo, fhi);
                         return match &x {
                             Value::Atom(AtomKind::Int(ix), _, _) => {
@@ -1303,6 +1332,9 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 if n.is_negative() {
                     return BottomCause::Conflict.into();
                 }
+                if let Err(h) = super::bill_output(ctx, digits_of_factorial(n)) {
+                    return h;
+                }
                 return Value::Atom(
                     AtomKind::Int(bigint_factorial(n.clone())),
                     EffectTag::Pure,
@@ -1328,6 +1360,9 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     {
                         if n.is_negative() {
                             return BottomCause::Conflict.into();
+                        }
+                        if let Err(h) = super::bill_output(ctx, digits_of_choose(n, k)) {
+                            return h;
                         }
                         return Value::Atom(
                             AtomKind::Int(bigint_choose(n, k)),

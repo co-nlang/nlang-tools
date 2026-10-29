@@ -47,6 +47,23 @@ pub fn value_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value
     Some(v)
 }
 
+/// D122: a builtin whose work a number sets bills that work to the fuel
+/// before doing it — 1 + 0.1 MBU per unit it will make (an element, a
+/// character, a digit), as a combo of that many fields is billed
+/// (SPEC_08 §3.1.1). Too little fuel answers the horizon, not a crash.
+pub fn bill_output(ctx: &mut EvalContext, units: u128) -> Result<(), Value> {
+    let cost = u64::try_from(1 + units.div_ceil(10)).unwrap_or(u64::MAX);
+    ctx.check_resources(cost).map_err(|e| {
+        crate::observation::handle_resource_exhausted(e, ctx.strategy, ctx, None, crate::value::EffectTag::Pure)
+    })
+}
+
+/// A count as units to bill: negative is none, too big for `u128` is all.
+pub fn units_of(n: &num_bigint::BigInt) -> u128 {
+    use num_traits::ToPrimitive;
+    if n.sign() == num_bigint::Sign::Minus { 0 } else { n.to_u128().unwrap_or(u128::MAX) }
+}
+
 pub fn pred_is_true(oo: &Ouroboros, v: &Value, ctx: &mut EvalContext) -> Result<bool, Value> {
     // G6: a predicate's answer is read as a value — a hybrid `#true` is true,
     // and one not yet a value makes the builtin answer `_`.

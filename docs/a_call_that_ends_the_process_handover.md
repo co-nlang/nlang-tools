@@ -78,16 +78,51 @@
 
 ### 8.1 射程逐項對照
 
+`mod.rs`、`math.rs`、`stat.rs`、`string.rs`、`time.rs` 與 `q111-ref 478eb0b` 逐位元組相同。`list.rs` 多一處：切片改讀區間裡的索引鍵，不再把整數一個一個走到上界。探針未改。版本未動（`oo` 0.111.0，interpreter 與 parser 0.2.2）。
+
+計費在 `bill_output`：單位 `u`，扣 `1 + ⌈u / 10⌉` MBU；超過 `u64` 的帳單收 `u64::MAX`。燃料不夠就走求值器同一支 `handle_resource_exhausted`，什麼都還沒配置。預設燃料 10000，所以 `u ≤ 99990` 過得了這筆帳。
+
+*   **M1** 沒有一個登錄表內建呼叫讓行程結束。r5 綠。`NOT_SWEPT` 仍是宿主效應、時鐘與 `math.random`。另外量到一格不在那 19 個運算元裡：`{ %kind: #list, 0: 1, 100000000: 2 }` 再 `~%List./slice (0, 100000001, _.t)`。參考實作把終點收到「最大索引 + 1」，這個鍵自己就是 10^8，演化 12 秒不返回。本卡改成只讀落在區間裡、十進位寫法就是那個整數的鍵。同一格 0.09 秒答 `[1, 2]`，根 `91cd9d997adbe195f53b6600a20046354e6858c63118ea69e879724897c54e0c`。
+*   **M2** r1 綠。空區間 `~%Math./clamp (3, 1, 2)`、`(0, -2.5, 1)` 是 ⊥ `#conflict`。`~%Time./add_days`／`add_hours` 跨出日曆是 ⊥ `#numerical_error`。百分位把秩夾在兩端：`([1, 2], 2^63−1)` 是 `2`，負的大百分位是 `1`。切片超出清單是清單：`~%List./slice (2, 1000000000, [1, 2])` 是 `[]`，`(0, 10^12, [1, 2, 3])` 是 `[1, 2, 3]`。
+*   **M3** r2 綠。太大在配置前答 `#blur` `#fuel_exhausted`：`repeat`／`pad_left`／`pad_right` 的 `2^63−1` 與 `10^9`、`range (0, 2^63−1)`、`range (0, 200000)`、`histogram` 的 `2^63−1` 與 `10^6` 箱、`factorial (2^63−1)` 與 `1000000!`、`pow (2, 10^6)`、`pow (3, 2^63−1)`、`choose (10^18, 5·10^17)`、`repeat (10^20, "ab")`、`pow (10^6, 10^20)`。燃料以內照答：`range (0, 20000)` 長 20000（帳 2001）、`repeat (20000, "a")` 長 20000、`pad_left (20000, "a")` 長 20000、`histogram ([1, 2], 2000)` 長 2000、`1000!` 的十進位長 2568、`2^10000` 的十進位長 3011。
+*   **M4** r3 綠。`pow (2, 2^32)` 是視界，不再是 `1`。`pow (0, 2^32)` 是 `0`，`pow (1, 2^63−1)` 是 `1`，`pow (−1, 2^32+1)` 是 `−1`，`pow (−1, 2^32)` 是 `1`。`repeat` 空字串任何次數是 `""`。`histogram ("ab", 2^63−1)` 仍是 ⊥ `#conflict`。
+*   **M5** r4 綠，三條路同讀數、同根。一檔量到：`n: 2^63−1` 再 `r: ~%Str./repeat (n, "ab")` 是 `feb10874f9d74482ab44de7a4ca6bc6247b7819cb48db3a1b8aedae4f3cd0c9a`，兩次演化同一顆，讀 `#blur` `#fuel_exhausted`。`n: 3` 再 `r: ~%Math./clamp (n, 1, 2)` 是 `df9521b4464d31726629df9744a06c36aa6f13b4c1b8bb6df3dedadda8261dbf`。`n: 2^63−1` 再 `r: ~%Time./add_days (0, n)` 是 `77e25661189d8093e3bd5297b07be6204f6a0439c91ec99ab12bb6c510b9c8db`。`n: 3` 再 `r: ~%Str./repeat (n, "ab")` 讀 `"ababab"`。
+*   **另一半** g1 綠，十二顆根由探針釘住。重測 `r: ~%List./range (0, 5)` 仍是 `da3121211313c07a3d880bd144b85e18c9b6d419a122ae7500a8357f60725b91`。
+
+名單上的內建：`list.range`（元素個數 `end − start`，負的算 0）、`str.repeat`（次數 × 字元數）、`str.pad_left`／`pad_right`（要補的字元數，已夠寬算 0）、`stat.histogram`（箱數）、`math.factorial`／`math.pow`（整數冪）／`math.choose`（結果的位數）。`clamp`、日曆、百分位、切片不產生由那個數字放大的結果，只把定義域外答成值。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。探針、版本、`CHANGELOG`、規格與向量都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+重測過的讀數與工單一致。切片那句對稠密清單是對的；清單自己帶一個 10^8 的索引鍵時，終點收到「最大鍵 + 1」仍要把空檔走完。這一格補在 8.1，不在 r5 的 19 個運算元裡。
+
 ### 8.4 工單指名要你回答的問題
+
+*   **Q1** 工作「由數字設定」是指產出的單位數由運算元裡的那個數決定，程式能把一份小輸入放大成一份大結果。在名單上的是上面七支（`pad` 左右各一）。`~%List./map`、`filter`、`take`、`drop`、`sum` 的工作由清單決定，清單已經是值；數字只是上界時，產出不超過清單長，不另開一筆帳。`pow` 的浮點臂、`pow_mod` 的結果被模數卡住，不在這張名單。宿主效應與 `math.random` 在 `NOT_SWEPT`，不掃也不計。
+*   **Q2** `range` 的單位是元素個數，`repeat` 是產出的字元數，`pad` 是補上的字元數，`histogram` 是箱數。位數在算之前估：`|x| ≤ 1` 的冪算 1 位；其餘 `⌊e · log10(|x|)⌋ + 1`。階乘用 Stirling `n ln n − n + ½ ln(2πn)` 換成十進位再加 1。組合數用 `⌊k' · log10(n)⌋ + 1`，`k' = min(k, n−k)`，沒有扣 `k!`。估與實際：`2^100` 31＝31，`2^10000` 3011＝3011，`20!` 19＝19，`1000!` 2568＝2568，差 0。`choose (10, 3)` 估 4、實際 3。`C(100000, 50000)` 估 250001、實際約 30103；帳是 `1 + ⌈250001 / 10⌉ = 25002`，過預設燃料，所以一份放得進燃料的結果會被答成視界。探針裡燃料以內的那幾格（含 `choose (10, 3)`、`1000!`、`2^10000`、兩萬元素的 `range`）沒有被這筆估擋下。差 1 位只在跨過 10 的倍數時讓帳差 1 MBU，探針那些格離牆還遠。
+*   **Q3** 運算元先認，再計費。負指數、負階乘先 ⊥ `#conflict`，不計費。`histogram` 先把清單讀成數，讀不成才 ⊥ `#conflict`，然後才按箱數計費；所以 `histogram ("ab", 2^63−1)` 是衝突不是視界。空區間在 `clamp` 裡先於夾值。次數是負的，`units_of` 算 0，`repeat` 答 `""`。型別對、數字又大，才是視界。
+*   **Q4** `#strict` 之下同一筆帳不夠時答 ⊥ `#fuel_exhausted`。量到 `~%Config.strategy: #strict` 再 `out: ~%List./range (0, 200000)`，演化報 `#fuel_exhausted at out`，`_.out` 是 `_|_ ;; %cause: #fuel_exhausted`。`#blur` 的 CAID 來自 `BlurDetail::blur_caid`：原因、燃料上限、策略、四個深度／分支上限，加上 node content 的 CAID；剩餘燃料不進位址。本卡傳的 partial 是空的（還沒配置）。預設上限 10000、策略 blur 時，`range (0, 200000)`、`repeat (2^63−1, "ab")`、`pow (2, 2^32)`、`1000000!` 是同一顆 `hash:sha256:v1:afc1a3df5c1f6919044700bbc58d164d2bf66c8d0d5988b7ac23ba249aa7253e`。求值器自己把燃料走完、而且手上有半成品時，partial 是那份值，位址不同。量到一棵 2500 片葉子的聯集耗盡後是 `00ee837f2962710c35cc2284bb7201fd37d55872b54d36dbe6da4ebd5e2bcd0c`。鑄造函數是同一支。
+*   **Q5** 新根是以前崩潰、不返回或讀錯的格子。單一欄位綁定同一顆視界時根相同：`r: ~%List./range (0, 200000)`、`r: ~%Math./pow (2, 4294967296)`、`r: ~%Math./factorial (2^63−1)` 都是 `9541a828380272d609675b6e1e5adf1be8e3fa86484e0699143f605b1fc7dfe4`。帶著 `n` 的那三顆見 8.1。g1 不動，因為燃料以內的值沒改、自交與值分支體的路沒改；`range (0, 5)` 重測仍是那顆根。既有測試裡把 `range 1 200000` 當重負載的是 `limit_you_cannot_choose` 與 `knob_that_does_nothing`，兩支都先把燃料設成 5000000（199999 個元素的帳是 20001），全樹 2872 通過、0 失敗，這兩支仍綠。conformance 196／196，沒有向量改讀數。倉庫裡沒有另一支在預設燃料下斷言一份超過約十萬單位的舊答案。
 
 ### 8.5 探針
 
+`a_call_that_ends_the_process_probe_test` **6／6**，0 失敗。最終二進位單獨一輪 660.26 s（編譯 Finished 39.95 s）；閘門內 649.38 s。檔案未改。六支：g1、r1、r2、r3、r4、r5。Linux interpreter lib 14 則警告，`cargo fix` 12，留著。
+
 ### 8.6 數字
 
+閘門：GATE 1 2026-10-29T13:26:44+08:00 WALL 3222 s；GATE 2 14:20:26 2659 s；GATE 3 15:04:45 2499 s。正規化 3781 行，sha `d720b32fa98de24e254c24e78a8b8b54bc4ab50d5f449c4cc13685a851064e77`，304 個結果，加總 **2872** 通過、0 失敗，`test ` 行 `ok` 2871，`Running` 301，`running` 304。三輪正規化相同。原始 sha 前綴 `b64ae90f206ed1e0`、`ceeccc060dc562ee`、`2c496afb374829de`。位元組 303864／303708／303708。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 9 m 48 s，interpreter lib 14 則警告，`cargo fix` 12，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-29T15:46:24+08:00 Finished 8.20 s，EXIT 0，`^error` 0，target lib 15 則、`cargo fix` 13，留著。
+
+conformance **196／196**，空目錄 `/home/gali/tmp/q111/conf.empty`，前後 `ls -A | wc -l` 都是 0，38 s。`oo` 11340248 位元組，mtime 2026-10-29 13:15:26.128155379 +0800。閘門沒有重編它。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在這顆 `x: 0` 的倉物件裡。新倉 `layout=9`，`encoding=10`。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_08` §3.1.1 加一列：工作量由數字設定的內建，先扣 `1 + ⌈單位 / 10⌉` MBU 再做；單位是元素、字元或位數。燃料不夠是視界 `#fuel_exhausted`（`#strict` 則是 ⊥ 同名），在配置之前。D122 落地就是這一列。空區間的 `clamp` 與 `(3 .. 1) & 2` 一樣是 ⊥ `#conflict`；日曆之外是 `#numerical_error`；百分位超出兩端是那一端；切片讀區間內的索引，缺的位置不是元素。整數冪的指數就是那個整數，不截成 `u32`。預設燃料 10000 因此把大約十萬單位以上的呼叫從值改成視界，收尾記 `CHANGELOG`。組合數的位數上界若要等於實際位數，得扣 `log10(k!)`；現在的上界會把大約三萬位的中心組合數擋在預設燃料外。規格文字、新向量與 `CHANGELOG` 未改。
 
 ## 9. 驗收（驗收方填）

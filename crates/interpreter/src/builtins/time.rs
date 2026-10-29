@@ -190,7 +190,12 @@ pub fn register_time_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     };
                     if let (Some(ms), Some(days)) = (to_i64(&ts), to_i64(&n)) {
                         if let Some(dt) = DateTime::from_timestamp_millis(ms) {
-                            let new_dt = dt + chrono::Duration::days(days);
+                            // Past the calendar the engine can represent: overflow.
+                            let Some(new_dt) = chrono::Duration::try_days(days)
+                                .and_then(|d| dt.checked_add_signed(d))
+                            else {
+                                return crate::value::BottomCause::NumericalError.into();
+                            };
                             return Value::Atom(
                                 AtomKind::Int(BigInt::from(new_dt.timestamp_millis())),
                                 EffectTag::Pure,
@@ -221,7 +226,12 @@ pub fn register_time_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     };
                     if let (Some(ms), Some(hours)) = (to_i64(&ts), to_i64(&n)) {
                         if let Some(dt) = DateTime::from_timestamp_millis(ms) {
-                            let new_dt = dt + chrono::Duration::hours(hours);
+                            // Past the calendar the engine can represent: overflow.
+                            let Some(new_dt) = chrono::Duration::try_hours(hours)
+                                .and_then(|d| dt.checked_add_signed(d))
+                            else {
+                                return crate::value::BottomCause::NumericalError.into();
+                            };
                             return Value::Atom(
                                 AtomKind::Int(BigInt::from(new_dt.timestamp_millis())),
                                 EffectTag::Pure,
