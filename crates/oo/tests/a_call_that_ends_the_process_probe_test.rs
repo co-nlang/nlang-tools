@@ -254,6 +254,8 @@ fn r1_outside_the_domain_is_an_answer() {
         ("~%List./slice (2, 1000000000, [1, 2])", "[]"),
         ("~%List./slice (0, 1000000000000, [1, 2, 3])", "[1, 2, 3]"),
         ("~%List./slice (0 - 1000000000000, 2, [1, 2, 3])", "[1, 2]"),
+        // R-1: a list whose own index key is huge (found by the delivery).
+        ("~%List./slice (0, 100000001, { %kind: #list, 0: 1, 100000000: 2 })", "[1, 2]"),
     ];
     table_h(&mut bad, &cells);
     verdict(bad, cells.len());
@@ -287,9 +289,26 @@ fn r2_work_a_number_sets_is_billed_first() {
         ("~%List./len (~%Stat./histogram ([1, 2], 2000))", "2000"),
         ("~%Str./len (~%Str./from_int (~%Math./factorial (1000)))", "2568"),
         ("~%Str./len (~%Str./from_int (~%Math./pow (2, 10000)))", "3011"),
+        // R-1: C(n, k) is billed its own digits, not those of n^k.
+        ("~%Str./len (~%Str./from_int (~%Math./choose (100000, 50000)))", "30101"),
+        ("~%Str./len (~%Str./from_int (~%Math./choose (100000, 25000)))", "24420"),
     ];
     table_h(&mut bad, &cells);
-    verdict(bad, cells.len());
+    // R-1: numbers past the f64 range. Too big for the fuel is the horizon;
+    // within it, the answer (a logarithm that overflows is not a free bill).
+    let big = format!("1{}", "0".repeat(400));
+    let e300 = format!("1{}", "0".repeat(300));
+    let far: Vec<(String, &str)> = vec![
+        (format!("~%Math./factorial ({big})"), BLUR_FUEL),
+        (format!("~%Math./pow (2, {big})"), BLUR_FUEL),
+        (format!("~%Math./choose ({big}, 1{})", "0".repeat(200)), BLUR_FUEL),
+        (format!("~%Math./choose ({e300}, 100000)"), BLUR_FUEL),
+        (format!("~%Str./len (~%Str./from_int (~%Math./pow ({big}, 2)))"), "801"),
+        (format!("~%Str./len (~%Str./from_int (~%Math./choose ({big}, 3)))"), "1200"),
+    ];
+    let cells_far: Vec<(&str, &str)> = far.iter().map(|(e, w)| (e.as_str(), *w)).collect();
+    table_h(&mut bad, &cells_far);
+    verdict(bad, cells.len() + cells_far.len());
 }
 
 /// r3 — A number too big for the machine word is still that number: the
