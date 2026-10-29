@@ -349,7 +349,10 @@ pub fn register_string_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                                 Value::Combo(ref lc) => match lc.get_field(&i.to_string()) {
                                     Some(v) => {
                                         // G6: shown as interpolation shows it — a hybrid shows its `%val`.
-                                        items.push(oo.read_value_context(v.clone(), ctx).to_string_plain());
+                                        let Some(shown) = super::shown_of(oo, v.clone(), ctx) else {
+                                            return Value::Top;
+                                        };
+                                        items.push(shown.to_string_plain());
                                         i += 1;
                                     }
                                     None => break,

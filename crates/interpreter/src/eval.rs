@@ -2335,12 +2335,13 @@ impl Ouroboros {
                 then_branch,
                 else_branch,
             } => {
-                // G6: the condition is a value context — a hybrid gives its `%val`.
+                // G6: the condition is a value context — a hybrid gives its `%val`;
+                // a union distributes and a horizon passes (Q-112).
                 let cv = self.eval(cond, ctx);
-                let cv = self.read_value_context(cv, ctx);
                 // D116: `? :` dispatches on `#true` / `#false` (SYNTAX_12 §3),
-                // so a complement condition is its meet with `@bool`.
-                let cv = match cv {
+                // so a complement condition is its meet with `@bool` — which
+                // may be the union `#true | #false`.
+                let cv = match self.read_value_context(cv, ctx) {
                     Value::Complement { within, without } => self.meet_complement(
                         crate::complement::bool_members(),
                         *within,
@@ -2349,20 +2350,20 @@ impl Ouroboros {
                     ),
                     other => other,
                 };
-                match cv {
+                self.per_branch(cv, ctx, &mut |oo, cv, ctx| match cv {
                     Value::Atom(AtomKind::Tag(ref t), _, _)
                         if t.trim_start_matches('#') == "true" =>
                     {
-                        self.eval(then_branch, ctx).with_effect(cv.effect())
+                        oo.eval(then_branch, ctx).with_effect(cv.effect())
                     }
                     Value::Atom(AtomKind::Tag(ref t), _, _)
                         if t.trim_start_matches('#') == "false" =>
                     {
-                        self.eval(else_branch, ctx).with_effect(cv.effect())
+                        oo.eval(else_branch, ctx).with_effect(cv.effect())
                     }
                     Value::Bottom(d) => Value::Bottom(d),
                     _ => Value::Top,
-                }
+                })
             }
             ExprKind::TypeAnnotation(v, t) => {
                 let vv = self.eval(v, ctx);
@@ -2467,23 +2468,53 @@ impl Ouroboros {
                 self.navigate_segments(ov, &[ks], ctx, "")
             }
             ExprKind::Interpolated(parts) => {
-                let mut res = String::new();
+                // Q-112: a union shown here distributes — one string per
+                // combination of branches; a horizon is the answer (G3).
+                let mut res = vec![String::new()];
                 let mut max_e = EffectTag::Pure;
                 for part in parts {
                     match part {
-                        nlang_parser::ast::StringPart::Literal(s) => res.push_str(s),
+                        nlang_parser::ast::StringPart::Literal(s) => {
+                            res.iter_mut().for_each(|r| r.push_str(s))
+                        }
                         nlang_parser::ast::StringPart::Interpolated(expr) => {
                             let val = self.eval(expr, ctx);
                             let solidified = self.force_recursive(val, ctx);
                             max_e = max_e.union(solidified.effect());
                             // G6: interpolation shows the collapsed state, as
                             // observation does — a hybrid shows its `%val`.
-                            let shown = self.read_value_context(solidified, ctx);
-                            res.push_str(&shown.to_string_plain());
+                            let shown = self.per_branch(solidified, ctx, &mut |_, v, _| {
+                                Value::Atom(AtomKind::Str(v.to_string_plain()), EffectTag::Pure, None)
+                            });
+                            let shown: Vec<String> = match shown {
+                                Value::Blur(mut bd) => {
+                                    bd.effect = bd.effect.union(max_e);
+                                    return Value::Blur(bd);
+                                }
+                                Value::Union(bs) => bs.iter().map(|b| b.to_string_plain()).collect(),
+                                Value::Atom(AtomKind::Str(s), _, _) => vec![s],
+                                other => vec![other.to_string_plain()],
+                            };
+                            let mut next = Vec::with_capacity(res.len() * shown.len());
+                            for r in &res {
+                                for s in &shown {
+                                    if let Err(h) = crate::builtins::bill_output(ctx, 0) {
+                                        return h;
+                                    }
+                                    next.push(format!("{r}{s}"));
+                                }
+                            }
+                            res = next;
                         }
                     }
                 }
-                Value::Atom(AtomKind::Str(res), max_e, None)
+                let strs: Vec<Value> =
+                    res.into_iter().map(|r| Value::Atom(AtomKind::Str(r), max_e, None)).collect();
+                if strs.len() == 1 {
+                    strs.into_iter().next().unwrap()
+                } else {
+                    self.union_of_results(strs, ctx)
+                }
             }
             ExprKind::Structural(e) => {
                 // Stage 3 (§3a): structural form <<path>> — symbolic reference.
@@ -2513,37 +2544,7 @@ impl Ouroboros {
                 match op {
                     nlang_parser::ast::UnaryOp::Not => self.orthocomplement(v, ctx),
                     nlang_parser::ast::UnaryOp::Neg => {
-                        // D119: unary minus is a value context. `!` is the
-                        // complement, not this arm.
-                        if self.is_order_anchor(&v) {
-                            return Value::Bottom(Box::new(BottomDetail {
-                                cause: BottomCause::ArithmeticOnAnchor,
-                                path: None,
-                                message: Some(
-                                    "Arithmetic operations on order anchors (#_, #_|_) are prohibited"
-                                        .to_string(),
-                                ),
-                                expected: None,
-                                found: Some(v),
-                                involved: vec![],
-                                ..Default::default()
-                            }));
-                        }
-                        if v.is_top() || not_yet_a_value(&v) {
-                            return Value::Top;
-                        }
-                        match v {
-                            Value::Atom(AtomKind::Int(i), e, _) => {
-                                Value::Atom(AtomKind::Int(-i), e, None)
-                            }
-                            Value::Atom(AtomKind::Float(f), e, _) => {
-                                Value::Atom(AtomKind::Float(-f), e, None)
-                            }
-                            Value::Atom(AtomKind::Complex(r, i), e, _) => {
-                                Value::Atom(AtomKind::Complex(-r, -i), e, None)
-                            }
-                            _ => BottomCause::Conflict.into(),
-                        }
+                        self.negate(v)
                     }
                 }
             }
@@ -2658,11 +2659,18 @@ impl Ouroboros {
                     }
                     None => None,
                 };
-                Value::Range {
-                    start: Box::new(vs),
-                    end: Box::new(ve),
-                    step: vst,
-                }
+                // Q-112: a union bound distributes — one range per branch.
+                let step = vst.map(|b| *b);
+                self.per_branch(vs, ctx, &mut |oo, vs, ctx| {
+                    oo.per_branch(ve.clone(), ctx, &mut |oo, ve, ctx| match step.clone() {
+                        None => Value::Range { start: Box::new(vs.clone()), end: Box::new(ve), step: None },
+                        Some(st) => oo.per_branch(st, ctx, &mut |_, st, _| Value::Range {
+                            start: Box::new(vs.clone()),
+                            end: Box::new(ve.clone()),
+                            step: Some(Box::new(st)),
+                        }),
+                    })
+                })
             }
             // `@{ e } ≡ e` (SYNTAX_04 §4.7); empty `@{}` is AnonSet(Bottom) → ⊥.
             ExprKind::AnonSet(inner) => self.eval(inner, ctx),
@@ -3142,12 +3150,51 @@ impl Ouroboros {
         Value::Atom(AtomKind::Float(result), effect, None)
     }
 
+    /// Unary minus on one value (D119: a value context).
+    fn negate(&self, v: Value) -> Value {
+        // D119: unary minus is a value context. `!` is the
+        // complement, not this arm.
+        if self.is_order_anchor(&v) {
+            return Value::Bottom(Box::new(BottomDetail {
+                cause: BottomCause::ArithmeticOnAnchor,
+                path: None,
+                message: Some(
+                    "Arithmetic operations on order anchors (#_, #_|_) are prohibited"
+                        .to_string(),
+                ),
+                expected: None,
+                found: Some(v),
+                involved: vec![],
+                ..Default::default()
+            }));
+        }
+        if v.is_top() || not_yet_a_value(&v) {
+            return Value::Top;
+        }
+        match v {
+            Value::Atom(AtomKind::Int(i), e, _) => {
+                Value::Atom(AtomKind::Int(-i), e, None)
+            }
+            Value::Atom(AtomKind::Float(f), e, _) => {
+                Value::Atom(AtomKind::Float(-f), e, None)
+            }
+            Value::Atom(AtomKind::Complex(r, i), e, _) => {
+                Value::Atom(AtomKind::Complex(-r, -i), e, None)
+            }
+            _ => BottomCause::Conflict.into(),
+        }
+    }
+
     fn eval_binary_cmp(&self, a: &Expr, b: &Expr, ctx: &mut EvalContext, op: CmpOp) -> Value {
         // Stage 2 (紀律 2) + G1 #13: solidify before any comparison judgment.
         // Always evaluate both sides so set-family effect max is honest and
         // set-family never short-circuits on ⊥ (SYNTAX_06 §4.1/§4.2 two-family split).
         let va = self.force_recursive(self.eval(a, ctx), ctx);
         let vb = self.force_recursive(self.eval(b, ctx), ctx);
+        self.cmp_values(va, vb, ctx, op)
+    }
+
+    fn cmp_values(&self, va: Value, vb: Value, ctx: &mut EvalContext, op: CmpOp) -> Value {
 
         // ── Atomic family (`==` / `!=`): absorbing ⊥/⊤ (SYNTAX_06 §4.1) ──
         // G6: both sides read in a value context (a hybrid gives its `%val`).
@@ -3196,6 +3243,13 @@ impl Ouroboros {
                     return Value::Blur(bd);
                 }
                 _ => {}
+            }
+            // D123 (Q-112): a union operand distributes, as in arithmetic —
+            // `(1 | 2) == 1` is `#true | #false`.
+            if matches!(va, Value::Union(_)) || matches!(vb, Value::Union(_)) {
+                return self.per_branch(va, ctx, &mut |oo, a, ctx| {
+                    oo.per_branch(vb.clone(), ctx, &mut |oo, b, ctx| oo.cmp_values(a.clone(), b, ctx, op))
+                });
             }
             let res_e = va.effect().union(vb.effect());
             // D119: as in arithmetic. Equality has no anchor cause; a type

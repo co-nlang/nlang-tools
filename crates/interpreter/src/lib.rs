@@ -201,6 +201,12 @@ pub struct EvalContext {
     /// G6: a builtin read an element or operand not yet a value
     /// (`builtins::value_of`); its `Top` is `_`, not a partial application.
     pub builtin_not_yet: bool,
+    /// Q-112: the branch each union a builtin read took on this run —
+    /// (taken, of how many), in reading order — and how many are read so far.
+    pub builtin_choices: Vec<(usize, usize)>,
+    pub builtin_cursor: usize,
+    /// G3: a horizon a builtin read as a value; the call answers it.
+    pub builtin_horizon: Option<Value>,
     pub had_nondistrib_event: bool,
     pub disc_routing_visited: std::collections::HashSet<String>,
     pub disc_routing_hops: u32,
@@ -259,6 +265,9 @@ impl EvalContext {
             max_lifting_depth: 32,
             refine_map_active: false,
             builtin_not_yet: false,
+            builtin_choices: Vec::new(),
+            builtin_cursor: 0,
+            builtin_horizon: None,
             had_nondistrib_event: false,
             disc_routing_visited: std::collections::HashSet::new(),
             disc_routing_hops: 0,
@@ -3121,6 +3130,31 @@ impl Ouroboros {
         res.with_effect(observed)
     }
 
+    /// Q-112: a value context reads one value. A union read there
+    /// distributes — each branch read alone, the answers joined, ⊥ pruned
+    /// (SPEC_08 §3.2.2 #7, SPEC_07 §4); a horizon passes through (G3).
+    pub(crate) fn per_branch(
+        &self,
+        v: Value,
+        ctx: &mut EvalContext,
+        k: &mut dyn FnMut(&Self, Value, &mut EvalContext) -> Value,
+    ) -> Value {
+        match self.read_value_context(v, ctx) {
+            Value::Union(bs) => {
+                let mut out = Vec::new();
+                for b in bs {
+                    if let Err(h) = crate::builtins::bill_output(ctx, 0) {
+                        return h;
+                    }
+                    out.push(self.per_branch(b, ctx, k));
+                }
+                self.union_of_results(out, ctx)
+            }
+            v @ Value::Blur(_) => v,
+            v => k(self, v, ctx),
+        }
+    }
+
     /// Branchwise results of one application: ⊥ branches prune; all ⊥ keeps
     /// the primary cause, as it arrived (REAL_04 §4).
     pub(crate) fn union_of_results(&self, results: Vec<Value>, ctx: &mut EvalContext) -> Value {
@@ -3142,6 +3176,140 @@ impl Ouroboros {
             return crate::value::primary_bottom_from_culled(culled);
         }
         self.normalize_union_absorbing(out, ctx)
+    }
+
+    /// Builtin `builtin_id` on its pack; `None` if this engine has no such
+    /// builtin. G6: a builtin's operand is read in a value context unless the
+    /// builtin carries it (`builtins::carries`) — a hybrid gives its
+    /// `%val`; one not yet a value answers `_` (D119; `~%Math./add (_, 1)`
+    /// as `_ + 1`), and so does a record without `%val` that is an
+    /// operand of a pack (D121). A record that is the argument itself
+    /// is named parameters (SPEC_08 §3.5).
+    /// Q-112: an operand read as a union distributes — the call once per
+    /// branch — and a horizon read there is the answer (G3). What the
+    /// builtin reads itself (an element, a predicate's answer) as a union
+    /// is a choice point (`builtins::value_of`): the builtin runs once per
+    /// combination of the branches it read, and the answers are joined.
+    fn run_builtin(
+        &self,
+        builtin_id: &str,
+        c: &ComboVal,
+        f: &Value,
+        mut unified_arg: Value,
+        is_arg_pack: bool,
+        ctx: &mut EvalContext,
+    ) -> Option<Value> {
+        if let Value::Combo(ref ac) = unified_arg {
+            let mut read = ac.clone();
+            let mut open = false;
+            for (k, v) in ac.data.iter().filter(|(k, _)| k.parse::<usize>().is_ok()) {
+                if crate::builtins::carries(builtin_id, k) {
+                    continue;
+                }
+                let v = self.read_value_context(v.clone(), ctx);
+                if matches!(v, Value::Union(_) | Value::Blur(_)) {
+                    let (key, mut pack) = (k.clone(), ac.clone());
+                    return Some(self.per_branch(v, ctx, &mut |oo, b, ctx| {
+                        pack.data.insert(key.clone(), b);
+                        oo.run_builtin(builtin_id, c, f, Value::Combo(pack.clone()), is_arg_pack, ctx)
+                            .unwrap_or_else(|| BottomCause::UnprovidedBuiltin.into())
+                    }));
+                }
+                let named = !is_arg_pack
+                    && matches!(&v, Value::Combo(rc) if rc.get_field("%val").is_none()
+                        && crate::value::carries_a_value(rc));
+                if named {
+                    continue;
+                }
+                open |= v.is_top() || crate::eval::not_yet_a_value(&v);
+                read.data.insert(k.clone(), v);
+            }
+            if open {
+                return Some(Value::Top);
+            }
+            unified_arg = Value::Combo(read);
+        }
+        let func = self.builtin_registry.get(builtin_id)?;
+        // O76 / O78 ②: declared keys live in the registry.
+        // Missing required keys reuse the existing Top → cocoon
+        // path; the builtin is not invoked on an undeclared shape.
+        let keys_ready = crate::builtins::contract_for(builtin_id)
+            .map(|c| c.satisfied(&unified_arg))
+            .unwrap_or(true);
+        let outer_not_yet = std::mem::replace(&mut ctx.builtin_not_yet, false);
+        let outer_choices = std::mem::take(&mut ctx.builtin_choices);
+        let outer_cursor = std::mem::replace(&mut ctx.builtin_cursor, 0);
+        let outer_horizon = ctx.builtin_horizon.take();
+        let mut runs = Vec::new();
+        let answer = loop {
+            ctx.builtin_not_yet = false;
+            ctx.builtin_cursor = 0;
+            let res = if keys_ready {
+                func(unified_arg.clone(), self, ctx)
+            } else {
+                Value::Top
+            };
+            if let Some(h) = ctx.builtin_horizon.take() {
+                break Some(h);
+            }
+            let not_yet = ctx.builtin_not_yet;
+            if ctx.builtin_choices.is_empty() {
+                break Some(if not_yet && res.is_top() {
+                    Value::Top
+                } else if let Value::Top = res {
+                    self.builtin_partial(c, f, &unified_arg)
+                } else {
+                    res
+                });
+            }
+            runs.push(res);
+            // The next combination: the last choice point read moves on. The
+            // points after it were popped, so the next run reads this prefix again.
+            let ch = &mut ctx.builtin_choices;
+            while let Some(last) = ch.last_mut() {
+                last.0 += 1;
+                if last.0 < last.1 {
+                    break;
+                }
+                ch.pop();
+            }
+            if ch.is_empty() {
+                break None;
+            }
+            if let Err(h) = crate::builtins::bill_output(ctx, 0) {
+                break Some(h);
+            }
+        };
+        ctx.builtin_not_yet = outer_not_yet;
+        ctx.builtin_choices = outer_choices;
+        ctx.builtin_cursor = outer_cursor;
+        ctx.builtin_horizon = outer_horizon;
+        Some(answer.unwrap_or_else(|| self.union_of_results(runs, ctx)))
+    }
+
+    /// A builtin not yet given the keys it needs is a partial application:
+    /// a cocoon holding what it was given.
+    fn builtin_partial(&self, c: &ComboVal, f: &Value, unified_arg: &Value) -> Value {
+        let mut partial_fields = c.fields().clone();
+        if let Value::Combo(ref ac) = unified_arg {
+            for (k, v) in &ac.fields() {
+                // Calling-convention marker must not become
+                // part of a user-visible partial morphism.
+                if k == "%arg" {
+                    continue;
+                }
+                partial_fields.insert(k.clone(), v.clone());
+            }
+        }
+        partial_fields.insert(
+            "%morphism".to_string(),
+            Value::Atom(AtomKind::Tag("true".to_string()), EffectTag::Pure, None),
+        );
+        partial_fields.insert(
+            "%kind".to_string(),
+            Value::Atom(AtomKind::Tag("logic".to_string()), EffectTag::Pure, None),
+        );
+        Value::Combo(ComboVal::new(partial_fields, true, IndexMap::new(), f.effect(), vec![]))
     }
 
     fn apply_morphism_dispatch(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
@@ -3321,87 +3489,7 @@ impl Ouroboros {
                             ..Default::default()
                         }));
                     }
-                    // G6: a builtin's operand is read in a value context unless the
-                    // builtin carries it (`builtins::carries`) — a hybrid gives its
-                    // `%val`; one not yet a value answers `_` (D119; `~%Math./add (_, 1)`
-                    // as `_ + 1`), and so does a record without `%val` that is an
-                    // operand of a pack (D121). A record that is the argument itself
-                    // is named parameters (SPEC_08 §3.5).
-                    if let Value::Combo(ref ac) = unified_arg {
-                        let mut read = ac.clone();
-                        let mut open = false;
-                        for (k, v) in ac.data.iter().filter(|(k, _)| k.parse::<usize>().is_ok()) {
-                            if crate::builtins::carries(builtin_id, k) {
-                                continue;
-                            }
-                            let v = self.read_value_context(v.clone(), ctx);
-                            let named = !is_arg_pack
-                                && matches!(&v, Value::Combo(rc) if rc.get_field("%val").is_none()
-                                    && crate::value::carries_a_value(rc));
-                            if named {
-                                continue;
-                            }
-                            open |= v.is_top() || crate::eval::not_yet_a_value(&v);
-                            read.data.insert(k.clone(), v);
-                        }
-                        if open {
-                            return Value::Top;
-                        }
-                        unified_arg = Value::Combo(read);
-                    }
-                    if let Some(func) = self.builtin_registry.get(builtin_id) {
-                        // O76 / O78 ②: declared keys live in the registry.
-                        // Missing required keys reuse the existing Top → cocoon
-                        // path; the builtin is not invoked on an undeclared shape.
-                        let keys_ready = crate::builtins::contract_for(builtin_id)
-                            .map(|c| c.satisfied(&unified_arg))
-                            .unwrap_or(true);
-                        let outer_not_yet = std::mem::replace(&mut ctx.builtin_not_yet, false);
-                        let res = if keys_ready {
-                            func(unified_arg.clone(), self, ctx)
-                        } else {
-                            Value::Top
-                        };
-                        let not_yet = std::mem::replace(&mut ctx.builtin_not_yet, outer_not_yet);
-                        if not_yet && res.is_top() {
-                            return Value::Top;
-                        }
-                        if let Value::Top = res {
-                            let mut partial_fields = c.fields().clone();
-                            if let Value::Combo(ref ac) = unified_arg {
-                                for (k, v) in &ac.fields() {
-                                    // Calling-convention marker must not become
-                                    // part of a user-visible partial morphism.
-                                    if k == "%arg" {
-                                        continue;
-                                    }
-                                    partial_fields.insert(k.clone(), v.clone());
-                                }
-                            }
-                            partial_fields.insert(
-                                "%morphism".to_string(),
-                                Value::Atom(
-                                    AtomKind::Tag("true".to_string()),
-                                    EffectTag::Pure,
-                                    None,
-                                ),
-                            );
-                            partial_fields.insert(
-                                "%kind".to_string(),
-                                Value::Atom(
-                                    AtomKind::Tag("logic".to_string()),
-                                    EffectTag::Pure,
-                                    None,
-                                ),
-                            );
-                            return Value::Combo(ComboVal::new(
-                                partial_fields,
-                                true,
-                                IndexMap::new(),
-                                f.effect(),
-                                vec![],
-                            ));
-                        }
+                    if let Some(res) = self.run_builtin(builtin_id, c, &f, unified_arg, is_arg_pack, ctx) {
                         return res;
                     }
                     return Value::Bottom(Box::new(crate::value::BottomDetail {

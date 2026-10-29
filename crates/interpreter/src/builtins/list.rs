@@ -241,7 +241,7 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 let mut items = Vec::new();
                 let mut i = 0;
                 while let Some(v) = c.get_field(&i.to_string()) {
-                    let item = oo.force(v.clone(), ctx);
+                    let item = super::branch_of(oo, v.clone(), ctx);
                     let Some(key) = super::value_of(oo, item.clone(), ctx) else {
                         return Value::Top;
                     };
