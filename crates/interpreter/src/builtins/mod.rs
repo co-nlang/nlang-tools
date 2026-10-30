@@ -38,13 +38,67 @@ pub use contract::{carries, contract_for, contract_ids, BuiltinContract};
 /// G6: an element or operand a builtin reads as a value. A hybrid gives its
 /// `%val`; one not yet a value (D119, D121) gives `None`, and the builtin
 /// answers `Value::Top` — which the dispatch reads as `_`, not a partial.
+/// Q-112: a union read here is a choice point — this run takes one branch
+/// and the dispatch runs the builtin again for the others (`run_builtin`);
+/// a horizon is the call's answer (G3).
 pub fn value_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value> {
     let v = oo.read_value_context(v, ctx);
+    if let Value::Union(bs) = &v {
+        let b = bs[choose(ctx, bs.len())].clone();
+        return value_of(oo, b, ctx);
+    }
+    if let Value::Blur(_) = &v {
+        ctx.builtin_horizon.get_or_insert(v);
+        return None;
+    }
     if v.is_top() || crate::eval::not_yet_a_value(&v) {
         ctx.builtin_not_yet = true;
         return None;
     }
     Some(v)
+}
+
+/// Q-112: an element a builtin shows (`str.format`), read as interpolation
+/// reads it — `_` shows as `_` — with a union a choice point and a horizon
+/// the call's answer (`None`).
+pub fn shown_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value> {
+    match oo.read_value_context(v, ctx) {
+        Value::Union(bs) => {
+            let b = bs[choose(ctx, bs.len())].clone();
+            shown_of(oo, b, ctx)
+        }
+        v @ Value::Blur(_) => {
+            ctx.builtin_horizon.get_or_insert(v);
+            None
+        }
+        v => Some(v),
+    }
+}
+
+/// Q-112: an element a builtin reads and also keeps (`list.sort`). A union
+/// is a choice point, and what is kept is the branch this run read — not
+/// the union, whose other branches would sit where this one was ordered.
+pub fn branch_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Value {
+    match oo.force(v, ctx) {
+        Value::Union(bs) => {
+            let b = bs[choose(ctx, bs.len())].clone();
+            branch_of(oo, b, ctx)
+        }
+        v => v,
+    }
+}
+
+/// The branch this run takes at the next choice point of `n` branches.
+fn choose(ctx: &mut EvalContext, n: usize) -> usize {
+    let taken = match ctx.builtin_choices.get(ctx.builtin_cursor) {
+        Some(&(t, _)) => t,
+        None => {
+            ctx.builtin_choices.push((0, n));
+            0
+        }
+    };
+    ctx.builtin_cursor += 1;
+    taken
 }
 
 /// D122: a builtin whose work a number sets bills that work to the fuel
@@ -69,6 +123,14 @@ pub fn pred_is_true(oo: &Ouroboros, v: &Value, ctx: &mut EvalContext) -> Result<
     // and one not yet a value makes the builtin answer `_`.
     let v = oo.read_value_context(v.clone(), ctx);
     match &v {
+        Value::Union(bs) => {
+            let b = bs[choose(ctx, bs.len())].clone();
+            pred_is_true(oo, &b, ctx)
+        }
+        Value::Blur(_) => {
+            ctx.builtin_horizon.get_or_insert(v.clone());
+            Err(Value::Top)
+        }
         Value::Bottom(_) => Err(v),
         _ if v.is_top() || crate::eval::not_yet_a_value(&v) => {
             ctx.builtin_not_yet = true;

@@ -372,13 +372,16 @@ const NOT_SWEPT: &[(&str, &str)] = &[
     ("math.random", "answers a new number each time"),
 ];
 
+/// Ten operands: the small ones a builtin reads, the huge ones that made
+/// one end the process, and those not yet a value. The exhaustive sweep
+/// (19 operands, every pair, 44,053 calls) is `acc/q111/crash_full.py`.
 const OPS: &[&str] = &[
-    "_", "0", "1", "0 - 1", "3", "2.5", "0 - 2.5", "\"ab\"", "\"\"", "#true", "[1, 2]", "[]", "{ a: 1 }",
-    "(x -> x)", "@int", "1..3", "9223372036854775807", "1000000000", "0.0",
+    "_", "0", "0 - 1", "2.5", "\"ab\"", "[1, 2]", "{ a: 1 }", "(x -> x)", "9223372036854775807",
+    "1000000000",
 ];
 
 /// r5 — Every builtin in the registry, with every operand pair (and a
-/// sample of triples) drawn from 19 operands, ints up to 2^63 among them:
+/// sample of triples) drawn from ten operands, ints up to 2^63 among them:
 /// no call panics, aborts or fails to return.
 #[test]
 fn r5_no_builtin_call_ends_the_process() {
@@ -406,7 +409,7 @@ fn r5_no_builtin_call_ends_the_process() {
             for o in OPS {
                 tuples.push(vec![*o; k]);
             }
-            for _ in 0..200 {
+            for _ in 0..40 {
                 tuples.push((0..k).map(|_| { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); OPS[(seed >> 33) as usize % OPS.len()] }).collect());
             }
         }
