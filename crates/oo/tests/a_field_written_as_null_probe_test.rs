@@ -22,6 +22,8 @@
 //
 // Every `oo` here runs under a 1 GB address-space cap and a 10 s kill.
 //
+// R-1 (acceptance round 1): r6 at the end of this file.
+//
 // The delivery may NOT edit this file. `rustfmt` must not touch it.
 
 
@@ -436,4 +438,47 @@ fn g2_roots_that_read_right_do_not_move() {
         check(&mut bad, src, root_of(src), root);
     }
     verdict(bad, cases.len());
+}
+
+// ── R-1 (acceptance round 1, 2026-10-30) ───────────────────────────────
+//
+// Measured outside the probe: a union in one field runs the serializer
+// once per combination, and every run forces the other fields again. A
+// field `~%Io./append_file ("w", "Z") ? 1 : 2` beside `b: 1 | 2 | 3` is
+// written 4 times; beside `b: 1`, twice. SPEC_08 §3.2.2 #7 (Q-112): the
+// effect is not done again because the answer is enumerated.
+
+/// The bytes `src` leaves in `w`, evaluated in an empty directory.
+fn writes_of(src: &str) -> String {
+    let w = Ws::new("effect");
+    let got = w.eval(src);
+    if got == "DID NOT RETURN" || got == "PANIC" || got == "CRASHED" {
+        return got;
+    }
+    fs::metadata(w.ws.join("w")).map(|m| m.len().to_string()).unwrap_or_else(|_| "0".into())
+}
+
+/// r6 — A union in one field does not change how many times another
+/// field's effect is done: the same value with the union and without it
+/// writes the file as many times. (How many times a field forced once is
+/// done is an older matter; this compares the two.) Combinations past the
+/// fuel are the horizon, within the kill.
+#[test]
+fn r6_a_union_beside_a_field_does_not_redo_it() {
+    let mut bad = Vec::new();
+    let pairs = [
+        ("~%Json./stringify ({ a: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2, b: 1 | 2 | 3 })", "~%Json./stringify ({ a: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2, b: 1 })"),
+        ("~%Json./stringify ({ a: { c: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2 }, b: [1 | 2] })", "~%Json./stringify ({ a: { c: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2 }, b: [1] })"),
+        ("~%Json./stringify ({ b: 1 | 2, a: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2 })", "~%Json./stringify ({ b: 1, a: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2 })"),
+        ("~%Toml./stringify ({ a: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2, b: 1 | 2 })", "~%Toml./stringify ({ a: ~%Io./append_file (\"w\", \"Z\") ? 1 : 2, b: 1 })"),
+        ("~%Csv./stringify ([{ a: ~%Io./append_file (\"w\", \"Z\") ? \"y\" : \"n\", b: \"1\" | \"2\" }])", "~%Csv./stringify ([{ a: ~%Io./append_file (\"w\", \"Z\") ? \"y\" : \"n\", b: \"1\" }])"),
+        ("~%Csv./stringify ([[~%Io./append_file (\"w\", \"Z\") ? \"y\" : \"n\", \"1\" | \"2\"]])", "~%Csv./stringify ([[~%Io./append_file (\"w\", \"Z\") ? \"y\" : \"n\", \"1\"]])"),
+    ];
+    for (with, without) in pairs {
+        let (a, b) = (writes_of(with), writes_of(without));
+        check(&mut bad, &format!("{with}\n    beside the same without the union ({b})"), a, &b);
+    }
+    let many = format!("~%Json./stringify ({{ {} }})", (0..20).map(|i| format!("a{i}: 0 | 1")).collect::<Vec<_>>().join(", "));
+    check(&mut bad, "twenty fields of 0 | 1", short(&eval_full(&many)), "#blur #fuel_exhausted");
+    verdict(bad, pairs.len() + 1);
 }
