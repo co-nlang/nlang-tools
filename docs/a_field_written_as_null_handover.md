@@ -148,6 +148,26 @@ conformance **204／204**，空目錄 `/home/gali/tmp/q113-r1/conf.empty`，前�
 
 ### 8.9 R-2（交付方填）
 
+`csv.rs` 與 `q113-ref 55316df` 逐位元組相同。相對 `75b2025` 只動這一檔（+5／−1）：第一筆不是清單的記錄，不以 `%` 開頭的鍵收進首行之後，按鍵字串的序排。`mod.rs`、`json.rs`、`toml.rs` 未動。探針未改。版本未動。`rustfmt` 未跑。
+
+首行用的是鍵的位元組序，也就是 `String` 的 `Ord`（UTF-8）。`{ b: "1", a: "2" }` 與 `{ a: "2", b: "1" }` 都寫 `a,b` 換行 `2,1`。`parse_with_headers` 讀 `b,a` 與 `a,b` 兩種首行，寫回去也是這一段。`{ b: "z", "2": "y", "10": "x" }` 寫 `10,2,b` 換行 `x,y,z`（`"10"` 在 `"2"` 前）。`{ z: "2", é: "1", a: "3" }` 寫 `a,z,é` 換行 `3,2,1`（`é` 的 UTF-8 在 `z` 之後）。含逗號的鍵仍加引號：`a,"c,d"`。聯集的兩支共用這一個首行。
+
+與 JSON、TOML 是同一個序，不是同一支函式。JSON 的 `serde_json::Map`、TOML 的 `toml::map::Map` 都是 `BTreeMap`（兩者都沒開 `preserve_order`），疊代順序就是這個 `Ord`。CSV 是把鍵排好再寫。`{"10":"x","2":"y","b":"z"}`、`{"a":2,"b":1}`、TOML 的 `a` 然後 `b`、`a` 然後 `z` 然後 `"é"`，都是這一序。
+
+`%` 開頭的鍵仍先濾掉，不是欄：`{ a: "1", "%h": "z", b: "2" }` 寫 `a,b` 換行 `1,2`。D124 的缺鍵、多鍵照舊。第二列只有 `b`，寫出 `a,b` 換行 `2,1` 換行 `,4`，缺的是空格。首行沒有的鍵仍是 ⊥ `#conflict`。
+
+r7 綠，其餘照綠。`a_field_written_as_null_probe_test` **9／9**。單獨一輪 13.65 s（編譯 Finished 1 m 56 s）。閘門內 12.69 s。
+
+閘門：GATE 1 2026-10-31T03:36:10+08:00 WALL 2703 s；GATE 2 04:21:13 2080 s；GATE 3 04:55:53 2064 s。正規化 3804 行，sha `9f5d5122dbd4002b047b227663baadb557716935bcba4ddc36b201ccf17e2a1e`，306 個結果，加總 **2889** 通過、0 失敗，`test ` 行 `ok` 2888，`Running` 303，`running` 306。三輪正規化相同。原始 sha 前綴 `9204c8f0653d2d9b`、`af332b410e2061a1`、`30fe4d249bbee5e5`。位元組 305507／305350／305350。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 10 m 22 s，interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-31T05:30:17+08:00 Finished 7.52 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+conformance **204／204**，空目錄 `/home/gali/tmp/q113-r2/conf.empty`，前後 `ls -A | wc -l` 都是 0，47 s。`oo` 11400904 位元組，mtime 2026-10-31 03:35:45.738875348 +0800。閘門沒有重編它。
+
+身分照舊：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `c9/6c29378c…`（16029 位元組）。新倉 `layout=9`，`encoding=10`。g2 八顆根都在。字面 `{ a: 1 }` 的 JSON `682a3ae6…`、TOML `75e6546a…`、`{ a: 1 | 2 }` `6250c698…`、CSV 清單列與 `{ a, b }` 記錄列 `9ba63bc5…` 都沒動。`{ b: "1", a: "2" }` 寫出的文字換了，根是 `48b258abf6f9568a42d2a53aaa8a3d768f98b3d036fc4c75919cc4a6c1df7161`。
+
+`REAL_03` §6.7：映射的鍵序由內容決定。CSV 首行用的就是這個序，與 JSON、TOML 已經寫出的序相同。D124 的「依序」是這一序。以 `%` 開頭的鍵不是欄，缺的鍵是空格，首行沒有的鍵是 ⊥ `#conflict`。規格文字、向量與 `CHANGELOG` 未改。
+
 ## 9. 驗收（驗收方填）
 
 ### 第一輪驗收（2026-10-31，交付 `568c4df`）：**R-1，起因在驗收方**

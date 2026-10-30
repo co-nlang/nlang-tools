@@ -117,8 +117,12 @@ fn csv_text(rows: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Value {
     };
     let mut lines: Vec<String> = Vec::new();
     let header: Option<Vec<String>> = match rows.first() {
+        // The keys in the order their content gives, as JSON and TOML
+        // write them (REAL_03 §6.7): two `=` records write one header.
         Some(Value::Combo(c)) if !is_list(c) => {
-            Some(c.data.keys().filter(|k| !k.starts_with('%')).cloned().collect())
+            let mut h: Vec<String> = c.data.keys().filter(|k| !k.starts_with('%')).cloned().collect();
+            h.sort();
+            Some(h)
         }
         _ => None,
     };
