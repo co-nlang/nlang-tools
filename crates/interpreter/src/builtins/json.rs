@@ -147,14 +147,12 @@ pub fn register_json_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 arg.clone()
             };
             // Q-113: the value written, read field by field.
-            let Some(forced) = super::written_of(oo, v, ctx) else {
-                return Value::Top;
-            };
-            let json_val = nlang_to_json(&forced);
-            match serde_json::to_string(&json_val) {
-                Ok(s) => Value::Atom(AtomKind::Str(s), EffectTag::Pure, None),
-                Err(_) => Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None),
-            }
+            super::written_text(oo, v, ctx, &mut |forced, _| {
+                match serde_json::to_string(&nlang_to_json(forced)) {
+                    Ok(s) => Value::Atom(AtomKind::Str(s), EffectTag::Pure, None),
+                    Err(_) => Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None),
+                }
+            })
         }) as Arc<BuiltinFn>,
     );
 

@@ -155,10 +155,7 @@ pub fn register_toml_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 _ => v,
             };
             // Q-113: the value written, read field by field.
-            let Some(target) = super::written_of(oo, target, ctx) else {
-                return Value::Top;
-            };
-            match value_to_toml(&target) {
+            super::written_text(oo, target, ctx, &mut |target, _| match value_to_toml(target) {
                 Some(tv) => match ::toml::to_string_pretty(&tv) {
                     Ok(s) => Value::Atom(AtomKind::Str(s), EffectTag::Pure, None),
                     Err(e) => Value::Bottom(Box::new(BottomDetail {
@@ -168,7 +165,7 @@ pub fn register_toml_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     })),
                 },
                 None => conflict(),
-            }
+            })
         }) as Arc<BuiltinFn>,
     );
 }

@@ -126,6 +126,26 @@ conformance **204／204**，空目錄 `/home/gali/tmp/q113/conf.empty`，前後 
 
 ### 8.8 R-1（交付方填）
 
+`builtins/mod.rs`、`json.rs`、`toml.rs`、`csv.rs` 與 `q113-ref 051cc41` 逐位元組相同（相對交付 +116／−77）。探針未改。版本未動。`rustfmt` 未跑。
+
+`written_of` 回傳每一種組合。聯集在讀法裡展開：每一支各自讀，結果接起來，不再走 `choose`，整支內建不重跑。記錄與清單的每個欄位只讀一次；這一欄有 k 種讀數、手上已有 n 筆，就變成 n×k 筆，鍵序仍是 `data` 的插入序。`written_text` 對每個組合各寫一段文字，再交給 `union_of_results`（⊥ 剪掉）。只有一種組合就交回那一個值。
+
+欄位 `~%Io./append_file ("w", "Z") ? 1 : 2` 旁邊是 `b: 1 | 2 | 3` 寫 2 次（`ZZ`），旁邊是 `b: 1` 也是 2 次。巢狀欄與清單裡的欄，兩邊都是 1 次。聯集欄在前，兩邊都是 2 次。TOML 兩邊都是 2 次。CSV 記錄列與清單列兩邊都是 1 次。次數不隨聯集的支數增加。頂層 JSON／TOML 的 2 次是既有的「欄位每強制一次就重做」，工單已把它放在本卡外面。
+
+**Q2 補答。** 組合是欄位讀數的笛卡兒積，每個欄位只強制一次。每多一個組合扣 1 MBU：跨出那一步之前扣 `(n × k) − n`，`check_resources` 從燃料減掉。深度仍是每層 `check_resources(0)`。沒有對寫出的文字扣 D122。預設燃料 10000。二十個 `0 | 1` 是 2^20 種組合、1048575 MBU，超過預算。0.698 秒答 `#blur` `#fuel_exhausted`，CAID `afc1a3df5c1f6919044700bbc58d164d2bf66c8d0d5988b7ac23ba249aa7253e`。停在下一步的帳超過燃料的地方，沒有把一百多萬筆組出來。十二欄在燃料內寫完，1.052 秒。十三欄是另一顆視界，CAID `42c299a023a7b944b38394c5306064cbff37613908ff268fa2ec394cc81f96b2`。觀察到的聯集仍受既有 `max_branches` 64 的截斷：`0 | 1 | … | 69` 也只印出前 64 支。二十欄在那一刀之前就已經是燃料視界。
+
+r6 綠，其餘照綠。`a_field_written_as_null_probe_test` **8／8**。單獨一輪 10.98 s（編譯 Finished 1 m 57 s）。閘門內 11.11 s。
+
+閘門：GATE 1 2026-10-31T00:12:07+08:00 WALL 3043 s；GATE 2 01:02:50 2222 s；GATE 3 01:39:52 2192 s。正規化 3803 行，sha `81d80883cd9e2c9009391139787f1008f2cab42a95b228d4f07bd43140f906ce`，306 個結果，加總 **2888** 通過、0 失敗，`test ` 行 `ok` 2887，`Running` 303，`running` 306。三輪正規化相同。原始 sha 前綴 `1aa95e689ed18b5d`、`26d051b5270f53bd`、`bd862e0b922195c7`。位元組 305468／305313／305312。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 12 m 23 s，interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-31T02:16:24+08:00 Finished 8.61 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+conformance **204／204**，空目錄 `/home/gali/tmp/q113-r1/conf.empty`，前後 `ls -A | wc -l` 都是 0，51 s。`oo` 11402784 位元組，mtime 2026-10-31 00:10:10.185059837 +0800。閘門沒有重編它。
+
+身分照舊：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `c9/6c29378c…`。新倉 `layout=9`，`encoding=10`。`r: ~%Json./stringify ({ a: 1 | 2 })` 仍是 `6250c698b594e7527a46cb291ec60d148fb4afcd3de15ad63b401828ddd140f2`。字面 `{ a: 1 }` 的 JSON／TOML、CSV 兩種列，都還在 §8.4 的那些根上。
+
+`SPEC_08` §3.2.2 第 7 款這條路也算：序列化把聯集讀成組合，不因列舉重做另一欄的效應。每多一個組合 1 MBU。帳超過燃料是視界 `#fuel_exhausted`。規格文字、向量與 `CHANGELOG` 未改。
+
 ## 9. 驗收（驗收方填）
 
 ### 第一輪驗收（2026-10-31，交付 `568c4df`）：**R-1，起因在驗收方**

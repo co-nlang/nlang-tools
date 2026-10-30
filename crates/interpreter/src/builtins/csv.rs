@@ -102,6 +102,55 @@ fn extract_list_items(v: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Vec<V
     }
 }
 
+fn csv_text(rows: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Value {
+    let Value::Combo(ref rc) = rows else {
+        return BottomCause::Conflict.into();
+    };
+    if !is_list(rc) {
+        return BottomCause::Conflict.into();
+    }
+    let rows = extract_list_items(rows, oo, ctx);
+    let cell = |v: &Value| match v {
+        Value::Atom(AtomKind::Str(s), _, _) => Some(escape_csv_field(s)),
+        Value::Atom(..) => Some(escape_csv_field(&v.to_string_plain())),
+        _ => None,
+    };
+    let mut lines: Vec<String> = Vec::new();
+    let header: Option<Vec<String>> = match rows.first() {
+        Some(Value::Combo(c)) if !is_list(c) => {
+            Some(c.data.keys().filter(|k| !k.starts_with('%')).cloned().collect())
+        }
+        _ => None,
+    };
+    if let Some(h) = &header {
+        lines.push(h.iter().map(|k| escape_csv_field(k)).collect::<Vec<_>>().join(","));
+    }
+    for row in &rows {
+        let Value::Combo(c) = row else {
+            return BottomCause::Conflict.into();
+        };
+        let cells: Option<Vec<String>> = match &header {
+            Some(h) => {
+                if is_list(c) || c.data.keys().any(|k| !k.starts_with('%') && !h.contains(k)) {
+                    return BottomCause::Conflict.into();
+                }
+                h.iter().map(|k| c.data.get(k).map_or(Some(String::new()), &cell)).collect()
+            }
+            None => {
+                if !is_list(c) {
+                    return BottomCause::Conflict.into();
+                }
+                extract_list_items(row, oo, ctx).iter().map(&cell).collect()
+            }
+        };
+        match cells {
+            Some(cells) => lines.push(cells.join(",")),
+            None => return BottomCause::Conflict.into(),
+        }
+    }
+    Value::Atom(AtomKind::Str(lines.join("\n")), EffectTag::Pure, None)
+}
+
 fn is_list(c: &ComboVal) -> bool {
     matches!(c.get_field("%kind"), Some(Value::Atom(AtomKind::Tag(t), _, _)) if t.trim_start_matches('#') == "list")
 }
@@ -185,55 +234,7 @@ pub fn register_csv_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 Value::Combo(c) if !is_list(c) => c.get_field("0").cloned().unwrap_or(Value::Top),
                 _ => arg.clone(),
             };
-            let Some(rows) = super::written_of(oo, rows, ctx) else {
-                return Value::Top;
-            };
-            let Value::Combo(ref rc) = rows else {
-                return BottomCause::Conflict.into();
-            };
-            if !is_list(rc) {
-                return BottomCause::Conflict.into();
-            }
-            let rows = extract_list_items(&rows, oo, ctx);
-            let cell = |v: &Value| match v {
-                Value::Atom(AtomKind::Str(s), _, _) => Some(escape_csv_field(s)),
-                Value::Atom(..) => Some(escape_csv_field(&v.to_string_plain())),
-                _ => None,
-            };
-            let mut lines: Vec<String> = Vec::new();
-            let header: Option<Vec<String>> = match rows.first() {
-                Some(Value::Combo(c)) if !is_list(c) => {
-                    Some(c.data.keys().filter(|k| !k.starts_with('%')).cloned().collect())
-                }
-                _ => None,
-            };
-            if let Some(h) = &header {
-                lines.push(h.iter().map(|k| escape_csv_field(k)).collect::<Vec<_>>().join(","));
-            }
-            for row in &rows {
-                let Value::Combo(c) = row else {
-                    return BottomCause::Conflict.into();
-                };
-                let cells: Option<Vec<String>> = match &header {
-                    Some(h) => {
-                        if is_list(c) || c.data.keys().any(|k| !k.starts_with('%') && !h.contains(k)) {
-                            return BottomCause::Conflict.into();
-                        }
-                        h.iter().map(|k| c.data.get(k).map_or(Some(String::new()), &cell)).collect()
-                    }
-                    None => {
-                        if !is_list(c) {
-                            return BottomCause::Conflict.into();
-                        }
-                        extract_list_items(row, oo, ctx).iter().map(&cell).collect()
-                    }
-                };
-                match cells {
-                    Some(cells) => lines.push(cells.join(",")),
-                    None => return BottomCause::Conflict.into(),
-                }
-            }
-            Value::Atom(AtomKind::Str(lines.join("\n")), EffectTag::Pure, None)
+            super::written_text(oo, rows, ctx, &mut |rows, ctx| csv_text(rows, oo, ctx))
         }) as Arc<BuiltinFn>,
     );
 
