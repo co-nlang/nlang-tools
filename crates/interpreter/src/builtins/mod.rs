@@ -75,6 +75,55 @@ pub fn shown_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value
     }
 }
 
+/// Q-113: what a serializer writes is the value, every field and element
+/// read as a value (G6): forced, a hybrid as its `%val`, a union a choice
+/// point, a horizon the call's answer, one not yet a value `_` (D119). A
+/// record or a list keeps its shape and its keys. `None`: the builtin
+/// answers `Value::Top`, which the dispatch reads.
+pub fn written_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value> {
+    ctx.depth += 1;
+    let out = written_once(oo, v, ctx);
+    ctx.depth -= 1;
+    out
+}
+
+fn written_once(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value> {
+    if let Err(e) = ctx.check_resources(0) {
+        let h = crate::observation::handle_resource_exhausted(e, ctx.strategy, ctx, None, crate::value::EffectTag::Pure);
+        ctx.builtin_horizon.get_or_insert(h);
+        return None;
+    }
+    let v = oo.read_value_context(v, ctx);
+    if v.is_morphism() {
+        return Some(v);
+    }
+    match v {
+        Value::Union(bs) => {
+            let b = bs[choose(ctx, bs.len())].clone();
+            written_of(oo, b, ctx)
+        }
+        v @ Value::Blur(_) => {
+            ctx.builtin_horizon.get_or_insert(v);
+            None
+        }
+        // A type is a combo too (`%kind: #type`): not yet a value, not a record.
+        Value::Combo(mut c) if !matches!(c.get_field("%kind"), Some(Value::Atom(AtomKind::Tag(t), _, _)) if t.trim_start_matches('#') == "type") => {
+            let keys: Vec<String> = c.data.keys().filter(|k| !k.starts_with('%')).cloned().collect();
+            for k in keys {
+                let field = c.data.get(&k).cloned().unwrap_or(Value::Top);
+                let w = written_of(oo, field, ctx)?;
+                c.data.insert(k, w);
+            }
+            Some(Value::Combo(c))
+        }
+        v if v.is_top() || crate::eval::not_yet_a_value(&v) => {
+            ctx.builtin_not_yet = true;
+            None
+        }
+        v => Some(v),
+    }
+}
+
 /// Q-112: an element a builtin reads and also keeps (`list.sort`). A union
 /// is a choice point, and what is kept is the branch this run read — not
 /// the union, whose other branches would sit where this one was ordered.

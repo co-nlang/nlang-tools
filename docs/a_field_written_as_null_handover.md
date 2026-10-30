@@ -77,16 +77,51 @@
 
 ### 8.1 射程逐項對照
 
+`builtins/mod.rs`、`json.rs`、`toml.rs`、`csv.rs` 與 `q113-ref b13d0da` 逐位元組相同（+117／−17）。探針未改。版本未動（`oo` 0.113.0，interpreter 與 parser 0.2.2）。
+
+三支 `stringify` 先走 `written_of`，再交給原來的轉換。`written_of` 把要寫的值整棵讀成值：先 `read_value_context`；聯集是 Q-112 的選擇點；`#blur` 記成這次呼叫的答案；型別與還不是值的答 `_`；記錄與清單留下鍵序，逐欄遞迴，每一層 `ctx.depth` 加一。沒有另一支把結構寫成文字的內建。`set`／`diff` 的 `{:?}` 只拿來比，不寫出去。
+
+*   **M1** r1、r3 綠。字面 `{ a: 1 }`、`parse` 讀回的記錄、經過坐標的記錄，寫出同一段文字。JSON 的數、字串、`#true`、`#false`、`#none` 在五種形狀下寫出去再讀回來是它自己。TOML 的表同。混血欄位讀 `%val`：`{ a: 5 & { n: 1 } }` 與 `{ a: { %val: 5, n: 1 } }` 都寫 `{"a":5}`。
+*   **M2** r1 綠。清單列逐格寫；字串照字，其他原子照印出的樣子；含逗號、引號、換行的格子加引號，引號加倍。記錄列照 D124。`~%Str./lines` 逐位元組對。寫出去再以 `parse`／`parse_with_headers` 讀回來是它自己。首行沒有的鍵、清單與記錄混在一起、格子是結構，答 ⊥ `#conflict`。缺的鍵是空格。
+*   **M3** r2 綠。`{ a: 1 | 2 }` 是兩段文字的聯集。視界就是那顆視界。`{ a: _ }`、`{ a: @int }` 答 `_`。
+*   **M4** r4 綠。一檔、兩次演化、兩次提交同讀數、同根。
+*   **M5** r5 綠。兩百層字面巢狀照寫（長度 1201）。抱著自己的記錄是視界 `#max_depth_exceeded`。
+*   **另一半** g1、g2 綠。八顆根都在，含 `[1, 2]` `30e187c0…`、`stringify (parse ({"a": 1}))` `682a3ae6…`、`#none` `56d26899…`。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。探針、版本、`CHANGELOG`、規格與向量都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。工單寫全樹 306 個目標、2887 通過。這棵樹印出 306 個 `test result:`、加總 2887 通過、0 失敗。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 讀在 `written_of`（`builtins/mod.rs`），`json.stringify`、`toml.stringify`、`csv.stringify` 在轉換之前各呼叫一次。先 `read_value_context`。混血讀 `%val`，然後照那個值走。聯集走 `choose`，這一輪只寫選到的支，里程表把幾支的文字聯起來。`#blur` 放進 `builtin_horizon`，呼叫的答案就是它。`%kind: #type`、區間、補條件、還不是值的記錄，設 `builtin_not_yet`，呼叫答 `_`。箭頭（`is_morphism`）原樣交回，既有轉換寫成 `{}`。原子原樣交回。記錄與清單是 combo：鍵序是 `data` 這個 `IndexMap` 的插入序，名字以 `%` 開頭的鍵不寫；其餘每一格遞迴。
+
+**Q2。** 每一層 `written_of` 把 `ctx.depth` 加一，開頭 `check_resources(0)`：深度超過 `max_unification_depth`（256）是視界 `#max_depth_exceeded`，這一行扣的燃料是 0。兩百層在上限之下，照寫。抱著自己的記錄沿欄位走到這個上限。兩萬個 `1` 的清單，預設燃料，`~%Json./stringify` 0.533 秒寫完，JSON 長 40001。同一支在燃料 11 寫得出來，10 是視界 `#fuel_exhausted`，CAID 隨剩餘燃料變。`stringify ([1])` 與 `stringify (1)` 也是 11 過、10 不過；`r: 1` 在燃料 1 就答 `1`。長度沒有再加帳。沒有扣 D122。D122 是工作量由一個數決定時，先按元素、字元或位數扣 `1 + ⌈n / 10⌉`。序列化寫的是呼叫者已經持有的值；`check_resources(0)` 只守深度。字面原子已經是值，逐格讀不另開子空間。若按 40001 個字元扣，帳是 4002，燃料 11 會是視界。它不是。
+
+**Q3。** 格子含 `,`、`"`、`\n`、`\r` 就用雙引號包起來，裡面的 `"` 寫成 `""`；否則照字。字串用自己的字，其他原子用印出的樣子，再走同一條。記錄列的首行是第一筆記錄裡不以 `%` 開頭的鍵，依 `data` 的順序。字面 `{ b: "1", a: "2" }` 寫 `b,a` 換行 `1,2`。`parse_with_headers` 依檔案的首行插入，所以 `"""b,a\n1,2"""` 讀回來再寫，仍是 `b,a` 換行 `1,2`。以 `%` 開頭的鍵不是欄：`{ a: "1", "%h": "z", b: "2" }` 寫 `a,b` 換行 `1,2`。缺的鍵是空格（`a,b`／`1,2`／`3,`）。首行沒有的鍵是 ⊥ `#conflict`。
+
+**Q4。** 今天寫錯的格子，值變成對的文字之後，根與已經寫對的那條重合，或是新的。`r: ~%Json./stringify ({ a: 1 })` 是 `682a3ae6aec39c76d2b1f6ee5e68ba1d285567a1f4326411861371aa955e8014`，與 g2 的 `stringify (parse ({"a": 1}))` 同一顆。`r: ~%Toml./stringify ({ a: 1 })` 是 `75e6546a62369b5815ddc906e9c3a074309c363dd38cab086e99ca1377b5b0d9`，與 g2 的 `stringify (parse ("a = 1"))` 同一顆。`r: ~%Csv./stringify ([["a", "b"], ["1", "2"]])` 與 `r: ~%Csv./stringify ([{ a: "1", b: "2" }])` 都寫 `a,b` 換行 `1,2`，同根 `9ba63bc5659449bd798b390f1cec91579caf21defae4b12fb8eaeda8d33f13f6`。`r: ~%Json./stringify ({ a: 1 | 2 })` 是 `6250c698b594e7527a46cb291ec60d148fb4afcd3de15ad63b401828ddd140f2`。g2 不動，因為那些格子的值沒改：清單、原子、`parse`、`parse` 再寫、`#none` 寫出的文字與 v0.113.0 相同。`json_p33` 斷言的是 `42` 與 `[1,2]`，沒有斷言記錄欄位的 `null`。`csv_p47` 的 `test_csv_stringify_roundtrip` 斷言 `stringify (parse ("a,b\n1,2"))` 等於原文；它把清單直接交給內建，斷言的是這段 CSV，不是 Rust 的 `Debug`。
 
 ### 8.5 探針
 
+`a_field_written_as_null_probe_test` **7／7**，0 失敗。單獨一輪 9.77 s（編譯 Finished 1 m 57 s）。閘門內 8.98 s。檔沒有改。七支：g1、g2、r1、r2、r3、r4、r5。
+
 ### 8.6 數字
 
+閘門：GATE 1 2026-10-30T21:08:58+08:00 WALL 2734 s；GATE 2 21:54:32 2457 s；GATE 3 22:35:29 2507 s。正規化 3802 行，sha `d0a94614c945b80173866f324c731987de42e37c88ca83eead913d75ed7e1974`，306 個結果，加總 **2887** 通過、0 失敗，`test ` 行 `ok` 2886，`Running` 303，`running` 306。三輪正規化相同。原始 sha 前綴 `cca9ee051b0c92f8`、`c4baf9107a8077c7`、`128d85dd0806003c`。位元組 305408／305258／305262。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 10 m 16 s，interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-30T23:17:16+08:00 Finished 9.68 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+conformance **204／204**，空目錄 `/home/gali/tmp/q113/conf.empty`，前後 `ls -A | wc -l` 都是 0，40 s。`oo` 11398896 位元組，mtime 2026-10-30 21:08:24.498623691 +0800。閘門沒有重編它。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在這顆 `x: 0` 的倉物件裡。新倉 `layout=9`，`encoding=10`。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_09` 補 `~%Json`／`~%Toml`／`~%Csv` 一節：序列化把每個欄位與清單元素讀成值再寫。聯集逐支，寫出的文字聯起來。`#blur` 原樣是答案，不寫成 `null`。型別與還不是值的答 `_`。D124 落地：記錄列以第一筆不以 `%` 開頭的鍵為首行，依記錄的鍵序；缺的鍵是空格，首行沒有的鍵是 ⊥ `#conflict`；以 `%` 開頭的鍵不是欄。深度超過 `max_unification_depth` 是視界 `#max_depth_exceeded`。規格文字、新向量與 `CHANGELOG` 未改。
 
 ## 9. 驗收（驗收方填）

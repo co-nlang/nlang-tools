@@ -102,6 +102,10 @@ fn extract_list_items(v: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Vec<V
     }
 }
 
+fn is_list(c: &ComboVal) -> bool {
+    matches!(c.get_field("%kind"), Some(Value::Atom(AtomKind::Tag(t), _, _)) if t.trim_start_matches('#') == "list")
+}
+
 fn extract_str_arg(v: &Value, oo: &Ouroboros, ctx: &mut EvalContext) -> Option<String> {
     match v {
         Value::Atom(AtomKind::Str(s), _, _) => Some(s.clone()),
@@ -170,24 +174,64 @@ pub fn register_csv_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
 
     m.insert(
         "csv.stringify".to_string(),
+        // {0: rows} → CSV text. A row is a list of cells, or a record (D124):
+        // the first record's keys, in order, are the header line and every
+        // record is written in that order — a key it lacks is an empty cell,
+        // a key the header lacks is a conflict. A cell is the value it reads
+        // as (Q-113): a string as itself, another atom as it prints; a cell
+        // that is a structure is a conflict.
         Arc::new(|arg: Value, oo: &Ouroboros, ctx: &mut EvalContext| {
-            let v = oo.force(arg, ctx);
-            let outer = match &v {
-                Value::Combo(_) => v.clone(),
-                _ => return BottomCause::Conflict.into(),
+            let rows = match &arg {
+                Value::Combo(c) if !is_list(c) => c.get_field("0").cloned().unwrap_or(Value::Top),
+                _ => arg.clone(),
             };
-            let rows = extract_list_items(&outer, oo, ctx);
+            let Some(rows) = super::written_of(oo, rows, ctx) else {
+                return Value::Top;
+            };
+            let Value::Combo(ref rc) = rows else {
+                return BottomCause::Conflict.into();
+            };
+            if !is_list(rc) {
+                return BottomCause::Conflict.into();
+            }
+            let rows = extract_list_items(&rows, oo, ctx);
+            let cell = |v: &Value| match v {
+                Value::Atom(AtomKind::Str(s), _, _) => Some(escape_csv_field(s)),
+                Value::Atom(..) => Some(escape_csv_field(&v.to_string_plain())),
+                _ => None,
+            };
             let mut lines: Vec<String> = Vec::new();
-            for row in rows {
-                let fields = extract_list_items(&row, oo, ctx);
-                let escaped: Vec<String> = fields
-                    .iter()
-                    .map(|v| match v {
-                        Value::Atom(AtomKind::Str(s), _, _) => escape_csv_field(s),
-                        _ => escape_csv_field(&format!("{:?}", v)),
-                    })
-                    .collect();
-                lines.push(escaped.join(","));
+            let header: Option<Vec<String>> = match rows.first() {
+                Some(Value::Combo(c)) if !is_list(c) => {
+                    Some(c.data.keys().filter(|k| !k.starts_with('%')).cloned().collect())
+                }
+                _ => None,
+            };
+            if let Some(h) = &header {
+                lines.push(h.iter().map(|k| escape_csv_field(k)).collect::<Vec<_>>().join(","));
+            }
+            for row in &rows {
+                let Value::Combo(c) = row else {
+                    return BottomCause::Conflict.into();
+                };
+                let cells: Option<Vec<String>> = match &header {
+                    Some(h) => {
+                        if is_list(c) || c.data.keys().any(|k| !k.starts_with('%') && !h.contains(k)) {
+                            return BottomCause::Conflict.into();
+                        }
+                        h.iter().map(|k| c.data.get(k).map_or(Some(String::new()), &cell)).collect()
+                    }
+                    None => {
+                        if !is_list(c) {
+                            return BottomCause::Conflict.into();
+                        }
+                        extract_list_items(row, oo, ctx).iter().map(&cell).collect()
+                    }
+                };
+                match cells {
+                    Some(cells) => lines.push(cells.join(",")),
+                    None => return BottomCause::Conflict.into(),
+                }
             }
             Value::Atom(AtomKind::Str(lines.join("\n")), EffectTag::Pure, None)
         }) as Arc<BuiltinFn>,

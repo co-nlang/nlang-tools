@@ -149,10 +149,14 @@ pub fn register_toml_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let v = oo.force(arg, ctx);
             let target = match &v {
                 Value::Combo(c) => match c.get_field("0") {
-                    Some(inner) => oo.force(inner.clone(), ctx),
+                    Some(inner) => inner.clone(),
                     None => v,
                 },
                 _ => v,
+            };
+            // Q-113: the value written, read field by field.
+            let Some(target) = super::written_of(oo, target, ctx) else {
+                return Value::Top;
             };
             match value_to_toml(&target) {
                 Some(tv) => match ::toml::to_string_pretty(&tv) {

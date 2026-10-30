@@ -146,7 +146,10 @@ pub fn register_json_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             } else {
                 arg.clone()
             };
-            let forced = oo.force(v, ctx);
+            // Q-113: the value written, read field by field.
+            let Some(forced) = super::written_of(oo, v, ctx) else {
+                return Value::Top;
+            };
             let json_val = nlang_to_json(&forced);
             match serde_json::to_string(&json_val) {
                 Ok(s) => Value::Atom(AtomKind::Str(s), EffectTag::Pure, None),
