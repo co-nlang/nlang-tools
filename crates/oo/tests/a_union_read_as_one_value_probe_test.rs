@@ -23,6 +23,8 @@
 //
 // Every `oo` here runs under a 1 GB address-space cap and a 10 s kill.
 //
+// R-1 (acceptance round 1): r6 at the end of this file.
+//
 // The delivery may NOT edit this file. `rustfmt` must not touch it.
 
 
@@ -280,6 +282,9 @@ fn r1_a_union_in_a_value_context_distributes() {
         ("~%List./max_by ((x -> (x | 0 - x)), [1, 2])", "1 | 2"),
         ("~%List./min_by ((x -> (x | 0 - x)), [1, 2])", "1 | 2"),
         ("~%Bytes./at (0 | 1, (~%Bytes./from_str (\"ab\")))", "97 | 98"),
+        ("~%List./count ((x -> ~%List./any ((y -> #true), [x]) | #false), [1, 2])", "0 | 1 | 2"),
+        ("~%List./count ((x -> ((z -> z) x == 1) | #false), [1, 2])", "0 | 1"),
+        ("~%List./count ((x -> ~%List./count ((y -> #true | #false), [x, x]) == 1), [1, 2])", "0 | 1 | 2"),
         ("~%List./filter ((x -> ~%Math./gt (x, 1)), [1 | 3, 2])", "[1 | 3, 2] | [2]"),
         ("~%Math./shl (1 | 2, 1)", "_|_ ;; %cause: #unprovided_builtin"),
         ("~%Bytes./len (~%Bytes./from_str (\"ab\" | \"abc\"))", "2 | 3"),
@@ -1089,4 +1094,70 @@ fn g2_roots_that_read_right_do_not_move() {
         check(&mut bad, src, root_of(src), root);
     }
     verdict(bad, cases.len());
+}
+
+// ── R-1 (acceptance round 1, 2026-10-30) ───────────────────────────────
+//
+// Measured outside the probe: a builtin run once per combination of the
+// branches it read applies its morphisms again on every run. A predicate
+// answering `~%Io./append_file ("w", "Z") | #false` writes the file 2 times
+// for one element, 8 for two, 384 for six; without the union, 2 for two.
+// The language applies a predicate once per element; how many times its
+// effect is done is not the engine's enumeration to choose.
+
+/// The bytes `src` leaves in `w`, evaluated in an empty directory.
+fn writes_of(src: &str) -> String {
+    let w = Ws::new("effect");
+    let got = w.eval(src);
+    if got == "DID NOT RETURN" || got == "PANIC" || got == "CRASHED" {
+        return got;
+    }
+    fs::metadata(w.ws.join("w")).map(|m| m.len().to_string()).unwrap_or_else(|_| "0".into())
+}
+
+/// r6 — A morphism a builtin applies runs once per application, whatever
+/// it answers: a union answer is read branch by branch, not produced again.
+/// An operand, an element, a condition or an interpolated part is
+/// evaluated once; so is a builtin in a predicate's body, applied by the
+/// predicate, not by the builtin that applies the predicate. (Answers that are `_` are avoided: at v0.112.0 a
+/// top-level `_` is evaluated twice by `oo eval`, an older matter.)
+#[test]
+fn r6_a_morphism_runs_once_per_application() {
+    let mut bad = Vec::new();
+    let cells: [(&str, u32); 23] = [
+        ("~%List./count ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1])", 1),
+        ("~%List./count ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1, 2])", 2),
+        ("~%List./count ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1, 2, 3, 4, 5, 6])", 6),
+        ("~%List./count ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1, 1])", 2),
+        ("~%List./filter ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1, 2, 3])", 3),
+        ("~%List./partition ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1, 2])", 2),
+        ("~%List./find ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1, 2])", 2),
+        ("~%List./any ((x -> ~%Io./append_file (\"w\", \"Z\") | #false), [1, 2])", 2),
+        ("~%List./group_by ((x -> ~%Io./append_file (\"w\", \"Z\") | x), [1, 2])", 2),
+        ("~%List./max_by ((x -> (~%Io./append_file (\"w\", \"Z\") ? 1 : 2) | 7), [1, 2])", 2),
+        ("~%List./count ((x -> ~%Io./append_file (\"w\", \"Z\")), [1, 2])", 2),
+        ("~%List./sum ([(~%Io./append_file (\"w\", \"Z\") ? 1 : 2) | 7, 10])", 1),
+        ("~%List./sort ([~%Io./append_file (\"w\", \"Z\") | 3, 1])", 1),
+        ("~%Math./add ((~%Io./append_file (\"w\", \"Z\") ? 1 : 2) | 7, 10)", 1),
+        ("((~%Io./append_file (\"w\", \"Z\") ? #true : #false) | #false) ? 1 : 2", 1),
+        ("`${(~%Io./append_file (\"w\", \"Z\") ? 1 : 2) | 7}`", 1),
+        ("~%List./count ((x -> ~%List./any ((y -> ~%Io./append_file (\"w\", \"Z\")), [x]) | #false), [1, 2])", 2),
+        ("~%List./count ((x -> ~%List./count ((y -> ~%Io./append_file (\"w\", \"Z\") | #false), [x]) | 9), [1, 2])", 2),
+        ("~%List./count ((x -> (~%List./sum ([x, 0 | 1]) == 1) | ~%Io./append_file (\"w\", \"Z\")), [1, 2, 3])", 3),
+        ("~%List./filter ((x -> ~%Io./append_file (\"w\", \"Z\") | ~%List./any ((y -> #true | #false), [x])), [1, 2])", 2),
+        ("~%List./count ((x -> (~%Io./append_file (\"w\", \"Z\") ? ~%List./any ((y -> #true), [x]) : #false) | #false), [1, 2])", 2),
+        ("~%List./count ((x -> (~%List./any ((y -> #true), [x]) ? ~%Io./append_file (\"w\", \"Z\") : #false) | #false), [1, 2, 3])", 3),
+        ("~%List./count ((x -> ~%List./sum ([~%Io./append_file (\"w\", \"Z\") ? 1 : 2, ~%List./len ([x])]) == 2 | #false), [1, 2])", 2),
+    ];
+    let srcs: Vec<String> = cells.iter().map(|c| c.0.to_string()).collect();
+    let mut got = vec![String::new(); srcs.len()];
+    std::thread::scope(|s| {
+        for (o, e) in got.iter_mut().zip(&srcs) {
+            s.spawn(move || *o = writes_of(e));
+        }
+    });
+    for ((e, want), g) in cells.iter().zip(got) {
+        check(&mut bad, &format!("{e}: bytes written"), g, &want.to_string());
+    }
+    verdict(bad, cells.len());
 }
