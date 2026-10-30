@@ -207,6 +207,13 @@ pub struct EvalContext {
     pub builtin_cursor: usize,
     /// G3: a horizon a builtin read as a value; the call answers it.
     pub builtin_horizon: Option<Value>,
+    /// Q-112: while a builtin runs once per combination of branches, the
+    /// morphisms it applies (argument, answer, in application order), how
+    /// many this run has applied, and whether one is being applied now.
+    pub builtin_replay: bool,
+    pub builtin_applied: Vec<(Value, Value)>,
+    pub builtin_apply_cursor: usize,
+    pub builtin_in_apply: bool,
     pub had_nondistrib_event: bool,
     pub disc_routing_visited: std::collections::HashSet<String>,
     pub disc_routing_hops: u32,
@@ -268,6 +275,10 @@ impl EvalContext {
             builtin_choices: Vec::new(),
             builtin_cursor: 0,
             builtin_horizon: None,
+            builtin_replay: false,
+            builtin_applied: Vec::new(),
+            builtin_apply_cursor: 0,
+            builtin_in_apply: false,
             had_nondistrib_event: false,
             disc_routing_visited: std::collections::HashSet::new(),
             disc_routing_hops: 0,
@@ -3112,6 +3123,37 @@ impl Ouroboros {
     }
 
     pub fn apply_morphism(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
+        // Q-112: a builtin run again for another combination of branches
+        // does not apply its morphisms again. Its k-th application, on the
+        // argument the last run gave it, answers what it answered then: a
+        // predicate is applied once per element, its effect done once.
+        if ctx.builtin_replay && !ctx.builtin_in_apply {
+            let i = ctx.builtin_apply_cursor;
+            ctx.builtin_apply_cursor += 1;
+            if let Some((a, r)) = ctx.builtin_applied.get(i) {
+                if *a == arg {
+                    let r = r.clone();
+                    if let Some(acc) = ctx.apply_effect_frames.last_mut() {
+                        *acc = acc.union(r.effect());
+                    }
+                    return r;
+                }
+            }
+            ctx.builtin_applied.truncate(i);
+            ctx.builtin_in_apply = true;
+            // Forced while still applying: what the answer's work applies
+            // (an arrow, a builtin in a predicate's body) is its own, not the
+            // builtin's next application.
+            let r = self.apply_morphism_once(f, arg.clone(), ctx);
+            let r = self.force(r, ctx);
+            ctx.builtin_in_apply = false;
+            ctx.builtin_applied.push((arg, r.clone()));
+            return r;
+        }
+        self.apply_morphism_once(f, arg, ctx)
+    }
+
+    fn apply_morphism_once(&self, f: Value, arg: Value, ctx: &mut EvalContext) -> Value {
         // O74 ①: every application unions the obstruction of what it
         // actually observed into its result, whether or not the returned
         // value kept that observation (`.r` after reading the clock;
@@ -3240,10 +3282,15 @@ impl Ouroboros {
         let outer_choices = std::mem::take(&mut ctx.builtin_choices);
         let outer_cursor = std::mem::replace(&mut ctx.builtin_cursor, 0);
         let outer_horizon = ctx.builtin_horizon.take();
+        let outer_replay = std::mem::replace(&mut ctx.builtin_replay, true);
+        let outer_applied = std::mem::take(&mut ctx.builtin_applied);
+        let outer_apply_cursor = std::mem::replace(&mut ctx.builtin_apply_cursor, 0);
+        let outer_in_apply = std::mem::replace(&mut ctx.builtin_in_apply, false);
         let mut runs = Vec::new();
         let answer = loop {
             ctx.builtin_not_yet = false;
             ctx.builtin_cursor = 0;
+            ctx.builtin_apply_cursor = 0;
             let res = if keys_ready {
                 func(unified_arg.clone(), self, ctx)
             } else {
@@ -3284,6 +3331,10 @@ impl Ouroboros {
         ctx.builtin_choices = outer_choices;
         ctx.builtin_cursor = outer_cursor;
         ctx.builtin_horizon = outer_horizon;
+        ctx.builtin_replay = outer_replay;
+        ctx.builtin_applied = outer_applied;
+        ctx.builtin_apply_cursor = outer_apply_cursor;
+        ctx.builtin_in_apply = outer_in_apply;
         Some(answer.unwrap_or_else(|| self.union_of_results(runs, ctx)))
     }
 

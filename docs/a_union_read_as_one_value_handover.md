@@ -135,6 +135,28 @@ conformance **199／199**，空目錄 `/home/gali/tmp/q112/conf.empty`，前後 
 
 ### 8.8 R-1（交付方填）
 
+`lib.rs` 與 `q112-ref ab4a61d` 逐位元組相同（+51）。探針是驗收方在 `98c0a7d` 預先修訂的，本回合沒有再改。版本未動（`oo` 0.112.0，interpreter 與 parser 0.2.2）。`rustfmt` 未跑。規格文字、向量、`CHANGELOG` 未改。
+
+一次內建呼叫裡 `builtin_replay` 打開。這一輪第 k 次施用，引數與上一輪同位的相同，就交回存著的答案，並把那個答案的效應併進目前的幀。對不上就從這一格截掉，標 `builtin_in_apply`，施用一次；答案在這標記還在時強制，所以答案自己再施用的（箭頭、述詞本體裡的內建）不算這支內建的下一格。然後把 `(引數, 答案)` 存起來。里程表每一輪把施用游標歸零。
+
+內建的態射本身又是一支內建時，內層 `run_builtin` 把外層的磁帶、游標、`builtin_replay`、`builtin_in_apply` 存起來，換自己的空磁帶。外層只記一格：這次施用的引數，與內層整次呼叫的答案。下一輪組合命中這一格，不再進入內層。箭頭本體在 `sub_context` 複製出來的脈絡裡跑，內層磁帶留在複本上；外層記的是整次箭頭施用。
+
+**Q3 重答。** 述詞 `x -> ~%Io./append_file ("w", "Z") | #false`：一個元素寫 1 次（`Z`），答案 `0 ;; %effect: #io | 1 ;; %effect: #io`；兩個元素寫 2 次（`ZZ`），`0 | 1 | 2`，每一支都帶 `#io`；六個元素寫 6 次（`ZZZZZZ`），`0 | … | 6`，每一支都帶 `#io`。沒有聯集時，兩個元素寫 2 次，答案 `2 ;; %effect: #io`。上一輪分別是 2、8、384 次。重跑的組合交回已存的答案，效應標籤還在，檔案按每個元素寫一次。
+
+態射本身是內建，另量：`~%List./count (~%Io./exists, ["w" | "nope"])`（`w` 已存在）答 `0 ;; %effect: #io | 1 ;; %effect: #io`。`strace` 裡 `w` 與 `nope` 各一次 `try_exists`（各一對 `statx`）。`~%List./map (~%Io./append_file ("w"), ["Z", "Y"])` 寫 `ZY`，答案 `[#true ;; %effect: #io, #true ;; %effect: #io]`。`~%List./count (~%Io./append_file ("w"), ["Z" | "Y", "Q"])` 寫 `ZYQ`，答案 `2 ;; %effect: #io`：聯集引數在這一次施用裡按分支各寫一次。述詞本體裡的內建同：`count` 的述詞呼叫 `any`、`count`、`sum` 時，兩個元素寫 2 次、三個元素寫 3 次。
+
+探針 **8／8**，0 失敗。單獨一輪 54.97 s（編譯 Finished 1 m 58 s）。閘門內 49.67 s。八支：g1、g2、r1、r2、r3、r4、r5、r6。
+
+閘門：GATE 1 2026-10-30T12:39:16+08:00 WALL 2784 s；GATE 2 13:25:40 2077 s；GATE 3 14:00:17 2533 s。正規化 3792 行，sha `a9c3cdae7a82580dd4008bba1a59f828465aded3ef514b1fa9a99656b2c45a9a`，305 個結果，加總 **2880** 通過、0 失敗，`test ` 行 `ok` 2879，`Running` 302，`running` 305。三輪正規化相同。原始 sha 前綴 `59dbf69e36da4d75`、`560576f281283944`、`37961fc4b445d313`。位元組 304841／304683／304692。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 10 m 56 s，interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-30T14:42:30+08:00 Finished 11.00 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+conformance **199／199**，空目錄 `/home/gali/tmp/q112-r1/conf.empty`，前後 `ls -A | wc -l` 都是 0，40 s。`oo` 11381488 位元組，mtime 2026-10-30 12:35:54.695952657 +0800。閘門沒有重編它。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在這顆 `x: 0` 的倉物件裡。`r: ~%Math./add (1 | 2, 10)` 與 `r: ~%List./sum ([1 | 2, 10])` 仍同根 `a01e8222f94b772e2119f06fbc7557070780e725fccce5a6168b9c7236ad098e`。`r: (1 | 2) + 10` 仍 `ab1cdb01b4697d2e2b4fe4fdfd9f13556a2d84177622ef6d6a6d40eda9f62922`。新倉 `layout=9`，`encoding=10`。
+
+工單寫全樹 310 個目標、2880 通過。這棵樹印出 305 個 `test result:`、加總 2880 通過、0 失敗。
+
 ## 9. 驗收（驗收方填）
 
 ### 第一輪驗收（2026-10-30，交付 `5495fa8`）：**R-1，起因在驗收方**
