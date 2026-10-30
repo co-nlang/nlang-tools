@@ -23,6 +23,7 @@
 // Every `oo` here runs under a 1 GB address-space cap and a 10 s kill.
 //
 // R-1 (acceptance round 1): r6 at the end of this file.
+// R-2 (acceptance round 2): r7 after it.
 //
 // The delivery may NOT edit this file. `rustfmt` must not touch it.
 
@@ -481,4 +482,63 @@ fn r6_a_union_beside_a_field_does_not_redo_it() {
     let many = format!("~%Json./stringify ({{ {} }})", (0..20).map(|i| format!("a{i}: 0 | 1")).collect::<Vec<_>>().join(", "));
     check(&mut bad, "twenty fields of 0 | 1", short(&eval_full(&many)), "#blur #fuel_exhausted");
     verdict(bad, pairs.len() + 1);
+}
+
+/// r7 (R-2) — A record's key order is not written. Two records that are
+/// `=` have one root whatever order their keys were written or read in
+/// (`{ b: "1", a: "2" }` and `{ a: "2", b: "1" }`; `parse_with_headers` of
+/// `b,a` and of `a,b`), so they write one text: the CSV header is the keys
+/// in the order their content gives, the order JSON and TOML write them
+/// (REAL_03 §6.7 — a mapping's key order is decided by its content, never
+/// by insertion). Each pair is checked against the other and against the
+/// text; a union's branches write one header; through a coordinate the
+/// same. The other half: the header is still the first record's keys, a
+/// missing key an empty cell, an extra key ⊥, read back is itself.
+#[test]
+fn r7_a_key_order_is_not_written() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    let pairs = [
+        ("~%Csv./stringify ([{ b: \"1\", a: \"2\" }])", "~%Csv./stringify ([{ a: \"2\", b: \"1\" }])", "\"\"\"a,b 2,1\"\"\""),
+        ("~%Csv./stringify (~%Csv./parse_with_headers (\"\"\"b,a\n1,2\"\"\"))", "~%Csv./stringify (~%Csv./parse_with_headers (\"\"\"a,b\n2,1\"\"\"))", "\"\"\"a,b 2,1\"\"\""),
+        ("~%Csv./stringify ([{ b: \"1\", a: \"2\" }, { a: \"3\", b: \"4\" }])", "~%Csv./stringify ([{ a: \"2\", b: \"1\" }, { b: \"4\", a: \"3\" }])", "\"\"\"a,b 2,1 3,4\"\"\""),
+        ("~%Csv./stringify ([{ b: \"1\", a: \"2\" }, { b: \"4\" }])", "~%Csv./stringify ([{ a: \"2\", b: \"1\" }, { b: \"4\" }])", "\"\"\"a,b 2,1 ,4\"\"\""),
+        ("~%Csv./stringify ([{ z: \"2\", é: \"1\", a: \"3\" }])", "~%Csv./stringify ([{ a: \"3\", é: \"1\", z: \"2\" }])", "\"\"\"a,z,é 3,2,1\"\"\""),
+        ("~%Csv./stringify ([{ b: \"z\", \"2\": \"y\", \"10\": \"x\" }])", "~%Csv./stringify ([{ \"10\": \"x\", \"2\": \"y\", b: \"z\" }])", "\"\"\"10,2,b x,y,z\"\"\""),
+        ("~%Csv./stringify ([{ \"c,d\": \"1\", a: \"2\" }])", "~%Csv./stringify ([{ a: \"2\", \"c,d\": \"1\" }])", "\"\"\"a,\"c,d\" 2,1\"\"\""),
+        ("~%Csv./stringify ([({ b: \"1\", a: \"2\" }) | ({ a: \"5\", b: \"1\" })])", "~%Csv./stringify ([({ a: \"2\", b: \"1\" }) | ({ b: \"1\", a: \"5\" })])", "\"\"\"a,b 2,1\"\"\" | \"\"\"a,b 5,1\"\"\""),
+        ("~%Csv./stringify ([{ b: \"1\" | \"7\", a: \"2\" }])", "~%Csv./stringify ([{ a: \"2\", b: \"1\" | \"7\" }])", "\"\"\"a,b 2,1\"\"\" | \"\"\"a,b 2,7\"\"\""),
+    ];
+    let srcs: Vec<String> = pairs.iter().flat_map(|p| [p.0.to_string(), p.1.to_string()]).collect();
+    let got = eval_all(&srcs);
+    for (i, (x, y, want)) in pairs.iter().enumerate() {
+        // `members` splits bytewise; only a union's cells go through it.
+        let norm = |g: &str| if want.contains(" | ") { members(&short(g)) } else { short(g) };
+        let (gx, gy) = (norm(&got[2 * i]), norm(&got[2 * i + 1]));
+        check(&mut bad, &format!("{x}\n    beside {y}"), gx.clone(), &gy);
+        check(&mut bad, x, gx, want);
+        n += 2;
+    }
+    let other = [
+        ("~%Csv./stringify ([{ b: \"1\" }, { a: \"3\", b: \"4\" }])", "_|_ #conflict"),
+        ("(~%Csv./parse_with_headers (~%Csv./stringify ([{ b: \"1\", a: \"2\" }, { b: \"4\", a: \"3\" }]))) = [{ a: \"2\", b: \"1\" }, { a: \"3\", b: \"4\" }]", "#true"),
+        ("~%Json./stringify ({ b: \"z\", \"2\": \"y\", \"10\": \"x\" })", "\"\"\"{\"10\":\"x\",\"2\":\"y\",\"b\":\"z\"}\"\"\""),
+        ("~%Toml./stringify ({ z: 2, é: 1, a: 3 })", "\"\"\"a = 3 z = 2 \"é\" = 1 \"\"\""),
+    ];
+    table(&mut bad, &other);
+    n += other.len();
+    for (w1, w2) in [("rows: [{ b: \"1\", a: \"2\" }]", "r: ~%Csv./stringify (rows)"), ("r: ~%Csv./stringify (rows)", "rows: [{ b: \"1\", a: \"2\" }]")] {
+        let (got, roots) = three_ways(w1, w2, "_.r");
+        for (way, g) in ["one file", "two evolves", "two commits"].iter().zip(got) {
+            let rc = if *way == "two evolves" { "e0 e0 c0" } else if *way == "one file" { "e0 c0" } else { "e0 c0 e0 c0" };
+            check(&mut bad, &format!("{w1} / {w2}, {way}"), g, &format!("{rc} | \"\"\"a,b 2,1\"\"\""));
+            n += 1;
+        }
+        let mut r = roots.clone();
+        r.sort();
+        r.dedup();
+        check(&mut bad, &format!("{w1} / {w2}: one root"), r.len().to_string(), "1");
+        n += 1;
+    }
+    verdict(bad, n);
 }
