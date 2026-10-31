@@ -125,3 +125,11 @@ conformance **208／208**，空目錄 `/home/gali/tmp/q114/conf.empty`，前後 
 `SPEC_09` §5.1.2 已寫：寫出去再讀回來是它自己；超過 `max_unification_depth` 是視界 `#max_depth_exceeded`。crate 的 128 與 80 不是旋鈕。剖析前的門是實作天花板 `HARD_RECURSION_LIMIT`（400），上界用來不走原生堆疊；值的深度仍是 `max_unification_depth`。規格文字、新向量與 `CHANGELOG` 未改。
 
 ## 9. 驗收（驗收方填）
+
+### 第一輪驗收（2026-10-31，交付 `ddebec3`）：**受理**
+
+**交付**：`Cargo.toml`、`builtins/{mod,json,toml}.rs` 與參考 `q114-ref c7df8be` 逐位元組相同；探針未改。驗收方以交付建置重量：探針 **6／6**、conformance **208／208**（空目錄前後 0）；收尾加兩條向量後 **210／210**。
+
+**探針外另量**〔`acc/q114/acc/out.py`，交付建置與 v0.114.0〕：`~%Config.max_unification_depth: 50` 之下 JSON 與 TOML 60 層答視界、40 層照讀（v0.114.0 不理會這個旋鈕）；`#strict` 答 ⊥ `#max_depth_exceeded`；讀回的 200 層 JSON 清單、120 層 TOML 陣列與同形字面同根；TOML `[[a.a.…]]` 十萬層答視界；CRLF 換行照讀；十萬個元素的淺陣列讀得出。**旁量一列既有的**（三版同，不屬本卡）：把十萬個元素的清單存進坐標，`commit` 中止；字面清單的提交時間隨元素數約平方長——記 Inbox。
+
+**收尾**（spec `local`）：`SPEC_09` §5.1.2 第 5 款補「讀回來也一樣」，未規定處補不合法文字的兩種慣例；conformance L1-55、L2-155；`CHANGELOG` [Unreleased]；`ENGINE_SYNC` Q-114。Inbox 結一列、新開兩列（清單提交的成本、不合法文字的慣例）。
