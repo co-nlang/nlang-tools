@@ -7,8 +7,8 @@ use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn json_to_nlang(json: serde_json::Value) -> Value {
-    match json {
+fn json_to_nlang(json: serde_json::Value, ctx: &mut EvalContext) -> Result<Value, Value> {
+    Ok(match json {
         serde_json::Value::Null => {
             Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None)
         }
@@ -32,10 +32,13 @@ fn json_to_nlang(json: serde_json::Value) -> Value {
         }
         serde_json::Value::String(s) => Value::Atom(AtomKind::Str(s), EffectTag::Pure, None),
         serde_json::Value::Array(arr) => {
+            super::read_deeper(ctx)?;
             let mut res = IndexMap::new();
             for (i, v) in arr.into_iter().enumerate() {
-                res.insert(i.to_string(), json_to_nlang(v));
+                let v = json_to_nlang(v, ctx);
+                res.insert(i.to_string(), v.map_err(|h| { ctx.depth -= 1; h })?);
             }
+            ctx.depth -= 1;
             res.insert(
                 "%kind".to_string(),
                 Value::Atom(AtomKind::Tag("list".to_string()), EffectTag::Pure, None),
@@ -49,10 +52,13 @@ fn json_to_nlang(json: serde_json::Value) -> Value {
             ))
         }
         serde_json::Value::Object(obj) => {
+            super::read_deeper(ctx)?;
             let mut res = IndexMap::new();
             for (k, v) in obj {
-                res.insert(k, json_to_nlang(v));
+                let v = json_to_nlang(v, ctx);
+                res.insert(k, v.map_err(|h| { ctx.depth -= 1; h })?);
             }
+            ctx.depth -= 1;
             Value::Combo(ComboVal::new(
                 res,
                 false,
@@ -61,7 +67,34 @@ fn json_to_nlang(json: serde_json::Value) -> Value {
                 vec![],
             ))
         }
+    })
+}
+
+/// Q-114: the most containers open at once, strings skipped — the depth
+/// of the value a JSON text reads as.
+fn json_nesting(s: &str) -> usize {
+    let (mut depth, mut max, mut in_str, mut esc) = (0usize, 0usize, false, false);
+    for b in s.bytes() {
+        if in_str {
+            match b {
+                _ if esc => esc = false,
+                b'\\' => esc = true,
+                b'"' => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'[' | b'{' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
     }
+    max
 }
 
 fn nlang_to_json(val: &Value) -> serde_json::Value {
@@ -128,8 +161,16 @@ pub fn register_json_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                 arg.clone()
             };
             if let Value::Atom(AtomKind::Str(s), _, _) = oo.force(v, ctx).collapse() {
-                return match serde_json::from_str::<serde_json::Value>(s) {
-                    Ok(json) => json_to_nlang(json),
+                // Q-114: as deep as the text is; past the depth a value may
+                // have, the horizon — not `#none`, which says "not JSON".
+                if let Some(h) = super::text_too_deep(json_nesting(s), ctx) {
+                    return h;
+                }
+                let mut de = serde_json::Deserializer::from_str(s);
+                de.disable_recursion_limit();
+                let parsed = <serde_json::Value as serde::Deserialize>::deserialize(&mut de).and_then(|j| de.end().map(|_| j));
+                return match parsed {
+                    Ok(json) => json_to_nlang(json, ctx).unwrap_or_else(|h| h),
                     Err(_) => Value::Atom(AtomKind::Tag("none".to_string()), EffectTag::Pure, None),
                 };
             }

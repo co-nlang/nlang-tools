@@ -72,16 +72,56 @@
 
 ### 8.1 射程逐項對照
 
+`Cargo.toml`、`builtins/mod.rs`、`json.rs`、`toml.rs` 與 `q114-ref c7df8be` 逐位元組相同（+173／−13）。探針未改。版本未動（`oo` 0.114.0，interpreter 與 parser 0.2.2）。
+
+開 `serde_json/unbounded_depth`、`toml/unbounded`，crate 的 128 層與 80 層不再擋。`json.parse` 先用括號計數（跳過字串與跳脫）跟 `HARD_RECURSION_LIMIT`（400）比，過了才關掉 `serde_json` 的遞迴上限來讀。`toml.parse` 先用上界跟同一個 400 比，再 `toml::from_str`。轉成值時，JSON 的每個陣列與物件、TOML 的每個陣列與每張表走 `read_deeper`：`ctx.depth` 加一，`check_resources(0)`，超過 `max_unification_depth`（預設 256）走 `handle_resource_exhausted`，與 `written_of` 同一條視界。出去時把深度減回來。
+
+*   **M1** r1 綠。記錄、清單、表、陣列，1 到 250 層，寫出再讀回來是它自己。一張深表旁邊一個深陣列，深度是較深的那一支。240 層陣列裡兩百個 `1.5`，小數點不是一層。`stringify` 寫得出的最深那一層，在來回的那個呼叫深度上，讀得回。
+*   **M2** r2、r4 綠。三百層到五萬層是視界 `#max_depth_exceeded`，不是 `#none`、不是衝突。鍵的每一段都是一層：數字段、引號段、inline table 裡的點號鍵、陣列裡的 inline table。檔案裡的一百萬層 JSON、三十萬層記錄、十萬層 TOML，演化並提交，答視界，不崩潰。
+*   **M3** r3 綠。一檔、兩次演化、兩次提交同讀數、同根。兩百層記錄讀回來是它自己；三百層文字存成視界。
+*   **另一半** g1、g2 綠。不是 JSON 的仍是 `#none`，不是 TOML 的仍是 ⊥ `#conflict`。字串與註解裡的括號、點、大括號不是深度，含 `\"` 與 `'''…'''`。127 層照讀。一千個並列的小陣列、三百張表是一層。六顆根都在。
+*   `csv`、`url`、`time` 的 `parse` 是平的。沒有另一支把巢狀文字的深度交給 crate。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。探針、版本、`CHANGELOG`、規格、向量、`Cargo.lock` 都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。工單寫全樹 307 個目標、2895 通過、conformance 208。這棵樹印出 307 個 `test result:`、加總 2895 通過、0 失敗。conformance **208／208**。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 讀成值的深度在 `read_deeper`。JSON 每個陣列、每個物件進一層；TOML 每個陣列、每張表進一層。原子、字串、數字不加。比的是 `ctx.depth > max_unification_depth`（預設 256），`check_resources(0)`，與 `written_of` 同一個旋鈕。`eval` 每個算式再加一層，包在別的呼叫裡時預算少一層。
+
+數法有兩處差。`written_of` 連葉子也進一層；`read_deeper` 只數容器，所以寫得出來的文字，容器層數比撞到旋鈕的那一步少。來回式裡 `stringify` 是 `parse` 的引數，比 `parse` 再深一層呼叫，它先停。讀的那邊用同一個旋鈕，剩下的預算夠把那些容器再數一次。
+
+剖析前另有一道門，比的是 `HARD_RECURSION_LIMIT`（400），不是 256。那是文字深度的上界，用來讓剖析器不要走原生堆疊。JSON 的括號數等於容器層數。TOML 的上界可以比值深大約兩層。兩道都放行 `stringify` 寫得出的文件。
+
+**Q2。** 擋住五萬層的是剖析前的 `text_too_deep`：上界大於 400 就答視界，剖析器沒有往下遞迴。JSON 的上界是精確的括號計數，字串與 `\"` 不算。TOML 的上界是上界：鍵的位置數點（表頭、`=` 之前、inline table 的鍵），加上開著的容器，再加一；鍵值宣告再加上它所屬的表頭。四種引號的字串與註解跳過。值裡的小數點不是鍵上的點，不算。高估大約兩層：兩百層的表寫成 `[a.a.…]\nv = 1\n`，長度 408；表頭成本是段數加一，底下那筆 `v = 1` 再加一。
+
+沒有 `stringify` 寫得出、卻被這道門擋掉的文件。頂層呼叫，253 層清單寫得出，長度 507；254 層已是視界 `#max_depth_exceeded`。預設旋鈕 256，寫得出的容器到不了 400，TOML 高估兩層也到不了。點號鍵、字串、註解、浮點、表頭與底下的宣告在 r1、g1：浮點的點不算層，字串與註解裡的括號不算，表頭的每一段算。一百萬層與十萬層在 r4，答視界，不崩潰。
+
+**Q3。** 五萬層 JSON，0.035 秒答視界 `#max_depth_exceeded`，CAID `b5de23854b5ca45cdb4db4848ab7fd09d0a8caf33a0ca9f5f38da4b3c468c13c`。v0.114.0 同一段 0.047 秒答 `#none`。十萬個 `1` 的淺陣列，兩邊都是燃料視界，2.772 秒，同一顆 CAID `2cfa31660844654d7be115dea0be851cd5cd87d0dbed6a3bb4e7bd332e78d568`。讀得完的寬陣列：一千個 0.046 秒對 0.043 秒，五千個 0.083 對 0.078，八千個 0.117 對 0.116，長度都對。`read_deeper` 扣的燃料是 0。
+
+**Q4。** 今天讀錯的深文字，根是新的。128 層 JSON 清單是 `25bf5661198caacc54cd600d1225083e9dc6f0ef9523838cac61cd5d3c96793a`。80 層 TOML 陣列是 `ceab4ae6308e1c92ea2a296745f48e191d9479667aad2f7f480f392f65116888`。300 層 JSON 清單存成視界，根 `d42fecb7c015b5303f1cfa5703de39b6c5822bb3a5321d67db9c95a8e1b3918a`。g2 不動，因為那些格子本來就讀對：`[[1], {"a": 2}]` `bdaacbd1f3857d746c8eaccd92c8e45f9aee4486fb756ca0e4dc56602e86dd79`；`[t]\nb = [1, [2]]` `c0fd230f4dd166d1217679c07fcede28fbab9ea9b2e976b7c6d1e539e8e985b6`；不合法的 `{` `0c8242bb8570326595b0b1dda5f1c8ac3b4e58d5f7b08c75ed1d59bf73935978`；100 層清單 `352bbb92f1e4f0b147a047c3d2b58e563aeefdbf89a59c0594aecb7141529623`；`a.b.c = 1` `d5c0fd6859e4b5e8aa002f32631c4a53bd235c820bc0e3c2d621ddeac871825d`；寫回去 `6f8569af46be09a5adae97fac4dc993c492218da718f6c772c1fca1dffe1268f`。`json_p33` 斷言淺的物件、陣列、`null` 與 `{bad json}` 答 `#none`，沒有斷言 128 層。`toml_p47` 斷言淺的表與 `invalid = ===` 答 ⊥，沒有斷言 80 層。
 
 ### 8.5 探針
 
+`a_text_read_back_short_probe_test` **6／6**，0 失敗。單獨一輪 40.83 s（編譯 Finished 1 m 28 s）。閘門內 41.49 s。檔沒有改。六支：g1、g2、r1、r2、r3、r4。
+
 ### 8.6 數字
 
+閘門：GATE 1 2026-10-31T13:32:57+08:00 WALL 1787 s；GATE 2 14:02:44 1422 s；GATE 3 14:26:26 1374 s。正規化 3813 行，sha `32e50f7f8dcead0bed9cd5ab83a96dff8c0f7a123209537221f32380e321d78c`，307 個結果，加總 **2895** 通過、0 失敗，`test ` 行 `ok` 2894，`Running` 304，`running` 307。三輪正規化相同。原始 sha 前綴 `194814d29b795b0f`、`5a6c1c4a47300133`、`02ecf7392a28a4ff`。位元組 306020／305865／305865。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 7 m 00 s，interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-10-31T14:49:20+08:00 Finished 6.84 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+conformance **208／208**，空目錄 `/home/gali/tmp/q114/conf.empty`，前後 `ls -A | wc -l` 都是 0，23 s。`oo` 11407248 位元組，mtime 2026-10-31 13:32:11.286313011 +0800。閘門沒有重編它。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `c9/6c29378c…`（16029 位元組）。新倉 `layout=9`，`encoding=10`。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_09` §5.1.2 已寫：寫出去再讀回來是它自己；超過 `max_unification_depth` 是視界 `#max_depth_exceeded`。crate 的 128 與 80 不是旋鈕。剖析前的門是實作天花板 `HARD_RECURSION_LIMIT`（400），上界用來不走原生堆疊；值的深度仍是 `max_unification_depth`。規格文字、新向量與 `CHANGELOG` 未改。
 
 ## 9. 驗收（驗收方填）

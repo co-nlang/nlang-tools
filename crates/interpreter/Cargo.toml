@@ -144,7 +144,9 @@ anyhow = "1.0"
 # rc: Thunk.closure / EvalContext.scopes hold Arc<ComboVal> (D1 nesting arc).
 # Arc serializes as the inner T — durable form unchanged.
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
+# Q-114: the depth a text may have is the engine's (`max_unification_depth`),
+# not the crate's; `builtins::text_too_deep` keeps the native stack safe.
+serde_json = { version = "1.0", features = ["unbounded_depth"] }
 indexmap = { version = "=2.5.0", features = ["serde"] }
 hashbrown = "0.14"
 base64 = "0.22"
@@ -155,4 +157,4 @@ ring = "0.17"
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
 url = "=2.2.2"
-toml = "0.8"
+toml = { version = "0.8", features = ["unbounded"] }
