@@ -75,6 +75,98 @@ pub fn shown_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Value
     }
 }
 
+/// Q-113: what a serializer writes is the value, every field and element
+/// read as a value (G6): forced, a hybrid as its `%val`, a horizon the
+/// call's answer, one not yet a value `_` (D119). A record or a list keeps
+/// its shape and its keys. A union gives one value per branch, combined
+/// across fields here rather than by running the builtin again — a field is
+/// forced once, so its effect is not done again per combination; each
+/// combination past the first costs 1 MBU. `None`: the builtin answers
+/// `Value::Top`, which the dispatch reads.
+pub fn written_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Vec<Value>> {
+    ctx.depth += 1;
+    let out = written_once(oo, v, ctx);
+    ctx.depth -= 1;
+    out
+}
+
+fn horizon_unless(ctx: &mut EvalContext, r: Result<(), crate::ResourceExhausted>) -> Option<()> {
+    if let Err(e) = r {
+        let h = crate::observation::handle_resource_exhausted(e, ctx.strategy, ctx, None, crate::value::EffectTag::Pure);
+        ctx.builtin_horizon.get_or_insert(h);
+        return None;
+    }
+    Some(())
+}
+
+fn written_once(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Vec<Value>> {
+    let r = ctx.check_resources(0);
+    horizon_unless(ctx, r)?;
+    let v = oo.read_value_context(v, ctx);
+    if v.is_morphism() {
+        return Some(vec![v]);
+    }
+    match v {
+        Value::Union(bs) => {
+            let mut out = Vec::new();
+            for b in bs {
+                out.extend(written_of(oo, b, ctx)?);
+            }
+            Some(out)
+        }
+        v @ Value::Blur(_) => {
+            ctx.builtin_horizon.get_or_insert(v);
+            None
+        }
+        // A type is a combo too (`%kind: #type`): not yet a value, not a record.
+        Value::Combo(c) if !matches!(c.get_field("%kind"), Some(Value::Atom(AtomKind::Tag(t), _, _)) if t.trim_start_matches('#') == "type") => {
+            let keys: Vec<String> = c.data.keys().filter(|k| !k.starts_with('%')).cloned().collect();
+            let mut alts = vec![c.clone()];
+            for k in keys {
+                let field = c.data.get(&k).cloned().unwrap_or(Value::Top);
+                let ws = written_of(oo, field, ctx)?;
+                let extra = (alts.len() * ws.len()).saturating_sub(alts.len()) as u64;
+                let r = ctx.check_resources(extra);
+                horizon_unless(ctx, r)?;
+                let mut next = Vec::with_capacity(alts.len() * ws.len());
+                for a in &alts {
+                    for w in &ws {
+                        let mut a = a.clone();
+                        a.data.insert(k.clone(), w.clone());
+                        next.push(a);
+                    }
+                }
+                alts = next;
+            }
+            Some(alts.into_iter().map(Value::Combo).collect())
+        }
+        v if v.is_top() || crate::eval::not_yet_a_value(&v) => {
+            ctx.builtin_not_yet = true;
+            None
+        }
+        v => Some(vec![v]),
+    }
+}
+
+/// Q-113: a serializer's answer — `write` on each value `written_of`
+/// gives, joined as a union (⊥ pruned).
+pub fn written_text(
+    oo: &Ouroboros,
+    v: Value,
+    ctx: &mut EvalContext,
+    write: &mut dyn FnMut(&Value, &mut EvalContext) -> Value,
+) -> Value {
+    let Some(alts) = written_of(oo, v, ctx) else {
+        return Value::Top;
+    };
+    let mut outs: Vec<Value> = alts.iter().map(|a| write(a, ctx)).collect();
+    if outs.len() == 1 {
+        outs.pop().unwrap_or(Value::Top)
+    } else {
+        oo.union_of_results(outs, ctx)
+    }
+}
+
 /// Q-112: an element a builtin reads and also keeps (`list.sort`). A union
 /// is a choice point, and what is kept is the branch this run read — not
 /// the union, whose other branches would sit where this one was ordered.

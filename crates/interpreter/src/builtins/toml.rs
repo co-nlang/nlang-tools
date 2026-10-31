@@ -149,12 +149,13 @@ pub fn register_toml_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             let v = oo.force(arg, ctx);
             let target = match &v {
                 Value::Combo(c) => match c.get_field("0") {
-                    Some(inner) => oo.force(inner.clone(), ctx),
+                    Some(inner) => inner.clone(),
                     None => v,
                 },
                 _ => v,
             };
-            match value_to_toml(&target) {
+            // Q-113: the value written, read field by field.
+            super::written_text(oo, target, ctx, &mut |target, _| match value_to_toml(target) {
                 Some(tv) => match ::toml::to_string_pretty(&tv) {
                     Ok(s) => Value::Atom(AtomKind::Str(s), EffectTag::Pure, None),
                     Err(e) => Value::Bottom(Box::new(BottomDetail {
@@ -164,7 +165,7 @@ pub fn register_toml_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     })),
                 },
                 None => conflict(),
-            }
+            })
         }) as Arc<BuiltinFn>,
     );
 }
