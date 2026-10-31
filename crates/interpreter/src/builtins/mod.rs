@@ -90,6 +90,35 @@ pub fn written_of(oo: &Ouroboros, v: Value, ctx: &mut EvalContext) -> Option<Vec
     out
 }
 
+/// Q-114: a text read into a value is as deep as it is. One level deeper:
+/// past `max_unification_depth` it is the horizon `#max_depth_exceeded` —
+/// the depth `stringify` writes to — returned as `Err`. The caller leaves
+/// the level with `ctx.depth -= 1`.
+pub fn read_deeper(ctx: &mut EvalContext) -> Result<(), Value> {
+    ctx.depth += 1;
+    ctx.check_resources(0).map_err(|e| {
+        ctx.depth -= 1;
+        crate::observation::handle_resource_exhausted(e, ctx.strategy, ctx, None, crate::value::EffectTag::Pure)
+    })
+}
+
+/// Q-114: a parser recurses once per level, so a text deeper than the
+/// engine's recursion ceiling is the horizon before it is parsed (a
+/// thousand levels or a million: the native stack is not the limit).
+/// `bound` is an upper bound on the text's depth; the exact depth, against
+/// `max_unification_depth`, is `read_deeper`'s.
+pub fn text_too_deep(bound: usize, ctx: &mut EvalContext) -> Option<Value> {
+    (bound > crate::HARD_RECURSION_LIMIT as usize).then(|| {
+        crate::observation::handle_resource_exhausted(
+            crate::ResourceExhausted::DepthExceeded,
+            ctx.strategy,
+            ctx,
+            None,
+            crate::value::EffectTag::Pure,
+        )
+    })
+}
+
 fn horizon_unless(ctx: &mut EvalContext, r: Result<(), crate::ResourceExhausted>) -> Option<()> {
     if let Err(e) = r {
         let h = crate::observation::handle_resource_exhausted(e, ctx.strategy, ctx, None, crate::value::EffectTag::Pure);
