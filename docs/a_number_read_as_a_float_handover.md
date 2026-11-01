@@ -161,3 +161,11 @@ conformance **210／210**，空目錄 `/home/gali/tmp/q115/conf.empty`，前後 
 `SYNTAX_02` 已寫數字依值比較。D125：`/clamp` 越界答那個界本身、界內答 `x`，型別照寫的樣子。規格原本沒寫 `clamp` 的型別。規格文字、新向量與 `CHANGELOG` 未改。
 
 ## 9. 驗收（驗收方填）
+
+### 第一輪驗收（2026-11-01，交付 `8154d02`）：**受理**
+
+*   **與參考同形**：引擎五檔（`value.rs`、`eval.rs`、`unify.rs`、`builtins/{math,list}.rs`）與 `q115-ref 6fefe18` 逐位元組相同；探針與 Q-111 探針與 `4bd01be` 相同。交付建置（worktree `q115-acc`，獨立 target）：`oo v0.115.0-1275-g8154d02`。
+*   **重量**：探針 5／5；conformance **213／213**（加 L1-56、L1-57、L2-156；空目錄前後 0）；v0.115.0 紅這三支（210／213）。
+*   **探針外**〔`acc/q115/acc/out.py`，交付建置與 v0.115.0〕：回呼裡的比較（`/count`、`/find`、`/filter`）、三元條件、混血 `%val`、聯集逐支分配 `(A | Z) == Z` ⟹ `#false | #true`、寫進 `@int & (0..Z)` 的 `A` 演化拒收、坐標裡 `(0..G)` 與 `(5..A)` 交會成 `5..A`——交付對，v0.115.0 錯。集合（`/contains`、`/from_list`、`/union`、`/intersection`）、`/dedup`、`/unique`、`/group_by`、以數為鍵的查找、`A & @int`、`A <= @nat`、兩個檔寫 `x: A`／`x: Z` 拒收、型別不對的運算元答 ⊥、NaN 在比較之前已是 ⊥ `#numerical_error`——兩建置同且對。
+*   **旁量一列既有的**：`3 & 3.0` ⟹ ⊥「Incompatible types」，而 `3 <= 3.0` ⟹ `#true`、`3 | 3.0` ⟹ `3`——兩建置同，小數字同；不在射程，新開 Inbox（須裁：3 與 3.0 是一個原子還是兩個）。
+*   **收尾**：`SYNTAX_02` §2 #1 補「依值＝精確」；`SPEC_09` 數值大小補精確與 `/clamp`（D125）；`REAL_05` L1-56、L1-57、L2-156；`CHANGELOG` [Unreleased]；`ENGINE_SYNC` Q-115；spec `local` `33d230c`。
