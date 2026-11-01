@@ -309,12 +309,11 @@ pub(crate) fn bind_open_terms(v: Value, input: &Value) -> Value {
                 &mut c.system,
                 &mut c.local,
             ] {
-                let keys: Vec<String> = axis.keys().cloned().collect();
-                for k in keys {
-                    if let Some(x) = axis.shift_remove(&k) {
-                        axis.insert(k, bind_open_terms(x, input));
-                    }
-                }
+                // Q-116: one pass in order (see `canonical_bodies`).
+                *axis = std::mem::take(axis)
+                    .into_iter()
+                    .map(|(k, x)| (k, bind_open_terms(x, input)))
+                    .collect();
             }
             Value::Combo(c)
         }
