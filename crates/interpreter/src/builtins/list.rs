@@ -877,20 +877,18 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     }
                     let items = extract_list_items(&list);
                     let mut best_elem: Option<Value> = None;
-                    let mut best_key: f64 = f64::INFINITY;
+                    // Q-115: keys by value, exactly — never through f64.
+                    let mut best_key = AtomKind::Float(f64::INFINITY);
                     for item in items {
                         let k = oo.apply_morphism(key_f.clone(), item.clone(), ctx);
                         let Some(k) = super::value_of(oo, k, ctx) else {
                             return Value::Top;
                         };
                         let kf = match k {
-                            Value::Atom(AtomKind::Float(f), _, _) => f,
-                            Value::Atom(AtomKind::Int(n), _, _) => {
-                                n.to_f64().unwrap_or(f64::INFINITY)
-                            }
+                            Value::Atom(k @ (AtomKind::Float(_) | AtomKind::Int(_)), _, _) => k,
                             _ => continue,
                         };
-                        if kf < best_key {
+                        if crate::value::num_cmp(&kf, &best_key) == Some(std::cmp::Ordering::Less) {
                             best_key = kf;
                             best_elem = Some(item);
                         }
@@ -914,20 +912,18 @@ pub fn register_list_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     }
                     let items = extract_list_items(&list);
                     let mut best_elem: Option<Value> = None;
-                    let mut best_key: f64 = f64::NEG_INFINITY;
+                    // Q-115: keys by value, exactly — never through f64.
+                    let mut best_key = AtomKind::Float(f64::NEG_INFINITY);
                     for item in items {
                         let k = oo.apply_morphism(key_f.clone(), item.clone(), ctx);
                         let Some(k) = super::value_of(oo, k, ctx) else {
                             return Value::Top;
                         };
                         let kf = match k {
-                            Value::Atom(AtomKind::Float(f), _, _) => f,
-                            Value::Atom(AtomKind::Int(n), _, _) => {
-                                n.to_f64().unwrap_or(f64::NEG_INFINITY)
-                            }
+                            Value::Atom(k @ (AtomKind::Float(_) | AtomKind::Int(_)), _, _) => k,
                             _ => continue,
                         };
-                        if kf > best_key {
+                        if crate::value::num_cmp(&kf, &best_key) == Some(std::cmp::Ordering::Greater) {
                             best_key = kf;
                             best_elem = Some(item);
                         }

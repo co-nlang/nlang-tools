@@ -1041,6 +1041,38 @@ fn display_family_rank(v: &Value) -> u8 {
     }
 }
 
+/// Q-115: two numbers compared by value, exactly (SYNTAX_02 §1). An
+/// integer is never rounded to a float to be compared: `2^53 + 1` is more
+/// than `2^53` and than `9007199254740992.0`. `None` when either is not an
+/// integer or a float, or a float is NaN.
+pub fn num_cmp(a: &AtomKind, b: &AtomKind) -> Option<std::cmp::Ordering> {
+    match (a, b) {
+        (AtomKind::Int(x), AtomKind::Int(y)) => Some(x.cmp(y)),
+        (AtomKind::Float(x), AtomKind::Float(y)) => x.partial_cmp(y),
+        (AtomKind::Int(x), AtomKind::Float(y)) => int_float_cmp(x, *y),
+        (AtomKind::Float(x), AtomKind::Int(y)) => int_float_cmp(y, *x).map(|o| o.reverse()),
+        _ => None,
+    }
+}
+
+fn int_float_cmp(i: &num_bigint::BigInt, f: f64) -> Option<std::cmp::Ordering> {
+    use num_traits::FromPrimitive;
+    use std::cmp::Ordering;
+    if f.is_nan() {
+        return None;
+    }
+    if f.is_infinite() {
+        return Some(if f > 0.0 { Ordering::Less } else { Ordering::Greater });
+    }
+    // |f - t| < 1 and t is an integer, so i against t decides unless equal.
+    let t = f.trunc();
+    match i.cmp(&num_bigint::BigInt::from_f64(t)?) {
+        Ordering::Equal if f > t => Some(Ordering::Less),
+        Ordering::Equal if f < t => Some(Ordering::Greater),
+        o => Some(o),
+    }
+}
+
 /// Numeric key: (magnitude as f64, subrank) with int before float on equal value.
 fn display_numeric_key(v: &Value) -> Option<(f64, u8)> {
     match v {
@@ -1095,7 +1127,12 @@ fn display_order_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
                         (true, true) => Ordering::Equal,
                         (true, false) => Ordering::Greater,
                         (false, true) => Ordering::Less,
-                        (false, false) => va.partial_cmp(&vb).unwrap_or(Ordering::Equal),
+                        (false, false) => match (a, b) {
+                            (Value::Atom(x, _, _), Value::Atom(y, _, _)) if sa < 2 && sb < 2 => {
+                                num_cmp(x, y).unwrap_or(Ordering::Equal)
+                            }
+                            _ => va.partial_cmp(&vb).unwrap_or(Ordering::Equal),
+                        },
                     };
                     o.then_with(|| sa.cmp(&sb))
                 }

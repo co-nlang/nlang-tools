@@ -814,11 +814,10 @@ impl Ouroboros {
             (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
                 return x == y;
             }
-            (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                return x.to_f64() == Some(*y);
-            }
-            (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                return Some(*x) == y.to_f64();
+            // Q-115: by value, exactly — `2^53 + 1` is not `9007199254740992.0`.
+            (Value::Atom(x @ AtomKind::Int(_), _, _), Value::Atom(y @ AtomKind::Float(_), _, _))
+            | (Value::Atom(x @ AtomKind::Float(_), _, _), Value::Atom(y @ AtomKind::Int(_), _, _)) => {
+                return crate::value::num_cmp(x, y) == Some(std::cmp::Ordering::Equal);
             }
             _ => {}
         }
@@ -2782,17 +2781,12 @@ impl Ouroboros {
                         None => Value::Atom(AtomKind::Tag("un".to_string()), res_e, None),
                     }
                 };
-                let as_f64 = |k: &AtomKind| -> Option<f64> {
-                    match k {
-                        AtomKind::Int(i) => i.to_f64(),
-                        AtomKind::Float(f) => Some(*f),
-                        _ => None,
-                    }
-                };
+                let is_num = |k: &AtomKind| matches!(k, AtomKind::Int(_) | AtomKind::Float(_));
                 match (&ca, &cb) {
                     (Value::Atom(xk, _, rx), Value::Atom(yk, _, ry)) => {
-                        if let (Some(x), Some(y)) = (as_f64(xk), as_f64(yk)) {
-                            return dir_tag(x.partial_cmp(&y));
+                        // Q-115: by value, exactly — never through f64.
+                        if is_num(xk) && is_num(yk) {
+                            return dir_tag(crate::value::num_cmp(xk, yk));
                         }
                         if let (AtomKind::Str(x), AtomKind::Str(y)) = (xk, yk) {
                             return dir_tag(Some(x.cmp(y)));
@@ -3278,59 +3272,24 @@ impl Ouroboros {
                 return Value::Bottom(d.clone());
             }
 
-            let op_fn = |x: f64, y: f64| match op {
-                CmpOp::Eq => x == y,
-                CmpOp::Ne => x != y,
-                _ => unreachable!(),
-            };
-            match (&ca, &cb) {
-                (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
+            // Q-115: numbers by value, exactly (SYNTAX_02 §1) — an integer
+            // is never rounded to a float to be compared.
+            if let (Value::Atom(x, _, _), Value::Atom(y, _, _)) = (&ca, &cb) {
+                if matches!(x, AtomKind::Int(_) | AtomKind::Float(_))
+                    && matches!(y, AtomKind::Int(_) | AtomKind::Float(_))
+                {
+                    let same = crate::value::num_cmp(x, y) == Some(std::cmp::Ordering::Equal);
+                    let yes = match op {
+                        CmpOp::Eq => same,
+                        CmpOp::Ne => !same,
+                        _ => unreachable!(),
+                    };
                     return Value::Atom(
-                        AtomKind::Tag(
-                            if op_fn(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0)) {
-                                "true".into()
-                            } else {
-                                "false".into()
-                            },
-                        ),
+                        AtomKind::Tag(if yes { "true".into() } else { "false".into() }),
                         res_e,
                         None,
                     );
                 }
-                (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                    return Value::Atom(
-                        AtomKind::Tag(if op_fn(*x, *y) {
-                            "true".into()
-                        } else {
-                            "false".into()
-                        }),
-                        res_e,
-                        None,
-                    );
-                }
-                (Value::Atom(AtomKind::Int(x), _, _), Value::Atom(AtomKind::Float(y), _, _)) => {
-                    return Value::Atom(
-                        AtomKind::Tag(if op_fn(x.to_f64().unwrap_or(0.0), *y) {
-                            "true".into()
-                        } else {
-                            "false".into()
-                        }),
-                        res_e,
-                        None,
-                    );
-                }
-                (Value::Atom(AtomKind::Float(x), _, _), Value::Atom(AtomKind::Int(y), _, _)) => {
-                    return Value::Atom(
-                        AtomKind::Tag(if op_fn(*x, y.to_f64().unwrap_or(0.0)) {
-                            "true".into()
-                        } else {
-                            "false".into()
-                        }),
-                        res_e,
-                        None,
-                    );
-                }
-                _ => {}
             }
             return Value::Atom(
                 AtomKind::Tag(if matches!(op, CmpOp::Eq) {
