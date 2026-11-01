@@ -1177,29 +1177,27 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                     let hi = oo.force(vhi.clone(), ctx).collapse().clone();
                     let x = oo.force(vx.clone(), ctx).collapse().clone();
                     let res_e = lo.effect().union(hi.effect()).union(x.effect());
-                    let to_f = |v: &Value| -> Option<f64> {
-                        match v {
-                            Value::Atom(AtomKind::Float(f), _, _) => Some(*f),
-                            Value::Atom(AtomKind::Int(i), _, _) => i.to_f64(),
-                            _ => None,
-                        }
+                    // Q-115: compared by value, exactly; the answer is one of
+                    // the three as it was written — `x` inside, else the
+                    // bound it crossed.
+                    let num = |v: &Value| match v {
+                        Value::Atom(k @ (AtomKind::Int(_) | AtomKind::Float(_)), _, _) => Some(k.clone()),
+                        _ => None,
                     };
-                    if let (Some(flo), Some(fhi), Some(fx)) = (to_f(&lo), to_f(&hi), to_f(&x)) {
+                    if let (Some(klo), Some(khi), Some(kx)) = (num(&lo), num(&hi), num(&x)) {
+                        use std::cmp::Ordering;
                         // An empty interval holds no value: `(3..1) & 2` is ⊥.
-                        if !(flo <= fhi) {
+                        if !matches!(crate::value::num_cmp(&klo, &khi), Some(Ordering::Less | Ordering::Equal)) {
                             return BottomCause::Conflict.into();
                         }
-                        let clamped = fx.clamp(flo, fhi);
-                        return match &x {
-                            Value::Atom(AtomKind::Int(ix), _, _) => {
-                                if (clamped - fx).abs() < f64::EPSILON {
-                                    Value::Atom(AtomKind::Int(ix.clone()), res_e, None)
-                                } else {
-                                    Value::Atom(AtomKind::Float(clamped), res_e, None)
-                                }
-                            }
-                            _ => Value::Atom(AtomKind::Float(clamped), res_e, None),
+                        let k = if crate::value::num_cmp(&kx, &klo) == Some(Ordering::Less) {
+                            klo
+                        } else if crate::value::num_cmp(&kx, &khi) == Some(Ordering::Greater) {
+                            khi
+                        } else {
+                            kx
                         };
+                        return Value::Atom(k, res_e, None);
                     }
                     return BottomCause::Conflict.into();
                 }
@@ -1656,15 +1654,14 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
     // ── Order wave W1: numeric order predicates (SPEC_09 §3) ───────────
     // Binary {0: x, 1: y} → #true | #false; int/float cross by value;
     // non-numeric → ⊥ #conflict (math-family error form).
-    fn numeric_pair(x: &Value, y: &Value) -> Option<(f64, f64)> {
-        let to_f = |v: &Value| -> Option<f64> {
-            match v {
-                Value::Atom(AtomKind::Int(n), _, _) => n.to_f64(),
-                Value::Atom(AtomKind::Float(f), _, _) => Some(*f),
-                _ => None,
+    /// Q-115: two numbers by value, exactly — never through f64.
+    fn numeric_order(x: &Value, y: &Value) -> Option<Option<std::cmp::Ordering>> {
+        match (x, y) {
+            (Value::Atom(a @ (AtomKind::Int(_) | AtomKind::Float(_)), _, _), Value::Atom(b @ (AtomKind::Int(_) | AtomKind::Float(_)), _, _)) => {
+                Some(crate::value::num_cmp(a, b))
             }
-        };
-        Some((to_f(x)?, to_f(y)?))
+            _ => None,
+        }
     }
     fn bool_tag(b: bool, e: EffectTag) -> Value {
         Value::Atom(
@@ -1683,8 +1680,8 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
                             let x = oo.force(vx.clone(), ctx).collapse().clone();
                             let y = oo.force(vy.clone(), ctx).collapse().clone();
                             let res_e = x.effect().union(y.effect());
-                            return match numeric_pair(&x, &y) {
-                                Some((a, b)) => bool_tag(($op)(a, b), res_e),
+                            return match numeric_order(&x, &y) {
+                                Some(o) => bool_tag(($op)(o), res_e),
                                 None => BottomCause::Conflict.into(),
                             };
                         }
@@ -1694,8 +1691,9 @@ pub fn register_complex_builtins(m: &mut HashMap<String, Arc<BuiltinFn>>) {
             );
         };
     }
-    math_cmp_pred!("math.lt", |a: f64, b: f64| a < b);
-    math_cmp_pred!("math.lte", |a: f64, b: f64| a <= b);
-    math_cmp_pred!("math.gt", |a: f64, b: f64| a > b);
-    math_cmp_pred!("math.gte", |a: f64, b: f64| a >= b);
+    use std::cmp::Ordering;
+    math_cmp_pred!("math.lt", |o: Option<Ordering>| o == Some(Ordering::Less));
+    math_cmp_pred!("math.lte", |o: Option<Ordering>| matches!(o, Some(Ordering::Less | Ordering::Equal)));
+    math_cmp_pred!("math.gt", |o: Option<Ordering>| o == Some(Ordering::Greater));
+    math_cmp_pred!("math.gte", |o: Option<Ordering>| matches!(o, Some(Ordering::Greater | Ordering::Equal)));
 }

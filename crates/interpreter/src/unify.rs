@@ -1188,7 +1188,7 @@ fn range_unify(a: &Value, b: &Value) -> Option<Value> {
 
 fn range_membership(atom: &Value, start: &Value, end: &Value, step: Option<&Value>) -> Value {
     // x must be a numeric atom
-    let Some(x) = numeric_f64(atom) else {
+    let Some(x) = numeric_f64(atom).and(bound_key(atom)) else {
         return BottomCause::Conflict.into();
     };
     let Some(lo) = bound_key(start) else {
@@ -1198,13 +1198,13 @@ fn range_membership(atom: &Value, start: &Value, end: &Value, step: Option<&Valu
         return BottomCause::Conflict.into();
     };
     // closed-closed: lo ≤ x ≤ hi
-    if bound_cmp(&lo, &bound_key_num(x))
+    if bound_cmp(&lo, &x)
         .map(|o| o == Ordering::Greater)
         .unwrap_or(true)
     {
         return BottomCause::Conflict.into();
     }
-    if bound_cmp(&bound_key_num(x), &hi)
+    if bound_cmp(&x, &hi)
         .map(|o| o == Ordering::Greater)
         .unwrap_or(true)
     {
@@ -1268,22 +1268,18 @@ fn range_intersect(a: &Value, b: &Value) -> Value {
     }
 }
 
-/// Bound key: (-1, _) = −∞ (TagStart), (1, _) = +∞ (TagEnd), (0, f) = number.
-#[derive(Clone, Copy)]
-struct BoundKey(i8, f64);
+/// Bound key: (-1, _) = −∞ (TagStart), (1, _) = +∞ (TagEnd), (0, k) = number,
+/// kept as written — Q-115: bounds compare by value, exactly, never through f64.
+#[derive(Clone)]
+struct BoundKey(i8, AtomKind);
 
 fn bound_key(v: &Value) -> Option<BoundKey> {
     match v {
-        Value::Atom(AtomKind::TagStart, _, _) => Some(BoundKey(-1, 0.0)),
-        Value::Atom(AtomKind::TagEnd, _, _) => Some(BoundKey(1, 0.0)),
-        Value::Atom(AtomKind::Int(i), _, _) => Some(BoundKey(0, i.to_f64()?)),
-        Value::Atom(AtomKind::Float(f), _, _) => Some(BoundKey(0, *f)),
+        Value::Atom(AtomKind::TagStart, _, _) => Some(BoundKey(-1, AtomKind::Float(0.0))),
+        Value::Atom(AtomKind::TagEnd, _, _) => Some(BoundKey(1, AtomKind::Float(0.0))),
+        Value::Atom(k @ (AtomKind::Int(_) | AtomKind::Float(_)), _, _) => Some(BoundKey(0, k.clone())),
         _ => None,
     }
-}
-
-fn bound_key_num(x: f64) -> BoundKey {
-    BoundKey(0, x)
 }
 
 fn bound_cmp(a: &BoundKey, b: &BoundKey) -> Option<Ordering> {
@@ -1293,22 +1289,22 @@ fn bound_cmp(a: &BoundKey, b: &BoundKey) -> Option<Ordering> {
         (_, -1) => Some(Ordering::Greater),
         (1, _) => Some(Ordering::Greater),
         (_, 1) => Some(Ordering::Less),
-        (0, 0) => a.1.partial_cmp(&b.1),
+        (0, 0) => crate::value::num_cmp(&a.1, &b.1),
         _ => None,
     }
 }
 
 fn bound_max(a: &BoundKey, b: &BoundKey) -> BoundKey {
     match bound_cmp(a, b) {
-        Some(Ordering::Less) => *b,
-        _ => *a,
+        Some(Ordering::Less) => b.clone(),
+        _ => a.clone(),
     }
 }
 
 fn bound_min(a: &BoundKey, b: &BoundKey) -> BoundKey {
     match bound_cmp(a, b) {
-        Some(Ordering::Greater) => *b,
-        _ => *a,
+        Some(Ordering::Greater) => b.clone(),
+        _ => a.clone(),
     }
 }
 
@@ -1316,18 +1312,13 @@ fn bound_to_value(k: &BoundKey) -> Value {
     match k.0 {
         -1 => Value::Atom(AtomKind::TagStart, EffectTag::Pure, None),
         1 => Value::Atom(AtomKind::TagEnd, EffectTag::Pure, None),
-        _ => {
+        _ => match &k.1 {
             // Prefer Int when the float is integral
-            if k.1.fract() == 0.0 && k.1.abs() < (i64::MAX as f64) {
-                Value::Atom(
-                    AtomKind::Int(BigInt::from(k.1 as i64)),
-                    EffectTag::Pure,
-                    None,
-                )
-            } else {
-                Value::Atom(AtomKind::Float(k.1), EffectTag::Pure, None)
+            AtomKind::Float(f) if f.fract() == 0.0 && f.abs() < (i64::MAX as f64) => {
+                Value::Atom(AtomKind::Int(BigInt::from(*f as i64)), EffectTag::Pure, None)
             }
-        }
+            n => Value::Atom(n.clone(), EffectTag::Pure, None),
+        },
     }
 }
 
