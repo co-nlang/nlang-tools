@@ -36,8 +36,8 @@ fn evolve_all(engine: &Ouroboros, universe: &mut Universe, src: &str) {
 
 fn observe(engine: &Ouroboros, universe: &Universe, path: &Path) -> Value {
     let root = engine.unify(
-        Value::Combo(universe.root.clone()),
-        Value::Combo(universe.staged.clone()),
+        Value::Combo((*universe.root).clone()),
+        Value::Combo((*universe.staged).clone()),
     );
     let root_val = match root {
         Value::Combo(r) => r,

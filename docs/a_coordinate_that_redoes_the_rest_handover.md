@@ -68,16 +68,60 @@
 
 ### 8.1 射程逐項對照
 
+*   **M1** r1 綠。整數、字串、算式、讀自己欄位的記錄、清單、local 坐標、都讀同一個坐標、兩個檔一起，N 與 4N 都在 30 秒內落地，4N 少於 N 的 8 倍。
+*   **M2** r2 綠。32000 個元素的根上寫 250 個坐標，扣掉寫一個的固定成本，少於空根上的 2 倍。
+*   **另一半** g1 十一組、g2 三組都在。前向引用、`_`、同一個值兩次、spread、兩個檔、寫在根上、改寫、自我參照、local、衝突拒收、`~%Config`、`#nondet` 都走原路。
+*   上一張卡：規模看 N 對 4N；計時格依序跑。捷徑的證明在 8.4 Q2。
+*   沒有另一條把整個工作集再交會一遍、而探針量得到的入口。`unify.rs` 的 `merge_axis` 沒有改，只把 `read_names` 改成 `pub(crate)`。
+
 ### 8.2 順手改動（逐項指名）
+
+`Universe.root`、`Universe.staged`、`EvalContext.staged` 改成 `Arc<ComboVal>`。型別跟著改的既有測試是四個函式各一行：`refine_test` 的 `shadow_scan_finds_field_in_committed_root`、`stage4_acceptance_test` 的 `fuel_after_observe`、`stage5_acceptance_probe_test` 的 `observe`、`stage5_redline_test` 的 `fuel_after_observe`。`oo/src/main.rs` 的 `run_status` 與 `run_one_shot` 兩處把 `staged` 解參考。工單說六個測試；參考提交是這四個函式加這兩處。
+
+其餘與 `q117-ref` `84b3256` 逐位元組相同：`universe.rs`、`lib.rs`、`unify.rs`、`oo/src/main.rs`，以及上面四個測試。探針、版本、`CHANGELOG`、規格、向量、`Cargo.lock` 都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+通過數與工單相同：2909。目標數這棵樹是 310，工單寫 307。307 是加寬清單格之前的參考日誌；上一張卡是 309 個目標，本探針再加一個。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 寫一個坐標時，與工作集或根成正比的是：深複製根（`EvalContext::new(self.root.clone())`）、深複製工作集（`ctx.staged = Some(self.staged.clone())`）、對整個工作集 `unify_universe`、對 session 差量再交會一次、`restamp_thunk_effects` 走過全部、`conflict_made` 走一遍。
+
+拿掉的方式：根與工作集改成 `Arc`，求值拿到的是指標（`new_shared`）。新來的坐標都是工作集與差量裡沒有的資料或 local 鍵、值是可直插的、讀到的名字都已經在、工作集也不讀這些新名字時，把它們插進去，只重算這些新值的 thunk 效應，讀名索引跟著加上去。否則索引作廢，走原來的兩次交會與 `restamp`。
+
+**Q2。** `OO_Q117_SHADOW` 指到一個檔時，每走一次原地的路就照原路再算一次（兩次 `unify_universe` 加 `restamp`），比 `content_hash`、鍵序、效應、`closed`、印出的樣子，不同就 panic。全樹開著它跑，略過本探針的 r1、r2（這兩格有 30 秒上限，每一步做兩遍會被強殺；g1、g2 有跑，都過）。40267 次原地，檔裡 40267 行都是 `hit`，0 次 panic。這輪 0 失敗。
+
+**Q3。** `k_i: i` 的演化，2 GB 上限。
+
+| 行 | 新 | v0.117.0 |
+| --- | --- | --- |
+| 1000 | 0.680 s | 11.851 s |
+| 4000 | 2.643 s | 151.540 s |
+| 16000 | 10.666 s | 2362.941 s |
+
+4 倍行數：新的是 3.9 倍與 4.0 倍，舊的是 12.8 倍與 15.6 倍。32000 個元素的根上再寫 1000 個坐標：新的 1.930 s，v0.117.0 45.016 s。
+
+**Q4。** 仍走完整交會的：pin 模式；名字已經在工作集或這次差量裡；工作集是閉的、是表、或帶 spread；進來的不是純資料／local，或值不是原子、不帶 `$` 且沒有 context 的 thunk、這種值組成的記錄（只留欄位與清單的 `%kind`）或聯集；讀到一個還不在工作集、根、`~%` 裡的名字；工作集裡已有的值讀到這些新名字。`_`、⊥、錨點、視界、引用、前向引用、表、spread、`~%Config` 都在這裡面。它們不能走原地的路，因為完整交會會丟掉 `_`、把 ⊥ 收成裸 `#conflict`、或讓後寫的名字被先寫的值讀到。一個這種坐標付一次整個工作集的交會（兩次 `unify_universe` 加 `restamp`）。根與工作集不再逐坐標深複製，這一份是交會本身。
 
 ### 8.5 探針
 
+`a_coordinate_that_redoes_the_rest_probe_test` **4／4**。單獨一輪 `finished in 56.56s`，EXIT 0。閘門裡 `finished in 53.35s`（`a_coordinate_that_redoes_the_rest_probe_test-1dbed67a3330580b`）。探針檔與 `ccc6ae3` 相同，未改。`rustfmt` 未掃。
+
 ### 8.6 數字
 
+引擎與四個測試、`main.rs` 相對 `34b7551`：8 檔，+374／−88。加上本節，交付含這份交接。
+
+探針 4／4。閘門：GATE 1 2026-11-02T02:15:11+08:00 WALL 1303 s；GATE 2 02:36:54 1294 s；GATE 3 02:58:28 1296 s。正規化 3836 行，sha `2c695222758f684f8ed8e7340bab30774a57253d2fb7f9b29486d48fe7cec1c8`，310 個結果，加總 **2909** 通過、0 失敗，`test ` 行 `ok` 2908，`Running` 307，`running` 310。三輪正規化相同。原始 sha 前綴 `7187f779592dcbe3`、`917c1aa1103f4a3a`、`988d0c9f21937fe3`。位元組都是 307276。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 這輪編譯在閘門裡 Finished 0.40 s（驗證那輪已經編過），interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-02T03:20:04+08:00 Finished 4.79 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q117/conf.empty`，前後 `ls -A | wc -l` 都是 0，10 s。`oo` 11451992 位元組，mtime 2026-11-02 00:56:07.346022786 +0800。閘門沒有重編它。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `c9/6c29378c…`（16029 位元組）。新倉 `layout=9`，`encoding=10`。
+
 ### 8.7 你認為需要改規格之處
+
+寫一個坐標的成本該是那個坐標。這是工作集的結構，不是新的語義。規格文字、新向量與 `CHANGELOG` 未改。N 個欄位的記錄身分、每個元素的記憶體常數，仍是另開的事。
 
 ## 9. 驗收（驗收方填）

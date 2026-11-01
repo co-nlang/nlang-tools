@@ -133,7 +133,7 @@ pub struct EvalContext {
     pub root_caid_cache: Option<ContentHash>,
     /// Lexical scope frames, Arc-shared (D1 nesting). See Thunk.closure.
     pub scopes: Vec<std::sync::Arc<ComboVal>>,
-    pub staged: Option<ComboVal>,
+    pub staged: Option<Arc<ComboVal>>,
     pub computing: HashSet<String>,
     pub call_history: HashMap<String, Vec<ContentHash>>,
     /// L2-17: thunk content-hashes currently being forced in this observation.
@@ -232,6 +232,13 @@ pub struct EvalContext {
 }
 
 impl EvalContext {
+    /// Q-117: a context over a root already shared — no copy of it.
+    pub fn new_shared(root: Arc<ComboVal>) -> Self {
+        let mut ctx = Self::new(ComboVal::default());
+        ctx.root = root;
+        ctx
+    }
+
     pub fn new(root: ComboVal) -> Self {
         let mut hasher = sha2::Sha256::new();
         hasher.update(b"default");
@@ -4482,7 +4489,7 @@ impl Ouroboros {
                 if let Some(eff) = crate::universe::effective_config(
                     &ctx.root,
                     &ctx.standard_root,
-                    ctx.staged.as_ref(),
+                    ctx.staged.as_deref(),
                 ) {
                     self.record_dep(ctx, "~%Config");
                     return Value::Combo(eff);
@@ -4691,7 +4698,7 @@ impl Ouroboros {
                     if let Some(eff) = crate::universe::effective_config(
                         &ctx.root,
                         &ctx.standard_root,
-                        ctx.staged.as_ref(),
+                        ctx.staged.as_deref(),
                     ) {
                         found = Some(Value::Combo(eff));
                         self.record_dep(ctx, "~%Config");
