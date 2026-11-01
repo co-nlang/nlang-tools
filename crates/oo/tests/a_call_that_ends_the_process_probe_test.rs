@@ -461,7 +461,9 @@ fn g1_what_answered_answers_the_same() {
     let roots = [
         ("r: ~%List./range (0, 5)", "da3121211313c07a3d880bd144b85e18c9b6d419a122ae7500a8357f60725b91"),
         ("r: ~%Str./repeat (3, \"ab\")", "3ae5c3fd119898bc4b4b4832310387d2cc6f8a3332585f25049da3729695f156"),
-        ("r: ~%Math./clamp (1, 3, 5)", "af54e9d17643ac667071bb048984da18f61fb23eb5ab5aa3c579ab9238e6d6d4"),
+        // Q-115 (D125): a clamp that crosses a bound answers that bound as
+        // written — the root of `r: 3`, not of `r: 3.0` as at v0.110.0.
+        ("r: ~%Math./clamp (1, 3, 5)", "02992e9f54b9b33f3fd414d81156ba336d797e268cc15cab7b0881dcf127521a"),
         ("r: ~%Math./pow (2, 100)", "ed17526b2822a517403987b0528e0403ccc557f4950a646b27e0b86609769330"),
         ("r: ~%Math./factorial (20)", "51ce4814af2f157bb521f6ea3b46542148366f30387c43270b9e8d7901c7591e"),
         ("r: ~%Math./choose (10, 3)", "873b93d90e1f1ee29dd83b718585cf266cae7084c4d3528a4325a22ac08f8549"),
