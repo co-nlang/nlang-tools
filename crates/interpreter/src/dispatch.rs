@@ -391,12 +391,12 @@ pub(crate) fn canonical_bodies(v: Value) -> Value {
                 &mut c.system,
                 &mut c.local,
             ] {
-                let keys: Vec<String> = axis.keys().cloned().collect();
-                for k in keys {
-                    if let Some(x) = axis.shift_remove(&k) {
-                        axis.insert(k, canonical_bodies(x));
-                    }
-                }
+                // Q-116: one pass in order; removing and re-inserting each
+                // key shifts the whole map, N^2 for N keys.
+                *axis = std::mem::take(axis)
+                    .into_iter()
+                    .map(|(k, x)| (k, canonical_bodies(x)))
+                    .collect();
             }
             Value::Combo(c)
         }
