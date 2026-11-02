@@ -1470,23 +1470,34 @@ fn strip_versions(v: &mut Value, c: &ComboVal) {
 /// this record's node, so a later meet of the record is a meet of it.
 pub fn own_its_frames(c: &mut ComboVal) {
     let mut own: Vec<(*const ComboVal, Option<std::sync::Arc<ComboVal>>)> = Vec::new();
+    // Q-118: every field holds the same frame; whether it reads as the
+    // record is asked once per frame, not once per field.
+    let mut read_as: std::collections::HashMap<*const ComboVal, (std::sync::Arc<ComboVal>, bool)> =
+        std::collections::HashMap::new();
     fn visit(
         v: &mut Value,
         c: &ComboVal,
         id: &mut u64,
         own: &mut Vec<(*const ComboVal, Option<std::sync::Arc<ComboVal>>)>,
+        read_as: &mut std::collections::HashMap<*const ComboVal, (std::sync::Arc<ComboVal>, bool)>,
     ) {
         match v {
             Value::Thunk { closure, .. } => {
                 // The record's own frame is the outermost that reads as it,
                 // whatever node its own read-back gave it: a literal spread
                 // into it, written alike, sits inside.
-                let own_at = closure.iter().position(|f| !is_meet_frame(f) && reads_as(c, f));
+                let own_at = closure.iter().position(|f| {
+                    !is_meet_frame(f)
+                        && read_as
+                            .entry(std::sync::Arc::as_ptr(f))
+                            .or_insert_with(|| (std::sync::Arc::clone(f), reads_as(c, f)))
+                            .1
+                });
                 for (at, f) in closure.iter_mut().enumerate() {
                     if is_meet_frame(f) {
                         let m = std::sync::Arc::make_mut(f);
                         for (_, side) in m.local.iter_mut() {
-                            visit(side, c, id, own);
+                            visit(side, c, id, own, read_as);
                         }
                         continue;
                     }
@@ -1516,7 +1527,7 @@ pub fn own_its_frames(c: &mut ComboVal) {
             Value::Combo(inner) => {
                 for axis in [&mut inner.data, &mut inner.local, &mut inner.rules, &mut inner.types, &mut inner.meta, &mut inner.system] {
                     for (_, fv) in axis.iter_mut() {
-                        visit(fv, c, id, own);
+                        visit(fv, c, id, own, read_as);
                     }
                 }
             }
@@ -1527,7 +1538,7 @@ pub fn own_its_frames(c: &mut ComboVal) {
     let mut id = c.node_id;
     for axis in [&mut c.data, &mut c.local, &mut c.rules, &mut c.types, &mut c.meta, &mut c.system] {
         for (_, fv) in axis.iter_mut() {
-            visit(fv, &probe, &mut id, &mut own);
+            visit(fv, &probe, &mut id, &mut own, &mut read_as);
         }
     }
     c.node_id = id;
@@ -1612,27 +1623,55 @@ impl Default for ComboVal {
     }
 }
 
-fn mark_combo_spans_unknown(combo: &mut ComboVal) {
+/// Q-118: one pass over a value meets a frame shared by every field it was
+/// sealed into once. Keyed by the frame before the pass; the old `Arc` is
+/// kept so its address is not reused while the pass runs.
+type FrameMemo = std::collections::HashMap<
+    *const ComboVal,
+    (std::sync::Arc<ComboVal>, std::sync::Arc<ComboVal>),
+>;
+
+/// Replace each frame by `f` of it, once per shared frame.
+fn map_frames_once(
+    closure: &mut [std::sync::Arc<ComboVal>],
+    memo: &mut FrameMemo,
+    f: &mut dyn FnMut(&mut ComboVal, &mut FrameMemo),
+) {
+    for frame in closure {
+        let key = std::sync::Arc::as_ptr(frame);
+        if let Some((_, done)) = memo.get(&key) {
+            *frame = std::sync::Arc::clone(done);
+            continue;
+        }
+        let mut c = (**frame).clone();
+        f(&mut c, memo);
+        let done = std::sync::Arc::new(c);
+        let old = std::mem::replace(frame, std::sync::Arc::clone(&done));
+        memo.insert(key, (old, done));
+    }
+}
+
+fn mark_combo_spans_unknown(combo: &mut ComboVal, memo: &mut FrameMemo) {
     for value in combo.data.values_mut() {
-        value.mark_spans_unknown();
+        value.mark_spans_unknown_in(memo);
     }
     for value in combo.types.values_mut() {
-        value.mark_spans_unknown();
+        value.mark_spans_unknown_in(memo);
     }
     for value in combo.rules.values_mut() {
-        value.mark_spans_unknown();
+        value.mark_spans_unknown_in(memo);
     }
     for value in combo.meta.values_mut() {
-        value.mark_spans_unknown();
+        value.mark_spans_unknown_in(memo);
     }
     for value in combo.system.values_mut() {
-        value.mark_spans_unknown();
+        value.mark_spans_unknown_in(memo);
     }
     for value in combo.local.values_mut() {
-        value.mark_spans_unknown();
+        value.mark_spans_unknown_in(memo);
     }
     for value in &mut combo.pending_spreads {
-        value.mark_spans_unknown();
+        value.mark_spans_unknown_in(memo);
     }
 }
 
@@ -2759,7 +2798,7 @@ impl Value {
     pub fn for_cas_storage(&self) -> Self {
         let mut projected = self.clone();
         projected.mark_spans_unknown();
-        projected.materialize_effect_fields();
+        projected.materialize_effect_fields_in(&mut FrameMemo::new());
         projected
     }
 
@@ -2777,7 +2816,7 @@ impl Value {
     /// as the ordinary hashed `%effect` meta field.  An absent field is the
     /// canonical spelling of `#pure`; every other tag, including `#cached`,
     /// is written down.
-    fn materialize_effect_fields(&mut self) {
+    fn materialize_effect_fields_in(&mut self, memo: &mut FrameMemo) {
         match self {
             Value::Combo(combo) => {
                 for value in combo
@@ -2790,7 +2829,7 @@ impl Value {
                     .chain(combo.local.values_mut())
                     .chain(combo.pending_spreads.iter_mut())
                 {
-                    value.materialize_effect_fields();
+                    value.materialize_effect_fields_in(memo);
                 }
                 if combo.effect.is_pure() {
                     if matches!(combo.meta.get("effect"), Some(Value::Atom(AtomKind::Tag(tag), _, _)) if tag == "pure")
@@ -2805,43 +2844,43 @@ impl Value {
             }
             Value::Union(values) => {
                 for value in values {
-                    value.materialize_effect_fields();
+                    value.materialize_effect_fields_in(memo);
                 }
             }
             Value::Range { start, end, step } => {
-                start.materialize_effect_fields();
-                end.materialize_effect_fields();
+                start.materialize_effect_fields_in(memo);
+                end.materialize_effect_fields_in(memo);
                 if let Some(step) = step {
-                    step.materialize_effect_fields();
+                    step.materialize_effect_fields_in(memo);
                 }
             }
             Value::Complement { within, without } => {
-                within.materialize_effect_fields();
-                without.materialize_effect_fields();
+                within.materialize_effect_fields_in(memo);
+                without.materialize_effect_fields_in(memo);
             }
             Value::Blur(blur) => {
                 if let Some(body) = blur.partial_body.as_mut() {
-                    body.materialize_effect_fields();
+                    body.materialize_effect_fields_in(memo);
                 }
                 for horizon in &mut blur.co_horizons {
                     if let Some(body) = horizon.partial_body.as_mut() {
-                        body.materialize_effect_fields();
+                        body.materialize_effect_fields_in(memo);
                     }
                 }
             }
             Value::Thunk {
                 closure, context, ..
             } => {
-                for frame in closure {
-                    let mut value = Value::Combo(std::sync::Arc::make_mut(frame).clone());
-                    value.materialize_effect_fields();
+                map_frames_once(closure, memo, &mut |c, memo| {
+                    let mut value = Value::Combo(std::mem::take(c));
+                    value.materialize_effect_fields_in(memo);
                     let Value::Combo(combo) = value else {
                         unreachable!()
                     };
-                    *std::sync::Arc::make_mut(frame) = combo;
-                }
+                    *c = combo;
+                });
                 if let Some(context) = context {
-                    context.materialize_effect_fields();
+                    context.materialize_effect_fields_in(memo);
                 }
             }
             _ => {}
@@ -2849,11 +2888,15 @@ impl Value {
     }
 
     fn mark_spans_unknown(&mut self) {
+        self.mark_spans_unknown_in(&mut FrameMemo::new());
+    }
+
+    fn mark_spans_unknown_in(&mut self, memo: &mut FrameMemo) {
         match self {
-            Value::Combo(combo) => mark_combo_spans_unknown(combo),
+            Value::Combo(combo) => mark_combo_spans_unknown(combo, memo),
             Value::Union(items) => {
                 for item in items {
-                    item.mark_spans_unknown();
+                    item.mark_spans_unknown_in(memo);
                 }
             }
             Value::Code(expr) => expr.mark_spans_unknown(),
@@ -2864,32 +2907,30 @@ impl Value {
                 ..
             } => {
                 expr.mark_spans_unknown();
-                for frame in closure {
-                    mark_combo_spans_unknown(std::sync::Arc::make_mut(frame));
-                }
+                map_frames_once(closure, memo, &mut |c, memo| mark_combo_spans_unknown(c, memo));
                 if let Some(context) = context {
-                    context.mark_spans_unknown();
+                    context.mark_spans_unknown_in(memo);
                 }
             }
             Value::Ref(path) => path.span = Span::unknown(),
             Value::Bottom(detail) => {
                 if let Some(expected) = &mut detail.expected {
-                    expected.mark_spans_unknown();
+                    expected.mark_spans_unknown_in(memo);
                 }
                 if let Some(found) = &mut detail.found {
-                    found.mark_spans_unknown();
+                    found.mark_spans_unknown_in(memo);
                 }
             }
             Value::Range { start, end, step } => {
-                start.mark_spans_unknown();
-                end.mark_spans_unknown();
+                start.mark_spans_unknown_in(memo);
+                end.mark_spans_unknown_in(memo);
                 if let Some(step) = step {
-                    step.mark_spans_unknown();
+                    step.mark_spans_unknown_in(memo);
                 }
             }
             Value::Complement { within, without } => {
-                within.mark_spans_unknown();
-                without.mark_spans_unknown();
+                within.mark_spans_unknown_in(memo);
+                without.mark_spans_unknown_in(memo);
             }
             Value::Top | Value::TopCaused { .. } | Value::Atom(..) | Value::Blur(_) => {}
         }
@@ -4458,7 +4499,8 @@ impl ComboVal {
         // Q-083 / D106. The memo is the current epoch only. A frozen
         // recompute must not read it or replace it.
         let legacy = crate::bn_serial::identity_is_legacy()
-            || crate::bn_serial::hidden_facets_as_local();
+            || crate::bn_serial::hidden_facets_as_local()
+            || crate::bn_serial::frames_inline();
         if !legacy {
             if let Ok(guard) = self.cache_id.read() {
                 if let Some(ref h) = *guard {

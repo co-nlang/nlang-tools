@@ -2366,7 +2366,11 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     let hidden = to_enc >= 9 && from_enc < 9;
     // Encoding 10 (D116) is refused by every tagged engine through v0.100.0.
     let complements = to_enc >= 10 && from_enc < 10;
-    let newest = if complements {
+    // Encoding 11 (D126) is refused by every tagged engine through v0.118.0.
+    let frame_digests = to_enc >= 11 && from_enc < 11;
+    let newest = if frame_digests {
+        "v0.118.0"
+    } else if complements {
         "v0.100.0"
     } else if hidden {
         "v0.99.0"
@@ -2451,10 +2455,17 @@ fn migrate_cost(declaration: &str, from_enc: u32, to_enc: u32) -> String {
     } else {
         String::new()
     };
+    // D126: v0.101.0 through v0.118.0 open encoding=10 and do not open
+    // encoding=11; name them when the range above runs past them.
+    let frame_digest_clause = if frame_digests && engine_ord(oldest) < engine_ord("v0.101.0") {
+        " oo v0.101.0 through v0.118.0 open encoding=10 and do not open encoding=11.".to_string()
+    } else {
+        String::new()
+    };
     format!(
         "Migrating this store from {from} to layout={target} will make it unopenable \
          by {who}.{layout5_clause}{rows_clause}{frames_clause}{hidden_clause}\
-         {complement_clause}{encoding_note}"
+         {complement_clause}{frame_digest_clause}{encoding_note}"
     )
 }
 
@@ -2485,7 +2496,8 @@ fn first_engine_that_opens_before(declaration: &str, enc: u32, newest: &str) -> 
             7 => "v0.95.0",
             8 => "v0.98.0",
             9 => "v0.100.0",
-            _ => "v0.101.0",
+            10 => "v0.101.0",
+            _ => "v0.119.0",
         };
         later_engine(by_layout, by_encoding)
     } else if declaration.parse::<u32>().is_ok() {

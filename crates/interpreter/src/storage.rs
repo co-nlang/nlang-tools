@@ -151,6 +151,10 @@ pub fn value_matches_stored_address(requested: &ContentHash, value: &Value) -> b
     if value_address_matches(requested, &value.content_hash()) {
         return true;
     }
+    let inline = crate::bn_serial::with_frames_inline(|| value.content_hash());
+    if value_address_matches(requested, &inline) {
+        return true;
+    }
     let hidden = crate::bn_serial::with_hidden_facets_as_local(|| value.content_hash());
     if value_address_matches(requested, &hidden) {
         return true;
@@ -207,7 +211,7 @@ fn commit_address_matches(requested: &ContentHash, recomputed: &ContentHash) -> 
 /// — including every future N (`layout=10`, `layout=99`). The past is a
 /// closed list, not "any value other than current".
 pub const STORE_LAYOUT_VERSION: u32 = 9;
-pub const OBJECT_ENCODING_VERSION: u32 = 10;
+pub const OBJECT_ENCODING_VERSION: u32 = 11;
 /// D112: the first encoding that carries a root's spread rows.
 pub const SPREAD_ROW_ENCODING: u32 = 7;
 /// D114: the first encoding whose documents write a closure frame once.
@@ -218,6 +222,9 @@ pub const HIDDEN_FACET_ENCODING: u32 = 9;
 /// D116: a complement value (`!0`, `@int & !0`). A store declaring less
 /// has no form for one and refuses it by name.
 pub const COMPLEMENT_ENCODING: u32 = 10;
+/// D126: a thunk's closure frame enters its identity by digest. A store
+/// declaring less receives the v0.118.0 rule (each frame written in full).
+pub const FRAME_DIGEST_ENCODING: u32 = 11;
 /// First layout whose new commits are addressed as the n/ value (D74).
 const VALUE_COMMIT_LAYOUT: u32 = 6;
 /// First layout whose `refine --sign` signs the whole commit (D76).
@@ -627,6 +634,9 @@ impl ObjectStore {
         if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
             return crate::bn_serial::with_hidden_facets_as_local(|| self.put_value(value));
         }
+        if self.encoding < FRAME_DIGEST_ENCODING && !crate::bn_serial::frames_inline() {
+            return crate::bn_serial::with_frames_inline(|| self.put_value(value));
+        }
         self.refuse_complement(value)?;
         let durable = if self.encoding < 4 {
             value.for_legacy_cas_storage()
@@ -656,6 +666,9 @@ impl ObjectStore {
         }
         if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
             return crate::bn_serial::with_hidden_facets_as_local(|| self.put_root(root, standard));
+        }
+        if self.encoding < FRAME_DIGEST_ENCODING && !crate::bn_serial::frames_inline() {
+            return crate::bn_serial::with_frames_inline(|| self.put_root(root, standard));
         }
         self.refuse_complement(&Value::Combo(root.clone()))?;
         if self.encoding < 4 {
@@ -807,6 +820,9 @@ impl ObjectStore {
         }
         if self.encoding < HIDDEN_FACET_ENCODING && !crate::bn_serial::hidden_facets_as_local() {
             return crate::bn_serial::with_hidden_facets_as_local(|| self.put_commit(commit));
+        }
+        if self.encoding < FRAME_DIGEST_ENCODING && !crate::bn_serial::frames_inline() {
+            return crate::bn_serial::with_frames_inline(|| self.put_commit(commit));
         }
         let content;
         let hash;
