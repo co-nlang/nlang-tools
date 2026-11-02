@@ -193,12 +193,13 @@ fn r1_a_record_is_written_once() {
 /// r2 — A root holding a record of 200 readings `xI: d.b`: the same address
 /// as v0.97.0, a root file under 100 KB (v0.97.0: 2993617 bytes).
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn r2_a_reading_record_keeps_its_address_in_fewer_bytes() {
     let mut bad = Vec::new();
     let w = Ws::new("r2");
     let fields: Vec<String> = (0..200).map(|i| format!("x{i}: d.b")).collect();
     check(&mut bad, "commit", w.commit(&format!("d: {{ b: 3 }}\nq: {{ {} }}\n", fields.join(", "))), "");
-    check(&mut bad, "root", w.root(), "60d3f35a5b033490b1f0475e468ce324b28d444bdd793528b9104c4e4a8230f0");
+    check(&mut bad, "root", w.root(), "e849c890d68f17f573cdd375aeefb0352efc05b368d1b1524d91432a9c9679f5");
     let b = root_file_bytes(&w);
     check(&mut bad, &format!("root file {b} bytes under 100000"), (b > 0 && b < 100_000).to_string(), "true");
     check(&mut bad, "_.q.x199", w.eval("_.q.x199"), "3");
@@ -215,7 +216,7 @@ fn r3_an_old_store_keeps_its_form_until_migrate() {
     let w = Ws::new("r3-new");
     check(&mut bad, "new store", w.commit("r: { y: 1, z: y }\n"), "");
     let decl = fs::read_to_string(w.ws.join(".oo").join("objects.format")).unwrap_or_default();
-    check(&mut bad, "new store declares", decl.trim().to_string(), "encoding=10"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10
+    check(&mut bad, "new store declares", decl.trim().to_string(), "encoding=11"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     let (_, shared) = bytes_under(&w, "", "__nlang_frame");
     check(&mut bad, "new store shares frames", shared.to_string(), "true");
 
@@ -230,9 +231,9 @@ fn r3_an_old_store_keeps_its_form_until_migrate() {
     check(&mut bad, "old store: _.r.z", w.eval("_.r.z"), "1");
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     check(&mut bad, "migrate rc", rc.to_string(), "0");
-    check(&mut bad, "migrate names the lockout", o.contains("v0.95.0 through v0.100.0").to_string(), "true"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10
+    check(&mut bad, "migrate names the lockout", o.contains("v0.95.0 through v0.118.0").to_string(), "true"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     let decl = fs::read_to_string(oo.join("objects.format")).unwrap_or_default();
-    check(&mut bad, "migrated declares", decl.trim().to_string(), "encoding=10"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10
+    check(&mut bad, "migrated declares", decl.trim().to_string(), "encoding=11"); // AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     check(&mut bad, "after migrate: commit", w.commit("u: { y: 2, w: y }\n"), "");
     let (_, shared) = bytes_under(&w, "", "__nlang_frame");
     check(&mut bad, "after migrate shares frames", shared.to_string(), "true");
@@ -246,6 +247,7 @@ fn r3_an_old_store_keeps_its_form_until_migrate() {
 /// g1 — Addresses do not move (D114 Q2): five roots as v0.97.0 gives them,
 /// one of them holding a reference that sorts before its frame's definition.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_addresses_do_not_move() {
     let mut bad = Vec::new();
     let readings = |n: usize| {
@@ -258,10 +260,10 @@ fn g1_addresses_do_not_move() {
     };
     let cases = [
         ("lit 50", format!("r: {}\n", record(50, "f")), "b8d6b5ce6e077004e1076117d72e9f1f808af34f787d4f27fe39c9e0876856bd"),
-        ("readings 50", readings(50), "2ea74a11c8cbd90a62c021f918c80668693a65f9c6b7ee5da75a53f1ae7bc452"),
-        ("chain 50", chain, "336a3085d16e367fd059a150d568b6522ec819ce5338cf4e77cbc88b636b2728"),
-        ("mixed", "d: { b: 3 }\nc: { b: 3, k: 1 }\n...c\nr: { y: 1, z: y, w: d.b, f: (x -> x + y) }\nq: r.z + 1\n".to_string(), "ccd4b230a94929a80277173f305f0ed8f31d8720da8f836e157a576748808447"),
-        ("readings 200", readings(200), "3dd138529716114bf5fb953de2eb6a358348de32b6c5b0889b7a2b07358bffbd"),
+        ("readings 50", readings(50), "fa145747064beffb0b8c51306bfbe766f99eab90558affdbbd5055725c8ab0bb"),
+        ("chain 50", chain, "4e9f36efcb01cac63de25aefb5f9deb0d40126e62abb039939c776f30ff01475"),
+        ("mixed", "d: { b: 3 }\nc: { b: 3, k: 1 }\n...c\nr: { y: 1, z: y, w: d.b, f: (x -> x + y) }\nq: r.z + 1\n".to_string(), "ce0bfefee6d64baea5a6ff9a737eb8a51ea55a3629e6c7e91b4a5d85c7ea3a97"),
+        ("readings 200", readings(200), "cfe9e46ec7dab50417a5600206067423e53186358c8aed3beefea6000231bf2f"),
     ];
     for (name, src, root) in cases {
         let w = Ws::new(&format!("g1-{}", name.replace(' ', "-")));

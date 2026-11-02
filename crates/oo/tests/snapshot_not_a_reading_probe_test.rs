@@ -528,8 +528,9 @@ fn r7_absorption_does_not_rewrite_the_snapshot() {
 /// node table, and a unify-side `#blur`'s `node_content` is a combo of
 /// field-thunks. Measured: `d0967392…` → `41ec191e…`.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn p4_a_unify_side_blur_has_a_literal_address() {
-    const KNOWN: &str = "c13a68519f5ca190ad90889d0aef8934220b1c8adbd9c5fc1e2ccf14e774f464"; // Q-083／D106 紀元
+    const KNOWN: &str = "67d9ddd179f7970c106e6d36e7af72c8a1307fc9d126e056f59609aeec7d6873"; // Q-083／D106 紀元
     let got = caid("p4", &format!("{KNOB}p: {DEEP_A}\ncp: p.%caid\n"));
     assert_eq!(got, KNOWN, "the CHS inputs of a depth-exhausted #blur moved");
 }

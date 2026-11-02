@@ -299,13 +299,14 @@ fn g1_outside_stays_outside() {
 /// Combo always reached history. (Mutation: drop the local axis of every
 /// Combo at commit ⟹ red.)
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_other_roots_do_not_move() {
     let mut wrong = Vec::new();
     for (i, (src, want)) in [
         ("k: 1\n", "da409cd2a1b3e91d120926d95d8828941612c383fefd78beaa581eba5987af04"), // Q-083／D106 紀元
         ("t: { ~h: 3, k: 1 }\n", "4301f567daafdd0fbe7e73013a4c11887065abbc0eef695b228a587165e1bf31"), // Q-083／D106 紀元
-        ("t: { ~h: 3, u: { k: h } }\n", "d51afb3c7a0329670d12a958a2b362e54a1cdc38dbdf16b0315530a56fbdbaf8"), // Q-083／D106 紀元
-        ("c: { b: 2 }\nr: { q: c.b }\n", "a546ea04cb2e1f70e1f648434f7c59ee29fe30af7dc4aeab9d4b18ef12c49bde"), // Q-083／D106 紀元
+        ("t: { ~h: 3, u: { k: h } }\n", "70adab4ea5f35b11833d72d258743e2864f9db153a9ca61c3614da0585b29069"), // Q-083／D106 紀元
+        ("c: { b: 2 }\nr: { q: c.b }\n", "72f5857c095f79c5e57edd3d6a3aedff59a6a0b2b48dee1f5ed8d656f4f3463f"), // Q-083／D106 紀元
     ]
     .iter()
     .enumerate()

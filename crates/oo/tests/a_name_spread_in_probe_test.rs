@@ -394,10 +394,11 @@ fn g2_lexical_scope_stays_lexical() {
 /// itself. (Mutation: give every spread source the container it is written in,
 /// whether it reads outside itself or not ⟹ the last two move ⟹ red.)
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g3_unchanged_values_keep_their_root() {
     let mut wrong = Vec::new();
     for (i, (src, want)) in [
-        ("t: { j: 5, q: j }\n", "0a497aa11a795667d3410e900d1a9d94e661e0ad8fd3fe261f532e97338dda3b"), // Q-083／D106 紀元
+        ("t: { j: 5, q: j }\n", "4d8b97ca2a7fa4786960a6ae8a71add704985041d7fd632685946c0f9d2b60c9"), // Q-083／D106 紀元
         ("t: { ...{ j: 5 }, q: 1 }\n", "b34efdb693f17773f38e924e7ea0d53112323026d4a4938b23e8064ccd2e4c32"), // Q-083／D106 紀元
         ("t: { a: 1, ...{ b: 2 } }\n", "ee2c382ff3a0337e3b515e41d5c0891010ef8cf62c3323486fcf933bb2b02fea"), // Q-083／D106 紀元
         // Q-091／D110: `q: j` reads the universe, so it stores the recipe `j`
@@ -410,8 +411,8 @@ fn g3_unchanged_values_keep_their_root() {
         // liveness is the Q-091 probe's r9.
         // AMENDED 2026-10-19 for Q-093 (D112): the root keeps `...s` as a row (`126f1785…`).
         ("s: { j: 5 }\n...s\n", "2355e7e85357191262bea67cf0a3e83a6aacd11490c292ee49f9c893e7ea68cb|a77a72fa45067d1670401364424c9b8178ca1793a9b4a2aaf69fb3862f555b8c|126f178575b732d567189d84b5253b45e16f44474909ffef0395f0a876d36f3a"),
-        ("t: { ...{ j: 5, k: j } }\n", "4fe83f4335a89b7d930731c4f62525e4d492337c838c58a3925730702c28c8c4"), // Q-083／D106 紀元
-        ("t: { k: 2, ...{ k: 1, q: k } }\n", "cac4a2994d66033de214195d5ac85a970b3d6bba4d58248b7fcd7237cfbd8f2f"), // Q-083／D106 紀元
+        ("t: { ...{ j: 5, k: j } }\n", "c89398fd9f888efcf638c9606409259097c6f0bddd7cd9b2534f5b0b92f30664"), // Q-083／D106 紀元
+        ("t: { k: 2, ...{ k: 1, q: k } }\n", "a9700ce41629bebbd8f3e535249a90271f4aefeb6f255650dfe3910a0ee97a40"), // Q-083／D106 紀元
     ]
     .iter()
     .enumerate()

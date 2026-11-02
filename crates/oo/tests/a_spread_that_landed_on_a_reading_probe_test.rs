@@ -225,12 +225,13 @@ fn r2_a_late_clash_is_refused_without_counting() {
 /// for byte; a clash with a held answer, a field clash and a clash at a
 /// coordinate are refused as today.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_agreement_lands_and_other_clashes_stay_refused() {
     let mut bad = Vec::new();
     let agree = [
         ("reading", "d: { b: 3 }\nb: d.b\n", "c: { b: 3 }\n...c\n", "_.b", "3", "58cfac64f9581104702cfc72b4e2579dbf45f7c8999506504a439cd91f07fc27"),
         ("alias", "n: 3\nb: n\n", "c: { b: 3 }\n...c\n", "_.b", "3", "96c7b48985376d6763a4fc6ea462a14c8cb82c934bea75212bb36e69f4a9d17e"),
-        ("nested", "d: { b: 3 }\nb: { k: d.b }\n", "c: { b: { k: 3 } }\n...c\n", "_.b.k", "3", "8d79b9704d65714e436d2770d0222164bb8c8b5ccc3269463ccd4a2c2c772b0f"),
+        ("nested", "d: { b: 3 }\nb: { k: d.b }\n", "c: { b: { k: 3 } }\n...c\n", "_.b.k", "3", "43451d7d3a24391641feff6c5424b259a5d0986ceffec50619e65590e581e1b0"),
     ];
     for (name, held, later, read, want, root) in agree {
         let w = Ws::new(&format!("g1-{name}"));

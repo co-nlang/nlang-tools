@@ -195,18 +195,19 @@ fn three_ways(w1: &str, w2: &str, q: &str) -> (Vec<String>, Vec<String>) {
 /// reading, one root. (The root of a meet in place moves from v0.105.0: a
 /// met node's view no longer holds the frames it stands for — r4.)
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn r1_a_later_write_meets_the_node_read_back() {
     let mut bad = Vec::new();
     let cases = [
-        ("h: { k: @int, r: k }", "h: { k: 5 }", "_.h.r", "5", "2fc429bb463cdf2b1f922860c854f01f97f070d4783f16944093b80c4c0d0468"),
-        ("h: { k: @int, r: k }", "h.k: 5", "_.h.r", "5", "2fc429bb463cdf2b1f922860c854f01f97f070d4783f16944093b80c4c0d0468"),
-        ("h: { k: @int, r: [k] }", "h: { k: 5 }", "_.h.r", "[5]", "44536ebc5d892c3c22056e6ba8aa8692b3d2e40f5afe1bb44c4f6fecb0ea72d7"),
-        ("h: { k: @int, t: { u: k } }", "h: { k: 5 }", "_.h.t.u", "5", "3d9dc42715633d9674d45308558f3b40955fdb1c0ecf3d9fc77f5cbfcfbc700c"),
-        ("h: { k: @int, s: { r: ^.k } }", "h: { k: 5 }", "_.h.s.r", "5", "d5c0d912a537d186729ac0725a6900179f65321120f02f1711aeea613ac0bae3"),
-        ("h: { ~k: @int, r: k }", "h: { ~k: 5 }", "_.h.r", "5", "c1a2e99ca7e88df0f88ad53b1d64608fd6a0b938e873a117c563accee6fa4142"),
-        ("h: { k: @int, r: k | \"s\" }", "h: { k: 5 }", "_.h.r", "5 | \"s\"", "8e5dcd2e421e1bd551d6110f9d8f6157e1244ff9ccfe5e0872a44a6ac1c1d7ca"),
-        ("h: { k: @int, r: k, z: r }", "h: { k: 5 }", "_.h.z", "5", "7149c2c1ea151981460a9caa2d720f70cdb29d15de04e313502e11d82f6ab880"),
-        ("h: { a: { k: @int }, r: a.k }", "h: { a: { k: 5 } }", "_.h.r", "5", "2afbf965acbef2ff970efec9934646cd58bb701a3117527cdb4d3cf814df8d28"),
+        ("h: { k: @int, r: k }", "h: { k: 5 }", "_.h.r", "5", "9442c1a8a42308044508886839df77d0e2824a504b38444b386c90548a861096"),
+        ("h: { k: @int, r: k }", "h.k: 5", "_.h.r", "5", "9442c1a8a42308044508886839df77d0e2824a504b38444b386c90548a861096"),
+        ("h: { k: @int, r: [k] }", "h: { k: 5 }", "_.h.r", "[5]", "de95e2da2cad53be7d04e49b2247a50261f3f5b2a71a75c651ea94ad3da8c203"),
+        ("h: { k: @int, t: { u: k } }", "h: { k: 5 }", "_.h.t.u", "5", "fd54cbddc4ddd0855b9cd03f6f3f082d907c232b5e57963b63069430d190fbfb"),
+        ("h: { k: @int, s: { r: ^.k } }", "h: { k: 5 }", "_.h.s.r", "5", "931bc182ab7ffd241bddce6aa99af66d8eccb64dbd350bd8387e732173fd249b"),
+        ("h: { ~k: @int, r: k }", "h: { ~k: 5 }", "_.h.r", "5", "8ce3d21b8d0c833bb98d4dca5bfc9806e73a4d8309eae8a8b2c69d4f03f10dfd"),
+        ("h: { k: @int, r: k | \"s\" }", "h: { k: 5 }", "_.h.r", "5 | \"s\"", "39d26b0e1c8babb2e910dfd1b1bb2b0aaea1f89908440c5777bf68be06598ea8"),
+        ("h: { k: @int, r: k, z: r }", "h: { k: 5 }", "_.h.z", "5", "9105eb305c6e673018c210a9915edc3a69c01c92d8fe15ff0e584b020fc05431"),
+        ("h: { a: { k: @int }, r: a.k }", "h: { a: { k: 5 } }", "_.h.r", "5", "3566681144d4df52740990e82daa652d391c568ae8f860dd5f9d7addeef7a34b"),
     ];
     let mut n = 0;
     for (w1, w2, q, want, root) in cases {
@@ -313,15 +314,16 @@ fn r4_a_large_record_met_reads_the_met_node_in_time() {
 /// field written on both sides of one literal's meet, or twice in it): a
 /// later write meets it there — one reading, one root, three ways.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn r5_a_meet_left_for_the_node_read_back() {
     let mut bad = Vec::new();
     let cases = [
-        ("h: { k: @int, r: k } & { r: @int }", "h: { k: 5 }", "_.h.r", "5", "a218d7ccd07c2b72485b025d7fe4804ba2ae2f497243b50190859f8a5934a112"),
-        ("h: { k: @int, r: k } & { r: @int }", "h.k: 5", "_.h.r", "5", "a218d7ccd07c2b72485b025d7fe4804ba2ae2f497243b50190859f8a5934a112"),
-        ("h: { k: @int, r: k, r: @int }", "h: { k: 5 }", "_.h.r", "5", "22c9eea3230cdcb23c99885864e0679cbf0e86b7baaa0aa4dce28d230f3c1796"),
-        ("h: { k: @int, r: [k] } & { r: [@int] }", "h: { k: 5 }", "_.h.r", "[5]", "e2cebad690e753f40fc791f4afbd2dd906c5e32cc29985bb948e256afc8b43b1"),
-        ("h: { k: @int, r: k } & { k: @int, r: @int }", "h: { k: 5 }", "_.h.r", "5", "0a34b1f2b05c7c380bf097b93039d8cd6425f957314f54a505ef444a160bebda"),
-        ("h: { k: @int, s: { r: k } & { r: @int } }", "h: { k: 5 }", "_.h.s.r", "5", "39793070c6811e2ec786573078b7d7347ff500202247cf6d4b8df4d396e6e0d6"),
+        ("h: { k: @int, r: k } & { r: @int }", "h: { k: 5 }", "_.h.r", "5", "292e63a664d9626eb229ca785ad75f61dd6e0fa4008d83a4050121fda2e26489"),
+        ("h: { k: @int, r: k } & { r: @int }", "h.k: 5", "_.h.r", "5", "292e63a664d9626eb229ca785ad75f61dd6e0fa4008d83a4050121fda2e26489"),
+        ("h: { k: @int, r: k, r: @int }", "h: { k: 5 }", "_.h.r", "5", "5e8603ae2b279773f0fa7b8097d996be484a0bc656edb24ff9d676bef0d69bff"),
+        ("h: { k: @int, r: [k] } & { r: [@int] }", "h: { k: 5 }", "_.h.r", "[5]", "183561f88c53df175f87b8719693f62741afe11c730e3eb3fd920db44e2dd3c7"),
+        ("h: { k: @int, r: k } & { k: @int, r: @int }", "h: { k: 5 }", "_.h.r", "5", "7e3f147f5860a5fb69852f7c2be0a07f3023f4c781c3672c25da1f01a315d636"),
+        ("h: { k: @int, s: { r: k } & { r: @int } }", "h: { k: 5 }", "_.h.s.r", "5", "e3d8a66b1c0321c86ced84823e4e8538d8c4e41c3eff3dc9c8038a011efe6561"),
     ];
     let mut n = 0;
     for (w1, w2, q, want, root) in cases {
@@ -377,6 +379,7 @@ fn r6_a_large_record_with_meets_left_reads_the_met_node_in_time() {
 /// collision is refused at evolve every way (as on the root), a conflict a
 /// meet makes reads `_|_` every way, and every way reads the met node.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn r7_a_later_write_to_a_field_meets_in_the_met_node() {
     let mut bad = Vec::new();
     let mut n = 0;
@@ -393,11 +396,11 @@ fn r7_a_later_write_to_a_field_meets_in_the_met_node() {
     }
     for (w1, w2, q, want, root) in [
         ("h: { k: @int, r: k }\nh: { r: 6 }", "h: { k: 5 }", "_.h.r", "_|_ #conflict", "61b0ca48ad9bf0a397d86660a89884597bd132caa5fec56756311a3326829ed5"),
-        ("h: { k: @int, r: k }", "h: { r: 6 }", "_.h.r", "6", "42b704016598e2393bef30aa0beaaaabe8e2de9d6bfe8fcbad4dccfb07abcdea"),
-        ("h: { k: @int, s: { j: @int, r: k + 0, q: j } }", "h: { k: 5, s: { j: 6 } }", "[_.h.s.r, _.h.s.q]", "[5, 6]", "25f13cb104d9a99e8bdab6a95deca3d900c05988f551869975df7ed48bc7060d"),
+        ("h: { k: @int, r: k }", "h: { r: 6 }", "_.h.r", "6", "d41431b042f3c81745a286f917d3a333ba7687cdb773e35a9d4322222a70887c"),
+        ("h: { k: @int, s: { j: @int, r: k + 0, q: j } }", "h: { k: 5, s: { j: 6 } }", "[_.h.s.r, _.h.s.q]", "[5, 6]", "0ded09c75eb0db22038cf36fb2d379ff34bb9421ab5b97220c4bb0fe711034da"),
         // R-3: one meet `k & 1..`, not `(k & @int) & 1..` (r8).
-        ("h: { k: @int, r: k } & { r: @int }\nh: { r: 1.. }", "h: { k: 5 }", "_.h.r", "5", "e2f0ce7e4a539510575048cab53ee08aef732468270351813c1758bc5ec571fc"),
-        ("r: { p: @int, s: p }", "r: { p: 5, s: @int }", "_.r", "{ p: 5 s: 5 }", "b1796986895c0655587e95d21688d56b4cd1f7f762d4d8037dc2270a8c1a1d5a"),
+        ("h: { k: @int, r: k } & { r: @int }\nh: { r: 1.. }", "h: { k: 5 }", "_.h.r", "5", "72f54c06bfde2f63e1e811e06e4014eb86dbf6370653183566ad4c03dfbe48fa"),
+        ("r: { p: @int, s: p }", "r: { p: 5, s: @int }", "_.r", "{ p: 5 s: 5 }", "d5d5344cc8972420a20bb9c886a45e97858b17f7c0e3dde8d47df23d8d194919"),
     ] {
         let (got, roots) = three_ways(w1, w2, q);
         for (way, g) in ["one file", "two evolves", "two commits"].iter().zip(got) {
@@ -507,17 +510,18 @@ fn g1_what_a_later_write_does_not_reach_reads_as_before() {
 
 /// g2 — Roots of a single write do not move (v0.105.0).
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_roots_of_a_single_write_do_not_move() {
     let mut bad = Vec::new();
     let cases = [
         ("x: 0", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"),
-        ("h: { k: @int, r: k }", "9247b8a31920ff61cd5ae14c35c682bdf0d372d28c68e53d5036a6b80de3043e"),
-        ("h: { k: 5, r: k }", "9c089093d7b40ed4d49f159b90814536abaf32aaa97a7211c331e099968e702b"),
-        ("h: { k: @int, t: { u: k } }", "36cf200b438e0c649edd80d5e796d39a5c0904d39eeb3de78dd75e14ecc552c1"),
-        ("h: { k: @int, s: { r: ^.k } }", "a9ed1582f63b53eb6562c2447044a95838923556efe57f9cccecd8ba1fc82465"),
-        ("h: { ~k: @int, r: k }", "fcf9368961f1e22ab586d25e5fd1e3478cdc7f18d70501e6b0f1e1de18989116"),
-        ("h: { k: 2, ...{ k: 1, q: k } }", "2e6e0abd971a14bee5cf17cabea04bff2925c6d6240044ad7fabe7735183b585"),
-        ("r: { z: y }", "5012d76dd9312a53bdfd6f1ee604f0d47276fe650ba6bfcaa4e401f5d576eb64"),
+        ("h: { k: @int, r: k }", "609a2afbc64d274b0ca840576660f7b0afff568443cbed4ffb30e78419073c04"),
+        ("h: { k: 5, r: k }", "b62e3eaf828ec0353bdb2c06fb1520657cf89e88babb9776ce006120c7224525"),
+        ("h: { k: @int, t: { u: k } }", "d25d084ff29cb91d2f32eefca2e3f8fddcb1ba3b816cf8dd3e16a84bd3cee3e8"),
+        ("h: { k: @int, s: { r: ^.k } }", "4712b16242bf09a3fca5dc5a9bda6204dc0f43b308c0a9a95ed2466bb15376db"),
+        ("h: { ~k: @int, r: k }", "98b26cc680ac6bf80283e1f391992646adbd0ad5b4658b5267100e52e544cb49"),
+        ("h: { k: 2, ...{ k: 1, q: k } }", "1846ad11a548c8a1fb906d1aa5b591c14e87457325d2214858361f7fec1cd6b9"),
+        ("r: { z: y }", "e7e469db391289d967964295bde01c816bbb6f879d66eb9cb446bb354f4d65d3"),
     ];
     for (src, root) in cases {
         check(&mut bad, src, root_of(src), root);

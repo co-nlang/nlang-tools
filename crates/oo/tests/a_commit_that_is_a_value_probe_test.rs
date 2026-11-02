@@ -408,12 +408,12 @@ fn g5_identify_is_not_changed_by_this_arc() {
     let body = text.splitn(2, '\n').nth(1).unwrap().trim().to_string();
     let o = w.ok(&["eval", &format!("~%Discovery./identify ({body})")]);
     assert!(
-        o.contains(":006efe31fc84eab4b89ee5b4f36cc30430e98f75019d4a1dded2f508f9c5dcdf"), // Q-083／D106 紀元
+        o.contains(":f0493ed77e6d174b764f8da9e9fb1f1db021c440b6e228ff390b9f6b171caf34"), // Q-083／D106 紀元; AMENDED 2026-11-02 for Q-118 (D126): was 006efe31…
         "identify of a commit-shaped value moved: {o}"
     );
     let o = w.ok(&["eval", "~%Discovery./identify ({ a: 1 b: \"x\" })"]);
     assert!(
-        o.contains(":a379a89dcb55a6653a1f867883e52e72f059829745df7b83fabbe104c213c65d"), // Q-083／D106 紀元
+        o.contains(":615ae0f7ec6b24d92c14f2691a70a5db07db8a90354dd5c4cde7532bc429dc84"), // Q-083／D106 紀元; AMENDED 2026-11-02 for Q-118 (D126): a record written in place holds its fields unforced, each with the record as its frame; was a379a89d…
         "control: identify of an ordinary value moved: {o}"
     );
 }

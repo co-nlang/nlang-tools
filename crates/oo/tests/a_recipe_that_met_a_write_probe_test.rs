@@ -356,6 +356,7 @@ fn g1_a_collision_is_still_refused() {
 /// g2 — Definitions that meet no recipe, and the forms D110 already moved,
 /// keep their v0.93.0 roots.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_what_meets_no_recipe_keeps_its_root() {
     let mut bad = Vec::new();
     let cases = [
@@ -365,7 +366,7 @@ fn g2_what_meets_no_recipe_keeps_its_root() {
         ("t: { a: $.b + 1 }\nw: t\n", "6677b2c7cfc5769d80c6cc004551afa129745f93a3b981b8684cb8ec71692b16"),
         // AMENDED 2026-10-19 for Q-093 (D112): a root spread of a universe name is a row of the root.
         ("s: { j: 5 }\n...s\n", "126f178575b732d567189d84b5253b45e16f44474909ffef0395f0a876d36f3a"),
-        ("c: { b: 2 }\nr: { x: { ...c } }\n", "7a0688650d0aa99e87e539e5b1aeb2c28aa375fc1c16daf22aa3b92955202f7f"),
+        ("c: { b: 2 }\nr: { x: { ...c } }\n", "a9b8b08675e339275e558c44039b8d31f0ab9f5d3f3ab8104a19cfb67987497e"),
         ("r: { a: 1, ...{ j: 5 } }\n", "862fc7a498b63dacaea04be09dea0b290817aa6c33e7a51ddf0933436fe749f8"),
         ("r: { b: 2 }\nr: { z: 9 }\n", "14c2852d5d03ffb5d807dbae8b78011bce511ee6c38332e7818508c6ab4b7e61"),
         ("c: { b: 2 }\nr: c\nr: c\n", "282e6c79fc12ff4732e2bfdb720aa6713f3ca206966dbbd275db0e8ba598d6b7"),
@@ -662,6 +663,7 @@ fn r14_a_recipe_met_by_a_record_a_call_built_keeps_both() {
 /// g5 — Written alone, a definition a call built reads as it did; one
 /// that reads nothing of the universe keeps its v0.93.0 root.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g5_a_definition_a_call_built_reads_as_it_did() {
     let mut bad = Vec::new();
     for (i, (e, want)) in [
@@ -678,11 +680,11 @@ fn g5_a_definition_a_call_built_reads_as_it_did() {
         check(&mut bad, &format!("r: {e}: _.r"), w.eval("_.r"), want);
     }
     let cases = [
-        ("r: (x -> { z: x }) 9\n", "6f2e2b61a10e0a11d64fc1236e451386a4d99433cef66972741a1b990218a196"),
+        ("r: (x -> { z: x }) 9\n", "277100876cb863ed802d59edea97ef45c85944bc4524b16f5cca6055cd23c962"),
         ("r: (x -> [x]) 9\n", "e674dc4f8d8c7e407f7de727f3ffc27931d80a455a35fd7de306fcbf75ef6e8b"),
-        ("r: ((x -> { z: x }) 9).z\n", "3a36abddbeba2fcb594fdac57a3b666a528d24ef4bfdc52e8025fa9f1b28ad82"),
-        ("r: { a: 1, ...((x -> { z: x }) 9) }\n", "a7584f8c93b12215429bb792b845b8277933606e9fd63021b43b71a1ce43f4a5"),
-        ("n: 5\nr: (x -> { z: x }) 9\n", "00001fe4fd9ac97bdd3d38d249fa9679d9dc92d351c2ac1abf244e8998d669a5"),
+        ("r: ((x -> { z: x }) 9).z\n", "0f41f4d65770849ef268c37a3af3e3619a28c346656d3e4a7306749e0bdd0a5a"),
+        ("r: { a: 1, ...((x -> { z: x }) 9) }\n", "dd7d700365267106fd76403fa3956246073f9b177741d689a97c41f4e5b7f37a"),
+        ("n: 5\nr: (x -> { z: x }) 9\n", "63f3b80c11c8b3af1b2f68394c7bfbeaad2970b7d6f2c497704e9e9c7500859d"),
     ];
     for (i, (src, want)) in cases.iter().enumerate() {
         check(&mut bad, &format!("{src:?}: root"), first_commit_root(src, &format!("g5-{i}")), want);
@@ -780,6 +782,7 @@ fn r15_a_recipe_met_by_a_record_holding_a_call_s_function() {
 /// what a named function built, and an answer that prints back, keep their
 /// v0.93.0 roots.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g6_what_prints_back_keeps_its_root() {
     let mut bad = Vec::new();
     let w = Ws::new("g6r");
@@ -789,7 +792,7 @@ fn g6_what_prints_back_keeps_its_root() {
     let cases = [
         ("f: (x -> (y -> x + y))\ng: f 1\n", "70b1a6e0086c73f4accace72c7146285babeef1ac7a699496d0a2a69ec792dd9"),
         ("f: (x -> { z: (y -> x + y) })\ng: f 1\n", "8c304343c29154caab4f5d54558a2560ed65b9531cd99fff064016bda1292be1"),
-        ("r: (x -> { z: x }) 9\n", "6f2e2b61a10e0a11d64fc1236e451386a4d99433cef66972741a1b990218a196"),
+        ("r: (x -> { z: x }) 9\n", "277100876cb863ed802d59edea97ef45c85944bc4524b16f5cca6055cd23c962"),
     ];
     for (i, (src, want)) in cases.iter().enumerate() {
         check(&mut bad, &format!("{src:?}: root"), first_commit_root(src, &format!("g6-{i}")), want);
@@ -938,6 +941,7 @@ fn r16_however_a_call_s_function_arrives_the_recipe_meets_it() {
 /// written alone, its root is v0.93.0's; a field taken from a call's record
 /// reads as it did.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g7_a_literal_holding_a_call_s_function_keeps_its_root() {
     let mut bad = Vec::new();
     let w = Ws::new("g7r");
@@ -945,8 +949,8 @@ fn g7_a_literal_holding_a_call_s_function_keeps_its_root() {
     check(&mut bad, "_.r.z 2", w.eval("_.r.z 2"), "3");
     check(&mut bad, "_.q.z 2", w.eval("_.q.z 2"), "3");
     let cases = [
-        ("s: { r: (x -> { z: (y -> x + y) }) 1 }\n", "95beb356292349743f62dd5550f1ec7ef6f9187b6d0fe1514e622374d37216cf"),
-        ("s: { a: ((x -> (y -> x)) 1) 2 }\n", "04f5f02836391bbaa9878ccfd523a20548e2481e11df0f1f299057521d529376"),
+        ("s: { r: (x -> { z: (y -> x + y) }) 1 }\n", "9b79bc6170171b35b49bd164ce665603f626c9f1ceab0d1c6d0231b60a370802"),
+        ("s: { a: ((x -> (y -> x)) 1) 2 }\n", "3369e85b4f85e86fb939d8d678d3fbf47a9478dc727e01e07a8b6b0750437bb4"),
         ("s: { f: (y -> y) }\n", "a4ce9d337444cbc26c40976e7d8b10f64bd92b7efa94846a601d2ac4f64652e3"),
     ];
     for (i, (src, want)) in cases.iter().enumerate() {

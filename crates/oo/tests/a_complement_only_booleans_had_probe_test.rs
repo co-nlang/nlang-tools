@@ -274,7 +274,7 @@ fn r5_complements_commit_and_read_back() {
     let mut bad = Vec::new();
     let w = Ws::new("r5");
     check(&mut bad, "commit", w.commit(DURABLE), "");
-    check(&mut bad, "declares", w.decl(), "encoding=10");
+    check(&mut bad, "declares", w.decl(), "encoding=11"); // AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     for (e, want) in [
         ("5 & _.n", "5"),
         ("(0 - 1) & _.n", "_|_ #conflict"),
@@ -314,7 +314,7 @@ fn r6_a_store_below_10_refuses_by_name() {
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     check(&mut bad, "migrate rc", rc.to_string(), "0");
     check(&mut bad, "migrate names the lockout", o.contains("unopenable by oo v0.100.0").to_string(), "true");
-    check(&mut bad, "migrated declares", w.decl(), "encoding=10");
+    check(&mut bad, "migrated declares", w.decl(), "encoding=11"); // AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     check(&mut bad, "after migrate: _.a", w.eval("_.a"), "1");
     check(&mut bad, "after migrate: commit", w.commit("n: !0\n"), "");
     check(&mut bad, "after migrate: 5 & _.n", w.eval("5 & _.n"), "5");
@@ -323,18 +323,22 @@ fn r6_a_store_below_10_refuses_by_name() {
 
 /// g1 — Roots that hold no complement do not move (v0.100.0), whether the
 /// store declares 10 or 9.
-const UNTOUCHED: [(&str, &str); 4] = [
-    ("x: 0\n", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"),
-    ("t: { a: 1, b: [1, 2] }\n", "51a571b4dc23426ee0687213bfb9b4f3d899bcee3731d716d80541775d3c9274"),
-    ("b: #true\n", "b5f945e297b460505da459a5d015ba82ff45b5356b0db0363aab56892fdda6fc"),
-    ("r: 1..3\n", "06254b6688a8cb61d2baa10793b1d2ae56815c87812b535fd71ae30f78acbc6d"),
+const UNTOUCHED: [(&str, &str, &str); 4] = [
+    ("x: 0\n", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"),
+    ("t: { a: 1, b: [1, 2] }\n", "a18f92e638d6646dcec31e2d3777451c0ee47b112d45dd65f911b7fc8e677a5e", "51a571b4dc23426ee0687213bfb9b4f3d899bcee3731d716d80541775d3c9274"),
+    ("b: #true\n", "b5f945e297b460505da459a5d015ba82ff45b5356b0db0363aab56892fdda6fc", "b5f945e297b460505da459a5d015ba82ff45b5356b0db0363aab56892fdda6fc"),
+    ("r: 1..3\n", "06254b6688a8cb61d2baa10793b1d2ae56815c87812b535fd71ae30f78acbc6d", "06254b6688a8cb61d2baa10793b1d2ae56815c87812b535fd71ae30f78acbc6d"),
 ];
 
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_roots_without_complements_do_not_move() {
     let mut bad = Vec::new();
-    for (src, root) in UNTOUCHED {
+    for (src, root_now, root_then) in UNTOUCHED {
         for at9 in [false, true] {
+            // AMENDED 2026-11-02 for Q-118 (D126): a store declaring 10 or less keeps
+            // the v0.118.0 rule (each frame written out), so its roots do not move.
+            let root = if at9 { root_then } else { root_now };
             let w = if at9 { Ws::at_encoding_9("g1-9") } else { Ws::new("g1") };
             let label = format!("{}{}", src.trim(), if at9 { " (encoding 9)" } else { "" });
             check(&mut bad, &format!("{label}: commit"), w.commit(src), "");

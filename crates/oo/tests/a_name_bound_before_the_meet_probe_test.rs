@@ -307,6 +307,7 @@ fn g1_what_meets_no_name_reads_as_before() {
 
 /// g2 — Roots that hold no meet of names do not move (v0.103.0).
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_roots_without_a_meet_of_names_do_not_move() {
     let mut bad = Vec::new();
     for (src, root) in [
@@ -316,7 +317,7 @@ fn g2_roots_without_a_meet_of_names_do_not_move() {
         ("a: 1\nb: a", "132ced2494ea0551192cab462b1d58afed6d742fccc99e60fa117e2b876ad269"),
         ("c: { b: 2 }\nr: c\nr: c", "282e6c79fc12ff4732e2bfdb720aa6713f3ca206966dbbd275db0e8ba598d6b7"),
         ("t: { a: 1 } & { b: 2 }", "ee2c382ff3a0337e3b515e41d5c0891010ef8cf62c3323486fcf933bb2b02fea"),
-        ("p: 1\ns: { t: p }\nr: s.t", "31462702b5f1132753a9bfb2db47ce51bed0add691f668cc806e55c378926fe5"),
+        ("p: 1\ns: { t: p }\nr: s.t", "93de60f31a538232381e8df80f06fbb4b5571d3590dfa49351b571ed94816e1c"),
     ] {
         check(&mut bad, src, root_of(src), root);
     }

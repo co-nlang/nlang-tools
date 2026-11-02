@@ -294,6 +294,7 @@ fn g1_what_reads_right_reads_the_same() {
 
 /// g2 — Roots that read nothing differently do not move (v0.102.0).
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_roots_that_read_the_same_do_not_move() {
     let mut bad = Vec::new();
     for (src, root) in [
@@ -303,8 +304,8 @@ fn g2_roots_that_read_the_same_do_not_move() {
         ("m: (_ -> 1)", "cf11d2ff2e95c11ecbae5ceba00ece7c60f87c7d81149287ffebce1b551a89a6"),
         ("k: { a: 1, _: 9 }", "420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e"),
         ("t: { @{ @int }: 0, x: 3 }", "5d0e29990a9573057a9f821a2b2c2af218883912ffb85cf29d54983802ac3a7e"),
-        ("p: 1\ns: { t: p }\nr: s.t", "31462702b5f1132753a9bfb2db47ce51bed0add691f668cc806e55c378926fe5"),
-        ("p: 1\nf: (x -> p)\nq: { k: 2, s: k + p }", "89b0945cd406f1fafd4e2f7a00ab1709562d4da5a4413b7f9cfa3ebe35a851c2"),
+        ("p: 1\ns: { t: p }\nr: s.t", "93de60f31a538232381e8df80f06fbb4b5571d3590dfa49351b571ed94816e1c"),
+        ("p: 1\nf: (x -> p)\nq: { k: 2, s: k + p }", "0fffe278f54d69a052c2207650c79f6074ffce6f06caa9a65d9797c1dc5cc77e"),
         ("@Pos: 1..\n/f: a -> { @{ @Pos }: \"y\", _: \"n\" }", "2979f9d8c94c692324120156cff0dce3509bad75c48b75a17f11a09fbc70d52d"),
     ] {
         check(&mut bad, src, root_of(src), root);

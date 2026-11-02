@@ -215,12 +215,13 @@ fn r4_past_two_thousand() {
 /// of 200 `+` in one record is `#max_depth_exceeded`, root unchanged. D113
 /// takes the merge off the meter, not the definitions.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_a_definition_of_its_own_horizon_keeps_it() {
     let mut bad = Vec::new();
     let w = Ws::new("g1");
     let chain: Vec<String> = (1..=200).map(|i| format!("a{i}: a{} + 1", i - 1)).collect();
     check(&mut bad, "commit", w.commit(&format!("x: {{ a0: 1, {} }}.a200\n", chain.join(", "))), "");
-    check(&mut bad, "root", w.root(), "76f95246e0b7d99197b06d1c8d0d13367bfca44d0da97e48cebb708f541cf212");
+    check(&mut bad, "root", w.root(), "cf105ff2b670efac628b205ccf887de3d575fc116ad58a9b6fb3fd5757a1d2be");
     let x = w.eval("_.x");
     check(&mut bad, "_.x", x.starts_with("#blur { %cause: #max_depth_exceeded").to_string(), "true");
     verdict(bad, 3);

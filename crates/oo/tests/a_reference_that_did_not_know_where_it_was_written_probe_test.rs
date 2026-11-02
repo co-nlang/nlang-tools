@@ -302,15 +302,16 @@ fn g1_what_reads_the_root_reads_as_before() {
 
 /// g2 — Roots of references do not move (v0.104.0).
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_roots_of_references_do_not_move() {
     let mut bad = Vec::new();
     let cases = [
         ("x: 0", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"),
-        ("t: { a: 1 }\nc: { r: <<t>> }", "756830fc5e46327bd60b57e540d449e9c522ab76046718c9e85c9ae795f42817"),
-        ("h: { k: 5, r: <<k>> }", "d7e8706b765f14a72b0df0884eb7f2e31fc35be7b40b3bef6490cd02342e006e"),
-        ("k: 1\nh: { k: 5, r: <<k>> }", "f5b524cfda7816dd57d27f54fb24992a5f474ebe959b51b324b5964c3103b462"),
-        ("h: { k: 5, s: { r: <<^.k>> } }", "8e1e8c2b6e3213f800775c180e9cc4181b8ed2eb08d9eca74c4f32746c34e5f2"),
-        ("h: { k: 5, r: <<k>> }\ng: h", "f8fce2800e115b54279c7a288674cd2d3e3602b099a203b2a4299d3922490990"),
+        ("t: { a: 1 }\nc: { r: <<t>> }", "2671f815611734ab7c1b88e47ee00f6a24d21e7115cf27d4bb2a73a6056b219d"),
+        ("h: { k: 5, r: <<k>> }", "af41b12a8fd79abf5d5d7eb498c3ddefa8721b0b393ae3fbadaaf2a08942c953"),
+        ("k: 1\nh: { k: 5, r: <<k>> }", "32663fb7bb2e8021b257ed7add40a8ad461f2b43e9d5b4061fa1942270a3e8f2"),
+        ("h: { k: 5, s: { r: <<^.k>> } }", "e183ac273c76ed8ea2c6e8ad3f3f4ee55fadb0c2fc5f53568f9a5bae90be369e"),
+        ("h: { k: 5, r: <<k>> }\ng: h", "959cc7d689049cb0bcd27eb3c0344256830388ddfef28d118c2543d067cf95f7"),
         ("v: <<_.>> |> <<_.>>", "5ce55aa56a6260f0a38232802ce05cd798e7ec8b250c873b7d15c2b22022d168"),
     ];
     for (src, root) in cases {

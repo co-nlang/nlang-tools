@@ -1,0 +1,4 @@
+#nlang/store savepoint
+parents: e187cd10450d04542f6075127fc98716
+point: bbfa21c2df2e007132aa7e6190c2ebee34e47512cbbca56561798190cf4a7725
+{ hf: { v: { ~%__nlang_thunk: #true ~%__nlang_expr: 1 ~%__nlang_closure: [{ ~%__nlang_frame: [0, { v: { ~%__nlang_thunk: #true ~%__nlang_expr: 1 ~%__nlang_closure: [] } w: { ~%__nlang_thunk: #true ~%__nlang_expr: v + 1 ~%__nlang_closure: [] } ~@T: { ~%__nlang_thunk: #true ~%__nlang_expr: @int ~%__nlang_closure: [] } }] }] } w: { ~%__nlang_thunk: #true ~%__nlang_expr: v + 1 ~%__nlang_closure: [0] } ~@T: { ~%__nlang_thunk: #true ~%__nlang_expr: @int ~%__nlang_closure: [0] } } }

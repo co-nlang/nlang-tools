@@ -196,23 +196,24 @@ fn ways(w1: &str, w2: &str, q: &str) -> (Vec<String>, Vec<String>) {
 /// r1 — An arrow reading its node's names reads the met node: one file, two
 /// evolves, two commits — one reading, one root.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn r1_an_arrow_reads_the_met_node_every_way() {
     let mut bad = Vec::new();
     let cases = [
-        ("h: { k: @int, f: (x -> k) }", "h: { k: 5 }", "_.h.f 0", "5", "1f351fe1c4781230356b1eaad59cca14631826e1ecdc8ec586c276ed66e10572"),
-        ("h: { k: 1.., f: (x -> k) }", "h: { k: 5 }", "_.h.f 0", "5", "1f351fe1c4781230356b1eaad59cca14631826e1ecdc8ec586c276ed66e10572"),
-        ("h: { k: @int, f: (x -> x + k) }", "h: { k: 5 }", "_.h.f 1", "6", "fa000a3ef115dcc294e1230bfc9c012e6ee501410667c02acf019bdca6b01bec"),
-        ("h: { k: @int, f: (x -> k), g: f }", "h: { k: 5 }", "_.h.g 0", "5", "b7be23aa451ae09b38d968fd013639ad9a5912a793ddd8f2b63425ebf5039c88"),
-        ("h: { k: @int, f: (x -> { v: k }) }", "h: { k: 5 }", "_.h.f 0", "{ v: 5 }", "68a6ddfdad4e1d40caa5fe4a8704dd08f2e8c5ab523239368c763822ce767f29"),
-        ("h: { k: @int, f: (x -> ^.k) }", "h: { k: 5 }", "_.h.f 0", "5", "c761ef16009cbe8f2fd9138ce458a3be91d5d026e1c54ea184c91cae84f34c80"),
-        ("h: { a: { k: @int }, f: (x -> a.k) }", "h: { a: { k: 5 } }", "_.h.f 0", "5", "79fcdf374a61b62e95c32d4c0d08e913ddd25a14e2648b3bff6713bf395753ff"),
-        ("h: { ~k: @int, f: (x -> k) }", "h: { ~k: 5 }", "_.h.f 0", "5", "7708413bb9b36b95d38f47fef07b330032336f567f1cd8eca318d7e6bb017a28"),
-        ("h: { k: @int, /f: (x -> k) }", "h: { k: 5 }", "_.h./f 0", "5", "e7ce69e3538843579c7e151942ab0ceacb852b7cf603d9fdf1e4142970259364"),
-        ("h: { k: @int, ~f: (x -> k), r: f 0 }", "h: { k: 5 }", "_.h.r", "5", "2f7b13e3bc08ba031e4062c5bc68aa28b398dba5a1b6fb1b41f765d1b2ed0c5f"),
-        ("h: { k: @int, f: (x -> k), r: f 0 }", "h: { k: 5 }", "_.h.r", "5", "7846ed9d5f54c0bc45e004591902469affc076fa13217da3cbd804539f4ed7a8"),
-        ("h: { k: @int, f: (x -> (y -> k)) }", "h: { k: 5 }", "(_.h.f 0) 0", "5", "cdce36a84c021d083cbd731c1bdf80a62518b420415084e6ce00fb1a59ba87b1"),
-        ("h: { k: @int, f: (x -> k) }", "h.k: 5", "_.h.f 0", "5", "1f351fe1c4781230356b1eaad59cca14631826e1ecdc8ec586c276ed66e10572"),
-        ("h: { k: @int, f: (x -> k) }", "h: { k: 5, f: (x -> 5) }", "_.h.f 0", "5", "71e7249f0e23008fe7f008bba232e11f578ef774d6ae644470e67bb5d7f2cdb1"),
+        ("h: { k: @int, f: (x -> k) }", "h: { k: 5 }", "_.h.f 0", "5", "a136524dba4f41c3d05d055ba3d125c892754a373ba1e5392091795c0666a22e"),
+        ("h: { k: 1.., f: (x -> k) }", "h: { k: 5 }", "_.h.f 0", "5", "a136524dba4f41c3d05d055ba3d125c892754a373ba1e5392091795c0666a22e"),
+        ("h: { k: @int, f: (x -> x + k) }", "h: { k: 5 }", "_.h.f 1", "6", "33f63ffb8d671a04122ae2c2fb7e8c926b2cca353cd1b956d652624290467480"),
+        ("h: { k: @int, f: (x -> k), g: f }", "h: { k: 5 }", "_.h.g 0", "5", "c5a6d6be60ad572ecac2addb2d972157bdcf3a7c0708a73fe3df217d71af9cb9"),
+        ("h: { k: @int, f: (x -> { v: k }) }", "h: { k: 5 }", "_.h.f 0", "{ v: 5 }", "bd8fda7665e61a8367bb7df32fb6bfe0798fb5716c36cf70f8283b0e9e968ad1"),
+        ("h: { k: @int, f: (x -> ^.k) }", "h: { k: 5 }", "_.h.f 0", "5", "f206ad66bcbddcf58f4b5638806671ef9b0542dcd87be3854353b69cbbfe8b94"),
+        ("h: { a: { k: @int }, f: (x -> a.k) }", "h: { a: { k: 5 } }", "_.h.f 0", "5", "9f6bcfd7a3a7dbba498ea68a85a01a6d940338fab71cc25fb323fc078cd7b520"),
+        ("h: { ~k: @int, f: (x -> k) }", "h: { ~k: 5 }", "_.h.f 0", "5", "843497e6860b5546e5bda1e88d74cce869a4dfdb79a15eac8cb3d229bf560c80"),
+        ("h: { k: @int, /f: (x -> k) }", "h: { k: 5 }", "_.h./f 0", "5", "9c5053f135cf79f0c6e73d5aecf6fb13cd6ef3a15269fc3d53afa0d7fe770b81"),
+        ("h: { k: @int, ~f: (x -> k), r: f 0 }", "h: { k: 5 }", "_.h.r", "5", "271009ad5799f234a8dfb97bc5421281f3b9d81d096080495c2092fc565e99b6"),
+        ("h: { k: @int, f: (x -> k), r: f 0 }", "h: { k: 5 }", "_.h.r", "5", "3d5e0e401c8ad7e001c49e08f57ceae7d16ad34213a39aef7e06ff19bf9a3ea9"),
+        ("h: { k: @int, f: (x -> (y -> k)) }", "h: { k: 5 }", "(_.h.f 0) 0", "5", "df6b7102cc0f4311099082b8707f4b813a307d4faca06ab3fe4e4316835cefad"),
+        ("h: { k: @int, f: (x -> k) }", "h.k: 5", "_.h.f 0", "5", "a136524dba4f41c3d05d055ba3d125c892754a373ba1e5392091795c0666a22e"),
+        ("h: { k: @int, f: (x -> k) }", "h: { k: 5, f: (x -> 5) }", "_.h.f 0", "5", "584f3c4cef777204a8f1775cc83c7e69d3e255764eb44fcd25a15b3a94cad091"),
     ];
     let mut n = 0;
     for (w1, w2, q, want, root) in cases {
@@ -338,16 +339,17 @@ fn g1_what_does_not_read_the_node_reads_as_before() {
 /// g2 — Roots that never held an arrow reading its node do not move
 /// (v0.107.0).
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_roots_without_this_form_do_not_move() {
     let mut bad = Vec::new();
     let cases = [
         ("x: 0", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"),
         ("f: (x -> x + 1)", "258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f"),
         ("h: { f: (x -> x + 1) }", "587570c12af93617cc54d00105f31ed7191d0ea70b8058dfdf61746a158617d2"),
-        ("h: { k: @int, f: (x -> x + 1) }", "9a0b58305f96e9d0aacb43a1e3205b89f655a37230231f8631acaeb913993e11"),
+        ("h: { k: @int, f: (x -> x + 1) }", "43904019ffc243d837b95996d89a36f20e1d09b6c3f03e1f9a784087fe6bf862"),
         ("n: @int\nh: { f: (x -> n) }", "7c2a0fa36d329813b7b9816e271baf942ead95955a575373002a5819748df4c5"),
-        ("h: { k: @int, r: k }", "9247b8a31920ff61cd5ae14c35c682bdf0d372d28c68e53d5036a6b80de3043e"),
-        ("h: { s: { k: @int, f: (x -> k) } }", "b12715e9a88c45537590ca12e67a09dcfe8a3d4e982dce41f9769b7f687d7f46"),
+        ("h: { k: @int, r: k }", "609a2afbc64d274b0ca840576660f7b0afff568443cbed4ffb30e78419073c04"),
+        ("h: { s: { k: @int, f: (x -> k) } }", "e8fa2a8ac203515190e3e881a06c2ecde204465c7bf9bd590f472f8cd666de55"),
         ("k: @int\nf: (x -> k)", "b4f912b83349d7beb7cab5225f49057640b04d613592ef8982bdd32965952716"),
     ];
     for (src, root) in cases {
