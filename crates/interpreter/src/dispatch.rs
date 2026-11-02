@@ -930,42 +930,62 @@ impl MorphismDispatchResult {
 /// value read from (or written to) a store of another identity epoch carries
 /// the other epoch's names; re-key them under the epoch now in force.
 pub fn rekey_identity_names(v: Value) -> Value {
+    rekey_value(v, &mut RekeyMemo::new())
+}
+
+/// Q-118: a frame shared by every field it was sealed into is rekeyed once.
+/// Keyed by the frame read in; the old `Arc` is kept so its address is not
+/// reused while the pass runs.
+type RekeyMemo = std::collections::HashMap<
+    *const ComboVal,
+    (std::sync::Arc<ComboVal>, std::sync::Arc<ComboVal>),
+>;
+
+fn rekey_value(v: Value, memo: &mut RekeyMemo) -> Value {
     match v {
-        Value::Combo(c) => Value::Combo(rekey_combo(c)),
-        Value::Union(items) => Value::Union(items.into_iter().map(rekey_identity_names).collect()),
+        Value::Combo(c) => Value::Combo(rekey_combo(c, memo)),
+        Value::Union(items) => Value::Union(items.into_iter().map(|i| rekey_value(i, memo)).collect()),
         Value::Thunk { expr, closure, context, effect } => Value::Thunk {
             expr,
             closure: closure
-                .iter()
-                .map(|f| std::sync::Arc::new(rekey_combo(f.as_ref().clone())))
+                .into_iter()
+                .map(|f| {
+                    let key = std::sync::Arc::as_ptr(&f);
+                    if let Some((_, done)) = memo.get(&key) {
+                        return std::sync::Arc::clone(done);
+                    }
+                    let done = std::sync::Arc::new(rekey_combo(f.as_ref().clone(), memo));
+                    memo.insert(key, (f, std::sync::Arc::clone(&done)));
+                    done
+                })
                 .collect(),
-            context: context.map(|c| Box::new(rekey_identity_names(*c))),
+            context: context.map(|c| Box::new(rekey_value(*c, memo))),
             effect,
         },
         Value::Range { start, end, step } => Value::Range {
-            start: Box::new(rekey_identity_names(*start)),
-            end: Box::new(rekey_identity_names(*end)),
-            step: step.map(|s| Box::new(rekey_identity_names(*s))),
+            start: Box::new(rekey_value(*start, memo)),
+            end: Box::new(rekey_value(*end, memo)),
+            step: step.map(|s| Box::new(rekey_value(*s, memo))),
         },
         Value::Complement { within, without } => Value::Complement {
-            within: Box::new(rekey_identity_names(*within)),
-            without: Box::new(rekey_identity_names(*without)),
+            within: Box::new(rekey_value(*within, memo)),
+            without: Box::new(rekey_value(*without, memo)),
         },
         other => other,
     }
 }
 
-fn rekey_map(m: IndexMap<String, Value>) -> IndexMap<String, Value> {
-    m.into_iter().map(|(k, v)| (k, rekey_identity_names(v))).collect()
+fn rekey_map(m: IndexMap<String, Value>, memo: &mut RekeyMemo) -> IndexMap<String, Value> {
+    m.into_iter().map(|(k, v)| (k, rekey_value(v, memo))).collect()
 }
 
-fn rekey_combo(mut c: ComboVal) -> ComboVal {
-    c.data = rekey_map(std::mem::take(&mut c.data));
-    c.types = rekey_map(std::mem::take(&mut c.types));
-    c.rules = rekey_map(std::mem::take(&mut c.rules));
-    c.meta = rekey_map(std::mem::take(&mut c.meta));
-    c.system = rekey_map(std::mem::take(&mut c.system));
-    c.local = rekey_map(std::mem::take(&mut c.local));
+fn rekey_combo(mut c: ComboVal, memo: &mut RekeyMemo) -> ComboVal {
+    c.data = rekey_map(std::mem::take(&mut c.data), memo);
+    c.types = rekey_map(std::mem::take(&mut c.types), memo);
+    c.rules = rekey_map(std::mem::take(&mut c.rules), memo);
+    c.meta = rekey_map(std::mem::take(&mut c.meta), memo);
+    c.system = rekey_map(std::mem::take(&mut c.system), memo);
+    c.local = rekey_map(std::mem::take(&mut c.local), memo);
     if let Some(Value::Combo(bs)) = c.get_field("%bodies").cloned() {
         let mut set: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
         for (_, b) in bs.data.clone() {

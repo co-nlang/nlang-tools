@@ -1074,6 +1074,7 @@ fn root_of(src: &str) -> String {
 
 /// g2 — Roots of what read right at v0.112.0 do not move.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_roots_that_read_right_do_not_move() {
     let mut bad = Vec::new();
     let cases = [
@@ -1087,7 +1088,7 @@ fn g2_roots_that_read_right_do_not_move() {
         ("r: ~%List./reverse ([1 | 2, 3])", "98cb52c063b5e339343688b6d0b193fb0a1ff7926bb0168981fc5d2a7a83e9a9"),
         ("r: (1 | 2) + 10", "ab1cdb01b4697d2e2b4fe4fdfd9f13556a2d84177622ef6d6a6d40eda9f62922"),
         ("r: ~%Str./len (\"ab\" | \"abc\")", "73c43dc4adfa5f0eff8e2a68c409b2bfdc9bff064e4cba53eb9fbf2a70dcd771"),
-        ("r: { a: 1 | 2, b: 0 .. 5 }", "3ab8d0896b3079fa3e72f98c66ae32b64f01c8b6940eb49ec62dc1fbf80efc81"),
+        ("r: { a: 1 | 2, b: 0 .. 5 }", "dc7b3479aed32f0b728b9948946d47ee71fca7a1852ccdfd852eb089c2824b9f"),
         ("r: (1 | 2) <= (1 | 2 | 3)", "a9bb46e377a2e5a76b0d53dee220c6e484af931ca22d2b5670025327d0be33c2"),
     ];
     for (src, root) in cases {

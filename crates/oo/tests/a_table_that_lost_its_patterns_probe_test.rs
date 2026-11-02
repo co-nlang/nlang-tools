@@ -282,19 +282,20 @@ fn r8_fmt_keeps_a_table_a_table() {
 /// print bare (`"a.b"`, `#a`, `_`, `@int`) one field down, open ranges
 /// one field down, and the identity red lines.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_roots_without_a_pattern_key_stay() {
     roots("g1", &[
         ("x: 0\n", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"), // Q-083／D106 紀元
         ("f: (x -> x + 1)\n", "258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f"), // Q-083／D106 紀元
         ("k: { @{ @str }: 9, @{ @int }: 1 }\n", "8210e484a870e9312794392d57ccce1ff1bb212bc0d1aacb0b52d1676e2b5f3b"), // Q-083／D106 紀元
-        ("k: { t: { a: 1, b: \"s\" } }\n", "3f94650b153f5b8d94a715fa607e6dd28625f6dc401f02cad3b452b1e4c67a8e"), // Q-083／D106 紀元
-        ("k: { t: { \"a.b\": 1, _: 2 } }\n", "1c69b0dc36393a7de3123eeb710dbae0e0130588874ed1ec4a63ed24470653e0"), // Q-083／D106 紀元
-        ("k: { t: { #a: 1, #b: 2 } }\n", "848fee88bc34a0af83330a0dc21df5ca6998fe520f36497327525217afe9e4c9"), // Q-083／D106 紀元
-        ("k: { t: { a: 4.., b: ..0 } }\n", "93ddfe5bcfbf83900f80706e2ad1a93a62d1c1ed3cdde1cc56c00e8d0a12bcf0"), // Q-083／D106 紀元
-        ("k: { t: { @int: 1 } }\n", "0307f8f168689163ef9aafbd1c31f96a5304d958d10eec5236c792e57353e805"), // Q-083／D106 紀元
+        ("k: { t: { a: 1, b: \"s\" } }\n", "ec8bf7a89a571144423ea7deb32b0817475fa47a03f2c60c9ce49f2a37c5297e"), // Q-083／D106 紀元
+        ("k: { t: { \"a.b\": 1, _: 2 } }\n", "3844542efefc8b695e5af9d16a84bebc13d896d55c9fd4dd26918bb7c5901f47"), // Q-083／D106 紀元
+        ("k: { t: { #a: 1, #b: 2 } }\n", "ba380b72727a1dc89775cc2899b6f536c92a10afac3910c40482b699c73800a2"), // Q-083／D106 紀元
+        ("k: { t: { a: 4.., b: ..0 } }\n", "c73f31df79046d5cb33024ed5e42b9be8a6df50fc6ca4ea6644a93ce3f485c32"), // Q-083／D106 紀元
+        ("k: { t: { @int: 1 } }\n", "64b471352fd22b50ce341044fd3e0b2930408ba97342ea33c1a1f7c4726c477d"), // Q-083／D106 紀元
         ("f: (x -> { a: x, \"q.r\": x })\n", "84a385e8ddf9140590b6516cebd7a92673119e174e31cfa53650ed97cdb797a6"), // Q-083／D106 紀元
         ("g: (x @str -> 9) & (y @int -> 1)\n", "0c5271d2f1dafa56b41036624acc72e8baf89896d30a3d9b930640c6f1e6edf4"), // Q-083／D106 紀元
-        ("k: { t: (x @str -> 9) & (y @int -> 1) }\n", "3256228ab6abcece3e30d78af84746f8a35372aa1a2f82338a129317d6080765"), // Q-083／D106 紀元
+        ("k: { t: (x @str -> 9) & (y @int -> 1) }\n", "5e7a3034ac03cc4c91b818b143ca74dca0ccd1477a3122f49eeecd932901625d"), // Q-083／D106 紀元
     ], "a value with no pattern key moved");
 }
 

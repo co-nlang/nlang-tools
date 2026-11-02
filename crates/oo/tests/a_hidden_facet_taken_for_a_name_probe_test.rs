@@ -213,12 +213,13 @@ impl Ws {
 /// `oo migrate` names the engines it locks out, and what was written before
 /// still reads after it.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn r3_new_stores_declare_9_and_old_stores_keep_their_rule() {
     let mut bad = Vec::new();
     let w = Ws::new("r3-new");
     check(&mut bad, "new: commit", w.commit(P1), "");
-    check(&mut bad, "new: declares", w.decl(), "encoding=10"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10
-    check(&mut bad, "new: root", w.root(), "21e6e90ff86296bc70ceb297610288322aa287b970f69a79ffa97879a6298621");
+    check(&mut bad, "new: declares", w.decl(), "encoding=11"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
+    check(&mut bad, "new: root", w.root(), "b4d51976267d6cf3749e6ce9658de46a2b9e470e23a2a3328d2df1d296a61a25");
     check(&mut bad, "new: _.t.r", w.eval("_.t.r"), "3");
 
     let w = Ws::at_encoding_8("r3-old");
@@ -228,8 +229,8 @@ fn r3_new_stores_declare_9_and_old_stores_keep_their_rule() {
     check(&mut bad, "old: _.t.r", w.eval("_.t.r"), "3");
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     check(&mut bad, "migrate rc", rc.to_string(), "0");
-    check(&mut bad, "migrate names the lockout", o.contains("unopenable by oo v0.98.0 through v0.100.0").to_string(), "true"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10
-    check(&mut bad, "migrated declares", w.decl(), "encoding=10"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10
+    check(&mut bad, "migrate names the lockout", o.contains("unopenable by oo v0.98.0 through v0.118.0").to_string(), "true"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
+    check(&mut bad, "migrated declares", w.decl(), "encoding=11"); // AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     check(&mut bad, "after migrate: _.t.r", w.eval("_.t.r"), "3");
     let (_, rc) = w.oo(&["log"]);
     check(&mut bad, "after migrate: log", rc.to_string(), "0");
@@ -239,18 +240,22 @@ fn r3_new_stores_declare_9_and_old_stores_keep_their_rule() {
 }
 
 /// g1 — Roots that hold no hidden type or logic do not move (v0.99.0).
-const UNTOUCHED: [(&str, &str); 4] = [
-    ("x: 0\n", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"),
-    ("t: { ~p: 3, y: p }\n", "1b1a1daa0d332554a2e85939fa416ca5d71877423db753a1bdbc2e339b30398e"),
-    ("t: { @T: @int, /f: (x -> x), v: 1 }\n", "4271b205b49c56a4326585ab6295f51798e2af3fae27210fce1318ff8c44cc14"),
-    ("~p: 3\ny: p\n", "f8b00ed33b9a22c0118f0f8176b5d89b506db8c45060e56cde7d82f2299cc166"),
+const UNTOUCHED: [(&str, &str, &str); 4] = [
+    ("x: 0\n", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f", "b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f"),
+    ("t: { ~p: 3, y: p }\n", "c5ca947c56382448085dbb3617dd41d7c242826a693799eac8694f8bf6fe6c92", "1b1a1daa0d332554a2e85939fa416ca5d71877423db753a1bdbc2e339b30398e"),
+    ("t: { @T: @int, /f: (x -> x), v: 1 }\n", "f9d45f896dc090d6d3505f69097e9bfe71ddc7f26a3cef1fd0f8d062ce0c8e52", "4271b205b49c56a4326585ab6295f51798e2af3fae27210fce1318ff8c44cc14"),
+    ("~p: 3\ny: p\n", "f8b00ed33b9a22c0118f0f8176b5d89b506db8c45060e56cde7d82f2299cc166", "f8b00ed33b9a22c0118f0f8176b5d89b506db8c45060e56cde7d82f2299cc166"),
 ];
 
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_roots_without_hidden_facets_do_not_move() {
     let mut bad = Vec::new();
-    for (src, root) in UNTOUCHED {
+    for (src, root_now, root_then) in UNTOUCHED {
         for at8 in [false, true] {
+            // AMENDED 2026-11-02 for Q-118 (D126): a store declaring 10 or less keeps
+            // the v0.118.0 rule (each frame written out), so its roots do not move.
+            let root = if at8 { root_then } else { root_now };
             let w = if at8 { Ws::at_encoding_8("g1-8") } else { Ws::new("g1") };
             let label = format!("{}{}", src.trim().replace('\n', "; "), if at8 { " (encoding 8)" } else { "" });
             check(&mut bad, &format!("{label}: commit"), w.commit(src), "");

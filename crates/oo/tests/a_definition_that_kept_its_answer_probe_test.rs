@@ -423,6 +423,7 @@ fn r10_a_collision_with_a_recipe_is_refused() {
 /// derivation keeps its form; an effect still runs once and is stored as
 /// its answer, and so is a reading of one (D46 (ii)). Every root is v0.92.0's.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_what_reads_nothing_keeps_its_root() {
     let mut bad = Vec::new();
     let cases = [
@@ -431,8 +432,8 @@ fn g1_what_reads_nothing_keeps_its_root() {
         ("k: { a: 1 } & { b: 2 }\n", "917b3ddb841747501e42d3618c1345fb0c401292d78ec953bb8bb38ee670a482"),
         ("a: 1\nb: a + 1\n", "6ef35a73ba9e12629b6d42bc27db08cf1469980e1ae9a3ca071533e167ec9c8e"),
         ("v: <<_.>> |> <<_.>>\n", "5ce55aa56a6260f0a38232802ce05cd798e7ec8b250c873b7d15c2b22022d168"),
-        ("t: { a: 1 }\nc: { r: <<t>> }\nk: c.r\n", "e027a82b8688874a6cc7dc4a338baee22abae5de2559dc44ff1d7818ecb3a3d9"),
-        ("t: { a: $.b + 1 }\ng: { m: t }\n", "505b71eeebf318bf7ce54529d05f0d9e4b2c4e5ef218c60db6ba757d4f366f79"),
+        ("t: { a: 1 }\nc: { r: <<t>> }\nk: c.r\n", "cb77e5851ff70970a4d759533b626952488318c550044c723a47c2f534e63124"),
+        ("t: { a: $.b + 1 }\ng: { m: t }\n", "3c4b38593e917b7eba23180526c358b82fd97be31f3879a7431a2e0e00090b69"),
         ("p: \"x.txt\"\nw: ~%Io./append_file (p, \"a\")\n", "77a310dff48f87848b190783ab27644ec2b22f291545059de9725e408dcdcf5f"),
         // a table whose patterns read nothing (R-1: one whose patterns read
         // a name is r6, not a guard)

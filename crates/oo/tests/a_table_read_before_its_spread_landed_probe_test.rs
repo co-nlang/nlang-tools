@@ -259,13 +259,14 @@ fn g1_structural_evolution_still_merges() {
 
 /// The answer is in reading, not in storing: these roots do not move.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g2_the_roots_do_not_move() {
     let w = Ws::new("g2a");
     w.commit(&["k: { t: { ...{ @{ @int }: 1 }, _: 0 } }\n"]);
-    assert_eq!(w.root(), "84df117faf575e96bcf3db4a95f91a00dd98ed58494ad9974995535dc2dca6aa");
+    assert_eq!(w.root(), "5fc4a01e6636b17299443585b516332b1d6b7a53f06d5c4a93da1fde6184febf");
     let w = Ws::new("g2b");
     w.commit(&["k: { t: { @{ @int }: 1, _: 0 } }\n"]);
-    assert_eq!(w.root(), "275bc55ddc3801d21b306de8cb06f1d9a8d455aea7bed823ab889975620d559f");
+    assert_eq!(w.root(), "33ba0b1e035336063fab7fa6c2f2ed92afd115175ca91dd12b199b05f8a9bff0");
 }
 
 // ── Acceptance (acceptor, 2026-10-13): two cells the reference missed ────

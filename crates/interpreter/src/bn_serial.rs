@@ -14,6 +14,7 @@ use std::collections::HashSet;
 thread_local! {
     static LEGACY_DEPTH: Cell<u32> = const { Cell::new(0) };
     static HIDDEN_AS_LOCAL_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static FRAMES_INLINE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 pub fn identity_is_legacy() -> bool {
@@ -48,6 +49,25 @@ pub fn with_hidden_facets_as_local<R>(f: impl FnOnce() -> R) -> R {
     impl Drop for Restore {
         fn drop(&mut self) {
             HIDDEN_AS_LOCAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+    let _restore = Restore;
+    f()
+}
+
+// Q-118 / D126. A thunk's closure frame enters its identity by the frame's
+// digest. `with_frames_inline` recomputes the v0.118.0 rule (each frame
+// written out in full), which a store declaring encoding ≤10 receives.
+pub fn frames_inline() -> bool {
+    FRAMES_INLINE_DEPTH.with(|d| d.get() > 0)
+}
+
+pub fn with_frames_inline<R>(f: impl FnOnce() -> R) -> R {
+    FRAMES_INLINE_DEPTH.with(|d| d.set(d.get().saturating_add(1)));
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FRAMES_INLINE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
         }
     }
     let _restore = Restore;
@@ -237,14 +257,19 @@ fn serialize_value(val: &Value, buf: &mut Vec<u8>) {
         } => {
             buf.push(TAG_THUNK);
             encode_expr(expr, buf);
-            // Identity encoding (store CAID): still inlines frames via
-            // serialize_combo so digests stay bit-stable (D1 success §5).
-            // Force/in_flight uses a separate cycle key that hashes frame
-            // digests only — see `thunk_cycle_id` — because inlining Arc
-            // frames as a tree is 2^depth work.
+            // D126: each frame is its 32-byte digest. A frame is shared by
+            // every field it was sealed into, and its digest is memoized on
+            // it, so a record of N fields hashes N frames once, not N times.
+            // Frozen epochs write the frame out in full.
             encode_unsigned_leb128(closure.len() as u64, buf);
-            for cv in closure.iter() {
-                serialize_combo(cv.as_ref(), buf);
+            if identity_is_legacy() || hidden_facets_as_local() || frames_inline() {
+                for cv in closure.iter() {
+                    serialize_combo(cv.as_ref(), buf);
+                }
+            } else {
+                for cv in closure.iter() {
+                    buf.extend_from_slice(&cv.content_hash().digest);
+                }
             }
             // context: None = #open; Some(v) = recursive serialize_value
             match context {

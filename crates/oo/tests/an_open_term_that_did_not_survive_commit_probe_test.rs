@@ -223,13 +223,14 @@ fn r4_each_dollar_keeps_its_own_binding() {
 /// for a reason of its own is still stored as that ⊥ (D33/D44: a divergent
 /// definition must say why). The fix is about open terms, not about ⊥.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_values_without_open_terms_keep_their_roots() {
     for (src, root) in [
         ("c: c + 1\n", "3f0a62e4ac00a7517e258bee6afbc348f33167cb1cd42e9bcefa419645c2da34"),
         ("k: { a: 1 / 0 }\n", "889b4174eb7a87bb8452197bc0a7247e6cd0d86d2b84a63e5ede00f87f1a15f2"),
-        ("k: { a: 1 + 1 }\n", "9445101c4b15c42562daed770b5d153f554dee67af0fdb9c8be8325247d111b7"),
-        ("k: { @{ @int }: $ + 1 }\n", "37026f7d8c3572710a84e93e3c4c81f367408b86986d8747a202bdbc3189ad2d"),
-        ("u: { b: 1 } |> { a: $.b + 1 }\n", "d3de86f4352682c5a44e1081994cf0b36290a0c37825664c06c06f7904a8f4ed"),
+        ("k: { a: 1 + 1 }\n", "057ceb27b9897b1bcd6163893fba217ff6646f8b7949fefe112d733af5ded9b3"),
+        ("k: { @{ @int }: $ + 1 }\n", "48593da80c2cfd6d8796c6732072b772387eb567cb76cc9a0bc6e61aea5bc78b"),
+        ("u: { b: 1 } |> { a: $.b + 1 }\n", "0f1991090e4b1dba3ba912c02c0ebe964d861581c2a7ec8222e4382f72e51bfc"),
     ] {
         let w = Ws::new("g1");
         w.commit(&[src]);

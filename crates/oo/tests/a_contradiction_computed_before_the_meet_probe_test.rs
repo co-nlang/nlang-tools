@@ -321,18 +321,19 @@ fn r3_a_file_reads_the_same_in_every_line_order() {
 /// r4 — One file, two evolves, two commits: one reading, one root (Q-103),
 /// at the root, in a record's first layer, below it, in a list.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn r4_three_ways_one_reading_one_root() {
     let mut bad = Vec::new();
     let cases = [
         ("n: @int\nr: n + 1", "n: 5", "_.r", "6", "f6dc16ae774bef4a5fb10d214847b2c84718d416654e9e11f3570fd92ef10db9"),
         ("n: 1..\nr: n + 1", "n: 5", "_.r", "6", "f6dc16ae774bef4a5fb10d214847b2c84718d416654e9e11f3570fd92ef10db9"),
-        ("n: @int\nr: { z: n + 1 }", "n: 5", "_.r.z", "6", "f2f0a75760817dea5ddb9bf9f55c9ed1f617cdfd762cf55fc1b96c19e80d42e2"),
+        ("n: @int\nr: { z: n + 1 }", "n: 5", "_.r.z", "6", "ce4cfcf0b1cc6eae4d2aae0954196152851fe63fdffabf7fb4535565f167d1a9"),
         ("n: @int\nr: [n + 1]", "n: 5", "_.r", "[6]", "5a933514b5074692293caab774ccb532a9c96c7d44ea75539d40aa44897fb5c6"),
         ("n: @int\nr: ~%Math./add (n, 1)", "n: 5", "_.r", "6", "652d1e77f5b9511322774d381be71919376c294d6b1c38b10db3b7e621119a12"),
         ("n: @int\nr: n == 5", "n: 5", "_.r", "#true", "2b8505cfc16b0404307e8b2917714bd851cb3e27aea68fe2fde8c791357cfd4a"),
-        ("h: { k: @int, r: k + 1 }", "h: { k: 5 }", "_.h.r", "6", "bcb96b882977ae9d757df79203c77c816533425241393a1341161503f56eda37"),
-        ("h: { k: @int, s: { r: ^.k + 1 } }", "h: { k: 5 }", "_.h.s.r", "6", "700b8c1709ae64c5fc11426096a77f5a5bac0d4f204534e77b3a9f3c38f3bd6c"),
-        ("h: { k: !0, r: k * 2 }", "h: { k: 3 }", "_.h.r", "6", "0617bd58d5ab015711b30fa91b87705b87fd82a7bd9b2642143a3439b577336e"),
+        ("h: { k: @int, r: k + 1 }", "h: { k: 5 }", "_.h.r", "6", "d97d2e23d0864a0f8ba90bb271ea21d75db49a0f638575f6dae209e6264dc14e"),
+        ("h: { k: @int, s: { r: ^.k + 1 } }", "h: { k: 5 }", "_.h.s.r", "6", "ab86c3bc478ccbb9ea70965b8744a90d6d5c5ced78343e3fb7831bb206b71875"),
+        ("h: { k: !0, r: k * 2 }", "h: { k: 3 }", "_.h.r", "6", "767cd4e66c741896405c625ddf1875123eb4f5abda5490c588d377b17e39666f"),
     ];
     let mut n = 0;
     for (w1, w2, q, want, root) in cases {
@@ -446,6 +447,7 @@ fn r7_many_derived_fields_read_the_filled_value_in_time() {
 /// g1 — Roots that never held a value context over a type do not move
 /// (v0.106.0).
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_roots_without_this_form_do_not_move() {
     let mut bad = Vec::new();
     let cases = [
@@ -455,8 +457,8 @@ fn g1_roots_without_this_form_do_not_move() {
         ("r: 1 + \"a\"", "7674df6e0cf1aadcedf26afd44b62186155cc717799a1864be4e90d634611f97"),
         ("c: c + 1", "3f0a62e4ac00a7517e258bee6afbc348f33167cb1cd42e9bcefa419645c2da34"),
         ("n: 5\nr: n & 7", "fba672c829ec60c00b70cb6090e8b95ba38b16c96cd99eb6773bad45a146822f"),
-        ("h: { k: 5, r: k + 1 }", "87b57f307c108e2fd303c78c69168e38a838b8828a1c02bdd3b96e536cf998a6"),
-        ("h: { k: @int, r: k }", "9247b8a31920ff61cd5ae14c35c682bdf0d372d28c68e53d5036a6b80de3043e"),
+        ("h: { k: 5, r: k + 1 }", "de5a1ec3826733ebcdcc266a2fd3aac2cbdf4d728161dada9efbd0c6ff27a7b1"),
+        ("h: { k: @int, r: k }", "609a2afbc64d274b0ca840576660f7b0afff568443cbed4ffb30e78419073c04"),
         ("r: (1 | 2) + 1", "fda956e1d47ac9011a7c617026ffbe70ffbe72550b26ae0d8bb12fea4dadb9b0"),
     ];
     for (src, root) in cases {

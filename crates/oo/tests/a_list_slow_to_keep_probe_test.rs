@@ -337,20 +337,21 @@ fn r3_a_hundred_thousand_are_kept() {
 /// do not move — lists, nested, a list in a field, open terms, a table, a
 /// branch with two bodies, fields that read their siblings, strings.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_roots_that_were_kept_do_not_move() {
     let cells: [(&[&str], &str); 12] = [
         (&["r: [1, 2, 3]"], "42d52b1d8be2c4ee717a18effdfa0b14b046d0d2885794d9b4754b3d3e6aa924"),
         (&["r: [[1], [2, [3]]]"], "985fa22997296374e033e0d02d53fd3cabefa472ceb70e36108e3374314ed83c"),
-        (&["r: { xs: [1, 2], name: \"n\" }"], "52c1641597dec4cf77737b6795e56b94a299e3f2f529f3196177c6e97ca64ab1"),
+        (&["r: { xs: [1, 2], name: \"n\" }"], "857a7c1341539c7e2cd4fbcef0a7c3fdfaee23cb89bf8b3c51502bec5b3e327d"),
         (&["r: [{ a: 1 }, { a: 2 }]"], "9d1ef85f7877142be5fd59fa845bc7866f89c2ce8e439c362daea4997e7adf94"),
         (&["r: 5 |> [$, $ + 1]"], "a96de7c276c784b283f548ebef2faee79b442b77d371c2d912e356b61e95e324"),
         (&["o: { a: $ + 1 }"], "2f03b548731f804e5121c8bea53e71e81bb211a310714733fb05fa36177cb9bb"),
         (&["t: { @int: 0, 1: \"a\" }"], "ad136515ecb828dbf509917ff97cb426a82cec4fd9e5476ff239587e7782f6b4"),
         (&["t: { @int: (n -> n + 1) }", "t: { @int: (n -> n * 2) }"], "74dc95fe41bf528fea6195cdcdd1fa900813cd88ea0e7179562f97b6c83da1d7"),
-        (&["r: { a: 1, b: a + 1 }"], "f466ac940606a06d1085327e45083797eae57bce46276d353d83421d60c545ca"),
-        (&["c: { a: c.b, b: 1 }"], "66417288010a66e4dd6e9e379829d286810a6606714f454ef883c6190bfd548b"),
+        (&["r: { a: 1, b: a + 1 }"], "299eb715b7bb1be5e00195cf0c297be160358c23546fb7c7f3d4db95b9f83681"),
+        (&["c: { a: c.b, b: 1 }"], "4e7080708e5a119ca9a513b7a12217125b56f21b80b5f1589d44ec029e8c5549"),
         (&["r: \"a long string\""], "fd022d418e8797ff79d2cae5249fedfeeeaef8ab017970bf3abddd70d09c8092"),
-        (&["r: { z: 1, a: 2, m: [3, 1] }"], "8744be70ed30f9437598d89007c9453cbba2e11e7be0150d3d1ab97eddfbb54e"),
+        (&["r: { z: 1, a: 2, m: [3, 1] }"], "a5eae034fae5cad0786c7d13e498ca484475979080592fb07a9949eb03ddf192"),
     ];
     let mut bad = Vec::new();
     let mut roots = vec![String::new(); cells.len()];

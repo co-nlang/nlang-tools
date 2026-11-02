@@ -227,7 +227,7 @@ fn r3_equal_tables_answer_alike() {
         // Controls, right on v0.88.0.
         ("{ @{ @int }: $ + 1 } = { @{ @int }: $ + 1 }", "#true"),
         ("({ @{ @int }: $ + 1 }) 5", "6"),
-        ("({ @{ @int }: $ + 1 } & { @{ @int }: $ * 2 }) 5", "_|_ ;; %cause: #conflict ;; Incompatible types: 10 vs 6"),
+        ("({ @{ @int }: $ + 1 } & { @{ @int }: $ * 2 }) 5", "_|_ ;; %cause: #conflict ;; Incompatible types: 6 vs 10"), // AMENDED 2026-11-02 for Q-118 (D126): the bodies meet in address order, and the addresses moved
     ]);
 }
 
@@ -291,6 +291,7 @@ fn r5_several_bodies_print_one_row_each() {
 /// D109 Q1: a closed pure body is a value. `1 + 1` equals `2`, prints as
 /// `2`, and tables made only of such bodies keep their roots.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_a_closed_pure_body_is_a_value() {
     answers("g1", &[
         ("{ @{ 4 }: 1 + 1 } = { @{ 4 }: 2 }", "#true"),
@@ -298,7 +299,7 @@ fn g1_a_closed_pure_body_is_a_value() {
     ]);
     for (src, root) in [
         ("k: { @{ 4 }: \"f\", _: \"z\" }\n", "43480b6b8fce1ec0c971f2d6d956b33f2b971371364d65006903ffd67ef41fe9"),
-        ("k: { t: { @{ @int }: 1, _: 0 } }\n", "275bc55ddc3801d21b306de8cb06f1d9a8d455aea7bed823ab889975620d559f"),
+        ("k: { t: { @{ @int }: 1, _: 0 } }\n", "33ba0b1e035336063fab7fa6c2f2ed92afd115175ca91dd12b199b05f8a9bff0"),
     ] {
         let w = Ws::new("g1c");
         w.commit(&[src]);

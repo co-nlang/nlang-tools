@@ -329,7 +329,7 @@ fn r6_encoding_seven() {
     let mut bad = Vec::new();
     let w = Ws::new("r6-new");
     check(&mut bad, "new store", w.commit("x: 0\n"), "");
-    check(&mut bad, "new store declares", w.encoding(), "encoding=10"); // AMENDED 2026-10-21 for Q-097 (D114); AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10
+    check(&mut bad, "new store declares", w.encoding(), "encoding=11"); // AMENDED 2026-10-21 for Q-097 (D114); AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     let w = Ws::new("r6-old");
     check(&mut bad, "seed", w.commit("c: { b: 2 }\n"), "");
     fs::write(w.ws.join(".oo/objects.format"), "encoding=6\n").unwrap();
@@ -342,8 +342,8 @@ fn r6_encoding_seven() {
     check(&mut bad, "...c on encoding=6: no member", (w.members().len() - before).to_string(), "0");
     let (o, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     check(&mut bad, "migrate rc", rc.to_string(), "0");
-    check(&mut bad, "migrate names whom it locks out", o.contains("oo v0.85.0 through v0.100.0").to_string(), "true"); // AMENDED 2026-10-21 for Q-097 (D114); AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10
-    check(&mut bad, "after migrate declares", w.encoding(), "encoding=10"); // AMENDED 2026-10-21 for Q-097 (D114); AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10
+    check(&mut bad, "migrate names whom it locks out", o.contains("oo v0.85.0 through v0.118.0").to_string(), "true"); // AMENDED 2026-10-21 for Q-097 (D114); AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
+    check(&mut bad, "after migrate declares", w.encoding(), "encoding=11"); // AMENDED 2026-10-21 for Q-097 (D114); AMENDED 2026-10-22 for Q-099 (D115): encoding 9; AMENDED 2026-10-22 for Q-100 (D116): encoding 10; AMENDED 2026-11-02 for Q-118 (D126): encoding 11
     check(&mut bad, "...c after migrate", w.commit("...c\n"), "");
     check(&mut bad, "...c after migrate: _.b", w.eval("_.b"), "2");
     verdict(bad, 13);
@@ -356,6 +356,7 @@ fn r6_encoding_seven() {
 /// as answers), a coordinate's and a nested record's spread (Q-092), and
 /// the readings a spread lands, written out by hand.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_roots_without_a_row_do_not_move() {
     let mut bad = Vec::new();
     let cases: [(&str, &str); 8] = [
@@ -363,7 +364,7 @@ fn g1_roots_without_a_row_do_not_move() {
         ("...~%Math\n", "42eadc23e9f62a7d379800d33ed7b716f0b2471ef86df8f923679d91e020fe14"),
         ("...{ j: 5 }\n", "2ab0bdf24ff774cc7b769ba9981bb9bc53a2f46912b7c5466aa481b2b7582615"),
         ("c: { b: 2 }\nr: { a: 1, ...c }\n", "f6be66e9989ce17b864992b6223061d8503f196a74b26c6311f2921d7e30ab13"),
-        ("c: { b: 2 }\nr: { x: { a: 1, ...c } }\n", "125589e26e3677bbf7a05ab851876f3adb303fefd8a5fc377be264468862921c"),
+        ("c: { b: 2 }\nr: { x: { a: 1, ...c } }\n", "2450d097f3e93f816e99a96c75ad3c7e6c78e6816f50f19886356f2deaf0f0b3"),
         ("c: { b: 2 }\nb: c.b\n", "eff89b3a87264fdba1ac9b0ed6a16ef0423645210c93a36b2148adff9146ea85"),
         ("s: { j: 1 }\nj: s.j\n", "3c5c33274660ede1e845280deed19f644195a8da8ebc65b8ac6d744bf23fadf2"),
         ("~p: { b: 2 }\nq: ~p\n", "aabf08268f5a9fddba1aa6308e5c146c188759a7e44a363586a4804bebc00d9b"),

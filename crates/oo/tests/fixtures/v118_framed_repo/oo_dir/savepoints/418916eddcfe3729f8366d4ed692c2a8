@@ -1,0 +1,7 @@
+#nlang/store savepoint
+parents: e187cd10450d04542f6075127fc98716
+point: bbfa21c2df2e007132aa7e6190c2ebee34e47512cbbca56561798190cf4a7725
+observation:
+question: eval\n_.t 4
+answer: 5
+{}

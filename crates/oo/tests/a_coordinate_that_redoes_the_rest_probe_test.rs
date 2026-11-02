@@ -359,6 +359,7 @@ fn reading(groups: &[&[&str]], qs: &[&str]) -> (String, String, Vec<String>) {
 /// `_`, the same coordinate twice, a spread among coordinates, two files,
 /// coordinates over a root and reading it, a self reading, a local read.
 #[test]
+// AMENDED 2026-11-02 for Q-118 (D126): a closure frame enters identity by its digest; roots that hold one moved.
 fn g1_what_was_written_stays_written() {
     let twenty = lines(20, |i| format!("k{i}: {i}"));
     let ten = lines(10, |i| format!("k{i}: {i}"));
@@ -367,7 +368,7 @@ fn g1_what_was_written_stays_written() {
     let tenk = lines(10, |i| format!("k{i}: b{i} * 2"));
     let cases: Vec<(&str, Vec<Vec<&str>>, Vec<&str>, &str)> = vec![
         ("ints", vec![vec![twenty.as_str()]], vec!["_.k19"], "e0 c0 | cbd672d177922cab314b9b663afd043abdc8e6db1c9db580ffe1cfafce44b0bd | 19"),
-        ("mixed", vec![vec!["a: 1\nb: \"s\"\nc: a + 1\nd: { x: 1, y: x + 1 }\ne: [1, 2]\n~f: 3\ng: ~f + 1\nh: 1 | 2\ni: #t"]], vec!["_.c", "_.d.y", "_.g", "_.h"], "e0 c0 | c6779b1ae24f5d38c69d141a086a19dcb37df864666fc6f929e8dbd3d570601a | 2 || 2 || 4 || 1 | 2"),
+        ("mixed", vec![vec!["a: 1\nb: \"s\"\nc: a + 1\nd: { x: 1, y: x + 1 }\ne: [1, 2]\n~f: 3\ng: ~f + 1\nh: 1 | 2\ni: #t"]], vec!["_.c", "_.d.y", "_.g", "_.h"], "e0 c0 | 342f4cebf74594942fe31ec1cdb75a1cd262a4b3884c6d5521259771e60f86b5 | 2 || 2 || 4 || 1 | 2"),
         ("forward", vec![vec!["a: z + 1\nb: 2\nz: 1"]], vec!["_.a"], "e0 c0 | 54d24d18bc02d2069de14e431a220281780a96b48b7e3a6ffbc59db6f543ea8a | 2"),
         ("top coordinate", vec![vec!["t: _\nout: t.%cause\nu: 1"]], vec!["_.out", "_.u"], "e0 c0 | 77473d9854d3065e392537d34367706bf5de7535352f65578926220f43684594 | _ || 1"),
         ("same twice", vec![vec!["x: 1\nx: 1\ny: 2"]], vec!["_.x", "_.y"], "e0 c0 | 04518d1b662974ac206331e7af92641252c96f541b6f8866b4dfa8f4a15678eb | 1 || 2"),

@@ -363,7 +363,7 @@ fn e5_this_engine_still_recomputes_cef5e484_for_the_artifact() {
         "the refusal must name what the artifact asked for; got {out:?}"
     );
     assert!(
-        out.contains("7c147a6beb9ee793dcfb2cbbb411c16cfcda89f551376120f4d294a1f97853e8"), // Q-083／D106 紀元
+        out.contains("759943849e339172bd0968a29f2c87f9f2ef28bb0db7f6b14aacddc2fb1b1efb"), // Q-083／D106 紀元; AMENDED 2026-11-02 for Q-118 (D126): was 7c147a6b…
         "if this is the only failure in this file, an identity epoch moved the \
          recomputed digest — see this test's doc comment, and do not edit e1–e4. \
          got {out:?}"
