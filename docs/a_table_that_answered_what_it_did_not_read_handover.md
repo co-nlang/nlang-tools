@@ -79,16 +79,56 @@
 
 ### 8.1 射程逐項對照
 
+*   **M1**（r1，13 格）綠。模式是視界（單獨、旁邊有匹配、旁邊有不匹配）、兩張表交會、具名規則表、箭頭的參數模式、聯集引數、記錄模式的欄位是視界、模式與引數的交會是視界、引數的欄位是視界而模式要求它（惰性、已強制、local 軸各一格）、從記錄導航到表，都答 `#blur #max_depth_exceeded`。
+*   **M2**（r2，8 格）綠。2000、4000 列，各讀 `5`、`0`、`N`、`N-1`，都答 `#blur #fuel_exhausted`。
+*   **M3**（r3，4 格）綠。2000 列從根上讀與直接求值同答 `#blur #fuel_exhausted`。
+*   **另一半** g1 綠：20 格判得出來的照答，含 60 支重疊區間從根上讀答 `59`、1900 列答 `3798`／`10`／`0`。g2 五顆根與工單所釘相同。
+*   判「判不出來」只在 `dispatch_morphism`。`project_for_commit` 沒動。沒有預先修訂。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。`dispatch.rs` 與 `q119-ref` `6a7bad2` 逐位元組相同，相對 `36272ec` 是 +60／−6。量燃料的插樁跑完已刪，不在這次提交。探針、版本、`CHANGELOG`、規格、向量、`Cargo.lock` 都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。`Running` 309 行、加總 2920 通過、0 失敗，與工單同。另有 312 行 `running N tests`。conformance **213／213**。1900／2000／4000 列的根與 v0.119.0 同一顆：`ab297d47f55c1b19548980f17bf941a0e80dd870e4a0a2985d78012c242f8fa4`、`4b66abc9c939ba00ffa48e648e9511a588cca4c15e72b0cd19b311cd6cd42d65`、`5a2606ce43c94de95e1e94cec6b2f940d5ef19c7f2aa312a83febb164484bd3c`。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 判在 `dispatch_morphism`。每一支先交會，`undecided_where_it_looks(模式, 交會)` 在模式有要求的坐標上找到視界，就以 `Single(那個視界)` 回答整張表。`filter_minimal_branches` 的模式對模式交會若仍是視界，也答那個視界。唯一呼叫者是 `lib.rs` 的 `apply_morphism_dispatch`。聯集引數、聯集函式在 `apply_morphism` 先拆開，逐支進來再把答案併回去，所以交會看不到「含視界的聯集」這一個值。
+
+`read_branch` 是導航按鍵名讀已經點名的那一支（`.k`、裸名落到表的分支），讀的是本體，不再做比對。`%bodies` 在分支被選上之後，由 `apply_single_rule` 交會各本體；沒被選上的本體留著。舊引擎只有 `%morphism`、沒有 `%rules` 的表在進分派前答 ⊥ `#pattern_not_kept`。內建走 `%builtin`／`run_builtin`。
+
+**Q2。** `looks_at`：`_` 不算有要求，包括 `Value::Top`、`Atom(Top)`、以及還沒強制、expr 是 `Atom(Top)` 的 thunk。其餘算有要求。`undecided_where_it_looks` 先看交會裡有沒有視界。頂層視界只在模式本身有要求時計。記錄走 data、types、rules、meta、system、local 六軸，只看模式也有的鍵，再對那個鍵遞迴。模式沒有的鍵是引數帶來的。所以引數在模式不看的地方帶視界，比對仍判得出來：萬用分支、模式看別的欄、那個欄寫 `_`、tuple、模式要求的欄引數沒有，g1 都照答。
+
+**Q3。** 「誰比較細」改 `unify_unmetered`。60 支重疊區間全部匹配：比對本身每支扣 5，隨後 60×59 次模式對模式交會燃料 9689 到 9689，答案 `59`。最壞是 n 支匹配做 n×(n−1) 次交會，走的是已經強制的有限模式。`unify_unmetered` 在交會入口不扣燃料。沿路若強制定義，`force_recursive` 會清掉無計量旗標，深度超過 `max_unification_depth`（256）或硬頂 400 就成視界；`filter_minimal_branches` 以 `Err` 把那個視界答出去，迴圈停。CLI 造不出「只剩深度」的這一格，這條路留著。
+
+**Q4。** 預設燃料 10000。從根上讀 `_.t 5` 進 `dispatch_morphism` 時剩 9989：讀根的參考扣 `SUBSPACE_EXPANSION` 1，施用扣 `OPERATOR_APPLICATION` 10。直接求值進門剩 9990，只有施用那 10；字面構造扣 0。
+
+每一列：模式已是原子（`thunk=false`），`force` 扣 0；`unify_internal` 一進來扣 `ORTHOGONAL_MERGE` 5；`settle_pending` 對原子扣 0。這 5 是交會這個運算的帳單，模式在這一讀不再被強制。依工單留著。
+
+從根上讀 2000 列：第 1997 列之後剩 4，第 1998 列要 5，答 `#blur #fuel_exhausted`。後面的列，包括真的匹配和 `_`，沒有再測。4000 列在同一列停。直接求值 2000 列進門多 1，在第 1999 列耗盡，答案仍是這個視界。1900 列加 `_` 共 1901 次交會，剩 484，簿記不再扣，答 `10`。
 
 ### 8.5 探針
 
+`a_table_that_answered_what_it_did_not_read_probe_test` **5／5**。單獨一輪 `finished in 33.67s`，EXIT 0。閘門裡 `finished in 34.39s`（`a_table_that_answered_what_it_did_not_read_probe_test-7f28ef2cc5b1342d`）。探針檔與 `36272ec` 相同，未改。`rustfmt` 未掃。
+
 ### 8.6 數字
 
+引擎相對 `36272ec`：`dispatch.rs` 一檔，+60／−6。加上本節，交付是這一檔與這份交接。
+
+探針 5／5。閘門：GATE 1 2026-11-03T00:17:08+08:00 WALL 1814 s（含編譯 7 m 15 s）；GATE 2 00:47:22 1324 s；GATE 3 01:09:26 1320 s。正規化 3853 行，sha `750f7e7db8a8ba31307feec0a7b1e608f87a73cddc473823b34d97bcae6aee64`，312 個 `running`、309 個 `Running`，加總 **2920** 通過、0 失敗，`test ` 行 `ok` 2919。三輪正規化相同。原始 sha 前綴 `41e544373ed0589f`、`e99ddb66ccd4c29f`、`d792af5f20a0e5d7`。位元組 308473、308318、308317。`^error` 0，BrokenPipe 0，panicked 0。
+
+Linux 編譯在閘門裡 Finished 7 m 15 s，interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-03T01:31:26+08:00 Finished 5.10 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q119/conf.empty`，前後 `ls -A | wc -l` 都是 0，10 s。`oo` 11476016 位元組，mtime 2026-11-03 00:15:44.985725543 +0800。閘門沒有再連結。
+
+v0.119.0 同一顆根：2000 列 `_.t 5` 答 `0 | 10 | 528 | 1656 | 3434 | #blur …`；4000 列 `_.t 5` 答 `602 | 4920 | 6964 | 7670 | #blur …`。直接求值 2000 列兩版都答視界。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `c9/6c29378c…`（16029 位元組）。新倉 `layout=9`，`encoding=11`。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_07` 的分派一節補一句「判不出來的比對答那個視界」，指回 `SPEC_08` §3.2.2 第 1、2 款。編輯性。讀數由一串聯集改答那個視界，收尾時記 `CHANGELOG`。本卡未改規格、向量、`CHANGELOG`。提交時共用一份燃料把 `#blur` 存進根，是下一張。一次查表對每一列付這 5，2000 列答視界是誠實的，成本模型仍在 Inbox。
 
 ## 9. 驗收（驗收方填）
