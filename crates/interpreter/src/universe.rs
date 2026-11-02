@@ -352,6 +352,161 @@ fn recipe_instead_of_pure_answer(
     }
 }
 
+type HashSet<T> = std::collections::HashSet<T>;
+
+/// Q-117: a value the meet with `_` leaves as it is, and whose own reading
+/// does not change when a coordinate it does not read arrives: atoms, and
+/// thunks with no open term, and records and unions of them. Not `_` (a
+/// meet drops a field that is `_`), not ⊥ (a meet keeps a bare
+/// `#conflict`, D117), not an anchor, a horizon, a reference or a pending
+/// spread.
+fn fast_value(v: &Value) -> bool {
+    match v {
+        Value::Atom(kind, ..) => matches!(
+            kind,
+            AtomKind::Int(_)
+                | AtomKind::Float(_)
+                | AtomKind::Complex(..)
+                | AtomKind::Str(_)
+                | AtomKind::MultilineStr(_)
+                | AtomKind::Tag(_)
+                | AtomKind::Unit
+        ),
+        Value::Thunk { expr, context, .. } => {
+            context.is_none() && !nlang_parser::tier::has_free_dollar(expr)
+        }
+        Value::Union(items) => items.iter().all(fast_value),
+        Value::Combo(c) => {
+            fast_combo(c) && c.data.values().chain(c.local.values()).all(fast_value)
+        }
+        _ => false,
+    }
+}
+
+/// Q-117: a record with only fields (a list's `%kind` is a field too): no
+/// table, type, rule, other meta or system axis, no spread waiting or
+/// landed, no relation.
+fn fast_combo(c: &ComboVal) -> bool {
+    !c.closed
+        && matches!(c.masa_ref, crate::value::MasaRef::Top)
+        && c.pending_spreads.is_empty()
+        && c.spread_rows.is_empty()
+        && c.relations.is_empty()
+        && c.legacy_fields.is_empty()
+        && c.legacy_local.is_empty()
+        && c.types.is_empty()
+        && c.rules.is_empty()
+        && c.system.is_empty()
+        && c.meta.iter().all(|(k, v)| k == "kind" && fast_value(v))
+}
+
+/// Q-117: the record shell of a working set or delta coordinates are
+/// added to: open, no table, no spread.
+fn fast_combo_shell(c: &ComboVal) -> bool {
+    !c.closed
+        && matches!(c.masa_ref, crate::value::MasaRef::Top)
+        && c.pending_spreads.is_empty()
+        && c.spread_rows.is_empty()
+        && !c.meta.contains_key("rules")
+}
+
+/// Q-117: every bare name a value reads, anywhere inside it.
+fn collect_reads(v: &Value, out: &mut HashSet<String>) {
+    match v {
+        Value::Thunk { .. } => crate::unify::read_names(v, out),
+        Value::Union(items) => items.iter().for_each(|x| collect_reads(x, out)),
+        Value::Combo(c) => {
+            // A name a record's own field defines is read in that record.
+            let mut inner = HashSet::new();
+            for x in c
+                .data
+                .values()
+                .chain(c.types.values())
+                .chain(c.rules.values())
+                .chain(c.meta.values())
+                .chain(c.system.values())
+                .chain(c.local.values())
+                .chain(c.pending_spreads.iter())
+            {
+                collect_reads(x, &mut inner);
+            }
+            out.extend(inner.into_iter().filter(|n| {
+                let bare = n.trim_start_matches('~');
+                !(c.data.contains_key(n.as_str())
+                    || c.local.contains_key(bare)
+                    || c.types.contains_key(n.trim_start_matches('@'))
+                    || c.rules.contains_key(n.trim_start_matches('/')))
+            }));
+        }
+        _ => {}
+    }
+}
+
+/// Q-117: the names a working set's values read, or `None` when the
+/// working set is not one coordinates can be added to in place (a closed
+/// or table working set, spreads waiting or landed).
+fn fast_index(staged: &ComboVal) -> Option<HashSet<String>> {
+    let fits = !staged.closed
+        && matches!(staged.masa_ref, crate::value::MasaRef::Top)
+        && staged.pending_spreads.is_empty()
+        && staged.spread_rows.is_empty()
+        && !staged.meta.contains_key("rules");
+    if !fits {
+        return None;
+    }
+    let mut reads = HashSet::new();
+    for x in staged
+        .data
+        .values()
+        .chain(staged.types.values())
+        .chain(staged.rules.values())
+        .chain(staged.meta.values())
+        .chain(staged.system.values())
+        .chain(staged.local.values())
+    {
+        collect_reads(x, &mut reads);
+    }
+    Some(reads)
+}
+
+/// Thunk effects read the working set: refresh them after a meet, and keep
+/// what this session wrote reading the same values (Q-098).
+fn restamp(
+    engine: &Ouroboros,
+    root: &std::sync::Arc<ComboVal>,
+    standard_root: &ComboVal,
+    staged: &mut std::sync::Arc<ComboVal>,
+    delta: Option<&mut ComboVal>,
+) {
+    let mut ctx = crate::EvalContext::new_shared(root.clone()).with_standard_root(standard_root.clone());
+    ctx.staged = Some(staged.clone());
+    refresh_combo_thunks(engine, &ctx, std::sync::Arc::make_mut(staged));
+    if let Some(session_delta) = delta {
+        let mut next = ComboVal::default();
+        next.effect = session_delta.effect;
+        // Q-098: a working set that is a table keeps a data key as a
+        // branch (D100), not under the key. What this session wrote is
+        // still the member's; it is never dropped for not being found.
+        for (k, own) in session_delta.all_fields_iter() {
+            if let Some(v) = staged.get_field(&k).cloned() {
+                next.insert_field(&k, v);
+            } else if let Some(v) = staged.get_local_field(&k).cloned() {
+                next.local.insert(k, v);
+            } else {
+                next.insert_field(&k, own);
+            }
+        }
+        // The local axis is a field axis too (REAL_03 §6).
+        for k in session_delta.local.keys() {
+            if let Some(v) = staged.local.get(k).cloned() {
+                next.local.insert(k.clone(), v);
+            }
+        }
+        next.spread_rows = session_delta.spread_rows.clone();
+        *session_delta = next;
+    }
+}
+
 fn refresh_combo_thunks(engine: &Ouroboros, ctx: &crate::EvalContext, c: &mut ComboVal) {
     for v in c
         .data
@@ -423,11 +578,11 @@ fn is_literal_top(expr: &Expr) -> bool {
 
 pub struct Universe {
     pub head: Option<ContentHash>,
-    pub root: ComboVal,
+    pub root: std::sync::Arc<ComboVal>,
     /// The table named by the loaded root.  New universes keep it separate
     /// from user content from their first write onward.
     pub standard_root: ComboVal,
-    pub staged: ComboVal,
+    pub staged: std::sync::Arc<ComboVal>,
     pub is_dirty: bool,
     /// Request flag for this evolve session (`oo evolve --pin`). Capability
     /// alone must not set this — two-step like runPure.
@@ -458,6 +613,10 @@ pub struct Universe {
     /// immutable injection at `save_staged`. Empty unless an evolve succeeded.
     session_delta: ComboVal,
     session_has_delta: bool,
+    /// Q-117: `Some(Some(reads))` when coordinates can be added to the
+    /// working set in place and its values read the names `reads`;
+    /// `Some(None)` when they cannot; `None` when not yet looked.
+    fast_state: Option<Option<HashSet<String>>>,
     /// D110 is a rule about what a definition stores. A one-shot question
     /// (`oo eval`) is never stored: it is answered where it is asked, so
     /// reading a stored atom stays a read of data (SPEC_10, D91).
@@ -506,9 +665,9 @@ impl Universe {
     ) -> Self {
         Self {
             head,
-            root,
+            root: root.into(),
             standard_root,
-            staged: ComboVal::default(),
+            staged: ComboVal::default().into(),
             is_dirty: false,
             pin_mode: false,
             pin_pending: false,
@@ -516,6 +675,7 @@ impl Universe {
             effect_pending: None,
             session_delta: ComboVal::default(),
             session_has_delta: false,
+            fast_state: None,
             answer_in_place: false,
             injection_ids: std::collections::BTreeSet::new(),
             injection_sources: Vec::new(),
@@ -675,7 +835,7 @@ impl Universe {
         }
 
         let mut ctx =
-            EvalContext::new(self.root.clone()).with_standard_root(self.standard_root.clone());
+            crate::EvalContext::new_shared(self.root.clone()).with_standard_root(self.standard_root.clone());
         ctx.staged = Some(self.staged.clone());
         // O42: no clock salt — blur identity is CHS (budgets + partial).
         // EvalContext keeps a fixed disc tie-break salt from ::new only.
@@ -878,20 +1038,21 @@ impl Universe {
                 }
                 // Merge open partials only (no root Config in the meet).
                 let res = engine.unify_unmetered(
-                    Value::Combo(self.staged.clone()),
+                    Value::Combo((*self.staged).clone()),
                     Value::Combo(incoming_combo.clone()),
                     &mut engine.eval_context(),
                 );
                 return match res {
                     Value::Combo(m) => {
                         if let Some(d) = crate::unify::conflict_made(
-                            &[&Value::Combo(self.staged.clone()), &Value::Combo(incoming_combo.clone())],
+                            &[&Value::Combo((*self.staged).clone()), &Value::Combo(incoming_combo.clone())],
                             &Value::Combo(m.clone()),
                         ) {
                             return Err(d);
                         }
                         self.note_session_incoming(engine, &incoming_combo);
-                        self.staged = m;
+                        self.staged = std::sync::Arc::new(m);
+                        self.fast_state = None;
                         self.is_dirty = true;
                         self.restamp_thunk_effects(engine);
                         Ok(())
@@ -1096,7 +1257,8 @@ impl Universe {
         }
         if self.pin_mode && engine.privilege.pin {
             self.note_session_incoming(engine, &incoming);
-            self.staged = Self::replace_merge(&self.staged, &incoming);
+            self.staged = std::sync::Arc::new(Self::replace_merge(&self.staged, &incoming));
+            self.fast_state = None;
             self.is_dirty = true;
             self.pin_pending = true;
             // ACCEPTANCE REPAIR: remember WHICH coordinates were pinned, so the
@@ -1113,20 +1275,147 @@ impl Universe {
             self.restamp_thunk_effects(engine);
             return Ok(());
         }
+        // Q-117: coordinates the working set does not hold, that read none of
+        // their own names and that nothing staged reads, are added in place —
+        // a write of one coordinate costs that coordinate, not the working set.
+        if self.fast_state.is_none() {
+            self.fast_state = Some(fast_index(&self.staged));
+        }
+        let new_keys: Vec<(&str, &String)> = incoming
+            .data
+            .keys()
+            .map(|k| ("", k))
+            .chain(incoming.local.keys().map(|k| ("~", k)))
+            .collect();
+        let delta_fits = !self.session_has_delta
+            || (fast_combo_shell(&self.session_delta));
+        let mut new_reads = HashSet::new();
+        let fits = matches!(&self.fast_state, Some(Some(_)))
+            && delta_fits
+            && fast_combo(&incoming)
+            && !new_keys.is_empty()
+            && incoming.data.keys().all(|k| !k.starts_with(['%', '/', '@', '~']))
+            && incoming.data.values().chain(incoming.local.values()).all(fast_value)
+            && new_keys.iter().all(|(_, k)| {
+                self.staged.get_field(k).is_none()
+                    && self.staged.get_local_field(k).is_none()
+                    && (!self.session_has_delta
+                        || (self.session_delta.get_field(k).is_none()
+                            && self.session_delta.get_local_field(k).is_none()))
+            })
+            && {
+                for v in incoming.data.values().chain(incoming.local.values()) {
+                    collect_reads(v, &mut new_reads);
+                }
+                let Some(Some(index)) = &self.fast_state else { unreachable!() };
+                // A name the new value reads is already there (staged, in
+                // the root, or the system's): a name not there yet is a
+                // forward reading, which the meet settles its own way.
+                let there = |n: &String| {
+                    n.starts_with("~%")
+                        || [&*self.staged, &*self.root].iter().any(|c| {
+                            c.get_field(n).is_some()
+                                || c.get_local_field(n.trim_start_matches('~')).is_some()
+                        })
+                };
+                new_reads.iter().all(there)
+                    && new_keys.iter().all(|(p, k)| {
+                        !crate::eval::captures(index, p, k) && !crate::eval::captures(&new_reads, p, k)
+                    })
+            };
+        if fits {
+            drop(ctx);
+            let shadow = std::env::var_os("OO_Q117_SHADOW").map(|_| {
+                (self.staged.clone(), self.session_delta.clone(), self.session_has_delta)
+            });
+            // What restamp gives a new value: its effect read in the working
+            // set (it reads none of the new names, so before or after the
+            // insert is the same).
+            let mut fresh = incoming.clone();
+            {
+                let mut rctx = crate::EvalContext::new_shared(self.root.clone())
+                    .with_standard_root(self.standard_root.clone());
+                rctx.staged = Some(self.staged.clone());
+                for v in fresh.data.values_mut().chain(fresh.local.values_mut()) {
+                    refresh_thunk_effects(engine, &rctx, v);
+                }
+            }
+            let put = |target: &mut ComboVal| {
+                for (k, v) in &fresh.data {
+                    target.data.insert(k.clone(), v.clone());
+                }
+                for (k, v) in &fresh.local {
+                    target.local.insert(k.clone(), v.clone());
+                }
+                target.effect = target.effect.union(incoming.effect);
+                *target.cache_id.write().unwrap() = None;
+                *target.cycle_frame_id.write().unwrap() = None;
+            };
+            put(std::sync::Arc::make_mut(&mut self.staged));
+            if self.session_has_delta {
+                put(&mut self.session_delta);
+            } else {
+                self.session_delta = fresh.clone();
+                self.session_has_delta = true;
+            }
+            if let Some(Some(index)) = &mut self.fast_state {
+                index.extend(new_reads);
+            }
+            self.is_dirty = true;
+            if let Some((s0, d0, h0)) = shadow {
+                let slow = engine.unify_universe(Value::Combo((*s0).clone()), Value::Combo(incoming.clone()));
+                let slow_delta = if h0 {
+                    engine.unify_universe(Value::Combo(d0), Value::Combo(incoming.clone()))
+                } else {
+                    Value::Combo(incoming.clone())
+                };
+                let (Value::Combo(mut slow), Value::Combo(mut slow_delta)) = (slow, slow_delta) else {
+                    panic!("Q-117 shadow: the meet is not a record for {:?}", incoming.data.keys().collect::<Vec<_>>());
+                };
+                let mut slow_arc = std::sync::Arc::new(std::mem::take(&mut slow));
+                restamp(engine, &self.root, &self.standard_root, &mut slow_arc, Some(&mut slow_delta));
+                let same = |fast: &ComboVal, slow: &ComboVal| {
+                    // Not `==`: a NaN inside is never equal to itself.
+                    slow.content_hash() == fast.content_hash()
+                        && slow.data.keys().eq(fast.data.keys())
+                        && slow.local.keys().eq(fast.local.keys())
+                        && slow.effect == fast.effect
+                        && slow.closed == fast.closed
+                        && Value::Combo(slow.clone()).to_nlang(0) == Value::Combo(fast.clone()).to_nlang(0)
+                };
+                if !same(&self.staged, &slow_arc) || !same(&self.session_delta, &slow_delta) {
+                    let show = |c: &ComboVal| Value::Combo(c.clone()).to_nlang(0).chars().take(300).collect::<String>();
+                    panic!(
+                        "Q-117 shadow: the in-place meet differs from unify_universe for {:?}\n fast {}\n slow {}\n fast delta {}\n slow delta {}",
+                        incoming.data.keys().collect::<Vec<_>>(),
+                        show(&self.staged), show(&slow_arc), show(&self.session_delta), show(&slow_delta)
+                    );
+                }
+                if let Some(path) = std::env::var_os("OO_Q117_SHADOW").filter(|p| p != "1") {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let _ = writeln!(f, "hit");
+                    }
+                }
+            }
+            return Ok(());
+        }
+        self.fast_state = None;
         let res = engine.unify_universe(
-            Value::Combo(self.staged.clone()),
+            Value::Combo((*self.staged).clone()),
             Value::Combo(incoming.clone()),
         );
         match res {
             Value::Combo(m) => {
                 if let Some(d) = crate::unify::conflict_made(
-                    &[&Value::Combo(self.staged.clone()), &Value::Combo(incoming.clone())],
+                    &[&Value::Combo((*self.staged).clone()), &Value::Combo(incoming.clone())],
                     &Value::Combo(m.clone()),
                 ) {
                     return Err(d);
                 }
                 self.note_session_incoming(engine, &incoming);
-                self.staged = m;
+                self.staged = std::sync::Arc::new(m);
+                self.fast_state = None;
                 self.is_dirty = true;
                 self.restamp_thunk_effects(engine);
                 Ok(())
@@ -1238,7 +1527,8 @@ impl Universe {
         }
         if self.pin_mode && engine.privilege.pin {
             self.note_session_incoming(engine, &incoming);
-            self.staged = Self::replace_merge(&self.staged, &incoming);
+            self.staged = std::sync::Arc::new(Self::replace_merge(&self.staged, &incoming));
+            self.fast_state = None;
             self.is_dirty = true;
             self.pin_pending = true;
             for c in &evolved_coords {
@@ -1253,18 +1543,19 @@ impl Universe {
             return Ok(());
         }
         match engine.unify_universe(
-            Value::Combo(self.staged.clone()),
+            Value::Combo((*self.staged).clone()),
             Value::Combo(incoming.clone()),
         ) {
             Value::Combo(m) => {
                 if let Some(d) = crate::unify::conflict_made(
-                    &[&Value::Combo(self.staged.clone()), &Value::Combo(incoming.clone())],
+                    &[&Value::Combo((*self.staged).clone()), &Value::Combo(incoming.clone())],
                     &Value::Combo(m.clone()),
                 ) {
                     return Err(d);
                 }
                 self.note_session_incoming(engine, &incoming);
-                self.staged = m;
+                self.staged = std::sync::Arc::new(m);
+                self.fast_state = None;
                 self.is_dirty = true;
                 self.restamp_thunk_effects(engine);
                 Ok(())
@@ -1397,7 +1688,8 @@ impl Universe {
                 let mut only = ComboVal::default();
                 only.spread_rows.insert(r.clone());
                 self.note_session_incoming(engine, &only);
-                self.staged.spread_rows.insert(r.clone());
+                std::sync::Arc::make_mut(&mut self.staged).spread_rows.insert(r.clone());
+                self.fast_state = None;
                 self.is_dirty = true;
             }
         }
@@ -1430,7 +1722,8 @@ impl Universe {
                 }
                 if self.pin_mode && engine.privilege.pin {
                     self.note_session_incoming(engine, &incoming);
-                    self.staged = Self::replace_merge(&self.staged, &incoming);
+                    self.staged = std::sync::Arc::new(Self::replace_merge(&self.staged, &incoming));
+                    self.fast_state = None;
                     self.is_dirty = true;
                     self.pin_pending = true;
                     for c in &evolved_coords {
@@ -1471,7 +1764,7 @@ impl Universe {
                         }
                     }
                 }
-                let mut next = self.staged.clone();
+                let mut next = (*self.staged).clone();
                 let clash = |existing: &Value, v: &Value, merged: &Value| {
                     !matches!(existing, Value::Bottom(_))
                         && !matches!(v, Value::Bottom(_))
@@ -1514,11 +1807,14 @@ impl Universe {
                     }
                 }
                 self.note_session_incoming(engine, &incoming);
-                self.staged = next;
+                self.staged = std::sync::Arc::new(next);
+                self.fast_state = None;
                 if !self.staged.closed {
-                    self.staged.effect = self.staged.effect.union(incoming.effect);
+                    let e = self.staged.effect.union(incoming.effect);
+                    std::sync::Arc::make_mut(&mut self.staged).effect = e;
                 }
-                self.staged.pending_spreads.extend(incoming.pending_spreads);
+                std::sync::Arc::make_mut(&mut self.staged).pending_spreads.extend(incoming.pending_spreads);
+                self.fast_state = None;
                 self.is_dirty = true;
                 self.restamp_thunk_effects(engine);
                 Ok(())
@@ -1548,11 +1844,11 @@ impl Universe {
         {
             return;
         }
-        let mut ctx = crate::EvalContext::new(self.root.clone())
+        let mut ctx = crate::EvalContext::new_shared(self.root.clone())
             .with_standard_root(self.standard_root.clone());
         ctx.staged = Some(self.staged.clone());
         ctx.memo_enabled = false;
-        let mut next = self.staged.clone();
+        let mut next = (*self.staged).clone();
         for (k, v) in self.staged.all_fields_iter() {
             if let Value::Combo(c) = v {
                 if !c.pending_spreads.is_empty() {
@@ -1569,39 +1865,15 @@ impl Universe {
                 }
             }
         }
-        self.staged = next;
+        self.staged = std::sync::Arc::new(next);
+        self.fast_state = None;
         self.restamp_thunk_effects(engine);
     }
 
     fn restamp_thunk_effects(&mut self, engine: &Ouroboros) {
-        let mut ctx = crate::EvalContext::new(self.root.clone())
-            .with_standard_root(self.standard_root.clone());
-        ctx.staged = Some(self.staged.clone());
-        refresh_combo_thunks(engine, &ctx, &mut self.staged);
-        if self.session_has_delta {
-            let mut next = ComboVal::default();
-            next.effect = self.session_delta.effect;
-            // Q-098: a working set that is a table keeps a data key as a
-            // branch (D100), not under the key. What this session wrote is
-            // still the member's; it is never dropped for not being found.
-            for (k, own) in self.session_delta.all_fields_iter() {
-                if let Some(v) = self.staged.get_field(&k).cloned() {
-                    next.insert_field(&k, v);
-                } else if let Some(v) = self.staged.get_local_field(&k).cloned() {
-                    next.local.insert(k, v);
-                } else {
-                    next.insert_field(&k, own);
-                }
-            }
-            // The local axis is a field axis too (REAL_03 §6).
-            for k in self.session_delta.local.keys() {
-                if let Some(v) = self.staged.local.get(k).cloned() {
-                    next.local.insert(k.clone(), v);
-                }
-            }
-            next.spread_rows = self.session_delta.spread_rows.clone();
-            self.session_delta = next;
-        }
+        self.fast_state = None;
+        let delta = if self.session_has_delta { Some(&mut self.session_delta) } else { None };
+        restamp(engine, &self.root, &self.standard_root, &mut self.staged, delta);
     }
 
     /// D112: a root's spread rows read the universe every time. After an
@@ -1894,7 +2166,7 @@ impl Universe {
         // Land spreads before the member is written: pending spreads do not
         // travel in the working set.
         self.land_staged_spreads(engine);
-        Value::Combo(self.staged.clone()).persist_blur_partials(&engine.store)?;
+        Value::Combo((*self.staged).clone()).persist_blur_partials(&engine.store)?;
         let mut written_id: Option<String> = None;
         if self.session_has_delta {
             Value::Combo(self.session_delta.clone()).persist_blur_partials(&engine.store)?;
@@ -2043,14 +2315,16 @@ impl Universe {
         if !proposals.is_empty() {
             match crate::injections::fold(engine, proposals) {
                 Ok(combo) => {
-                    self.staged = combo;
+                    self.staged = std::sync::Arc::new(combo);
+                    self.fast_state = None;
                     self.restamp_thunk_effects(engine);
                     self.is_dirty = staged_has_committable_content(&self.staged)
                         || self.staged.get_field("~%Config").is_some();
                 }
                 Err(d) => {
                     self.workset_bottom = Some(d);
-                    self.staged = ComboVal::default();
+                    self.staged = std::sync::Arc::new(ComboVal::default());
+                    self.fast_state = None;
                     self.is_dirty = true;
                 }
             }
@@ -2061,7 +2335,7 @@ impl Universe {
                     // O42 repair: blur carries partial as CAID only — staged stays
                     // shallow; default serde recursion limit is correct again.
                     self.staged = if crate::store_codec::is_framed(&json) {
-                        crate::store_codec::decode_staged(&json)?
+                        crate::store_codec::decode_staged(&json)?.into()
                     } else {
                         serde_json::from_str(&json)?
                     };
@@ -2079,7 +2353,8 @@ impl Universe {
         } else {
             // Every member is already at HEAD. There is no proposal, and the
             // legacy staged file is not the working set while members exist.
-            self.staged = ComboVal::default();
+            self.staged = std::sync::Arc::new(ComboVal::default());
+            self.fast_state = None;
             self.is_dirty = false;
         }
         // Q4: a v0.43.0 leftover sidecar still contributes to the gate on
@@ -2157,7 +2432,7 @@ impl Universe {
         // the commit meet so ordinary writes beside a knob still land; keep
         // the override in staging as session state after the commit.
         let retained_config = self.staged.get_field("~%Config").cloned();
-        let mut staged_for_commit = self.staged.clone();
+        let mut staged_for_commit = (*self.staged).clone();
         if retained_config.is_some() {
             staged_for_commit.remove_field("~%Config");
         }
@@ -2176,7 +2451,7 @@ impl Universe {
             }
         } else {
             match engine.unify_universe(
-                Value::Combo(self.root.clone()),
+                Value::Combo((*self.root).clone()),
                 Value::Combo(staged_for_commit),
             ) {
                 Value::Combo(m) => (m, CommitKind::Standard),
@@ -2189,7 +2464,7 @@ impl Universe {
             .with_standard_root(self.standard_root.clone());
         commit_ctx.memo_enabled = false;
         commit_ctx.preserve_refs = true;
-        let parent_root = Value::Combo(self.root.clone());
+        let parent_root = Value::Combo((*self.root).clone());
         let new_root = match engine.project_for_commit(
             Value::Combo(new_root),
             Some(&parent_root),
@@ -2277,7 +2552,7 @@ impl Universe {
         if let Err(e) = folded {
             return Self::undo_landed_head(engine, base_dir, previous_head.as_ref(), &commit_hash, e);
         }
-        self.root = new_root;
+        self.root = std::sync::Arc::new(new_root);
         self.standard_root = standard;
         // Workset injections are consumed. Config is session-scoped (O37):
         // write one Config-only injection back so a "clear the directory"
@@ -2295,7 +2570,8 @@ impl Universe {
         if let Some(cfg) = retained_config {
             let mut restaged = ComboVal::default();
             restaged.insert_field("~%Config", cfg);
-            self.staged = restaged.clone();
+            self.staged = std::sync::Arc::new(restaged.clone());
+            self.fast_state = None;
             self.is_dirty = true;
             self.session_delta = restaged;
             self.session_has_delta = true;
@@ -2310,7 +2586,8 @@ impl Universe {
                 );
             }
         } else {
-            self.staged = ComboVal::default();
+            self.staged = std::sync::Arc::new(ComboVal::default());
+            self.fast_state = None;
             self.is_dirty = false;
         }
         let config_not_committed = self.staged.get_field("~%Config").is_some();
@@ -2494,9 +2771,10 @@ impl Universe {
         }
         engine.store.set_head(base_dir, target)?;
         self.head = Some(target.clone());
-        self.root = new_root;
+        self.root = std::sync::Arc::new(new_root);
         self.standard_root = standard_root;
-        self.staged = ComboVal::default();
+        self.staged = std::sync::Arc::new(ComboVal::default());
+        self.fast_state = None;
         self.is_dirty = false;
         self.pin_pending = false;
         self.pin_coords.clear();
@@ -2587,12 +2865,13 @@ impl Universe {
         crate::savepoint::record_commit(base_dir, &commit_hash, None, Some(&ancestor))?;
         engine.store.set_head(base_dir, &commit_hash)?;
         // Root value is the same as before; reload for consistency.
-        self.root = engine
+        self.root = std::sync::Arc::new(engine
             .store
-            .get_root(&head_commit.root, &engine.standard_roots)?;
+            .get_root(&head_commit.root, &engine.standard_roots)?);
         self.standard_root = standard_for_root(engine, &head_commit.root)?;
         self.head = Some(commit_hash.clone());
-        self.staged = ComboVal::default();
+        self.staged = std::sync::Arc::new(ComboVal::default());
+        self.fast_state = None;
         self.is_dirty = false;
         // Pending abandonment file may point into the compressed range;
         // drop it — squash made those edges unreachable and marks itself.
@@ -2624,8 +2903,8 @@ impl Universe {
         // lattice meet never conflicts genesis fuel with user override.
         // SPEC_09 §6 display: binding is the EFFECTIVE config (genesis ∧
         // overrides, all seven knobs) — not the staged fragment alone.
-        let mut root_for_obs = self.root.clone();
-        let mut staged_for_obs = self.staged.clone();
+        let mut root_for_obs = (*self.root).clone();
+        let mut staged_for_obs = (*self.staged).clone();
         if staged_for_obs.get_field("~%Config").is_some() {
             if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged))
             {
@@ -2695,7 +2974,7 @@ impl Universe {
     /// with the field taken back out: `<<_.>>` and `_.` are the universe's
     /// root, not the root plus the question (SYNTAX_07 §2 #4).
     pub fn observe_field_apart(&mut self, engine: &Ouroboros, name: &str) -> Value {
-        let held = self.staged.data.shift_remove(name);
+        let held = std::sync::Arc::make_mut(&mut self.staged).data.shift_remove(name);
         let path = Path {
             anchor: PathAnchor::Bare,
             segments: vec![name.to_string()],
@@ -3006,7 +3285,7 @@ impl Universe {
         // Step 2: build Refine Commit
         let current_root_hash = match &self.head {
             Some(h) => engine.store.get_commit(h)?.root.clone(),
-            None => engine.store.put_value(&Value::Combo(self.root.clone()))?,
+            None => engine.store.put_value(&Value::Combo((*self.root).clone()))?,
         };
         let mut commit = Commit {
             parent: None,

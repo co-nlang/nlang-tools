@@ -1476,10 +1476,10 @@ fn run_status(universe: Option<PathBuf>) -> anyhow::Result<()> {
     }
     if universe.is_dirty {
         println!("Staged changes:");
-        println!("{}", Value::Combo(universe.staged.clone()).to_nlang(0));
+        println!("{}", Value::Combo((*universe.staged).clone()).to_nlang(0));
         println!(
             "Total Logical Entropy: {} bits",
-            Value::Combo(universe.staged).bits()
+            Value::Combo((*universe.staged).clone()).bits()
         );
     } else {
         println!("Universe is static (no staged changes).");
@@ -2617,7 +2617,7 @@ fn run_one_shot(
             let path = parse_path_only(path_str)?;
             Ok(Some(universe.observe(&engine, &path)))
         } else if format {
-            Ok(Some(Value::Combo(universe.staged.clone())))
+            Ok(Some(Value::Combo((*universe.staged).clone())))
         } else {
             Ok(None)
         }

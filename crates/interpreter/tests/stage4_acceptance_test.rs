@@ -40,8 +40,8 @@ fn fuel_after_observe(
     initial_fuel: u64,
 ) -> (Value, u64) {
     let root = engine.unify(
-        Value::Combo(universe.root.clone()),
-        Value::Combo(universe.staged.clone()),
+        Value::Combo((*universe.root).clone()),
+        Value::Combo((*universe.staged).clone()),
     );
     let root_val = match root {
         Value::Combo(r) => r,

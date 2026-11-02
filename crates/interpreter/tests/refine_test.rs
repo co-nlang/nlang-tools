@@ -596,9 +596,9 @@ fn shadow_scan_finds_field_in_committed_root() {
 
     let mut root_fields = IndexMap::new();
     root_fields.insert("tracked_field".to_string(), val_to_evolve.clone());
-    u.root = ComboVal::new(root_fields, false, IndexMap::new(), EffectTag::Pure, vec![]);
+    u.root = ComboVal::new(root_fields, false, IndexMap::new(), EffectTag::Pure, vec![]).into();
 
-    let root_hash = oo.store.put_value(&Value::Combo(u.root.clone())).unwrap();
+    let root_hash = oo.store.put_value(&Value::Combo((*u.root).clone())).unwrap();
     let commit0 = Commit {
         parent: None,
         root: root_hash,

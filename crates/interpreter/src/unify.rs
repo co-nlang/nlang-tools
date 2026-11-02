@@ -1489,7 +1489,7 @@ impl Ouroboros {
 
 
 /// D118: the bare names an unforced value reads (through pending meets).
-fn read_names(v: &Value, out: &mut std::collections::HashSet<String>) {
+pub(crate) fn read_names(v: &Value, out: &mut std::collections::HashSet<String>) {
     if let Value::Thunk { expr, closure, .. } = v {
         out.extend(crate::eval::free_bare_names(expr, &std::collections::HashSet::new()));
         for f in closure {
