@@ -910,7 +910,8 @@ impl Universe {
                         if crate::READ_WORLD.with(|c| c.get()) {
                             break;
                         }
-                        let _ = engine.force_recursive(s.clone(), &mut ctx);
+                        // Q-120: looking is bookkeeping; each cell its own budget.
+                        let _ = engine.force_each_cell(s.clone(), &mut ctx);
                     }
                 }
             }
@@ -923,7 +924,9 @@ impl Universe {
                 && v.effect().is_pure()
                 && !crate::READ_WORLD.with(|c| c.get())
             {
-                let _ = engine.force_recursive(v.clone(), &mut ctx);
+                // Q-120 / D113: whether it read the universe must not depend on
+                // how many fields it holds; each cell gets its own budget.
+                let _ = engine.force_each_cell(v.clone(), &mut ctx);
             }
             let read = crate::READ_WORLD.with(|c| c.get());
             crate::READ_WORLD.with(|c| c.set(outer || read));
@@ -932,6 +935,7 @@ impl Universe {
         };
         for c in &coords {
             ctx.computing.remove(c);
+            crate::drop_idle_hops(&mut ctx, c);
         }
 
         // Forward / mutual refs evaluate to open-miss Top under sequential
@@ -1079,7 +1083,8 @@ impl Universe {
         if !(self.pin_mode && engine.privilege.pin) {
             let read_here = |v: &Value, ctx: &mut EvalContext| -> (Value, bool) {
                 let outer = crate::READ_WORLD.with(|c| c.replace(false));
-                let got = engine.force_recursive(v.clone(), ctx);
+                // Q-120 / D113: the verdict is bookkeeping; each cell its own budget.
+                let got = engine.force_each_cell(v.clone(), ctx);
                 let read = crate::READ_WORLD.with(|c| c.get());
                 crate::READ_WORLD.with(|c| c.set(outer));
                 (got, read)
