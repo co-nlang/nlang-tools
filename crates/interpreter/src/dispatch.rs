@@ -600,8 +600,19 @@ impl Ouroboros {
                 },
                 _ => Value::Top,
             };
+            // Q-119 / SPEC_08 §3.2.2 #1: a branch whose test meets a
+            // horizon where its pattern looks (the pattern is a horizon, or
+            // the meet ran out, or a field the pattern constrains is one) is
+            // not decided. Whether it matches is unknown, so what the table
+            // answers is unknown: that horizon passes out as it is — neither
+            // a match (its body is not an answer) nor a non-match. A horizon
+            // the argument carries where the pattern does not look is the
+            // argument's (§3.2.2 #2: arguments carry): the test still decides.
             let unified = self.unify_internal(arg.clone(), pattern_value.clone(), ctx);
             let unified = self.settle_pending(unified, ctx);
+            if let Some(h) = undecided_where_it_looks(&pattern_value, &unified) {
+                return MorphismDispatchResult::Single(h);
+            }
 
             // D117: an argument whose meet with the pattern made a conflict
             // does not match, though the conflict stays in its field.
@@ -619,7 +630,11 @@ impl Ouroboros {
             return MorphismDispatchResult::NoMatch;
         }
 
-        let minimal_elements = self.filter_minimal_branches(&matching_branches, ctx);
+        let minimal_elements = match self.filter_minimal_branches(&matching_branches, ctx) {
+            Ok(m) => m,
+            // Which branch is finer could not be decided: the same horizon.
+            Err(horizon) => return MorphismDispatchResult::Single(horizon),
+        };
 
         match minimal_elements.len() {
             0 => MorphismDispatchResult::NoMatch,
@@ -655,10 +670,10 @@ impl Ouroboros {
         &self,
         branches: &[(String, Value, Value, Value)],
         ctx: &mut EvalContext,
-    ) -> Vec<(String, Value, Value, Value)> {
+    ) -> Result<Vec<(String, Value, Value, Value)>, Value> {
         let n = branches.len();
         if n <= 1 {
-            return branches.to_vec();
+            return Ok(branches.to_vec());
         }
 
         let mut is_minimal = vec![true; n];
@@ -672,7 +687,14 @@ impl Ouroboros {
                 let (_, pattern_i, _, _) = &branches[i];
                 let (_, pattern_j, _, _) = &branches[j];
 
-                let meet_ij = self.unify_internal(pattern_i.clone(), pattern_j.clone(), ctx);
+                // Q-119: which of two patterns is finer is the table's own
+                // bookkeeping over values already forced, not an
+                // observation (SPEC_04 §6.5: fuel is spent at force points;
+                // D113 precedent) — it spends no fuel.
+                let meet_ij = self.unify_unmetered(pattern_i.clone(), pattern_j.clone(), ctx);
+                if let Value::Blur(_) = &meet_ij {
+                    return Err(meet_ij);
+                }
 
                 // p_i strictly finer than p_j → j not minimal
                 if meet_ij == *pattern_i && meet_ij != *pattern_j {
@@ -681,12 +703,12 @@ impl Ouroboros {
             }
         }
 
-        branches
+        Ok(branches
             .iter()
             .enumerate()
             .filter(|(i, _)| is_minimal[*i])
             .map(|(_, b)| b.clone())
-            .collect()
+            .collect())
     }
 
     /// Navigation reads the value a branch stores. `$` in that body is the
@@ -902,6 +924,38 @@ fn extract_tuple_fields(arg: &Value, k: usize) -> Option<Vec<Value>> {
         out.push(cv.data.get(&key).cloned().unwrap());
     }
     Some(out)
+}
+
+/// Q-119: does the pattern constrain this coordinate? `_` does not, whether
+/// it is the value or a field not forced yet that is written `_`.
+fn looks_at(pattern: &Value) -> bool {
+    match pattern {
+        Value::Thunk { expr, .. } => !matches!(expr.kind, nlang_parser::ast::ExprKind::Atom(nlang_parser::ast::AtomKind::Top)),
+        Value::Atom(nlang_parser::ast::AtomKind::Top, _, _) => false,
+        v => !v.is_top(),
+    }
+}
+
+/// Q-119: a horizon in the meet at a coordinate the pattern constrains (the
+/// pattern holds something there other than `_`). Records walk axis by axis
+/// and key by key; a union is undecided when any of its branches is.
+fn undecided_where_it_looks(pattern: &Value, met: &Value) -> Option<Value> {
+    if !met.contains_blur() {
+        return None;
+    }
+    match met {
+        Value::Blur(_) => looks_at(pattern).then(|| met.clone()),
+        Value::Union(vs) => vs.iter().find_map(|m| undecided_where_it_looks(pattern, m)),
+        Value::Combo(mc) => {
+            let Value::Combo(pc) = pattern else { return None };
+            let pa = [&pc.data, &pc.types, &pc.rules, &pc.meta, &pc.system, &pc.local];
+            let ma = [&mc.data, &mc.types, &mc.rules, &mc.meta, &mc.system, &mc.local];
+            pa.iter().zip(ma.iter()).find_map(|(p, m)| {
+                m.iter().find_map(|(k, mv)| p.get(k).and_then(|pv| undecided_where_it_looks(pv, mv)))
+            })
+        }
+        _ => None,
+    }
 }
 
 pub enum MorphismDispatchResult {
