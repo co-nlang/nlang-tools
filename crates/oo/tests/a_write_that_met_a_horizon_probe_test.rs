@@ -416,6 +416,97 @@ fn r3_a_clash_is_judged_on_what_a_reader_reads() {
     verdict(bad, n);
 }
 
+// ── r4 ── R-1: the same writes in any order are one root ────────────────
+
+/// r4 — R-1 (acceptance, 2026-11-04). A write and a horizon met in either
+/// order, over two commits, two evolves or one file, are one root; the
+/// reading and its `%caid` are the same. Three writes (the horizon, `77777`,
+/// `88888`) in every order that takes all three are one root, and writing
+/// one again moves nothing. The kept writes are a set: the order they came
+/// in is not stored (Q-092 r9, D118). The reading meets the horizon first,
+/// whatever the hashes: `(5 & 6) & h` would be ⊥ where `(h & 5) & 6` is `h`;
+/// six pairs of values after the horizon each read the horizon.
+/// 729ae40 (= q121-ref 729dd8f): `r: /f 5000` then `r: 77777` is root
+/// `…f081ffc8e4d6`, the other order `…99fc313cb3f0`; three writes, four
+/// orders, four roots.
+#[test]
+fn r4_the_same_writes_in_any_order_are_one_root() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    for (name, h, pre, want) in horizons() {
+        let shapes: Vec<(&str, String, String, &'static str)> = vec![
+            ("at the top", format!("r: {h}"), format!("r: {W}"), "_.r"),
+            ("in a record", format!("h: {{ a: {h} }}"), format!("h: {{ a: {W} }}"), "_.h.a"),
+            ("a list element", format!("l: [{h}]"), format!("l: [{W}]"), "_.l.0"),
+            ("a call's answer", format!("r: (x -> x) ({h})"), format!("r: {W}"), "_.r"),
+        ];
+        for (label, hs, ws, q) in shapes {
+            let label = format!("{name}, {label}");
+            let pre = pre.clone();
+            run.push(Box::new(move || {
+                let mut bad = Vec::new();
+                let mut seen: Vec<(String, String, String)> = Vec::new();
+                for (first, second) in [(&hs, &ws), (&ws, &hs)] {
+                    let splits: [(&str, Vec<String>, bool); 3] = [
+                        ("two commits", vec![format!("{pre}{first}"), second.clone()], false),
+                        ("two evolves", vec![format!("{pre}{first}"), second.clone()], true),
+                        ("one file", vec![format!("{pre}{first}\n{second}")], false),
+                    ];
+                    for (split, srcs, ev) in splits {
+                        let w = Ws::new("r4");
+                        let rcs = steps(&w, &srcs, ev);
+                        let tag = format!("{label}, {}, {split}", if first == &hs { "horizon first" } else { "write first" });
+                        check(&mut bad, &format!("{tag}: every step"), rcs.split(' ').all(|x| x == "e0" || x == "c0").to_string(), "true");
+                        check(&mut bad, &format!("{tag}: {q}"), short(&w.eval(q)), want);
+                        seen.push((tag, w.root(), w.eval(&format!("{q}.%caid"))));
+                    }
+                }
+                let (t0, r0, c0) = seen[0].clone();
+                for (t, r, c) in &seen[1..] {
+                    check(&mut bad, &format!("{t}: root (as {t0})"), r.clone(), &r0);
+                    check(&mut bad, &format!("{t}: %caid (as {t0})"), c.clone(), &c0);
+                }
+                bad
+            }));
+        }
+        let pre = pre.clone();
+        let h = h.clone();
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let writes = [format!("r: {h}"), format!("r: {W}"), "r: 88888".to_string()];
+            let mut roots: Vec<(String, String)> = Vec::new();
+            for o in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [2, 0, 1]] {
+                let w = Ws::new("r4-three");
+                let srcs: Vec<String> = o.iter().enumerate().map(|(i, &k)| if i == 0 { format!("{pre}{}", writes[k]) } else { writes[k].clone() }).collect();
+                let rcs = steps(&w, &srcs, false);
+                let tag = format!("{name}, three writes in order {o:?}");
+                check(&mut bad, &format!("{tag}: every step (got {rcs})"), rcs.split(' ').all(|x| x == "e0" || x == "c0").to_string(), "true");
+                check(&mut bad, &format!("{tag}: _.r"), short(&w.eval("_.r")), want);
+                let before = w.root();
+                let again = steps(&w, &[writes[1].clone()], false);
+                check(&mut bad, &format!("{tag}: {W} again moves nothing (got {again})"), w.root(), &before);
+                roots.push((tag, before));
+            }
+            let (t0, r0) = roots[0].clone();
+            for (t, r) in &roots[1..] {
+                check(&mut bad, &format!("{t}: root (as {t0})"), r.clone(), &r0);
+            }
+            // The canonical order puts the horizon first whatever the hashes:
+            // under hash order alone `h, 5, 6` reads ⊥ (5 & 6 first).
+            for (x, y) in [(1, 2), (3, 4), (5, 6), (11, 12), (21, 22), (31, 32)] {
+                let w = Ws::new("r4-pairs");
+                let rcs = steps(&w, &[format!("{pre}r: {h}"), format!("r: {x}"), format!("r: {y}")], false);
+                let tag = format!("{name}, the horizon then {x} then {y}");
+                check(&mut bad, &format!("{tag}: every step (got {rcs})"), rcs.split(' ').all(|z| z == "e0" || z == "c0").to_string(), "true");
+                check(&mut bad, &format!("{tag}: _.r"), short(&w.eval("_.r")), want);
+            }
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
 // ── g1 ── a decided value is judged as before ───────────────────────────
 
 #[test]
