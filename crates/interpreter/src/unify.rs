@@ -210,19 +210,28 @@ impl Ouroboros {
     /// D110 and D127: does reading this value read the universe, and does it
     /// read, somewhere, as a horizon? One walk answers both.
     fn reads_world_or_horizon(&self, v: &Value) -> (bool, bool) {
+        let (read, horizon, _) = self.reads_world_or_horizon_full(v);
+        (read, horizon)
+    }
+
+    /// The same walk, and what it walked to: the side as the universe keeps
+    /// it once every cell is forced (R-1). A side that reads the universe,
+    /// or is not walked, comes back as it is.
+    fn reads_world_or_horizon_full(&self, v: &Value) -> (bool, bool, Value) {
         match v {
-            Value::Blur(_) => (false, true),
-            Value::Ref(_) => (true, false),
-            Value::Thunk { context: Some(_), .. } => (false, false),
-            Value::Thunk { effect, .. } if !effect.is_pure() => (false, false),
-            Value::Top | Value::TopCaused { .. } | Value::Bottom(_) => (false, false),
+            Value::Blur(_) => (false, true, v.clone()),
+            Value::Ref(_) => (true, false, v.clone()),
+            Value::Thunk { context: Some(_), .. } => (false, false, v.clone()),
+            Value::Thunk { effect, .. } if !effect.is_pure() => (false, false, v.clone()),
+            Value::Top | Value::TopCaused { .. } | Value::Bottom(_) => (false, false, v.clone()),
             _ => {
                 let outer = crate::READ_WORLD.with(|c| c.replace(false));
                 let mut ctx = self.eval_context();
                 let full = self.force_each_cell(v.clone(), &mut ctx);
                 let read = crate::READ_WORLD.with(|c| c.get());
                 crate::READ_WORLD.with(|c| c.set(outer));
-                (read, full.contains_blur())
+                let horizon = full.contains_blur();
+                (read, horizon, if read { v.clone() } else { full })
             }
         }
     }
@@ -375,7 +384,29 @@ impl Ouroboros {
         // `already in HEAD`; `r: 7` then `r: /f 5000` lost the 7), or a side
         // that could not print back made the meet a refusal.
         if (ha || hb) && a.content_hash() != b.content_hash() {
-            return crate::value::pending_meet(a, b);
+            // R-1: the same writes in any order are one root. The sides of
+            // the meets this coordinate kept before are this meet's sides;
+            // each once, in canonical order. What reads as a horizon comes
+            // first, so a reading meets the horizon before the writes it
+            // kept — `(7 & 8) & h` would be ⊥ where `(h & 7) & 8` is `h`.
+            let mut sides = Vec::new();
+            meet_sides(&a, &mut sides);
+            meet_sides(&b, &mut sides);
+            // A side is kept as the universe would keep it alone: the write
+            // that came in unforced and the same write read back from the
+            // root are one side.
+            let mut keyed: Vec<(bool, String, Value)> = sides
+                .into_iter()
+                .map(|v| {
+                    let (_, horizon, v) = self.reads_world_or_horizon_full(&v);
+                    (!horizon, v.content_hash().to_string(), v)
+                })
+                .collect();
+            keyed.sort_by(|x, y| (x.0, &x.1).cmp(&(y.0, &y.1)));
+            keyed.dedup_by(|x, y| x.1 == y.1);
+            if let Some(met) = keyed.into_iter().map(|(_, _, v)| v).reduce(crate::value::pending_meet) {
+                return met;
+            }
         }
         let reads = [ra, rb];
         let own = [
