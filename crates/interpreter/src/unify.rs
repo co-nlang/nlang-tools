@@ -207,6 +207,26 @@ impl Ouroboros {
         r
     }
 
+    /// D110 and D127: does reading this value read the universe, and does it
+    /// read, somewhere, as a horizon? One walk answers both.
+    fn reads_world_or_horizon(&self, v: &Value) -> (bool, bool) {
+        match v {
+            Value::Blur(_) => (false, true),
+            Value::Ref(_) => (true, false),
+            Value::Thunk { context: Some(_), .. } => (false, false),
+            Value::Thunk { effect, .. } if !effect.is_pure() => (false, false),
+            Value::Top | Value::TopCaused { .. } | Value::Bottom(_) => (false, false),
+            _ => {
+                let outer = crate::READ_WORLD.with(|c| c.replace(false));
+                let mut ctx = self.eval_context();
+                let full = self.force_each_cell(v.clone(), &mut ctx);
+                let read = crate::READ_WORLD.with(|c| c.get());
+                crate::READ_WORLD.with(|c| c.set(outer));
+                (read, full.contains_blur())
+            }
+        }
+    }
+
     /// D110: does reading this value read the universe? A live reference
     /// always does; an open term (a `$` with no frame) is not decided here.
     fn reads_world(&self, v: &Value) -> bool {
@@ -345,7 +365,19 @@ impl Ouroboros {
         {
             return self.unify_internal(a, b, ctx);
         }
-        let reads = [self.reads_world(&a), self.reads_world(&b)];
+        let (ra, ha) = self.reads_world_or_horizon(&a);
+        let (rb, hb) = self.reads_world_or_horizon(&b);
+        // D127 (Q-121): a write that meets a horizon the universe holds — the
+        // coordinate is one, or reads as one somewhere inside — keeps both,
+        // and so does a horizon written over a value. The horizon stays the
+        // snapshot it is; reading the coordinate answers it. Met at once, the
+        // horizon absorbed the write (`r: /f 5000` then `r: 7` answered
+        // `already in HEAD`; `r: 7` then `r: /f 5000` lost the 7), or a side
+        // that could not print back made the meet a refusal.
+        if (ha || hb) && a.content_hash() != b.content_hash() {
+            return crate::value::pending_meet(a, b);
+        }
+        let reads = [ra, rb];
         let own = [
             !reads[0] && self.keeps_its_syntax(&a),
             !reads[1] && self.keeps_its_syntax(&b),

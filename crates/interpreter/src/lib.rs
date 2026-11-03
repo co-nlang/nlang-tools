@@ -3677,7 +3677,13 @@ impl Ouroboros {
         // message would depend on the order (a pending meet, D118, too).
         let pending_meet = matches!(&val, Value::Thunk { closure, .. }
             if closure.first().map(|f| crate::value::is_meet_frame(f)).unwrap_or(false));
+        // D113 (Q-121): a definition forced inside a meet the universe makes
+        // for free is charged as usual. Free, the clash check worked out a
+        // definition no reader could and refused a write the reader saw as a
+        // horizon (`h: { a: (3000 & 3000).k2999 }`, then `h: { a: 7 }`).
+        let free = FREE_MEET.with(|c| c.replace(false));
         let out = self.force_once_inner(val, ctx);
+        FREE_MEET.with(|c| c.set(free));
         match out {
             Value::Bottom(d) if pending_meet => Value::Bottom(Box::new(crate::unify::order_free(*d))),
             other => other,

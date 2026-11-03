@@ -76,16 +76,74 @@
 
 ### 8.1 射程逐項對照
 
+引擎兩檔與 `q121-ref` `729dd8f` 逐位元組相同（`lib.rs`、`unify.rs`，相對 `a9ca9f2` +39／−1）。探針未改。
+
+*   **M1。** 寫在視界上的值留著。r1 十六格綠。深度視界 `r: /f 5000` 再寫 `r: 7`：演化與提交都成功。根 `23d054992aa9d980ae123b47a4fdb5095084ab99af686440b138f081ffc8e4d6`。框的一邊是快照（`#max_depth_exceeded`，`%caid` `e84c5a97…`），一邊是 `7`。讀 `_.r` 答那個快照。v0.121.0 同一序：演化收下、提交 `already in HEAD`、根 `0d0c15f20219e61144f5a56ff65fa82d888d03e594e80881239e1531d16cc756`，根裡是那顆視界。
+*   **M2。** 寫在值上的視界，值留著。r2 八格綠。先 `r: 7` 再 `r: /f 5000`：提交成功，根 `b601597c4304b8074d823df57e6a9bae00052780048e070994b499fc313cb3f0`，框的兩邊是 `7` 與同一顆快照。v0.121.0 提交成功，讀數只剩視界。
+*   **M3。** 判撞不撞看讀的人讀得到的。r3 綠。N=10 兩種先後都是演化 rc=1、`#conflict at h.a`。N=3000 讀出視界，寫入收下。
+*   **g1。** `/f 50` 之後寫 `7` 具名拒絕、寫 `0` 收下；`7` 之後寫 `/f 50` 具名拒絕。直接求值 `/f 5000 & 7` 答 `#max_depth_exceeded`（另一次觀測，`%caid` `34c53dba…`），`/f 50 & 7` 答 `#conflict`。
+*   **g2。** 寫入前後 `%caid` 同。`r: /f 5000` 釘 `e84c5a978ff81efffa3df3d9f8a5406af9c3de2df5274eb469fbbc1765973ecd`。4000 層鏈展開與交會之後讀，與直接讀同一顆。
+*   **g3。** 五顆小根不動，含 `x: 0` `b74d7758…`、`v: 1 + 1` `df91a8ad…`、`f: (x -> x + 1)` `258a1a08…`。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。兩檔與參考逐位元組相同。`reads_world` 沒有呼叫點，參考留著這個函式，多出來的那則警告留著。探針、版本、`CHANGELOG`、規格、向量、`Cargo.lock` 都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。v0.121.0 上寫在視界上的 `7` 提交答 `already in HEAD`、根裡沒有這筆寫入；寫在 `7` 上的視界把 `7` 蓋掉；N=10 具名拒絕、N=3000 在參考上收下。與工單同。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 判「一邊是視界」在 `reads_world_or_horizon`。坐標本身是 `Blur`，直接算視界。其餘用 `force_each_cell` 走完，`contains_blur` 為真就是讀起來某處是視界。兩個都記下在 `meet_coordinate_`：兩邊的內容雜湊不同，且任一是視界，就回 `pending_meet(a, b)`。框裡放的是進來的兩個值。
+
+這一處只在 `DEFER_RECIPES` 非 0 時，從 `unify_internal` 進來。`unify_universe` 把旗標設成 1（兩根），每一欄再設成 2。走 `unify_universe` 的坐標交會都經過這裡。
+
+*   演化把寫入併進暫存。慢路徑是 `unify_universe`，經過。快路徑把欄位放進暫存，根與這筆寫入的交會留到提交。演化拒不拒是 `meet_clash`，不經這裡，也不把兩個存下來。`from_root` 那次預看把 `DEFER_RECIPES` 設成 2 再 `unify`，經過這裡，只用來抓 `cannot_keep`。
+*   兩次演化一次提交、同一個檔。第二次若走慢路徑，暫存與寫入是 `unify_universe`。提交是根與暫存，也是。
+*   頂層的 local 軸與資料軸一起在 `unify_universe` 裡按坐標交會，經過。
+*   工作集成員相交。`injections::fold` 的 `unify_universe`，經過。
+*   提交時根與暫存。`commit` 的 `unify_universe`，經過。`#pin` 的普通部分同；被釘的坐標是覆蓋。
+*   記錄、清單、聯集。探針裡它們是一個坐標的值。`meet_coordinate_` 對整個值問一次「讀起來某處是視界嗎」，是就把整個值與那筆寫入放進同一個框。
+*   展開把一鍵併進暫存。拒絕檢查與併進都是 `unify_unmetered`，`DEFER_RECIPES` 維持 0，不經過。根上已提交的值與這筆展開，要等提交的 `unify_universe` 才到這裡。探針的清單是欄位值，走前一條。
+*   `refine`。`unify_unmetered`，不經過。比的是已經存下的兩顆提交。
+*   `squash`。新提交沿用 HEAD 的根，不交會。不經過。
+*   `status`。`session_would_be_listed` 先用普通 `unify`，不經過；接著的 `fold` 經過。
+*   在不在 HEAD。`head_if_it_holds` 是普通 `unify`，不經過。`proposals_at` 用 `unify_universe`，經過。
+
+**Q2。** 記錄的欄位、清單的元素還沒強制時，值多半是 thunk 或記錄，落在 `reads_world_or_horizon` 的最後一臂：`force_each_cell` 逐格走，每一格換上自己的 `fuel_budget`，走完還原外層。這次強制是檢查的簿記，花的是那一格自己的預算。定義本身仍是一份燃料：走訪裡真正算定義的地方把逐格旗標關掉，定義裡的 `&` 回到那一份。讀的人從根上讀 `_.h.a`，也是把那一個定義放在一份預設 10000 裡。N=10 兩邊都算出值，衝突具名拒絕。N=3000 兩邊都停在 `#fuel_exhausted`，檢查收下，兩個都記下。`force_once` 進門清掉 `FREE_MEET`，這次強制不會因為包在免費交會裡而免掉定義裡的 `&`。
+
+**Q3。** 根裡該坐標印出來是 `~__nlang_meet_l & ~__nlang_meet_r`。物件裡這個 thunk 帶一個框，一邊是視界快照（或它的定義），一邊是寫入。讀它時交會，視界那一臂照舊勝，答案是那顆快照，`%caid` 不動。
+
+v0.121.0 打得開這顆根：`inspect` rc=0，讀 `_.r` 答同一顆 `#max_depth_exceeded`，`%caid` 仍是 `e84c5a97…`。
+
+再寫一次已經記下的 `r: 7`：演化 rc=0，根維持 `23d05499…`，提交答 `Nothing to commit`，`status` 是 static。同一份 `r: /f 5000` 的來源再交一次，提交答 `already in HEAD`。兩句都是沒有新提交、根不動。`7` 走前一句，是因為 `proposals_at` 看到框裡已經有這一邊，演化不把工作集弄髒；`head_if_it_holds` 不經過 `meet_coordinate_`，所以句子是 `Nothing to commit`。
+
+**Q4。** `force_once` 進門把 `FREE_MEET` 設成 false，`force_once_inner` 跑完放回。thunk 的本體，包括使用者寫的 `&`，在這扇門裡求值。`meet_clash` 只開 `FREE_MEET`。清掉之後，定義裡的交會兩個旗標都關著，就扣 `ORTHOGONAL_MERGE`。
+
+`UNMETERED_MERGE` 留在 `force_once` 外面。它仍是 D118「這是宇宙自己的寫入」的標記。看它的是同一個欄位的兩種寫法（`same_field_of`）、一邊已經含著另一邊（兩處 `holds_field`）、讀了正在交會的節點的名字（還看 `IN_COORDINATE`）。`unify_universe` 照舊開著它。`force_recursive` 在逐格走訪裡會暫時清掉、走完放回。Q-120 把清除放在 `force_recursive`，包不到 `force_once` 裡對 `&` 的求值；v0.121.0 上 N=3000 那一格因此把定義算出來並拒絕。
 
 ### 8.5 探針
 
+`a_write_that_met_a_horizon_probe_test` **6／6**。單獨一輪 `finished in 11.78s`，EXIT 0。閘門裡 `finished in 11.71s`（`a_write_that_met_a_horizon_probe_test-25b6373ff374e46d`）。探針檔與 `a9ca9f2` 相同，未改。`rustfmt` 未掃。
+
 ### 8.6 數字
+
+引擎相對 `a9ca9f2`：`lib.rs`、`unify.rs`，+39／−1。加上本節，交付是這兩檔與這份交接。
+
+探針 6／6。閘門：GATE 1 2026-11-03T23:22:01+08:00 WALL 1953 s（含編譯 7 m 36 s，結束 23:54:34）；GATE 2 23:54:34 1509 s（結束 2026-11-04T00:19:43）；GATE 3 00:19:43 1502 s（結束 00:44:45）。正規化 3873 行，sha `5b22cbfbbc6c7badf480d3a984e316b2b7ca9fa31e97ca776b4ed702b6057668`，314 個 `running`、311 個 `Running`，加總 **2934** 通過、0 失敗，`test ` 行 `ok` 2933。三輪正規化相同。原始 sha 前綴 `a58a77b0ff1d7d43`、`cdf1f4885743da51`、`e09e1347d18dbdd1`。位元組 310155、310002、310000。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q121/conf.empty`，前後 `ls -A | wc -l` 都是 0，11 s。
+
+Linux 編譯在閘門裡 Finished 7 m 36 s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-04T00:44:45+08:00 Finished 5.35 s，EXIT 0，`^error` 0，target lib 17 則、`cargo fix` 14，留著。
+
+`oo` 11486448 位元組，mtime 2026-11-03 23:16:53.990708576 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `c9/6c29378c…`（16029 位元組）。新倉 `layout=9`，`encoding=11`。
 
 ### 8.7 你認為需要改規格之處
 
+`SPEC_10` §2.3.1 補「一筆寫入遇上存著的視界，兩個都記下」。`SPEC_06` §1 第 5 款補按語：宇宙的寫入不照「精確值勝」合併；值語境仍照 `SPEC_08` §3.2.2。演化如今收下 v0.121.0 會答 `already in HEAD` 或 `#conflict` 的那幾筆，讀數仍是那個快照，根裡兩個都在。破壞性，收尾時記 `CHANGELOG`。本卡未改規格、向量、`CHANGELOG`。直接求值的交會、`r: /f 5000` 在演化時存成視界、交會的成本、同一個式子的燃料因寫在哪裡而不同，仍在射程外。
+
 ## 9. 驗收（驗收方填）
+
