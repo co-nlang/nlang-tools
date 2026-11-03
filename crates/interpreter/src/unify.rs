@@ -170,9 +170,18 @@ fn cannot_keep(v: &Value) -> Value {
 }
 
 impl Ouroboros {
+    /// D113 (Q-120): a meet with no observation around it is one the
+    /// universe makes for itself (is a member already at HEAD, would
+    /// `status` list it, does it hold anything to commit). It spends no
+    /// fuel; a definition forced on the way is metered. Metered, a member
+    /// of more than two thousand fields ran out and `commit` stopped naming
+    /// the HEAD that already held it.
     pub fn unify(&self, a: Value, b: Value) -> Value {
         let mut ctx = self.eval_context();
-        self.unify_internal(a, b, &mut ctx)
+        let free = crate::FREE_MEET.with(|c| c.replace(true));
+        let r = self.unify_internal(a, b, &mut ctx);
+        crate::FREE_MEET.with(|c| c.set(free));
+        r
     }
 
     /// Q-092: the meet of two writes to the universe. Each coordinate is
@@ -209,7 +218,8 @@ impl Ouroboros {
             _ => {
                 let outer = crate::READ_WORLD.with(|c| c.replace(false));
                 let mut ctx = self.eval_context();
-                let _ = self.force_recursive(v.clone(), &mut ctx);
+                // Q-120 / D113: deciding is bookkeeping; each cell its own budget.
+                let _ = self.force_each_cell(v.clone(), &mut ctx);
                 let read = crate::READ_WORLD.with(|c| c.get());
                 crate::READ_WORLD.with(|c| c.set(outer));
                 read
@@ -236,8 +246,11 @@ impl Ouroboros {
         if !Self::same_reading(v, &read) {
             return None;
         }
-        let back = self.force_recursive(read, &mut ctx);
-        let held = self.force_recursive(v.clone(), &mut ctx);
+        // Q-120 / D113: comparing is bookkeeping; each cell its own budget.
+        // On one meter the second walk ran out where the first had not, and
+        // a record of four thousand fields "did not print back".
+        let back = self.force_each_cell(read, &mut ctx);
+        let held = self.force_each_cell(v.clone(), &mut ctx);
         (back.content_hash() == held.content_hash()).then_some(e)
     }
 
@@ -289,12 +302,12 @@ impl Ouroboros {
     }
 
     pub(crate) fn made_in_a_call(&self, v: &Value) -> bool {
-        holds_call_names(&self.force_recursive(v.clone(), &mut self.eval_context()))
+        holds_call_names(&self.force_each_cell(v.clone(), &mut self.eval_context()))
     }
 
     pub(crate) fn answer_syntax(&self, v: &Value) -> Option<nlang_parser::ast::Expr> {
         let mut ctx = self.eval_context();
-        let full = self.force_recursive(v.clone(), &mut ctx);
+        let full = self.force_each_cell(v.clone(), &mut ctx);
         let held = full.content_hash();
         [v.to_nlang(0), full.to_nlang(0)].into_iter().find_map(|src| {
             let e = nlang_parser::parse_expr_only(&src).ok()?;
@@ -307,7 +320,7 @@ impl Ouroboros {
             {
                 return None;
             }
-            let back = self.force_recursive(read, &mut c);
+            let back = self.force_each_cell(read, &mut c);
             (back.content_hash() == held).then_some(e)
         })
     }
@@ -381,7 +394,8 @@ impl Ouroboros {
                 let outer = crate::READ_WORLD.with(|c| c.replace(false));
                 let mut c = self.eval_context();
                 let got = self.eval(&part, &mut c);
-                let _ = self.force_recursive(got.clone(), &mut c);
+                // Q-120 / D113: deciding is bookkeeping; each cell its own budget.
+                let _ = self.force_each_cell(got.clone(), &mut c);
                 let read = crate::READ_WORLD.with(|c| c.get());
                 crate::READ_WORLD.with(|c| c.set(outer));
                 // R-3: a conjunct whose answer does not print back keeps its
@@ -475,7 +489,7 @@ impl Ouroboros {
         // D113: the universe's own merge (staging, members, commit, the
         // observation view) is bookkeeping, not an observation; it spends
         // no fuel. A coordinate is a horizon only when its own definition is.
-        let metered = !crate::UNMETERED_MERGE.with(|c| c.get());
+        let metered = !crate::UNMETERED_MERGE.with(|c| c.get()) && !crate::FREE_MEET.with(|c| c.get());
         if let Err(e) = if metered { ctx.check_resources(mbu::ORTHOGONAL_MERGE) } else { Ok(()) } {
             let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
                 Some(Value::Union(vec![a.clone(), b.clone()]))
@@ -1480,7 +1494,13 @@ impl Ouroboros {
         b: Value,
         ctx: &mut EvalContext,
     ) -> (Value, Option<BottomDetail>) {
+        // D113 (Q-120): every caller is the universe deciding whether to take
+        // a write; that is bookkeeping and spends no fuel. Metered, a write on
+        // the last field of a committed record of four thousand fields ran
+        // out, read a horizon instead of the clash, and was taken.
+        let free = crate::FREE_MEET.with(|c| c.replace(true));
         let met = self.unify_internal(a.clone(), b.clone(), ctx);
+        crate::FREE_MEET.with(|c| c.set(free));
         let met = self.settle_pending(met, ctx);
         let clash = conflict_made(&[&a, &b], &met);
         (met, clash)

@@ -95,16 +95,100 @@
 
 ### 8.1 射程逐項對照
 
+引擎三檔與 `q120-ref` `922c778` 逐位元組相同（`lib.rs`、`unify.rs`、`universe.rs`，+105／−18）。探針未改。
+
+*   **M1。** 每一格在簿記走訪裡換上一份自己的 `fuel_budget`，出來還原外層。4000 欄原子提交燃料視界 0，頭／中／尾讀 `0`／`2000`／`3999`。16000 欄同，讀 `0`／`8000`／`15999`。探針 r1 十格綠。
+*   **M2。** 最後一欄 `z: 1 & 2`、前面 3999 欄，提交仍印 `#conflict at h.z` 並且成功。r2 綠（499／3999／15999）。
+*   **M3。** `meet_clash` 不扣交會的 5。16000 欄已提交的記錄上寫衝突值，演化 rc=1、`#conflict at h.k15999`，之後沒有東西可提交。別名 `r` 同，`#conflict at r.k15999`。r3 綠。
+*   **M4。** 不帶 ctx 的 `Ouroboros::unify` 不扣那 5。同一個 2500 行的檔第二次提交 rc=1、`already in HEAD`。16000 行同。r4 綠。
+*   **M5。** `made_in_a_call`、`answer_syntax`、演化裡判「讀了宇宙」的兩處，都是每格一份預算。r5 綠。
+*   **M6。** `syntax_of` 的兩次強制、`meet_coordinate` 的每個合取項，各從滿的預算開始。r6 綠。
+*   **g1。** 走訪裡算出一個定義時把逐格旗標關掉，那一個定義仍是一份燃料。使用者寫的 1000 欄交會、深度、存下的配方等於就地重讀，都還在。g1 綠。
+*   **g2。** 五顆小根與探針所釘的相同，含 `x: 0` `b74d7758…`、`f: (x -> x + 1)` `258a1a08…`。
+*   **大的根會動。** 4000 欄原子：v0.120.0 `5d5d3cc0f241b195…`（667 處 `#fuel_exhausted`，`_.h.k3999` 是視界），本卡 `50ec0c6398a2a788…`（0 處，讀 `3999`）。16000 欄：v0.120.0 `9b85c39081f5a3d4…`（12667 處），本卡 `7e977a0ace9353f7…`（0 處，讀 `15999`）。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。三檔與參考逐位元組相同。量燃料的插樁（`check_resources` 的 `#[track_caller]`、`Q119_PROF`）跑完已從樹裡刪掉，`main.rs` 回到 `61e8e26`。探針、版本、`CHANGELOG`、規格、向量、`Cargo.lock` 都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。4000 欄在 v0.120.0 存 667 處 `#fuel_exhausted`，與工單同。16000 欄存 12667 處，等於那 667 再加上多出來的 12000 欄：一份 10000 的預算，每欄 3，約 3333 欄之後停。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 生效在 `force_recursive`。`CELL_BUDGET` 開著時，每進一格把 `ctx.fuel` 換成 `ctx.fuel_budget`（預設 10000），這格走完把外層的燃料放回去。`force_each_cell` 只負責打開旗標。呼叫點不各自改預算。
+
+走訪裡真正算一個定義的三處把旗標關掉（`as_one_definition`）：剝 thunk 時的 `force`、沿著參考的 `force`、`expand_combo_pending`。已是實值的記錄，旗標開著時不收它整個大小的費用。
+
+入口：
+
+*   提交投影。`project_for_commit` 的兩個 thunk 分支走 `force_each_cell`。記錄按欄遞迴進來，每一欄的 thunk 再走同一處。`squash` 的新提交是同一個 `project_for_commit`。
+*   演化的拒絕檢查。`read_here` 走 `force_each_cell`。判撞不撞的那次交會是 `meet_clash`，走的是下面的免費交會，不是逐格預算。
+*   R-4。`made_in_a_call`、`answer_syntax`（含印回去的那一次）。
+*   D110。`reads_world`、`syntax_of` 的兩次強制、`meet_coordinate` 對每個合取項的強制、`evolve_field` 判「讀了宇宙」的兩處。
+*   `status`、在不在 HEAD、有沒有東西可提交。`injection_has_committable_content`、`head_if_it_holds`、`session_would_be_listed`、`injection_positions_equal` 都走不帶 ctx 的 `Ouroboros::unify`，只關交會那 5，不開逐格旗標。已提交的實值不再被強制。
+*   `refine`。幾何檢查是 `unify_unmetered`（Q-094），交會不扣燃料，不開 `CELL_BUDGET`。比的是已經存下的值，沒有「一個記錄的每一格共用一份燃料」這條走訪。
+*   gc。按摘要走，不強制值。
+*   `oo test`。使用者的觀測，一份燃料。測試裡若提交，仍走 `project_for_commit`。
+*   讀數。`observe_with` 的 `force_recursive`、`eval`、內建，是觀測，不開旗標。
+
+反查。`check_resources` 依呼叫位置計數，燃料不夠時把該位置的次數加上 10⁹。插樁建置在別的 `CARGO_TARGET_DIR`，跑完已刪。
+
+*   21 種大形狀的提交：0 次耗盡。最後一欄是 ⊥ 的那格提交成功並印 `#conflict at h.z`。同一個 2500 行的檔第二次 rc=1、`already in HEAD`。
+*   這 21 種的演化：0 次耗盡。
+*   工單那份腳本把 `status` 放在演化之前，第一輪是空目錄（`no universe here`），0 次耗盡；第二筆才看得到已提交的宇宙，也是 0。補了一輪：先演化再 `status`，21 種全部 rc=0、0 次耗盡。
+*   8 種 16000 欄，演化、`status`、提交每一步：0 次耗盡。衝突寫入具名拒絕；同一個檔第二次 `already in HEAD`。
+
+**Q2。** 算一個定義時 `as_one_definition` 把 `CELL_BUDGET` 關掉，這個定義裡的交會、強制都回到呼叫者給它的那一份燃料。`force_recursive` 進門也清掉 `FREE_MEET`，所以免費交會裡被強制的定義，它內部的交會照常扣 5。
+
+g1 的 `z: (4000 欄 = 4000 欄) & #false` 是一個定義。兩份 4000 欄的交會在這一份 10000 裡做不完，答案是 `#blur #fuel_exhausted`。視界不是 ⊥，提交不回報衝突。若定義內部也逐格給預算，這個交會會做完，讀出來是 `#false`，g1 會紅。
+
+**Q3。** 不扣 `ORTHOGONAL_MERGE` 的是 `FREE_MEET`：不帶 ctx 的 `Ouroboros::unify`，以及 `meet_clash`。`unify_internal` 入口看到 `FREE_MEET` 或既有的 `UNMETERED_MERGE` 就不扣那 5。`force_recursive` 進門把 `FREE_MEET` 清掉。
+
+D118 那幾處仍只讀 `UNMETERED_MERGE`：同一個欄位的兩種寫法、一邊已經含著另一邊、讀了正在交會的節點的名字（還看 `IN_COORDINATE`）。`FREE_MEET` 不在這些條件裡。宇宙自己的寫入仍由 `unify_universe` 打開 `UNMETERED_MERGE`。沒有把「不扣燃料」和「這是宇宙自己的寫入」合成一個旗標。
+
+**Q4。** 沒有把視界改判成「不是衝突」的分支。`syntax_of` 兩次強制的內容雜湊不同就回 `None`，`meet_coordinate` 仍回 `cannot_keep`，那是 ⊥。假衝突是兩次走訪共用一份燃料，第二次沒走完，雜湊對不上。現在每一次 `force_each_cell` 進門換一份預算、出來還原，兩次都走完；印得回去就留語法。
+
+`cannot_keep` 這條路還在，留給真的印不回去（Q-092）。一格自己的定義在一份預算裡走到視界時，若兩邊停在同一個視界且雜湊相同，比對成立；雜湊不同仍是 ⊥。
+
+**Q5。** 最壞是每一格花完自己的 `fuel_budget`。N 格最多 N×10000。外層的燃料在離開格子時還原，不跟著格數累加。一格自己的定義仍只有那一份，定義內部可以把它用完。
+
+原子欄實測每欄 3，三處各扣 `SUBSPACE_EXPANSION` 1：強制 thunk、剝 thunk、固化時計深度。4000 欄這次提交的帳是 12000，0 次耗盡。共用一份 10000 時，3333 欄之後停，所以 4000 欄剩 667 格、16000 欄剩 12667 格是視界。
+
+提交與演化（各自的臨時目錄，2 GB 上限）。v0.120.0 的時間是走到視界就停的時間：
+
+| | 演化 | 提交 | 根裡的 `#fuel_exhausted` |
+| --- | --- | --- | --- |
+| v0.120.0，4000 欄 | 2.25 s | 3.07 s | 667 |
+| 本卡，4000 欄 | 0.30 s | 2.01 s | 0 |
+| v0.120.0，16000 欄 | 1.60 s | 7.99 s | 12667 |
+| 本卡，16000 欄 | 2.55 s | 9.02 s | 0 |
+
+同一對二進位早一輪較閒：v0.120.0 的 4000／16000 欄提交 1.42 s／6.62 s，本卡 1.08 s／4.03 s。根與讀數兩輪相同。
+
+Q-118 的三種形狀，本卡每 2 倍大約 2 倍。4000 欄演化 0.70／1.17／1.39 s，提交 2.27／2.56／4.10 s（外層讀、local、記錄的清單）。v0.120.0 同形 4000 欄演化 0.94／2.63／1.93 s，提交 2.46／6.09／5.19 s，後段的格沒有做成。
 
 ### 8.5 探針
 
+`a_field_that_paid_for_its_neighbours_probe_test` **8／8**。單獨一輪 `finished in 80.58s`，EXIT 0。閘門裡 `finished in 81.74s`（`a_field_that_paid_for_its_neighbours_probe_test-42fbc21c782c681a`）。探針檔與 `61e8e26` 相同，未改。`rustfmt` 未掃。
+
 ### 8.6 數字
 
+引擎相對 `61e8e26`：`lib.rs`、`unify.rs`、`universe.rs` 三檔，+105／−18。加上本節，交付是這三檔與這份交接。
+
+探針 8／8。閘門：GATE 1 2026-11-03T17:56:19+08:00 WALL 1963 s（含編譯 8 m 28 s）；GATE 2 18:29:02 1407 s；GATE 3 18:52:29 1412 s。正規化 3864 行，sha `741038469c1fcb967767a14aee75f508bd19f2e8e6fa8b8536c7402f31613c7a`，313 個 `running`、310 個 `Running`，加總 **2928** 通過、0 失敗，`test ` 行 `ok` 2927。三輪正規化相同。原始 sha 前綴 `25037ca46b48bd8f`、`eacd458fb2fdee68`、`79c8c58be032d26f`。位元組 309269、309114、309114。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q120/conf.empty`，前後 `ls -A | wc -l` 都是 0，10 s。
+
+Linux 編譯在閘門裡 Finished 8 m 28 s，interpreter lib 15 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-03T19:16:01+08:00 Finished 4.80 s，EXIT 0，`^error` 0，target lib 16 則、`cargo fix` 14，留著。
+
+`oo` 11484688 位元組。量測用的那份 mtime 2026-11-03 17:40:56.024466926 +0800。閘門再連結了同一份位元組（`cmp` 相同），樹裡的 mtime 是 17:57:51.591109787 +0800。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b` 在 `c9/6c29378c…`（16029 位元組）。新倉 `layout=9`，`encoding=11`。
+
 ### 8.7 你認為需要改規格之處
+
+`SPEC_10` §2.3.1 D113 款補一句「宇宙為自己的簿記強制一個值時，每一格各自一份預算」，用本卡的 667／12667 與每欄 3 當判例。編輯性。讀數由視界改答真值、提交多回報 ⊥、演化多拒絕寫入、兩次提交同一個檔改答 `already in HEAD`，收尾時記 `CHANGELOG`。本卡未改規格、向量、`CHANGELOG`。交會的成本模型、`r: /f 5000`、同一個式子的燃料因寫在哪裡而不同、寫在視界上的值被吸收，仍在 Inbox。
 
 ## 9. 驗收（驗收方填）

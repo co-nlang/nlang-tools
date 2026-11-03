@@ -96,6 +96,11 @@ pub enum ResourceExhausted {
 pub const HARD_RECURSION_LIMIT: u32 = 400;
 
 thread_local! {
+    /// Q-120 / D113: set while the universe forces a value for its own
+    /// bookkeeping (projecting a commit, deciding how a definition is
+    /// stored). Each cell of the structure walked gets its own budget; a
+    /// definition being worked out is charged on one meter as usual.
+    pub(crate) static CELL_BUDGET: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Q-091 / D110: set when an evaluation reads the universe. Evolve
     /// clears it around one definition and reads it after.
     pub(crate) static READ_WORLD: std::cell::Cell<bool> = std::cell::Cell::new(false);
@@ -108,6 +113,12 @@ thread_local! {
     /// bookkeeping and spend no fuel; a definition forced on the way is an
     /// observation and is metered (`force_recursive` clears this).
     pub(crate) static UNMETERED_MERGE: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-120 / D113: set while the universe meets values for its own
+    /// bookkeeping outside its writes (is a member already at HEAD, does a
+    /// write clash). Only the fuel: the meet keeps the rules of the meet it
+    /// is (`UNMETERED_MERGE` also marks the universe's writes for D118).
+    /// `force_recursive` clears it: a definition forced on the way is metered.
+    pub(crate) static FREE_MEET: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
 #[derive(Debug, Clone)]
@@ -588,6 +599,17 @@ fn expr_is_lattice_structural(expr: &Expr) -> bool {
         &expr.kind,
         ExprKind::Join(_, _) | ExprKind::Meet(_, _) | ExprKind::Diff(_, _)
     )
+}
+
+/// Q-120: `entry_hops` is read only for a key that is being forced (in
+/// `computing`, `lexical_forcing`, or `#id` in `in_flight`), and entering
+/// writes it first; a key no set holds any more can drop its entry. Kept,
+/// every entry ever entered rode each `sub_context` clone: forcing every
+/// field of a record of N fields cloned N entries N times.
+pub(crate) fn drop_idle_hops(ctx: &mut EvalContext, key: &str) {
+    if !ctx.computing.contains(key) && !ctx.lexical_forcing.contains(key) {
+        ctx.entry_hops.remove(key);
+    }
 }
 
 /// Re-entry on a force chain: pure static cycle → caused Top; any transform
@@ -3864,6 +3886,7 @@ impl Ouroboros {
                     };
                 }
                 call_ctx.in_flight.remove(&thunk_id);
+                call_ctx.entry_hops.remove(&format!("#{thunk_id:?}"));
                 ctx.fuel = call_ctx.fuel;
                 ctx.in_flight = call_ctx.in_flight;
                 ctx.computing = call_ctx.computing;
@@ -3994,8 +4017,40 @@ impl Ouroboros {
 
     pub fn force_recursive(&self, val: Value, ctx: &mut EvalContext) -> Value {
         let merging = UNMETERED_MERGE.with(|c| c.replace(false));
-        let out = self.force_recursive_metered(val, ctx);
+        let free = FREE_MEET.with(|c| c.replace(false));
+        let out = if CELL_BUDGET.with(|c| c.get()) {
+            let outer = std::mem::replace(&mut ctx.fuel, ctx.fuel_budget);
+            let out = self.force_recursive_metered(val, ctx);
+            ctx.fuel = outer;
+            out
+        } else {
+            self.force_recursive_metered(val, ctx)
+        };
+        FREE_MEET.with(|c| c.set(free));
         UNMETERED_MERGE.with(|c| c.set(merging));
+        out
+    }
+
+    /// Q-120 / D113 (`SPEC_10` §2.3.1): the universe forcing a value for its
+    /// own bookkeeping. What one cell comes to must not depend on how many
+    /// other cells the same walk holds: each cell gets its own budget, and
+    /// a definition worked out on the way is charged as usual. Under one
+    /// meter, a record of four thousand fields stored 667 of them as
+    /// `#blur #fuel_exhausted`, a ⊥ past the budget was not reported, and a
+    /// record a call built stopped keeping its recipe.
+    pub(crate) fn force_each_cell(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        let outer = CELL_BUDGET.with(|c| c.replace(true));
+        let out = self.force_recursive(val, ctx);
+        CELL_BUDGET.with(|c| c.set(outer));
+        out
+    }
+
+    /// Q-120: working a definition out is one observation, on one meter,
+    /// even inside a bookkeeping walk.
+    fn as_one_definition<T>(f: impl FnOnce() -> T) -> T {
+        let outer = CELL_BUDGET.with(|c| c.replace(false));
+        let out = f();
+        CELL_BUDGET.with(|c| c.set(outer));
         out
     }
 
@@ -4005,6 +4060,10 @@ impl Ouroboros {
         // inspected to establish that fact.
         if let Value::Combo(ref c) = val {
             if let Some(cost) = solid_combo_expansion_cost(c) {
+                // Q-120: a solid record holds nothing to work out; in a
+                // bookkeeping walk, looking at it spends no fuel (one charge
+                // of its whole size would outrun any one cell's budget).
+                let cost = if CELL_BUDGET.with(|c| c.get()) { 0 } else { cost };
                 if let Err(e) = ctx.check_resources(cost) {
                     let partial = if crate::observation::needs_partial_body(&e, ctx.strategy) {
                         Some(val.clone())
@@ -4043,7 +4102,7 @@ impl Ouroboros {
                         EffectTag::Pure,
                     );
                 }
-                v = self.force(v, ctx);
+                v = Self::as_one_definition(|| self.force(v, ctx));
                 peel += 1;
             }
             return self.force_recursive(v, ctx);
@@ -4073,7 +4132,7 @@ impl Ouroboros {
         // SYNTAX_07 §2 #4: dereferencing a live reference binds the reference
         // to what the coordinate holds now. It binds no `$`: only an evolution
         // does (SPEC_07 §4.2 P1, P3).
-        let val = self.force(val, ctx);
+        let val = Self::as_one_definition(|| self.force(val, ctx));
         let res = match val {
             // Residual thunk after force (path field leave): peel without
             // double-counting depth (Thunk arm above).
@@ -4081,6 +4140,7 @@ impl Ouroboros {
             Value::Combo(c) => {
                 // May have become solid under force (thunk → cocoon eval).
                 if let Some(cost) = solid_combo_expansion_cost(&c) {
+                    let cost = if CELL_BUDGET.with(|c| c.get()) { 0 } else { cost };
                     match ctx.check_resources(cost) {
                         Ok(()) => Value::Combo(c),
                         Err(e) => {
@@ -4101,7 +4161,7 @@ impl Ouroboros {
                     }
                 } else {
                     // forward_spread: expand deferred sources before solidifying fields.
-                    let expanded = self.expand_combo_pending(c, ctx);
+                    let expanded = Self::as_one_definition(|| self.expand_combo_pending(c, ctx));
                     match expanded {
                         Value::Combo(mut c) => {
                             let mut new_c = ComboVal::default();
@@ -4265,7 +4325,7 @@ impl Ouroboros {
                 let orig = val.clone();
                 let outer = READ_WORLD.with(|c| c.replace(false));
                 let keep = std::mem::replace(&mut ctx.preserve_refs, false);
-                let forced = self.force_recursive(val, ctx);
+                let forced = self.force_each_cell(val, ctx);
                 ctx.preserve_refs = keep;
                 let read = READ_WORLD.with(|c| c.get());
                 READ_WORLD.with(|c| c.set(outer || read));
@@ -4282,7 +4342,7 @@ impl Ouroboros {
                 // reading itself is ⊥.
                 let orig = val.clone();
                 let keep = std::mem::replace(&mut ctx.preserve_refs, false);
-                let forced = self.force_recursive(val, ctx);
+                let forced = self.force_each_cell(val, ctx);
                 ctx.preserve_refs = keep;
                 match &forced {
                     Value::Bottom(_) => forced,
@@ -5406,6 +5466,7 @@ impl Ouroboros {
                 ctx.cycle_chain.pop();
             }
             ctx.computing.remove(coord);
+            drop_idle_hops(ctx, coord);
             res
         } else {
             self.force_once(val, ctx)
@@ -5462,6 +5523,7 @@ impl Ouroboros {
                 ctx.cycle_chain.pop();
             }
             ctx.lexical_forcing.remove(name);
+            drop_idle_hops(ctx, name);
         }
         res
     }
