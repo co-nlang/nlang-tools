@@ -70,16 +70,66 @@
 
 ### 8.1 射程逐項對照
 
+`universe.rs`、`main.rs` 與 `q122-ref` `3aa85db` 逐位元組相同。探針與 r7 的預先修訂是 `25f2ecf`，未改。
+
+*   **M1。** 晚到的名字讓既有定義讀成 ⊥，就拒。探針 r1 綠（13 形 × 3 分法，一行 `&` 與單一配方各 2 分法）。探針外：`r: 7`、`r: n + 1` 再 `n: 5` 是 `e0 c0 e0 c0 e1 #conflict at r`，下一筆提交 `Nothing to commit`。根停在 `9dd48139cf8ec41edc7f04849eb0d810302edeedef09094a39284979bb9a625f`，`_.r` 讀 `7`。同一個 `oo evolve` 的兩個檔（`r: n + 1` 與 `n: 5`，根上已有 `r: 7`）在第二個檔拒 `#conflict at r`，根不動，`_.n` 讀 `_`。
+*   **M2。** 一筆寫入自己做出的 ⊥ 記下並回報。探針 r2 綠。`n: 5` 與 `r: n & 7` 同檔：演化退出碼 0，提交印 `#conflict at r` 再 `Commit successful`，讀 `_|_ #conflict`，根 `fba672c829ec60c00b70cb6090e8b95ba38b16c96cd99eb6773bad45a146822f`。清單元素 `n: 5`、`l: [n & 7]` 回報 `#conflict at l.0`。記錄裡讀節點名字 `h: { k: 5, r: k & 7 }` 回報 `#conflict at h.r`，根 `61b0ca48ad9bf0a397d86660a89884597bd132caa5fec56756311a3326829ed5`。
+*   **另一半。** `n: 6` 收下，`_.r` 仍是 `7`，根 `d961113118ac416f6fe0b9975e35d224c7f870faf7a380ef74dbbbf7b5aa2419`。g1–g4 綠。r7 那一列三條路都拒，單獨一輪 `finished in 6.21s`。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。本回合只動 `universe.rs` 與 `crates/oo/src/main.rs`，而且是參考實作的位元組。`reads_world` 仍沒有呼叫點，警告留著。探針、r7、版本、`CHANGELOG`、規格、向量都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 判在 `Universe::late_bottom`。`oo evolve` 的 `evolve_files` 每個檔落地後叫一次（對照該檔之前的 `bottoms_as_read`），根上的展開落地後再叫一次（對照整次命令之前的那一次）。拒絕在 `save_staged` 之前返回，工作集不寫回。
+
+會把工作集寫回倉的入口是 `evolve_at` 與 `evolve_where_absent`，兩者都經 `evolve_files`。`REPL`、`run`、`eval`、`test` 直接叫 `universe.evolve`，不經 `late_bottom`，也不 `save_staged`。已有 `r: 7` 與 `r: n + 1` 的倉上，`oo eval "1 + 1"` 讀 `2`、`oo run` 一個寫 `n: 5` 的檔並 `--observe n` 讀 `5`，根與 `status` 都不動。提交裡的 `save_staged` 只把留下的 `~%Config` 再暫存，不經 `late_bottom`；回報走 `read_bottoms_of`。
+
+`#pin` 仍進 `evolve_files`，`late_bottom` 在 `pin_mode` 且有 pin 能力時直接返回。視界式的兩筆已提交（`r: 7`、`r: n + 1`）之後 `evolve --pin --grant pin` 寫 `n: 5`，演化與提交退出碼都是 0，提交印 `#conflict at r`，讀 `_|_`，根移到與「寫入自己做出的 ⊥」同一顆 `fba672c8…`。
+
+並行注入各自過自己載入的那一倉：`r: 7` 與 `r: n + 1` 一次演化、另一個行程演化 `n: 5`，兩次退出碼都是 0。合進同一個提交時不經 `late_bottom`。提交退出碼 0，印 `#conflict at r`，讀 `_|_`，根 `10e832f9593c6374a39a696fd21a1ba9bc360c35b93e5b7b2ef6363eac27750c`。參考二進位同一顆根、同一個退出碼。
+
+**Q2。** `bottoms_as_read` 把根與工作集（去掉 `~%Config`）用 `unify_universe` 交成提交會交的那顆，再交 `read_bottoms_of`。走訪是 `read_bottoms`：已經是 `Bottom` 的記下坐標與原因；記錄的每個欄位用 D118 的 `rebind_in`，同一個節點共用 `views`，再往下走；聯集的元素走同一條路徑。存成語法的配方走 `force_each_cell`，每格自己的預算，強制結果再走。清單元素與記錄欄位都在這一遍裡。提交在投影之後叫同一個 `read_bottoms_of`，所以回報與演化閘門是同一個走訪。
+
+不強制的：帶 `context` 的 thunk、帶效應的 thunk（演化不觀察，D46）、帶自由 `$` 的開放項。`preserve_refs` 開著，活引用保持引用，`<<_.>>` 不跟著走。`memo_enabled` 關著。
+
+**Q3。** `written_paths` 把記錄字面的每個具名欄位展開成它寫的坐標，其餘形狀算該坐標本身。展開字面與模式鍵（表的列）放進 `own_rules`，新出現的 ⊥ 落在其下就跳過。恰好被一個自己寫的坐標蓋住的 ⊥ 是寫的人的，跳過；同一個坐標被這筆寫入的兩個欄位蓋住，就拒。路徑裡的 `%rules`，若這筆寫入寫了那個節點底下的東西，也跳過（D117 Q2）。
+
+*   **自己寫的。** `n: 5` 與 `r: n & 7` 同檔，演化退出碼 0，提交回報 `#conflict at r`，讀 ⊥，根 `fba672c8…`。
+*   **它沒寫的。** `r: 7`、`r: n + 1` 已提交再寫 `n: 5`，演化 `#conflict at r`，根停在 `9dd48139…`，讀 `7`。
+*   **兩個欄位寫同一坐標。** 同一個檔 `r: 5` 與 `r: 7`，演化退出碼 1，`#conflict at r`。
+*   **展開。** `c: { a: 2 }`、`r: { b: 1, ...c }` 再 `r: { a: 1 }`，以及反過來，都是 `#conflict at r.a`。前一個方向根 `36c5459c32169323d58d2df6d3ed5d8677adec1ee6da49bf9a1d802a5bbd8a26`，讀 `{ a: 2, b: 1 }`；後一個根 `6cf645f0005e93e8ef82301ba4ac622df191cd5237d438ba7a1a9b4ed456fbcb`，讀 `{ a: 1 }`。
+*   **表的列。** `t: { @{ @int }: 0 }` 再 `t.b: 3`，兩次都 `e0 c0`，`_.t.b` 讀 `3`，根 `a9803c0969167c5274ac6e993c857fd4ae5f14cd5e13af0517a7d521249a46b7`。
+
+**Q4。** 一次只有一個檔的 `oo evolve` 走四遍整顆交會後的視圖：命令一開始、該檔之前、該檔之後的 `late_bottom`、根上展開落地之後的 `late_bottom`。前兩遍在欄位落地前是同一顆。每一遍是 `unify_universe` 再 `read_bottoms`。`rebind_in` 讓同一個節點的欄位共用 `views`，不讀該節點名字的欄位直接返回；走訪仍進每一個純配方的 `force_each_cell`，沒有先問這筆寫入寫了哪個名字。所以寫 `h: { z: 1 }` 仍強制每一個讀 `k` 的配方。只走讀了這筆寫入所寫名字的定義，會讓 `z: 1` 跳過那些配方；本交付照參考，走整顆。
+
+安靜重測（閘門結束後，3 GB 上限）：4000／8000 個讀 `k` 的配方，寫 `h: { z: 1 }` 演化 5.82／19.42 秒、提交 5.75／18.93 秒；寫 `h: { k: 5 }` 演化 2.67／5.27 秒、提交 2.40／4.74 秒；16000 欄字面記錄再寫 `z: 1` 演化 0.84 秒、提交 0.84 秒。驗收方在參考上的演化是 5.43／16.98、2.53／5.03、0.83。欄位數加倍時，`k: 5` 的演化約兩倍（配方讀成整數之後，後面的遍數便宜）；`z: 1` 約 3.3 倍（四遍都還在強制配方）。提交的超線性在 v0.122.0 已經有（3.77／10.36 秒）；本卡在投影之後多加同一個走訪。
 
 ### 8.5 探針
 
+`a_name_that_arrived_late_probe_test` **6／6**。單獨一輪 `finished in 10.59s`，EXIT 0。閘門裡 `finished in 9.70s`（`a_name_that_arrived_late_probe_test-2ad4a7bc610685ed`）。r7 單獨一輪 `finished in 6.21s`。探針檔未改。`rustfmt` 未掃。
+
 ### 8.6 數字
 
+`universe.rs` 與 `main.rs` 相對 `25f2ecf`：+198／−1。加上本節，交付是這兩檔與這份交接。
+
+探針 6／6。閘門：GATE 1 2026-11-04T23:52:53+08:00 WALL 2159 s（含編譯 7 m 50 s，結束 2026-11-05T00:28:52）；GATE 2 00:28:52 1683 s（結束 00:56:55）；GATE 3 00:56:55 1620 s（結束 01:23:55）。正規化 3884 行，sha `45e777e9a4965aa3dc055523abc3c148f6b318b2016f40bcbe7b1e6e9857742c`，315 個 `running`、312 個 `Running`，加總 **2942** 通過、0 失敗，`test ` 行 `ok` 2941。三輪正規化相同。原始 sha 前綴 `3c1d5f06c82cd79f`、`7188480a22becbd0`、`db44ee7145b813bf`。位元組 310901、310747、310747。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q122/conf.empty`，前後 `ls -A | wc -l` 都是 0，11 s。
+
+Linux 編譯在閘門裡 Finished 7 m 50 s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-05T01:23:55+08:00 Finished 5.12 s，腳本 wall 5 s，EXIT 0，`^error` 0，target lib 17 則、`cargo fix` 14，留著。
+
+`oo` 11508232 位元組，mtime 2026-11-04 23:51:30.303530818 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`h: { a: 1, b: a + 1 }` `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`。新倉 `layout=9`，`encoding=11`。
+
 ### 8.7 你認為需要改規格之處
+
+規格已寫「存語法不得讓衝突晚到」與「它做出的相撞在演化時拒」。本卡讓晚到的名字在演化時拒，並讓讀成 ⊥ 的配方進提交回報。沒有 ⊥ 的根不動。破壞性，收尾時記 `CHANGELOG`。本卡未改規格、向量、`CHANGELOG`。兩次演化以第一筆剛進來的形去交會、頂層 N 個坐標的演化成本、補與視界互拒，仍在射程外。
 
 ## 9. 驗收（驗收方填）

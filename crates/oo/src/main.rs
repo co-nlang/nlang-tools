@@ -817,12 +817,17 @@ fn evolve_files(
     engine: &Ouroboros,
     files: &[PathBuf],
 ) -> anyhow::Result<()> {
+    // Q-122: what reads as ⊥ before this evolve; a write that makes one more
+    // definition read ⊥ is refused (SPEC_10 §2.3.1 D110 款, §2.2.1).
+    let first = universe.bottoms_as_read(engine);
+    let mut all_fields = Vec::new();
     for file in files {
         let input = oo::read_source_file(file).map_err(|m| anyhow::anyhow!("{m}"))?;
         let program = match parse_program(&input) {
             Ok(program) => program,
             Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
         };
+        let before = universe.bottoms_as_read(engine);
         for f in &program.fields {
             if let Err(e) = universe.evolve(engine, f) {
                 let fb = field_key_label(&f.key);
@@ -833,9 +838,20 @@ fn evolve_files(
                 );
             }
         }
+        if let Some(e) = universe.late_bottom(engine, &before, &program.fields) {
+            anyhow::bail!(
+                "Evolution Conflict in \"{}\": {}",
+                file.display(),
+                format_conflict_where(&e, None)
+            );
+        }
+        all_fields.extend(program.fields);
     }
     // D112: the root's spread rows read the universe this evolve left.
     if let Err(e) = universe.land_root_spreads(engine) {
+        anyhow::bail!("Evolution Conflict: {}", format_conflict_where(&e, None));
+    }
+    if let Some(e) = universe.late_bottom(engine, &first, &all_fields) {
         anyhow::bail!("Evolution Conflict: {}", format_conflict_where(&e, None));
     }
     Ok(())
