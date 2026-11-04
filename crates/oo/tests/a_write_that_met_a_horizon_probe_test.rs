@@ -420,15 +420,18 @@ fn r3_a_clash_is_judged_on_what_a_reader_reads() {
 
 /// r4 — R-1 (acceptance, 2026-11-04). A write and a horizon met in either
 /// order, over two commits, two evolves or one file, are one root; the
-/// reading and its `%caid` are the same. Three writes (the horizon, `77777`,
-/// `88888`) in every order that takes all three are one root, and writing
-/// one again moves nothing. The kept writes are a set: the order they came
-/// in is not stored (Q-092 r9, D118). The reading meets the horizon first,
-/// whatever the hashes: `(5 & 6) & h` would be ⊥ where `(h & 5) & 6` is `h`;
-/// six pairs of values after the horizon each read the horizon.
+/// reading and its `%caid` are the same. Three writes that do not clash (the
+/// horizon, `@int`, `77777`) in every order are one root — `@int` and
+/// `77777` are kept as the one value they make with no horizon there — and
+/// writing one again moves nothing. The kept writes are a set: the order
+/// they came in is not stored (Q-092 r9, D118).
 /// 729ae40 (= q121-ref 729dd8f): `r: /f 5000` then `r: 77777` is root
-/// `…f081ffc8e4d6`, the other order `…99fc313cb3f0`; three writes, four
-/// orders, four roots.
+/// `…f081ffc8e4d6`, the other order `…99fc313cb3f0`. ec81e37 (= q121-r1ref
+/// 4fc8add): the horizon, `@int`, `77777` is `…be7759bfced2` when the
+/// horizon came before both, `…6882a82fc750` when it came last.
+/// AMENDED 2026-11-04 for D127 Q3: the three writes were the horizon,
+/// `77777`, `88888`, all taken, and six pairs of values after the horizon
+/// each read the horizon. Under Q3 the second value is refused (r5).
 #[test]
 fn r4_the_same_writes_in_any_order_are_one_root() {
     let mut bad = Vec::new();
@@ -473,17 +476,17 @@ fn r4_the_same_writes_in_any_order_are_one_root() {
         let h = h.clone();
         run.push(Box::new(move || {
             let mut bad = Vec::new();
-            let writes = [format!("r: {h}"), format!("r: {W}"), "r: 88888".to_string()];
+            let writes = [format!("r: {h}"), "r: @int".to_string(), format!("r: {W}")];
             let mut roots: Vec<(String, String)> = Vec::new();
-            for o in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [2, 0, 1]] {
+            for o in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
                 let w = Ws::new("r4-three");
                 let srcs: Vec<String> = o.iter().enumerate().map(|(i, &k)| if i == 0 { format!("{pre}{}", writes[k]) } else { writes[k].clone() }).collect();
                 let rcs = steps(&w, &srcs, false);
                 let tag = format!("{name}, three writes in order {o:?}");
-                check(&mut bad, &format!("{tag}: every step (got {rcs})"), rcs.split(' ').all(|x| x == "e0" || x == "c0").to_string(), "true");
+                check(&mut bad, &format!("{tag}: no write refused (got {rcs})"), (!rcs.contains("e1")).to_string(), "true");
                 check(&mut bad, &format!("{tag}: _.r"), short(&w.eval("_.r")), want);
                 let before = w.root();
-                let again = steps(&w, &[writes[1].clone()], false);
+                let again = steps(&w, &[writes[2].clone()], false);
                 check(&mut bad, &format!("{tag}: {W} again moves nothing (got {again})"), w.root(), &before);
                 roots.push((tag, before));
             }
@@ -491,14 +494,104 @@ fn r4_the_same_writes_in_any_order_are_one_root() {
             for (t, r) in &roots[1..] {
                 check(&mut bad, &format!("{t}: root (as {t0})"), r.clone(), &r0);
             }
-            // The canonical order puts the horizon first whatever the hashes:
-            // under hash order alone `h, 5, 6` reads ⊥ (5 & 6 first).
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+// ── r5 ── D127 Q3: the writes kept beside a horizon are judged on each other ──
+
+/// r5 — R-2 (acceptance, 2026-11-04; D127 Q3, user). A write that clashes
+/// with a decided write the coordinate kept beside a horizon is refused, as
+/// it is with no horizon there — whichever split into evolves, commits and
+/// files: the horizon, `77777`, `88888` in thirteen splits each refuse the
+/// second value by name and never keep both. In a record field and a list
+/// element; six pairs of values. ec81e37: `c[h] c[77777] c[88888]` takes all
+/// three, `c[h] e[77777] e[88888]` refuses the third — the verdict was the
+/// split's.
+#[test]
+fn r5_the_writes_kept_beside_a_horizon_are_judged_on_each_other() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    // (label, steps): 'c' evolve+commit, 'e' evolve, 'C' commit; a step's
+    // lines are the writes of one file.
+    let splits: Vec<(&'static str, Vec<(char, Vec<&'static str>)>)> = vec![
+        ("c[h] c[7] c[8]", vec![('c', vec!["h"]), ('c', vec!["7"]), ('c', vec!["8"])]),
+        ("c[h] e[7] e[8] C", vec![('c', vec!["h"]), ('e', vec!["7"]), ('e', vec!["8"]), ('C', vec![])]),
+        ("e[h] e[7] e[8] C", vec![('e', vec!["h"]), ('e', vec!["7"]), ('e', vec!["8"]), ('C', vec![])]),
+        ("e[h] e[8] e[7] C", vec![('e', vec!["h"]), ('e', vec!["8"]), ('e', vec!["7"]), ('C', vec![])]),
+        ("e[8] e[h] e[7] C", vec![('e', vec!["8"]), ('e', vec!["h"]), ('e', vec!["7"]), ('C', vec![])]),
+        ("c[8] c[h] c[7]", vec![('c', vec!["8"]), ('c', vec!["h"]), ('c', vec!["7"])]),
+        ("c[8] e[h] e[7] C", vec![('c', vec!["8"]), ('e', vec!["h"]), ('e', vec!["7"]), ('C', vec![])]),
+        ("c[8 h] c[7]", vec![('c', vec!["8", "h"]), ('c', vec!["7"])]),
+        ("c[8] c[h 7]", vec![('c', vec!["8"]), ('c', vec!["h", "7"])]),
+        ("c[h 7] c[8]", vec![('c', vec!["h", "7"]), ('c', vec!["8"])]),
+        ("c[h] c[7 8]", vec![('c', vec!["h"]), ('c', vec!["7", "8"])]),
+        ("c[h 7 8]", vec![('c', vec!["h", "7", "8"])]),
+        ("c[7 8 h]", vec![('c', vec!["7", "8", "h"])]),
+    ];
+    for (name, h, pre, _want) in horizons() {
+        for (label, st) in splits.clone() {
+            if name == "fuel" && !["c[h] c[7] c[8]", "c[h] e[7] e[8] C", "c[8] c[h] c[7]", "c[h 7 8]"].contains(&label) {
+                continue;
+            }
+            let (h, pre) = (h.clone(), pre.clone());
+            run.push(Box::new(move || {
+                let mut bad = Vec::new();
+                let w = Ws::new("r5");
+                let mut said = Vec::new();
+                let mut first = true;
+                for (k, lines) in &st {
+                    if *k == 'C' {
+                        said.push(format!("c{}", w.commit().1));
+                        continue;
+                    }
+                    let body: Vec<String> = lines.iter().map(|l| match *l {
+                        "h" => format!("r: {h}"),
+                        "7" => format!("r: {W}"),
+                        _ => "r: 88888".to_string(),
+                    }).collect();
+                    let src = if first { format!("{pre}{}", body.join("\n")) } else { body.join("\n") };
+                    first = false;
+                    let (o, rc) = w.evolve(&src);
+                    said.push(format!("e{rc}"));
+                    if rc != 0 && !o.contains("#conflict at r") {
+                        bad.push(format!("  {name}, {label}: refused, but not as #conflict at r: {}", o.chars().take(120).collect::<String>()));
+                    }
+                    if *k == 'c' {
+                        said.push(format!("c{}", w.commit().1));
+                    }
+                }
+                let tag = format!("{name}, {label} (got {})", said.join(" "));
+                check(&mut bad, &format!("{tag}: a write refused"), said.iter().any(|x| x == "e1").to_string(), "true");
+                let obj = w.root_object();
+                check(&mut bad, &format!("{tag}: the root keeps 77777 and 88888 both"), (obj.contains(W) && obj.contains("88888")).to_string(), "false");
+                let r = short(&w.eval("_.r"));
+                check(&mut bad, &format!("{tag}: _.r is not ⊥ ({r})"), r.starts_with("_|_").to_string(), "false");
+                bad
+            }));
+        }
+        let (h2, pre2) = (h.clone(), pre.clone());
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            for (label, q, a, b, c) in [
+                ("in a record", "_.h.a", format!("h: {{ a: {h2} }}"), format!("h: {{ a: {W} }}"), "h: { a: 88888 }".to_string()),
+                ("a list element", "_.l.0", format!("l: [{h2}]"), format!("l: [{W}]"), "l: [88888]".to_string()),
+            ] {
+                let w = Ws::new("r5-pos");
+                check(&mut bad, &format!("{name}, {label}: horizon"), w.write(&format!("{pre2}{a}")), "e0 c0");
+                check(&mut bad, &format!("{name}, {label}: {W}"), w.write(&b), "e0 c0");
+                let (o, rc) = w.evolve(&c);
+                check(&mut bad, &format!("{name}, {label}: 88888 refused"), format!("rc={rc}"), "rc=1");
+                check(&mut bad, &format!("{name}, {label}: by name"), o.contains("#conflict at").to_string(), "true");
+                let _ = q;
+            }
             for (x, y) in [(1, 2), (3, 4), (5, 6), (11, 12), (21, 22), (31, 32)] {
-                let w = Ws::new("r4-pairs");
-                let rcs = steps(&w, &[format!("{pre}r: {h}"), format!("r: {x}"), format!("r: {y}")], false);
-                let tag = format!("{name}, the horizon then {x} then {y}");
-                check(&mut bad, &format!("{tag}: every step (got {rcs})"), rcs.split(' ').all(|z| z == "e0" || z == "c0").to_string(), "true");
-                check(&mut bad, &format!("{tag}: _.r"), short(&w.eval("_.r")), want);
+                let w = Ws::new("r5-pairs");
+                let rcs = steps(&w, &[format!("{pre2}r: {h2}"), format!("r: {x}"), format!("r: {y}")], false);
+                check(&mut bad, &format!("{name}, the horizon then {x} then {y}: {y} refused"), rcs, "e0 c0 e0 c0 e1 c1");
             }
             bad
         }));
