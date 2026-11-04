@@ -467,3 +467,95 @@ fn g4_the_roots_of_small_writes_do_not_move() {
     }
     verdict(bad, 8);
 }
+
+// ── r3 ── R-1 (2026-11-05): a pin makes a definition it does not pin read ⊥ ──
+//
+// `#pin` overwrites the coordinates it pins (SPEC_08 §6.2 「直接覆蓋節點值」;
+// SPEC_10 §2.2.3 「特權座標」, D58: the unit is the coordinate). A definition
+// it does not pin is any other write's: a pin that makes it read ⊥ is
+// refused at evolve, at that coordinate (§2.3.1 「存語法不得讓衝突晚到」). The
+// delivery of 2026-11-05 measured `--pin` `n: 5` over `r: 7` and `r: n + 1`
+// commit `r` as ⊥ (handover §8.4 Q1); q122-ref did the same.
+//
+// The other half: what the pin pins is overwritten as before, also a name
+// others read (`n: 3` to `n: 5` under `r: n + 1` reads 6) — the gate sees the
+// universe the commit will make, not the root met with the pin.
+
+impl Ws {
+    /// `oo evolve --pin --grant pin` from a new file: (output, rc).
+    fn pin(&self, src: &str) -> (String, i32) {
+        let n = fs::read_dir(&self.ws).map(|d| d.count()).unwrap_or(0);
+        let f = format!("f{n}.n");
+        fs::write(self.ws.join(&f), src).unwrap();
+        self.oo(&["evolve", "--pin", "--grant", "pin", &f])
+    }
+
+    /// `oo commit --grant pin`: rc.
+    fn commit_pin(&self) -> i32 {
+        self.oo(&["commit", "-m", "p", "--grant", "pin"]).1
+    }
+}
+
+#[test]
+fn r3_a_pin_that_makes_a_definition_it_does_not_pin_read_bottom_is_refused() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    // (committed one by one, staged one by one, the pin, where the ⊥ falls, what to read, what it reads after)
+    for (before, staged, pinned, at, q, want) in [
+        (vec!["r: 7", "r: n + 1"], vec![], "n: 5", "r", "_.r", "7"),
+        (vec![], vec!["r: 7", "r: n + 1"], "n: 5", "r", "_.r", "7"),
+        (vec!["n: 3\nr: 4", "r: n + 1"], vec![], "n: 5", "r", "_.r", "4"),
+        (vec!["r: 7", "s: 8", "s: r + 1"], vec![], "r: 9", "s", "_.s", "8"),
+        (vec!["h: { r: n + 1 }", "h: { r: 7 }"], vec![], "n: 5", "h.r", "_.h.r", "7"),
+        (vec!["l: [n]", "l: [7]"], vec![], "n: 5", "l.0", "_.l.0", "7"),
+    ] {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let w = Ws::new("r3");
+            let tag = format!("{before:?} {staged:?} pin {pinned}");
+            for s in &before {
+                check(&mut bad, &format!("{tag}: {s}"), w.write(s), "e0 c0");
+            }
+            for s in &staged {
+                check(&mut bad, &format!("{tag}: staged {s}"), format!("e{}", w.evolve(s).1), "e0");
+            }
+            let (o, rc) = w.pin(pinned);
+            check(&mut bad, &format!("{tag}: refused"), format!("rc={rc}"), "rc=1");
+            check(&mut bad, &format!("{tag}: named at the leaf"), o.contains(&format!("#conflict at {at}")).to_string(), "true");
+            if rc != 1 || !o.contains(&format!("#conflict at {at}")) {
+                bad.push(format!("    (said {})", o.chars().take(120).collect::<String>()));
+            }
+            let _ = w.commit_pin();
+            let _ = w.commit();
+            check(&mut bad, &format!("{tag}: {q}"), short(&w.eval(q)), want);
+            bad
+        }));
+    }
+    for (before, pinned, q, want) in [
+        (vec!["r: 7", "r: n + 1"], "n: 6", "_.r", "7"),
+        (vec!["n: 3", "r: n + 1"], "n: 5", "_.r", "6"),
+        (vec!["n: 3", "h: { r: n + 1 }"], "n: 5", "_.h.r", "6"),
+        (vec!["r: 7", "s: r + 1"], "r: 8", "_.s", "9"),
+        (vec!["r: 7"], "r: 8", "_.r", "8"),
+        (vec!["n: 3", "r: 4", "r: n + 1"], "n: 5\nr: 6", "_.r", "6"),
+    ] {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let w = Ws::new("r3-other");
+            let tag = format!("{before:?} pin {pinned}");
+            for s in &before {
+                check(&mut bad, &format!("{tag}: {s}"), w.write(s), "e0 c0");
+            }
+            let (o, rc) = w.pin(pinned);
+            check(&mut bad, &format!("{tag}: taken"), format!("rc={rc}"), "rc=0");
+            if rc != 0 {
+                bad.push(format!("    (said {})", o.chars().take(120).collect::<String>()));
+            }
+            check(&mut bad, &format!("{tag}: commit"), format!("rc={}", w.commit_pin()), "rc=0");
+            check(&mut bad, &format!("{tag}: {q}"), short(&w.eval(q)), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
