@@ -200,3 +200,53 @@ Linux 編譯在閘門裡 Finished 7 m 50 s，interpreter lib 16 則警告，`car
 *   **m3 只有一個欄位的 pin 整筆豁免** ⟹ r3。
 
 三個全擋下。
+
+## 10. 修補回合 R-1 回報（交付方填；本行以上一字不得動）
+
+### 10.1 射程逐項對照
+
+`universe.rs` 與 `q122-r1ref` `116c702` 逐位元組相同。`main.rs` 未動。探針是驗收提交 `481a63b`，未改。
+
+*   **R1-M1。** 一筆 `--pin` 讓它沒釘的定義讀成 ⊥，演化拒，指名那個坐標，工作集不寫回。`r: 7`、`r: n + 1` 已提交再 pin `n: 5`：`e0 c0 e0 c0 e1 #conflict at r`，下一筆 `Nothing to commit`。根停在 `9dd48139cf8ec41edc7f04849eb0d810302edeedef09094a39284979bb9a625f`，`_.r` 讀 `7`，`_.n` 讀 `_`。兩筆還在工作集（兩次演化、尚未提交）時同一句 `#conflict at r`，拒絕當下沒有 `HEAD`；把已暫存的兩筆提交，根仍是 `9dd48139…`，`_.r` 讀 `7`。`n: 3`、`r: 4` 再 `r: n + 1` 之後 pin `n: 5`，`#conflict at r`，根停在 `7c68d16c8ce25434f6c5c307518fce8206bb1b3140635f92882f2db63b4745d5`，`_.r` 讀 `4`。`r: 7`、`s: 8`、`s: r + 1` 之後 pin `r: 9`，`#conflict at s`，根停在 `c94930229b7702167200989fc375a693a32f2ad6068e3192f30fbaeea5f91233`，`_.s` 讀 `8`。記錄 `h: { r: n + 1 }`、`h: { r: 7 }` 之後 pin `n: 5`，`#conflict at h.r`，根停在 `7bb5797799301e3e386770da2fc8bf93a644caba8398317e07508e75f1165c1a`，`_.h.r` 讀 `7`。清單 `l: [n]`、`l: [7]` 之後 pin `n: 5`，`#conflict at l.0`，根停在 `797bc7526c5efcb18e33e86900ad9dd77fe542fd54fba55823d3bf5f610a627a`，`_.l.0` 讀 `7`。
+*   **另一半。** pin 釘的坐標照舊覆寫。`r: 7`、`r: n + 1` 之後 pin `n: 6`，收下，`_.r` 讀 `7`，根 `d961113118ac416f6fe0b9975e35d224c7f870faf7a380ef74dbbbf7b5aa2419`。`n: 3`、`r: n + 1` 之後 pin `n: 5`，`_.r` 讀 `6`，根 `f6dc16ae774bef4a5fb10d214847b2c84718d416654e9e11f3570fd92ef10db9`。記錄 `n: 3`、`h: { r: n + 1 }` 之後 pin `n: 5`，`_.h.r` 讀 `6`，根 `58a7734eb72cacef6e0d1fb68066993f28b73db62359f739702381e0634a758e`。`r: 7`、`s: r + 1` 之後 pin `r: 8`，`_.s` 讀 `9`，根 `e53a7552313f424e9ed12ae9a0e3984ca649c164ecf6cfc067bb35fcc33fb009`。只釘 `r: 7` 再 pin `r: 8`，`_.r` 讀 `8`，根 `797d2ac52096d2bacac591348e7df3936e070c26000f083a38c10e563626d354`。`n: 3`、`r: 4`、`r: n + 1` 之後同一個 pin 寫 `n: 5` 與 `r: 6`，`_.r` 讀 `6`，根 `63d8f9260ef908f6ee65185fb69cdb0324da73dbb4d3449036dff61caaef3acc`。r1、r2、g1–g4 在探針裡綠。
+
+### 10.2 順手改動（逐項指名）
+
+沒有。本回合只動 `universe.rs`，而且是參考實作的位元組。`main.rs` 未動。`reads_world` 仍沒有呼叫點，警告留著。探針、版本、`CHANGELOG`、規格、向量都沒動。`rustfmt` 未跑。
+
+### 10.3 工單哪裡是錯的
+
+沒有。
+
+### 10.4 工單指名要你回答的問題
+
+**R1-Q1。** `pin_coords` 非空時，`bottoms_as_read` 拿掉暫存的 `~%Config`，呼叫與提交同一支 `pin_commit_merge`（根、暫存、`self.pin_coords`），再交 `read_bottoms_of`。空的時候仍是 `unify_universe`。提交在 `pin_pending` 時也先拿掉 `~%Config`，再呼叫同一支 `pin_commit_merge`，然後才 `project_for_commit`。閘門讀的是覆寫合併的那一顆，不是投影之後的那一顆；沒有 `~%Config`、沒有根上展開時，兩邊放進 `pin_commit_merge` 的是同一組根、暫存與坐標。
+
+`pin_coords` 從這幾處來。這次 `--pin` 演化在欄位落地時，把該欄寫下的坐標放進 `pin_coords` 與 `session_pin_coords`（一般欄位、展開、根上展開三處）。`save_staged` 把 `session_pin_coords` 寫進該成員。下一道命令 `load_staged` 先清空，再把每個提案成員裡的 `pin_coords` 聯集進來（舊的 `pin_pending` 檔也讀）。同一個命令裡，前一個檔落地後記憶體裡的 `pin_coords` 已經在，後一個檔的 `late_bottom` 看得到。`pin_mode` 是整道命令的旗標，兩個檔都算 pin。
+
+*   **工作集裡已有一筆 pin。** `t: 0` 與 `t: n + k` 已提交，`_.t` 讀 `0`，根 `52152cd38dd93a231c684b9a5208147ff6bdcbde74dca389f96b4bbb9daa0b1d`。pin `n: 5` 收下（`k` 還沒到，`t` 仍讀 `0`）。之後一般寫入 `k: 1`：`#conflict at t`，根不動，`_.t` 仍是 `0`，`_.k` 是 `_`。這一筆沒寫回。再提交，釘下的 `n: 5` 落地，`_.n` 讀 `5`，`_.t` 仍是 `0`，根 `4edbc06729e447bdd79ab7933984d82c42fbcd877dea768d12148151097f6949`。閘門看的是 pin 覆寫之後的宇宙：`n` 已是 `5`，`k: 1` 讓 `t` 讀成 ⊥，而 `t` 不是這筆一般寫入寫的坐標。
+*   **同一個命令兩個檔，第一個是 pin。** 根上已有 `r: 7` 與 `r: n + 1`（根 `9dd48139…`）。`oo evolve --pin --grant pin k.n n.n`（`k: 1`、`n: 5`）在第二個檔拒 `#conflict at r`。注入 0 筆，根不動，`_.r` 讀 `7`，`_.n` 讀 `_`。第一個檔的 pin 也沒有寫回。對照：`n: 3`、`r: n + 1` 之後同一個命令 pin `n: 5` 與 `z: 1`，演化與提交都是 0，`_.r` 讀 `6`，根 `b4b2592e0355325d44306f928676249cf7f80cf337002e6be6b575abf43496e1`。
+
+**R1-Q2。** 兩個 pin 各自在自己的樹上演化，合進一次提交時不經 `late_bottom`。種子是 `x: 0`。循序：pin `r: n & 7` 收下，再 pin `n: 5` 拒 `#conflict at r`；把第一筆提交，`_.r` 讀 `7`，根 `cb6c64391ce676fbe8f8b8f3f299c96de94ee8361ba948ea507d7cb3c9e9bdb3`。並行：兩棵樹各自 pin，退出碼都是 0；成員合到一棵再提交，退出碼 0，先印 `#conflict at r` 再 `Commit successful`，`_.r` 讀 `_|_ #conflict`，`_.n` 讀 `5`，根 `384e2dc832af4ffd556822c67fd5cdb1952f5fe25a13d967ec1074c72b81c5f4`。與 9.1 表格並行那一欄同形：提交成功，⊥ 進歷史。本回合沒有修。
+
+### 10.5 探針
+
+`a_name_that_arrived_late_probe_test` **7／7**。單獨一輪 `finished in 10.77s`，EXIT 0。閘門裡 `finished in 10.81s`（`a_name_that_arrived_late_probe_test-2ad4a7bc610685ed`）。探針檔未改。`rustfmt` 未掃。
+
+### 10.6 數字
+
+`universe.rs` 相對 `481a63b`：+15／−6。加上本節，交付是這一檔與這份交接。
+
+探針 7／7。閘門：GATE 1 2026-11-05T02:33:05+08:00 WALL 1959 s（含編譯 7 m 07 s，結束 03:05:44）；GATE 2 03:05:44 1536 s（結束 03:31:20）；GATE 3 03:31:20 1535 s（結束 03:56:55）。正規化 3885 行，sha `091bb64261c4b646dc3c189a8ba3a4ba79676622b00b7913c87007257d42c16b`，315 個 `running`、312 個 `Running`，加總 **2943** 通過、0 失敗，`test ` 行 `ok` 2942。三輪正規化相同。原始 sha 前綴 `37a9e9d4335a77bd`、`5020e4864eb22775`、`5da2e3042ca70ac7`。位元組 310982、310827、310827。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q122r1/conf.empty`，前後 `ls -A | wc -l` 都是 0，10 s。
+
+Linux 編譯在閘門裡 Finished 7 m 07 s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-05T03:56:55+08:00 Finished 4.62 s，腳本 wall 5 s，EXIT 0，`^error` 0，target lib 17 則、`cargo fix` 14，留著。
+
+`oo` 11508000 位元組，mtime 2026-11-05 02:30:16.940072242 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`h: { a: 1, b: a + 1 }` `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`（`c9/6c…`，16029 位元組）。新倉 `layout=9`，`encoding=11`。
+
+### 10.7 你認為需要改規格之處
+
+規格已寫 pin 的單位是坐標，沒有讓沒釘的定義讀成 ⊥ 的例外。本回合拿掉那個例外：沒釘的定義讀成 ⊥ 就在演化時拒。破壞性，收尾時記 `CHANGELOG`。本回合未改規格、向量、`CHANGELOG`。兩個 pin 並行做出的晚到 ⊥ 仍進歷史，與 9.1 同一件事，不在本回合。

@@ -1892,9 +1892,18 @@ impl Universe {
     pub fn bottoms_as_read(&self, engine: &Ouroboros) -> std::collections::BTreeSet<String> {
         let mut staged = (*self.staged).clone();
         staged.remove_field("~%Config");
-        let view = match engine.unify_universe(Value::Combo((*self.root).clone()), Value::Combo(staged)) {
-            Value::Combo(m) => m,
-            _ => return Default::default(),
+        // A pinned coordinate overwrites the root as the commit will
+        // (`pin_commit_merge`); every other coordinate meets it.
+        let view = if self.pin_coords.is_empty() {
+            match engine.unify_universe(Value::Combo((*self.root).clone()), Value::Combo(staged)) {
+                Value::Combo(m) => m,
+                _ => return Default::default(),
+            }
+        } else {
+            match Self::pin_commit_merge(engine, &self.root, &staged, &self.pin_coords) {
+                Some(m) => m,
+                None => return Default::default(),
+            }
         };
         read_bottoms_of(engine, &view, &self.standard_root).into_iter().map(|(c, _)| c).collect()
     }
@@ -1913,9 +1922,9 @@ impl Universe {
         before: &std::collections::BTreeSet<String>,
         fields: &[Field],
     ) -> Option<crate::value::BottomDetail> {
-        if self.pin_mode && engine.privilege.pin {
-            return None;
-        }
+        // `#pin` overwrites the coordinates it pins (SPEC_08 §6.2, SPEC_10
+        // §2.2.3 特權座標); a definition it does not pin is judged as any
+        // other write's would be.
         let after = self.bottoms_as_read(engine);
         let mut written: Vec<String> = Vec::new();
         let mut own_rules: Vec<String> = Vec::new();
