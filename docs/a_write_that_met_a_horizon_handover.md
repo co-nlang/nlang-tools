@@ -262,3 +262,67 @@ Linux 編譯在閘門裡 Finished 7 m 22 s，interpreter lib 16 則警告，`car
 `q121-r2ref` `8ae0fce` ⟹ 本探針 **8／8**（交付 `ec81e37` 6 綠 2 紅：r4 4 格、r5 38 條；v0.121.0 3 綠 5 紅）；全樹 **311 target、2936 通過、0 失敗**（2935 加 r5）；conformance **213／213**（`acc/emptyconf`，前後 0）；交叉編譯 0 error。13 種分法每一種都拒第二個值、根裡不會同時有 `77777` 與 `88888`；視界、`@int`、`77777`、`1..`、`77777 | 88888` 的 24 種先後，23 種一顆根 `…6882a82fc750`（第 24 種是 `!0` 先到、視界被拒，收下的不是同一組）。
 
 **變異**（`acc/q121acc/mut_r2.py`）：閘門不看留下的寫入 ⟹ r5；坐標上已決定的寫入不交會（即 R-1）⟹ r4；**坐標上相撞照存 ⟹ 存活，走不到**——到得了坐標交會的每一筆已決定寫入，都已在閘門對著同樣的幾邊判過，或在 D49 的 fold 裡先與另一個注入交會（`conc.sh`：並行的 `77777`、`88888` 在 fold 報 `#conflict at r`，參考與變異同）；以 `ec81e37` 寫下的 `{h, 77777, 88888}` 根再寫（`old.sh`），變異與參考逐格同根；**閘門連沒有視界的框也判 ⟹ 存活，等價**——讀名字的配方在自己字面框裡的讀數在交會後節點的讀數之上（精煉單調），框裡判出的相撞在節點裡也相撞；限制在有視界的框只為少花成本。兩個存活變異各跑全樹與 conformance：`surv_m15`、`surv_m16` 各 311 target、2936 通過、0 失敗，conformance 213／213（空目錄前後 0），交叉編譯 0。
+
+## 11. 修補回合 R-2 回報（交付方填；本行以上一字不得動）
+
+### 11.1 射程逐項對照
+
+`unify.rs` 與 `q121-r2ref`（`/home/gali/nlang-baselines/q121-r2b`）`8ae0fce` 逐位元組相同。`lib.rs` 未動。探針是驗收提交 `ef1a2d9`，未改。相對該提交，`unify.rs` +49／−8。
+
+*   **R2-M1。** 留下的寫入彼此照判。探針 r5 綠：深度視界 13 種分法、燃料視界、記錄欄位、清單元素、六組值對，第二筆具名拒絕，根裡不同時有兩筆相撞的寫入。探針外一格：視界、`77777`、`88888` 依序各提交，`e0 c0 e0 c0 e1 #conflict at r`，下一筆提交 `Nothing to commit`。根停在 `da63477d5a1899eeba7add259af3f297f67464e492d6a278a5d06882a82fc750`。`_.r` 仍是快照 `%caid` `e84c5a978ff81efffa3df3d9f8a5406af9c3de2df5274eb469fbbc1765973ecd`。
+*   **R2-M2。** 已決定的寫入交成一個值。視界、`@int`、`77777` 六種先後一顆根 `da63477d5a1899eeba7add259af3f297f67464e492d6a278a5d06882a82fc750`（後綴 `6882a82fc750`）。`hnt`、`nht` 的最後一筆是 `Nothing to commit`，`nth` 的中間一筆是 `already in HEAD`；根不動。讀數是那顆快照。沒有視界時 `@int` 再 `77777` 讀 `77777`，根 `2c44fa5fa089865f5fe1260c5fc2f0c9285ec31f7ad8905b3f378945abb35d3c`。
+*   **另一半。** r1–r3、g1–g3 在探針裡綠。並行的兩個注入：兩次演化都是退出碼 0，兩筆注入，`status` 印 `Conflict` 與 `#conflict at r`，提交 `Evolution Conflict: #conflict at r`。讀數仍是快照，根停在只有視界的 `0d0c15f20219e61144f5a56ff65fa82d888d03e594e80881239e1531d16cc756`。
+
+### 11.2 順手改動（逐項指名）
+
+沒有。本回合只動 `unify.rs`，而且是參考實作的位元組。`reads_world` 仍沒有呼叫點，警告留著。探針、版本、`CHANGELOG`、規格、向量、`Cargo.lock` 都沒動。`rustfmt` 未跑。`surv_m15`、`surv_m16` 未改行為。
+
+### 11.3 工單哪裡是錯的
+
+沒有。視界、`@int`、`77777` 六種先後是工單寫的那顆根，後綴 `6882a82fc750`。相撞的第二筆在演化閘門具名拒絕。
+
+### 11.4 工單指名要你回答的問題
+
+**R2-Q1。** 兩筆已決定的寫入可以不經 `meet_clash` 到達交會的路，各一格。視界之上的兩筆是 `77777` 與 `88888`。
+
+*   **並行注入。** `injections::fold` 走 `unify_universe`，再用 `conflict_made`（D49），不呼叫 `meet_clash`。兩次演化退出碼都是 0。`status` 退出碼 1，印 `#conflict at r`。提交退出碼 1，`Evolution Conflict: #conflict at r`。根停在 `0d0c15f20219e61144f5a56ff65fa82d888d03e594e80881239e1531d16cc756`。`_.r` 是快照 `e84c5a97…`。兩筆值沒有一起留在坐標上。
+*   **`#pin`。** `pin_mode` 且有 pin 能力時，演化的兩處單調 `meet_clash` 被跳過。`pin_commit_merge` 覆寫被釘住的坐標，其餘走 `unify_universe`。視界與 `77777` 已提交之後，`evolve --pin --grant pin` 寫 `r: 88888` 退出碼 0，`commit --grant pin` 退出碼 0。讀數是 `88888`，根移到 `fe600e552b19debd5610d10626422eb77039d125c7e6546f5f75015202e7c8bb`。`77777` 只在暫存、接著釘上 `88888`：兩次演化退出碼 0，提交成功，讀數仍是 `88888`。坐標上留下的是後一筆，兩筆不相撞的值沒有同時留著。
+*   **`refine`。** `unify_unmetered`，`DEFER_RECIPES` 維持 0，不經 `meet_clash`，也不經 `meet_coordinate_`。比的是已經入庫的兩個值的幾何單調。整數的 `_.a.%caid` 印出 `_`，不能當 CAID；這一格用 `~%Discovery./identify_and_store`。`77777` 的摘要 `52cfb0fbe51da03c5cab1d607c68424ba349b69795c895ce3ba217ff513bb793`，`88888` 的摘要 `7747163c09876163b4e98eaf33259c54168f8eca868a9482833cbe96e865353a`。兩個方向 `oo refine` 都是退出碼 1：`new ⋢ old: refinement fails geometric monotonicity`。HEAD 不動，宇宙根仍是 `da63477d…6882a82fc750`，`_.r` 仍是快照。`@int` 精煉成 `77777` 會新開一筆 refine 提交（`Refine authority: unverified`），宇宙根的摘要不變，`_.r` 仍是快照；反方向退出碼 1，同一句幾何單調。refine 沒有把兩筆相撞的值寫上 `r`。
+*   **`squash`。** 把 HEAD 的根抄到一筆新提交，不交會。視界再 `77777` 之後，對視界那筆提交做 `oo squash --grant squash`，退出碼 0，根仍是 `da63477d…6882a82fc750`。`88888` 沒有進這顆倉。
+*   **peer。** `unify_universe` 的呼叫點只在 `universe.rs`（演化合併、pin 的其餘部分、`proposals_at`、提交、觀察）和 `injections.rs` 的 `fold`。`oo node` 的子命令是 serve、id、advertise、discover、find-node、affiliate、peers、trust。這些命令不把兩筆本地寫入交到同一個坐標。本回合沒有一條 peer 交會可以量。
+*   **提交時的根×暫存。** `unify_universe` 進 `meet_coordinate_`，不經 `meet_clash`。已決定的幾邊交成 ⊥ 就回 ⊥。普通演化已經在閘門判過：視界、`77777` 再寫 `88888`，演化就是 `#conflict at r`，提交 `Nothing to commit`，根停在 `da63477d…`。並行注入的 fold 是閘門之外、這一條交會被量到的那一格。
+*   **展開列。** `land_root_spreads` 呼叫 `evolve_field`，那一處會進 `meet_clash`。展開列回到演化閘門，不是繞過。
+*   **`status`。** `proposals_at` 用 `unify_universe` 決定一句是 `already in HEAD` 還是 `Nothing to commit`。它不把第二筆相撞的寫入落進坐標。
+
+**R2-Q2。** `!0`、視界、`77777` 六種先後，本建置與 `q121-r2b` 的 `target/release/oo` 逐格同根、同演化／提交退出碼。`already in HEAD` 那一行裡的提交位址因時間戳不同。行為未改。
+
+*   `zhn`（`!0` 先到）：視界被拒 `#conflict at r`，然後 `77777` 收下。根 `f1134fb3f34cb46c45bb2ddf4137564f5fa5731e48ececd6d05b0b2e4835ccbc`，讀數 `77777`。這是工單說的「收下的不是同一組」。
+*   `znh`：三筆都 `e0 c0`。`!0` 先被 `77777` 吸掉，再遇上視界。根 `da63477d…`，讀數是快照。
+*   `hzn`：視界之後 `!0` 被拒，`77777` 收下。根 `da63477d…`。
+*   `hnz`：`77777` 收下，`!0` 被拒。根 `da63477d…`。
+*   `nzh`：`!0` 是 `already in HEAD`（已被 `77777` 吸掉），視界收下。根 `da63477d…`。
+*   `nhz`：視界收下，`!0` 被拒。根 `da63477d…`。
+
+視界已提交之後直接求值：`_.r & !0` 印 `_|_  ;; %cause: #conflict`，同一行還有那顆快照；`_.r & 7` 與 `_.r & @int` 都是快照 `e84c5a97…`。
+
+### 11.5 探針
+
+`a_write_that_met_a_horizon_probe_test` **8／8**。單獨一輪 `finished in 64.85s`，EXIT 0。閘門裡 `finished in 30.85s`（`a_write_that_met_a_horizon_probe_test-25b6373ff374e46d`）。探針檔未改。`rustfmt` 未掃。
+
+### 11.6 數字
+
+`unify.rs` 相對 `ef1a2d9`：+49／−8。加上本節，交付是這一檔與這份交接。
+
+探針 8／8。閘門：GATE 1 2026-11-04T12:19:09+08:00 WALL 1986 s（含編譯 7 m 51 s，結束 12:52:15）；GATE 2 12:52:15 1468 s（結束 13:16:43）；GATE 3 13:16:43 1425 s（結束 13:40:28）。正規化 3875 行，sha `a587f4037f89f448c47ba88348f629561f689f7889791b8eb8d66e28ee9c111b`，314 個 `running`、311 個 `Running`，加總 **2936** 通過、0 失敗，`test ` 行 `ok` 2935。三輪正規化相同。原始 sha 前綴 `b87dc8cb25b97649`、`98bb40a3a0172d7b`、`d2d061badcca5e3d`。位元組 310286、310131、310130。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q121r2/conf.empty`，前後 `ls -A | wc -l` 都是 0，11 s。
+
+Linux 編譯在閘門裡 Finished 7 m 51 s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-04T13:40:28+08:00 Finished 4.98 s，腳本 wall 5 s，EXIT 0，`^error` 0，target lib 17 則、`cargo fix` 14，留著。
+
+`oo` 11517768 位元組，mtime 2026-11-04 12:16:48.784282780 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。與參考二進位的差在 ELF 位元組 41（參考 11517760 位元組）；原始碼逐位元組相同，R2-Q2 的根與退出碼相同。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`h: { a: 1, b: a + 1 }` `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`；`h: { a: 1, b: 2 }` `3525d353584d8f2523cedad36edec0385aa208f09003f8c6db60ea5d327e0006`；`t: { @{ @int }: 1, _: 0 }` `b6130220f9d82a6d1a5686b41c622853a844aa649ac056e81c4871b525c3e582`。新倉 `layout=9`，`encoding=11`。
+
+### 11.7 你認為需要改規格之處
+
+與 10.7 相同，本回合沒有新的規格缺口。留下的已決定寫入彼此照判，互相精煉的交成一個值；讀數仍是那個快照。`!0` 與視界互拒仍在射程外。本回合未改規格、向量、`CHANGELOG`。
