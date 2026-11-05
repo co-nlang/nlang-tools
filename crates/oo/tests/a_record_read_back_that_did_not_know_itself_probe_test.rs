@@ -387,6 +387,11 @@ fn r7_a_later_write_to_a_field_meets_in_the_met_node() {
         ("h: { k: @int, r: k }", "h: { k: 5, r: 6 }", "_.h.r", ["e1 c1 | _", "e0 e1 c0 | {{ %kind: #type %name: \"int\" }}", "e0 c0 e1 c1 | {{ %kind: #type %name: \"int\" }}"]),
         ("h: { k: @int, r: k } & { r: @int }", "h: { k: 5, r: 6 }", "_.h.r", ["e1 c1 | _", "e0 e1 c0 | {{ %kind: #type %name: \"int\" }}", "e0 c0 e1 c1 | {{ %kind: #type %name: \"int\" }}"]),
         ("k: @int\nr: k", "k: 5\nr: 6", "_.r", ["e1 c1 | _", "e0 e1 c0 | {{ %kind: #type %name: \"int\" }}", "e0 c0 e1 c1 | {{ %kind: #type %name: \"int\" }}"]),
+        // AMENDED 2026-11-04 for Q-122: the collision the meet makes when `k`
+        // arrives is refused at evolve every way (SPEC_10 §2.3.1 Q-105 款「它做
+        // 出的相撞在演化時拒」, D110 款「存語法不得讓衝突晚到」); this row
+        // read `_|_ #conflict` every way, root `61b0ca48…`.
+        ("h: { k: @int, r: k }\nh: { r: 6 }", "h: { k: 5 }", "_.h.r", ["e1 c1 | _", "e0 e1 c0 | 6", "e0 c0 e1 c1 | 6"]),
     ] {
         let (got, _) = three_ways(w1, w2, q);
         for ((way, g), w) in ["one file", "two evolves", "two commits"].iter().zip(got).zip(want) {
@@ -395,7 +400,6 @@ fn r7_a_later_write_to_a_field_meets_in_the_met_node() {
         }
     }
     for (w1, w2, q, want, root) in [
-        ("h: { k: @int, r: k }\nh: { r: 6 }", "h: { k: 5 }", "_.h.r", "_|_ #conflict", "61b0ca48ad9bf0a397d86660a89884597bd132caa5fec56756311a3326829ed5"),
         ("h: { k: @int, r: k }", "h: { r: 6 }", "_.h.r", "6", "d41431b042f3c81745a286f917d3a333ba7687cdb773e35a9d4322222a70887c"),
         ("h: { k: @int, s: { j: @int, r: k + 0, q: j } }", "h: { k: 5, s: { j: 6 } }", "[_.h.s.r, _.h.s.q]", "[5, 6]", "0ded09c75eb0db22038cf36fb2d379ff34bb9421ab5b97220c4bb0fe711034da"),
         // R-3: one meet `k & 1..`, not `(k & @int) & 1..` (r8).

@@ -1884,6 +1884,96 @@ impl Universe {
     /// D112: a root's spread rows read the universe every time. After an
     /// evolve, land each row again: fields the source gained, or a source
     /// that arrived, land as readings; a clash is refused here, by key.
+    /// Q-122: the coordinates whose reading is ⊥ in the universe this
+    /// session would commit — the root met with the working set. Every
+    /// shape a reader reads counts, not only the cells already stored as ⊥:
+    /// a kept recipe, a list element, a field read in its node. Nothing that
+    /// carries an effect is forced (evolve observes nothing, D46 ②).
+    pub fn bottoms_as_read(&self, engine: &Ouroboros) -> std::collections::BTreeSet<String> {
+        let mut staged = (*self.staged).clone();
+        staged.remove_field("~%Config");
+        // A pinned coordinate overwrites the root as the commit will
+        // (`pin_commit_merge`); every other coordinate meets it.
+        let view = if self.pin_coords.is_empty() {
+            match engine.unify_universe(Value::Combo((*self.root).clone()), Value::Combo(staged)) {
+                Value::Combo(m) => m,
+                _ => return Default::default(),
+            }
+        } else {
+            match Self::pin_commit_merge(engine, &self.root, &staged, &self.pin_coords) {
+                Some(m) => m,
+                None => return Default::default(),
+            }
+        };
+        read_bottoms_of(engine, &view, &self.standard_root).into_iter().map(|(c, _)| c).collect()
+    }
+
+    /// Q-122 (`SPEC_10` §2.3.1 D110 款「存語法不得讓衝突晚到」, Q-105 款「它做
+    /// 出的相撞在演化時拒」; §2.2.1): a write that makes a definition it does
+    /// not write read ⊥ is refused where the ⊥ falls. `before` is
+    /// `bottoms_as_read` before the write's fields landed. What the write
+    /// writes itself is judged as before (one definition that reads ⊥ is the
+    /// writer's, D56); two of its definitions of one coordinate that meet to
+    /// ⊥ are two writes, as `r: 5` and `r: 7` in one file are. A spread or a
+    /// table row keeps its own rules (D111／D112, the table's rows).
+    pub fn late_bottom(
+        &self,
+        engine: &Ouroboros,
+        before: &std::collections::BTreeSet<String>,
+        fields: &[Field],
+    ) -> Option<crate::value::BottomDetail> {
+        // `#pin` overwrites the coordinates it pins (SPEC_08 §6.2, SPEC_10
+        // §2.2.3 特權座標); a definition it does not pin is judged as any
+        // other write's would be.
+        let after = self.bottoms_as_read(engine);
+        let mut written: Vec<String> = Vec::new();
+        let mut own_rules: Vec<String> = Vec::new();
+        for f in fields {
+            let mut mine = Vec::new();
+            if is_spread_field(f) {
+                // A spread at the root: a literal's keys are this write's
+                // own; a name's keys come from the universe, and what they
+                // make read ⊥ elsewhere is late like any other name.
+                if let ExprKind::Spread(inner) = &f.value.kind {
+                    if matches!(inner.kind, ExprKind::Combo { .. }) {
+                        written_paths("", inner, &mut mine, &mut own_rules);
+                    }
+                }
+            } else if let Some(at) = key_path(&f.key) {
+                written_paths(&at, &f.value, &mut mine, &mut own_rules);
+            } else {
+                // A table row at the root keeps the table's own rules.
+                own_rules.push(String::new());
+            }
+            mine.sort();
+            mine.dedup();
+            written.extend(mine);
+        }
+        let covers = |p: &str, c: &str| p.is_empty() || c == p || c.starts_with(&format!("{p}."));
+        for c in after.iter().filter(|c| !before.contains(*c)) {
+            if own_rules.iter().any(|p| covers(p, c)) {
+                continue;
+            }
+            if written.iter().filter(|p| covers(p, c)).count() == 1 {
+                continue;
+            }
+            // A table's row is the key it matches: a write under a node with
+            // a table writes that table's branch (D117 Q2), as before.
+            if let Some(i) = c.find("%rules") {
+                let node = c[..i].trim_end_matches('.');
+                if written.iter().any(|p| covers(node, p)) {
+                    continue;
+                }
+            }
+            return Some(crate::value::BottomDetail {
+                cause: BottomCause::Conflict,
+                path: Some(c.clone()),
+                ..Default::default()
+            });
+        }
+        None
+    }
+
     pub fn land_root_spreads(
         &mut self,
         engine: &Ouroboros,
@@ -2484,7 +2574,9 @@ impl Universe {
         // S1 / D56: bottoms of `c: c + 1` exist only after this projection.
         // Collect here, before put_commit, so the audit field can enter the
         // digest. Never read `message`.
-        let mut reported = Value::Combo(new_root.clone()).bottom_leaves();
+        // Q-122: what a reader reads as ⊥, in every shape — a kept recipe
+        // in a record or a list reads ⊥ without being stored as one.
+        let mut reported = read_bottoms_of(engine, &new_root, &self.standard_root);
         reported.sort();
         reported.dedup();
         // S9 甲: a store that still declares a past layout must not receive
@@ -3351,5 +3443,103 @@ impl Universe {
         }
 
         Ok(commit_hash)
+    }
+}
+
+/// Q-122: the coordinates of `c` whose reading is ⊥, with their cause. A
+/// thunk is forced one cell at a time on its own budget (Q-120); a thunk
+/// that carries an effect, or waits for a context, is not forced.
+pub(crate) fn read_bottoms_of(engine: &Ouroboros, c: &ComboVal, standard: &ComboVal) -> Vec<(String, String)> {
+    let mut ctx = EvalContext::new(c.clone()).with_standard_root(standard.clone());
+    ctx.memo_enabled = false;
+    // A live reference stays one (`<<_.>>` is the universe itself), as in
+    // the commit's own observation.
+    ctx.preserve_refs = true;
+    let mut out = Vec::new();
+    read_bottoms(engine, &Value::Combo(c.clone()), "", &mut ctx, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn read_bottoms(engine: &Ouroboros, v: &Value, path: &str, ctx: &mut EvalContext, out: &mut Vec<(String, String)>) {
+    match v {
+        Value::Bottom(d) => {
+            let coord = if path.is_empty() { d.path.clone().filter(|s| !s.is_empty()).unwrap_or_default() } else { path.to_string() };
+            out.push((coord, format!("#{}", d.cause.as_tag())));
+        }
+        Value::Combo(c) => {
+            // D118: a field of a met node is read in the met node; the fields
+            // of one node share its views (one view per field is N²).
+            let mut views = Vec::new();
+            for (prefix, axis) in [("", &c.data), ("@", &c.types), ("/", &c.rules), ("%", &c.meta), ("~", &c.local)] {
+                for (k, val) in axis.iter() {
+                    let child = if path.is_empty() { format!("{prefix}{k}") } else { format!("{path}.{prefix}{k}") };
+                    let val = crate::value::rebind_in(c, val.clone(), &mut views);
+                    read_bottoms(engine, &val, &child, ctx, out);
+                }
+            }
+        }
+        Value::Union(items) => {
+            for item in items {
+                read_bottoms(engine, item, path, ctx, out);
+            }
+        }
+        Value::Thunk { context: Some(_), .. } => {}
+        Value::Thunk { effect, .. } if !effect.is_pure() => {}
+        // An open term reads its input where it is used, not here.
+        Value::Thunk { expr, .. } if nlang_parser::tier::has_free_dollar(expr) => {}
+        Value::Thunk { .. } => {
+            let forced = engine.force_each_cell(v.clone(), ctx);
+            if !matches!(forced, Value::Thunk { .. }) {
+                read_bottoms(engine, &forced, path, ctx, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Q-122: the coordinate a field's key names (`r`, `@T`, `a.b`); `None` for
+/// a pattern key (a table row).
+fn key_path(key: &FieldKey) -> Option<String> {
+    Some(match key {
+        FieldKey::Named { name, prefix } => {
+            let p = match prefix {
+                Some(Prefix::Logic) => "/",
+                Some(Prefix::Type) => "@",
+                Some(Prefix::Meta) => "%",
+                Some(Prefix::Private) | Some(Prefix::Local) => "~",
+                _ => "",
+            };
+            format!("{p}{}", name.trim())
+        }
+        FieldKey::Quoted(n) => n.trim().to_string(),
+        FieldKey::Path(p) => p.segments.iter().map(|s| s.trim()).collect::<Vec<_>>().join("."),
+        FieldKey::Pattern(_) => return None,
+    })
+}
+
+/// Q-122: the coordinates a definition writes — into a record literal, each
+/// field; anything else, the coordinate itself. A literal with a spread or a
+/// table row keeps its own rules there (`own_rules`).
+fn written_paths(at: &str, e: &Expr, out: &mut Vec<String>, own_rules: &mut Vec<String>) {
+    match &e.kind {
+        ExprKind::Combo { fields, .. } => {
+            let mut any = false;
+            for f in fields {
+                match key_path(&f.key) {
+                    Some(k) if !is_spread_field(f) => {
+                        any = true;
+                        let child = if at.is_empty() { k } else { format!("{at}.{k}") };
+                        written_paths(&child, &f.value, out, own_rules);
+                    }
+                    _ => own_rules.push(at.to_string()),
+                }
+            }
+            if !any {
+                out.push(at.to_string());
+            }
+        }
+        _ => out.push(at.to_string()),
     }
 }
