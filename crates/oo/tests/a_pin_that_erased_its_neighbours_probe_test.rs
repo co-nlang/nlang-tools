@@ -642,3 +642,196 @@ fn r6_a_sidecar_pin_writes_its_leaves() {
     check(&mut bad, "_.h", short(&w.eval("_.h")), "{ k: 7 r: 6 }");
     verdict(bad, 3);
 }
+
+// ── R-1 (2026-11-05, acceptance of the delivery `dfbfdf6`) ──────────────
+//
+// Two holes the probe above did not reach, both in what M1/M3 already say:
+// a later pin overwrites what was there before it at its leaves, and only
+// there.
+//
+// r7: a later pin of the value HEAD holds was judged held per member,
+// before it absorbed anything — so the earlier pin it overwrote landed.
+// `x: 1` committed, pin `x: 2`, pin `x: 1`: the commit lands `x: 2` (since
+// v0.80.0 at least). The same at a leaf: pin `h.k: 7`, pin `h.k: 5` lands
+// `{ k: 7 r: 6 }`.
+//
+// r8: after each evolve the member of a pin session was set to the working
+// set's whole coordinate (Q-098 restamp), so a pin carried every other
+// member's fields there as its own leaves. A plain `h: { k: @int, z: 1 }`
+// (which meets HEAD's `k: 5`) followed by pin `h.r: 9` commits `k: @int`;
+// pin `h.r: 9`, then one pin file `h.k: 7` and `h.r: 8` is refused
+// `#conflict at h.r` while `h: { k: 7, r: 8 }` lands.
+
+// ── r7 ── a later pin of what HEAD holds still takes its leaves ──
+
+#[test]
+fn r7_a_later_pin_of_what_head_holds_still_takes_its_leaves() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    // (label, committed, pins, read, want; "" = held: status quiet, root and read unchanged)
+    let rows: Vec<(&'static str, &'static str, Vec<&'static str>, &'static str, &'static str)> = vec![
+        ("a scalar back to HEAD", "x: 1", vec!["x: 2", "x: 1"], "_.x", ""),
+        ("a leaf back to HEAD", "h: { k: 5, r: 6 }", vec!["h.k: 7", "h.k: 5"], "_.h", ""),
+        ("a leaf back to HEAD, nested", "h: { k: 5, r: 6 }", vec!["h.k: 7", "h: { k: 5 }"], "_.h", ""),
+        ("a record back to HEAD", "h: { k: 5, r: 6 }", vec!["h: { k: 7, r: 9 }", "h: { k: 5, r: 6 }"], "_.h", ""),
+        ("back to HEAD beside a leaf it keeps", "h: { k: 5, r: 6 }", vec!["h: { k: 7, r: 9 }", "h.k: 5"], "_.h", "{ k: 5 r: 9 }"),
+        ("back to HEAD after two leaves", "h: { k: 5, r: 6 }", vec!["h.r: 9", "h.k: 7", "h.k: 5"], "_.h", "{ k: 5 r: 9 }"),
+        ("held first, then away", "h: { k: 5, r: 6 }", vec!["h.k: 5", "h.k: 7"], "_.h", "{ k: 7 r: 6 }"),
+        ("away, then away again", "x: 1", vec!["x: 2", "x: 3"], "_.x", "3"),
+        ("a function back to HEAD", "g: (n -> n)\nk: g 1", vec!["g: (n -> n + 5)", "g: (n -> n)"], "_.k", ""),
+        ("a function back to HEAD, with its reader", "g: (n -> n)\nk: g 1", vec!["g: (n -> n + 5)", "k: g 1\ng: (n -> n)"], "_.k", ""),
+    ];
+    for (label, committed, pins, q, want) in rows {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let w = Ws::new("r7");
+            let _ = w.write(committed);
+            let (before, read) = (w.root(), w.eval(q));
+            for s in &pins {
+                let (o, rc) = w.pin(s);
+                check(&mut bad, &format!("{label}: pin {s}"), format!("rc={rc}"), "rc=0");
+                if rc != 0 {
+                    bad.push(format!("    (said {})", o.chars().take(100).collect::<String>()));
+                }
+            }
+            let (o, rc) = w.commit_pin();
+            if want.is_empty() {
+                check(&mut bad, &format!("{label}: commit"), format!("rc={rc} {}", said(&o)), "rc=1 held");
+                check(&mut bad, &format!("{label}: root"), w.root(), &before);
+                check(&mut bad, &format!("{label}: {q}"), w.eval(q), &read);
+            } else {
+                check(&mut bad, &format!("{label}: commit"), format!("rc={rc} {}", said(&o)), "rc=0 landed");
+                check(&mut bad, &format!("{label}: {q}"), short(&w.eval(q)), want);
+            }
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+// ── r8 ── a pin member holds the leaves it wrote, not the coordinate around them ──
+
+#[test]
+fn r8_a_pin_member_holds_only_the_leaves_it_wrote() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    // (label, committed, steps: ('e' evolve | 'p' pin | 'f' pin of two files split at '|'), read, want)
+    let rows: Vec<(&'static str, &'static str, Vec<(char, &'static str)>, &'static str, &'static str)> = vec![
+        ("a wider write before, then a pin beside it", "h: { k: 5, r: 6 }", vec![('e', "h: { k: @int, z: 1 }"), ('p', "h.r: 9")], "_.h", "{ k: 5 r: 9 z: 1 }"),
+        ("the same, the pin elsewhere", "h: { k: 5, r: 6 }\ng: 0", vec![('e', "h: { k: @int, z: 1 }"), ('p', "g: 1")], "_.h", "{ k: 5 r: 6 z: 1 }"),
+        ("a pin, then path keys over it", "h: { k: 5, r: 6 }", vec![('p', "h.r: 9"), ('p', "h.k: 7\nh.r: 8")], "_.h", "{ k: 7 r: 8 }"),
+        ("a pin, then the nested spelling", "h: { k: 5, r: 6 }", vec![('p', "h.r: 9"), ('p', "h: { k: 7, r: 8 }")], "_.h", "{ k: 7 r: 8 }"),
+        ("a pin, then two files over it", "h: { k: 5, r: 6 }", vec![('p', "h.r: 9"), ('f', "h.k: 7|h.r: 8")], "_.h", "{ k: 7 r: 8 }"),
+        ("a write, then path keys over it", "h: { k: 5, r: 6 }", vec![('e', "h.z: 1"), ('p', "h.k: 7\nh.z: 2")], "_.h", "{ k: 7 r: 6 z: 2 }"),
+        ("a pin, then a recipe beside it", "h: { k: @int, r: k + 1 }", vec![('p', "h: { k: 5, r: k + 1 }"), ('p', "h.k: 7")], "_.h", "{ k: 7 r: 8 }"),
+    ];
+    for (label, committed, steps, q, want) in rows {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let w = Ws::new("r8");
+            let _ = w.write(committed);
+            for (k, s) in &steps {
+                let (o, rc) = match k {
+                    'p' => w.pin(s),
+                    'f' => w.pin_files(&s.split('|').collect::<Vec<_>>()),
+                    _ => w.evolve(s),
+                };
+                check(&mut bad, &format!("{label}: {k} {s}"), format!("rc={rc}"), "rc=0");
+                if rc != 0 {
+                    bad.push(format!("    (said {})", o.chars().take(100).collect::<String>()));
+                }
+            }
+            let (o, rc) = w.commit_pin();
+            check(&mut bad, &format!("{label}: commit"), format!("rc={rc} {}", said(&o)), "rc=0 landed");
+            check(&mut bad, &format!("{label}: {q}"), short(&w.eval(q)), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+// ── r9 ── the working set at a pinned coordinate, in each form it is stored ──
+//
+// R-1, third: where the working set holds a record as a met recipe — two
+// record literals kept as their meet (Q-092), or two records waiting for
+// their met node because a field reads a name (D118) — the pin's leaves
+// were not found in it, and the commit dropped the coordinate: pin
+// `h.k: g + 1` with `g: 2`, then a plain `h.z: 1`, commits `h` unchanged
+// (`{ k: 0 r: 6 }`), both writes gone, while the answer is `Commit successful`.
+
+#[test]
+fn r9_a_pinned_coordinate_held_as_a_met_recipe() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    let h = "h: { k: 0, r: 6 }";
+    // (label, committed, steps: ('e' evolve | 'p' pin), read, want)
+    let rows: Vec<(&'static str, &'static str, Vec<(char, &'static str)>, &'static str, &'static str)> = vec![
+        ("a pin reading a name, then a write beside it", h, vec![('p', "h.k: g + 1\ng: 2"), ('e', "h.z: 1")], "_.h", "{ k: 3 r: 6 z: 1 }"),
+        ("a write reading a name, then a pin beside it", h, vec![('e', "h.z: g\ng: 1"), ('p', "h.k: 7")], "_.h", "{ k: 7 r: 6 z: 1 }"),
+        ("a pin, then a pin reading a name", h, vec![('p', "h.r: 9"), ('p', "h.k: g + 1\ng: 2")], "_.h", "{ k: 3 r: 9 }"),
+        ("a write reading a sibling, then a pin", h, vec![('e', "h.z: r + 1"), ('p', "h.k: 7")], "_.h", "{ k: 7 r: 6 z: 7 }"),
+        ("a pin reading a sibling, then a write", h, vec![('p', "h.z: k + 1"), ('e', "h.y: 2")], "_.h", "{ k: 0 r: 6 y: 2 z: 1 }"),
+        ("a pin reading a name, then two writes", h, vec![('p', "h.k: g + 1\ng: 2"), ('e', "h.z: 1"), ('e', "h.y: 2")], "_.h", "{ k: 3 r: 6 y: 2 z: 1 }"),
+        ("a pin reading a name, a write, a pin over it", h, vec![('p', "h.k: g + 1\ng: 2"), ('e', "h.z: 1"), ('p', "h.k: 5")], "_.h", "{ k: 5 r: 6 z: 1 }"),
+        ("HEAD holds a met recipe", "h: { k: 5 } & { r: 6 }", vec![('p', "h.k: 7")], "_.h", "{ k: 7 r: 6 }"),
+        ("no pin: a write reading a name, two writes", h, vec![('e', "h.z: g\ng: 1"), ('e', "h.y: 2")], "_.h", "{ k: 0 r: 6 y: 2 z: 1 }"),
+        ("a pin takes a field beside one reading a name", "h: { r: 6 }", vec![('e', "h: { k: g + 1, z: 1 }\ng: 2"), ('p', "h.z: 5")], "_.h", "{ k: 3 r: 6 z: 5 }"),
+        ("the same, the record pinned before", "h: { r: 6 }", vec![('p', "h: { k: g + 1, z: 1 }\ng: 2"), ('p', "h.z: 5")], "_.h", "{ k: 3 r: 6 z: 5 }"),
+        ("one pin file writes the record twice, reading a name", "h: { r: 6 }", vec![('p', "h.k: g + 1\nh.z: 1\ng: 2")], "_.h", "{ k: 3 r: 6 z: 1 }"),
+        ("a write reading a sibling the pin writes", "h: { r: 6 }", vec![('e', "h.k: z + 1"), ('p', "h.z: 5")], "_.h", "{ k: 6 r: 6 z: 5 }"),
+        ("two writes, one reading the other, then a pin", "h: { r: 6 }", vec![('e', "h.k: z + 1\ng: 0"), ('e', "h.z: 1"), ('p', "h.r: 7")], "_.h", "{ k: 2 r: 7 z: 1 }"),
+        ("a pin reading a sibling, then the sibling written", "h: { r: 6 }", vec![('p', "h.k: z + 1"), ('e', "h.z: 1")], "_.h", "{ k: 2 r: 6 z: 1 }"),
+        ("the other half: a record with a spread stays a leaf", "b: { x: 1 }\nh: { ...b, k: 5, r: 6 }", vec![('p', "h.k: 7")], "_.h", "{ k: 7 }"),
+    ];
+    for (label, committed, steps, q, want) in rows {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let w = Ws::new("r9");
+            let _ = w.write(committed);
+            for (k, s) in &steps {
+                let (o, rc) = if *k == 'p' { w.pin(s) } else { w.evolve(s) };
+                check(&mut bad, &format!("{label}: {k} {s}"), format!("rc={rc}"), "rc=0");
+                if rc != 0 {
+                    bad.push(format!("    (said {})", o.chars().take(100).collect::<String>()));
+                }
+            }
+            let (o, rc) = w.commit_pin();
+            check(&mut bad, &format!("{label}: commit"), format!("rc={rc} {}", said(&o)), "rc=0 landed");
+            check(&mut bad, &format!("{label}: {q}"), short(&w.eval(q)), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+// ── r10 ── what the definitions beside a pin meet into ⊥ is not erased by it ──
+//
+// R-1, fourth: a plain write that meets HEAD into ⊥ (`h.k: g + 1` with
+// `g: 2` over `k: 0`), then a pin of a field beside it (`h.r: 9`): the leaf
+// was written into a new record in place of the ⊥ one, and the commit landed
+// `{ r: 9 }` — `k` and `z` gone, the conflict with them, `Commit successful`.
+// The siblings are judged as any definition (M4, Q-122): the pin is refused.
+
+#[test]
+fn r10_a_pin_does_not_erase_a_conflict_beside_it() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r10");
+        let _ = w.write("h: { k: 0, r: 6 }");
+        let (_, rc) = w.evolve("h.k: g + 1\nh.z: 1\ng: 2");
+        check(&mut bad, "the write beside", format!("rc={rc}"), "rc=0");
+        let (o, rc) = w.pin("h.r: 9");
+        check(&mut bad, "the pin: refused, a conflict", format!("rc={rc} {}", o.contains("#conflict at h")), "rc=1 true");
+        let _ = w.commit_pin();
+        check(&mut bad, "the pin did not land: _.h.r", short(&w.eval("_.h.r")), "6");
+        check(&mut bad, "the conflict is still there: _.h.z", short(&w.eval("_.h.z")), "1");
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
