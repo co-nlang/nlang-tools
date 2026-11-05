@@ -1719,7 +1719,7 @@ fn run_squash(
 fn already_in_head(
     engine: &Ouroboros,
     base: &Path,
-    combos: &[nlang_interpreter::value::ComboVal],
+    combos: &[(nlang_interpreter::value::ComboVal, std::collections::BTreeSet<String>)],
 ) -> anyhow::Result<Option<String>> {
     match Universe::head_if_it_holds(engine, base, combos)? {
         Some(head) => Ok(Some(format!("already in HEAD {head}"))),
@@ -1753,7 +1753,7 @@ fn run_commit(
                         &m.combo,
                     )
                 })
-                .map(|m| m.combo)
+                .map(|m| (m.combo, m.pin_coords))
                 .collect::<Vec<_>>();
             (seen, false)
         }

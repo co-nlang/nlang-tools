@@ -632,7 +632,7 @@ pub struct Universe {
     held_sources: Vec<std::path::PathBuf>,
     /// Held members that carry committable content. `v: _` and a
     /// `~%Config`-only member are held and are not in this list. Process-local.
-    held_committable: Vec<ComboVal>,
+    held_committable: Vec<(ComboVal, std::collections::BTreeSet<String>)>,
     /// Pin metadata for the one injection this evolve process will mint.
     session_pin_coords: std::collections::BTreeSet<String>,
     session_absorbs: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -2053,6 +2053,7 @@ impl Universe {
             return Ok(injections);
         }
         let root = Self::root_now(engine, base_dir)?;
+        let head = Self::head_root_and_standard(engine, base_dir)?;
         // Q-092: "HEAD already holds it" is the same meet as the commit's;
         // a recipe on either side stays a recipe there too.
         let at_head = engine
@@ -2063,16 +2064,24 @@ impl Universe {
             .content_hash();
         let mut kept = Vec::with_capacity(injections.len());
         for injection in injections {
-            let at = engine
-                .unify_universe(
-                    Value::Combo(root.clone()),
-                    Value::Combo(injection.combo.clone()),
-                )
-                .content_hash();
-            if at == at_head {
+            let held = match &head {
+                Some((root, standard)) if !injection.pin_coords.is_empty() => {
+                    !Self::pin_moves(engine, root, standard, &injection.combo, &injection.pin_coords)
+                }
+                _ => {
+                    engine
+                        .unify_universe(
+                            Value::Combo(root.clone()),
+                            Value::Combo(injection.combo.clone()),
+                        )
+                        .content_hash()
+                        == at_head
+                }
+            };
+            if held {
                 self.held_sources.push(injection.source);
                 if injection_has_committable_content(engine, &injection.combo) {
-                    self.held_committable.push(injection.combo);
+                    self.held_committable.push((injection.combo, injection.pin_coords));
                 }
             } else {
                 kept.push(injection);
@@ -2083,7 +2092,7 @@ impl Universe {
 
     /// Held members that are committable content. Empty when every held
     /// member is `v: _` or `~%Config` only.
-    pub fn held_committable(&self) -> &[ComboVal] {
+    pub fn held_committable(&self) -> &[(ComboVal, std::collections::BTreeSet<String>)] {
         &self.held_committable
     }
 
@@ -2094,30 +2103,91 @@ impl Universe {
     pub fn head_if_it_holds(
         engine: &Ouroboros,
         base_dir: &std::path::Path,
-        combos: &[ComboVal],
+        combos: &[(ComboVal, std::collections::BTreeSet<String>)],
     ) -> Result<Option<ContentHash>> {
         if combos.is_empty() {
             return Ok(None);
         }
         let root = Self::root_now(engine, base_dir)?;
+        let head = Self::head_root_and_standard(engine, base_dir)?;
         let at_head = engine
             .unify(
                 Value::Combo(root.clone()),
                 Value::Combo(ComboVal::default()),
             )
             .content_hash();
-        for combo in combos {
-            let at = engine
-                .unify(
-                    Value::Combo(root.clone()),
-                    Value::Combo(combo.clone()),
-                )
-                .content_hash();
-            if at != at_head {
+        for (combo, pin_coords) in combos {
+            // D84 (i): a member that pins is held when the root the commit
+            // would store is HEAD's (Q-123).
+            let held = match &head {
+                Some((root, standard)) if !pin_coords.is_empty() => {
+                    !Self::pin_moves(engine, root, standard, combo, pin_coords)
+                }
+                _ => {
+                    engine
+                        .unify(
+                            Value::Combo(root.clone()),
+                            Value::Combo(combo.clone()),
+                        )
+                        .content_hash()
+                        == at_head
+                }
+            };
+            if !held {
                 return Ok(None);
             }
         }
         Ok(engine.store.get_head(base_dir)?)
+    }
+
+    /// HEAD's commit root and the standard root it was committed with.
+    /// `None` when there is no HEAD.
+    fn head_root_and_standard(
+        engine: &Ouroboros,
+        base_dir: &std::path::Path,
+    ) -> Result<Option<(ComboVal, ComboVal)>> {
+        match engine.store.get_head(base_dir)? {
+            Some(head) => {
+                let (_addr, commit) = engine.store.open_commit(&head)?;
+                let root = engine.store.get_root(&commit.root, &engine.standard_roots)?;
+                Ok(Some((root, standard_for_root(engine, &commit.root)?)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// D84 (i) 「不移動位置」 for a member that pins (Q-123): the position a
+    /// pin puts the universe at is the root the commit would store — the
+    /// overwrite (`pin_commit_merge`), observed as the commit observes it
+    /// (`project_for_commit`, `canonical_bodies`) — not the meet. A pin over
+    /// ⊥, over a narrower value, or over a record with more fields moves it;
+    /// a pin of what HEAD stores does not.
+    fn pin_moves(
+        engine: &Ouroboros,
+        root: &ComboVal,
+        standard: &ComboVal,
+        combo: &ComboVal,
+        pin_coords: &std::collections::BTreeSet<String>,
+    ) -> bool {
+        let observed = |m: ComboVal| -> Option<ContentHash> {
+            let mut ctx = crate::EvalContext::new(m.clone()).with_standard_root(standard.clone());
+            ctx.memo_enabled = false;
+            ctx.preserve_refs = true;
+            match engine.project_for_commit(Value::Combo(m), Some(&Value::Combo(root.clone())), &mut ctx) {
+                Value::Combo(r) => match crate::dispatch::canonical_bodies(Value::Combo(r)) {
+                    v @ Value::Combo(_) => Some(v.content_hash()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        let Some(merged) = Self::pin_commit_merge(engine, root, combo, pin_coords) else {
+            return true;
+        };
+        match (observed(merged), observed(root.clone())) {
+            (Some(a), Some(b)) => a != b,
+            _ => true,
+        }
     }
 
     /// HEAD's commit root. No HEAD is the empty combo (there is no point).

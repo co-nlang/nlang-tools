@@ -76,16 +76,83 @@
 
 ### 8.1 射程逐項對照
 
+`universe.rs`、`main.rs` 與 `q123-ref` `df3a376` 逐位元組相同。探針是 `0625f13`，未改。
+
+*   **M1。** pin 讓被釘的坐標換值就落地：演化 rc=0，`status` 列出它，`commit --grant pin` 成功，讀 pin 的值，成員收走。
+    *   蓋頂層 ⊥：`r: 5 & 7` 之後 pin `r: 3`。根從 `7674df6e0cf1aadcedf26afd44b62186155cc717799a1864be4e90d634611f97` 到 `02992e9f54b9b33f3fd414d81156ba336d797e268cc15cab7b0881dcf127521a`，`_.r` 讀 `3`。
+    *   記錄欄位：`h: { a: 1, r: 5 & 7 }` 之後 pin `h: { a: 1, r: 3 }`。根從 `7d5ed99ad4c49653482c76b52b48ea433121069c0320d7389c044bd271f8d2a1` 到 `5fced5bbfe410640dfcb6a1fd4602ec311e703f75bc8c20e65849403be58d3b6`，`_.h` 讀 `{ a: 1 r: 3 }`。
+    *   清單元素：`l: [5 & 7, 1]` 之後 pin `l: [3, 1]`。根從 `9895dca97d966ce48136530d7f2cdb5581157125075161e2fa6a8b185345958b` 到 `caf4f24c463c12e48f92a356458309196a53cbda54b16b6bb39db30fc28f93aa`，`_.l` 讀 `[3, 1]`。
+    *   存成 ⊥ 的配方：`n: 5`、`r: n & 7`（根 `fba672c829ec60c00b70cb6090e8b95ba38b16c96cd99eb6773bad45a146822f`）之後 pin `r: 3`。根 `4bd16f89349c2819f98d373750a2d745568c4f61997813581c635baff247874d`，`_.r` 讀 `3`。
+    *   別的欄位先提交：`a: 1` 再 `r: 5 & 7`（根 `4448ffaefbba3f33ab0f0c37610fcd561d1bc7ec2654e5dba2b16c28fbbb53ab`）之後 pin `r: 3`。根 `62090c9830f0a64a63b3c97cdd8d65f097bf184109799bc7748e88e920a53a37`，`_.r` 讀 `3`。
+    *   寬化成型別：`r: 3` 之後 pin `r: @int`。根從 `02992e9f…` 到 `f15584157b0530941f782a00ef28f6281d4c5c994c3be716d1dfa03675307821`，`_.r` 讀 `{{ %kind: #type %name: "int" }}`。
+    *   寬化成區間：pin `r: 1..10`。根 `1b2fbd0a51af36c47baf85682a08354adf20d61ff68292a06ad2ba1baa66b1b7`，`_.r` 讀 `1..10`。
+    *   少欄位：`r: { a: 1, b: 2 }`（根 `2604502f258bb162157b59571bbbd56fb6534003e9ba25c7db12f01230b64727`）之後 pin `r: { a: 1 }`。根 `0123237164ecb12f7558d886a0d8baceb29777fe30d8e254d282fc217bda08a2`，`_.r` 讀 `{ a: 1 }`。
+    *   巢狀少欄位：`h: { k: { a: 1, b: 2 }, z: 0 }`（根 `25706a771a901f4bf365db0e86891c1832bb1088b8fba0c7ce38c84623af3425`）之後 pin `h: { k: { a: 1 }, z: 0 }`。根 `16338586ecc66422c32c4e00f6350f5e14b5952a6d238ef437417c45af639de2`，`_.h.k` 讀 `{ a: 1 }`。
+*   **M2。** 一般寫入在前或在後，與 pin `r: 3` 一起提交，根都是 `9b456cc4bc2e6a209190eb72dcfa1df74cf8206c700b27f81e845ef8a06b9def`，`_.r` 讀 `3`，`_.s` 讀 `2`。同一坐標兩次 pin（`@int` 再 `1..10`），後者落地，根 `1b2fbd0a…`（與直接 pin `1..10` 同一顆），`_.r` 讀 `1..10`。兩個坐標兩次 pin，根 `1b68970f49d587a3b72dc01ace5d658943c071a50e95a5d818996e121bd5a4cf`，`_.r` 讀 `3`，`_.s` 讀 `{ a: 1 }`。同一筆 pin 裡 `r: 3` 已持有、`s: 4` 換值，根 `28cbf2a51549999a83f6d2a9fb5bbb982840ac922ad8967fec36ce1ca87cb460`，讀 `3` 與 `4`。落地 `r: 4`（根 `560ac5cd003ad1d37f9e8b398d06a2a88ba7ace348efa70fe98672dcef584aaa`）再 pin `r: @int`，根 `f1558415…`，再 pin 一次 `status` 靜止、提交答 `already in HEAD`、根不動。
+*   **另一半。** pin 與 HEAD 存的相同（值、記錄、型別、⊥、讀名字的記錄、箭頭、表、讀根的配方）：`status` 靜止，提交答 `already in HEAD`，根不動。讀名字的記錄根 `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`；箭頭 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；表 `3218de24658ad19158c38e50b714ef7b7eba8e85fc8a296a791f4f9823a2c66f`；`n: 5`、`r: n + 1` 根 `f6dc16ae774bef4a5fb10d214847b2c84718d416654e9e11f3570fd92ef10db9`。收窄 pin `r: 4` 落地，根 `560ac5cd…`，再 pin 一次已持有。一般寫入 `r: 3` 蓋 ⊥ 拒 `#conflict at r`。一般寫入 `q: @int` 蓋 `q: 3` 答 `already in HEAD`，根不動，`_.q` 讀 `3`。沒有 `--grant pin` 的提交答 `#privileged_required`，根不動。
+*   **g2。** `x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08…`；`h: { a: 1, b: a + 1 }` `2284caf4…`。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。本回合只動 `universe.rs` 與 `main.rs`，而且是參考實作的位元組。探針、版本、`CHANGELOG`、規格、向量都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** pin 成員「已在 HEAD」只在兩處改判，都走 `pin_moves`：`proposals_at`（載入工作集；`status`、提交、下一筆演化都從這裡看），以及 `head_if_it_holds`（提交答「已在 HEAD」）。後者有兩條路。工作集折完沒有可提交內容時，C2 把 `held_committable` 交進去——那份清單是 `proposals_at` 判過、而且帶著 `(combo, pin_coords)` 的。等鎖之後成員被別的提交拿走（C1），`seen_committable` 是鎖前讀到的成員，同樣帶 `pin_coords`，再交同一支。`pin_coords` 空的成員仍用交會雜湊。
+
+`pin_moves` 用 `pin_commit_merge` 做出提交會存的那顆，再與 HEAD 的根一起走提交的觀測（`project_for_commit`、`canonical_bodies`）比雜湊。相等就是已持有。
+
+`evolve` 寫成員的時候不判這句。判在下一次載入。蓋 ⊥ 的 pin，演化 rc=0，成員檔在，接著 `status` 列出 `Staged changes`。
+
+`session_would_be_listed`（D92，還沒有倉的那一條）仍用交會，對的是空根。空目錄裡 pin `r: 3`：演化 rc=0，倉出現，`status` 列出它。空根上，交會與覆寫落在同一位置，這條不會把「已提交的 ⊥」誤判成已持有——那時候還沒有 HEAD。
+
+`injection_positions_equal` 仍用交會，記的是存點圓（D80）工作集前後的位置，不決定「已在 HEAD」那句，也不把成員丟掉。
+
+**Q2。** 比的不是成員正文與倉裡那份字。兩邊都先照提交觀測再比雜湊，所以同一個值寫成字面、倉裡已是觀測過的形，pin 那份字面答已持有，根不動。
+
+*   讀名字的記錄 `h: { a: 1, b: a + 1 }`：根 `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`。`inspect` 仍印 `b: a + 1`。pin 同一句：`status` 靜止，提交 `already in HEAD`，根不動。
+*   箭頭 `f: (x -> x + 1)`：根 `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`。同上。
+*   表 `t: { @{ @int }: 0, _: 1 }`：根 `3218de24658ad19158c38e50b714ef7b7eba8e85fc8a296a791f4f9823a2c66f`。同上。
+*   讀根的配方 `n: 5`、`r: n + 1`：根 `f6dc16ae774bef4a5fb10d214847b2c84718d416654e9e11f3570fd92ef10db9`。`inspect` 仍印 `r: n + 1`。pin `r: n + 1`：`status` 靜止，提交 `already in HEAD`，根不動。
+
+**Q3。** 可以。`combo` 是這筆的 delta，`pin_coords` 是釘下的坐標，分開記。`pin_commit_merge` 先把 `pin_coords` 從 combo 拿掉，剩下的與根交會，再把釘的坐標覆寫上去。
+
+一道 `--pin` 寫下的每個頂層坐標都會進 `pin_coords`。pin `r: 3` 與 `s: 4`，成員是 `pin_coords: ["r","s"]`，正文 `{ r: 3 s: 4 }`。
+
+同一筆裡不在 `pin_coords` 的坐標照交會。HEAD 是 `r: 3`、`q: 3`，成員正文改成 `{ r: 3 q: 4 }`、`pin_coords` 仍只有 `r`：不是把 `q` 覆寫成 `4`。提交印 `#conflict at q` 然後成功，倉裡 `q` 是 `_|_ #conflict`，`r` 仍是 `3`，根 `e79fecdc1d891cdb75f791deeb80745eefe9251a037045ab324edbc1cf1672c6`。對照：同一道 pin 把 `q: @int` 也釘上，`_.q` 讀型別 `int`，根 `2d2eaed731b2aef97c8bab1b6c40cc797e12a7d88176cc16903904fb767981cc`。
+
+另一格是命令自己做出的：pin `r: 3` 與一般寫入 `q: @int` 分兩筆成員，HEAD 原是 `r` 的 ⊥ 與 `q: 3`。`status` 只列出 `{ r: 3 }`（`q` 交會之後已持有）。提交後 `_.r` 讀 `3`，`_.q` 仍是 `3`，根 `224fc22c9148aeed8cc1f25717d46a459d86d9d7f7c84563eec3d0ad2af561b3`。
+
+**Q4。** 每個帶 `pin_coords` 的成員，一次 `pin_moves` 做兩次提交觀測：覆寫後的根一次，HEAD 的根一次。`proposals_at` 在載入時對每個這樣的成員叫一次。`head_if_it_holds` 在提交要答已持有時再叫一次；會落地的成員不進這條。沒有 `pin_coords` 的成員仍是一次交會雜湊。
+
+`r: { N 欄 }` 之後 pin `r: { N-1 欄 }`：N=2000 演化 0.34 秒、提交 0.63 秒；N=8000 演化 1.31 秒、提交 2.40 秒。都落地，`k1999`／`k7999` 讀 `_`。驗收方量的 v0.123.0 是演化 0.35／1.33 秒、提交 0.73／2.65 秒，答 `already in HEAD`，`k7999` 仍讀 `7999`。本回合沒有重編那個標籤。
 
 ### 8.5 探針
 
+`a_pin_head_said_it_held_probe_test` **4／4**。單獨一輪 `finished in 3.84s`，EXIT 0。閘門裡 `finished in 3.76s`（`a_pin_head_said_it_held_probe_test-82a91dbbab569c2d`）。探針檔未改。`rustfmt` 未掃。
+
 ### 8.6 數字
 
+`universe.rs` 與 `main.rs` 相對 `0625f13`：+91／−21。加上本節，交付是這兩檔與這份交接。
+
+探針 4／4。閘門：GATE 1 2026-11-05T12:32:21+08:00 WALL 1995 s（含編譯 7 m 11 s，結束 13:05:36）；GATE 2 13:05:36 1561 s（結束 13:31:37）；GATE 3 13:31:37 1549 s（結束 13:57:26）。正規化 3892 行，sha `c521d5674e1cb91fb28c79588373a7faeac157dfda4cdb0618ad3c56280e4121`，316 個 `running`、313 個 `Running`，加總 **2947** 通過、0 失敗，`test ` 行 `ok` 2946。三輪正規化相同。原始 sha 前綴 `42cb03ab5b45ba98`、`46feced62096414f`、`1ac036b0b5fa4f9e`。位元組 311442、311285、311285。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q123/conf.empty`，前後 `ls -A | wc -l` 都是 0，9 s。
+
+Linux 編譯在閘門裡 Finished 7 m 11 s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-05T13:57:26+08:00 Finished 4.86 s，腳本 wall 5 s，EXIT 0，`^error` 0，target lib 17 則、`cargo fix` 14，留著。
+
+`oo` 11521320 位元組，mtime 2026-11-05 12:27:55.688391488 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。
+
+身分：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`h: { a: 1, b: a + 1 }` `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`（`c9/6c…`，16029 位元組）。新倉 `layout=9`，`encoding=11`。
+
 ### 8.7 你認為需要改規格之處
+
+規格已寫 pin 的位置是覆寫、單位是坐標，已在 HEAD 是不移動那個位置。本回合把「已在 HEAD」從交會改成提交會存下的那顆。破壞性（pin 的結果改變），收尾時記 `CHANGELOG`。本回合未改規格、向量、`CHANGELOG`。
+
+路徑鍵把兄弟欄位抹掉、並行注入做出的晚到 ⊥、Q-122 的走訪代價、`rollback`，都不在本回合。
 
 ## 9. 驗收（驗收方填）
