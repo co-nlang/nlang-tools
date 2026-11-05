@@ -301,8 +301,10 @@ fn moves() -> Vec<(&'static str, Vec<&'static str>, &'static str, &'static str, 
         ("over ⊥ committed after another field", vec!["a: 1", "r: 5 & 7"], "r: 3", "_.r", "3"),
         ("wider: a type", vec!["r: 3"], "r: @int", "_.r", INT),
         ("wider: a range", vec!["r: 3"], "r: 1..10", "_.r", "1..10"),
-        ("fewer fields", vec!["r: { a: 1, b: 2 }"], "r: { a: 1 }", "_.r", "{ a: 1 }"),
-        ("a nested record wider", vec!["h: { k: { a: 1, b: 2 }, z: 0 }"], "h: { k: { a: 1 }, z: 0 }", "_.h.k", "{ a: 1 }"),
+        // AMENDED 2026-11-05 for Q-124 (D128): a pin writes the leaves of a record, so it cannot drop
+        // a field ({ a: 1 } over { a: 1, b: 2 } is held); the record cells widen a field instead.
+        ("a field of a record wider", vec!["r: { a: 1, b: 2 }"], "r: { a: 1, b: @int }", "_.r", "{ a: 1 b: {{ %kind: #type %name: \"int\" }} }"),
+        ("a field of a nested record wider", vec!["h: { k: { a: 1, b: 2 }, z: 0 }"], "h: { k: { a: 1, b: @int }, z: 0 }", "_.h.k", "{ a: 1 b: {{ %kind: #type %name: \"int\" }} }"),
     ]
 }
 
@@ -347,7 +349,8 @@ fn r2_a_pin_beside_other_members_lands() {
         ("an ordinary write first", "r: 5 & 7", vec![('e', "s: 2"), ('p', "r: 3")], vec![("_.r", "3"), ("_.s", "2")]),
         ("an ordinary write after", "r: 5 & 7", vec![('p', "r: 3"), ('e', "s: 2")], vec![("_.r", "3"), ("_.s", "2")]),
         ("two pins at one coordinate", "r: 3", vec![('p', "r: @int"), ('p', "r: 1..10")], vec![("_.r", "1..10")]),
-        ("two pins, two coordinates", "r: 5 & 7\ns: { a: 1, b: 2 }", vec![('p', "r: 3"), ('p', "s: { a: 1 }")], vec![("_.r", "3"), ("_.s", "{ a: 1 }")]),
+        // AMENDED 2026-11-05 for Q-124 (D128): widen a field of `s` instead of dropping one.
+        ("two pins, two coordinates", "r: 5 & 7\ns: { a: 1, b: 2 }", vec![('p', "r: 3"), ('p', "s: { a: 1, b: @int }")], vec![("_.r", "3"), ("_.s", "{ a: 1 b: {{ %kind: #type %name: \"int\" }} }")]),
         ("one pin, a held and a moved coordinate", "r: 3\ns: 5 & 7", vec![('p', "r: 3\ns: 4")], vec![("_.r", "3"), ("_.s", "4")]),
     ];
     for (label, committed, steps, reads) in rows {

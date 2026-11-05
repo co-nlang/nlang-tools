@@ -1,0 +1,3 @@
+#nlang/store savepoint
+parents:
+{ h: { k: { ~%__nlang_thunk: #true ~%__nlang_expr: 5 ~%__nlang_closure: [{ k: { ~%__nlang_thunk: #true ~%__nlang_expr: 5 ~%__nlang_closure: [] } r: { ~%__nlang_thunk: #true ~%__nlang_expr: 6 ~%__nlang_closure: [] } }] } r: { ~%__nlang_thunk: #true ~%__nlang_expr: 6 ~%__nlang_closure: [{ k: { ~%__nlang_thunk: #true ~%__nlang_expr: 5 ~%__nlang_closure: [] } r: { ~%__nlang_thunk: #true ~%__nlang_expr: 6 ~%__nlang_closure: [] } }] } } }
