@@ -477,11 +477,21 @@ fn restamp(
     standard_root: &ComboVal,
     staged: &mut std::sync::Arc<ComboVal>,
     delta: Option<&mut ComboVal>,
+    pin: Option<&std::collections::BTreeSet<String>>,
 ) {
     let mut ctx = crate::EvalContext::new_shared(root.clone()).with_standard_root(standard_root.clone());
     ctx.staged = Some(staged.clone());
     refresh_combo_thunks(engine, &ctx, std::sync::Arc::make_mut(staged));
     if let Some(session_delta) = delta {
+        // D128: a pin member holds the leaves it wrote, as the working set
+        // now reads them — not the working set's coordinate around them
+        // (that would pin what other members wrote there).
+        if pin.is_some_and(|c| !c.is_empty()) {
+            // The pin wrote its own values into the working set at its leaves
+            // (`pin_write`): its thunks read the same working set there.
+            refresh_combo_thunks(engine, &ctx, session_delta);
+            return;
+        }
         let mut next = ComboVal::default();
         next.effect = session_delta.effect;
         // Q-098: a working set that is a table keeps a data key as a
@@ -1427,7 +1437,7 @@ impl Universe {
                     panic!("Q-117 shadow: the meet is not a record for {:?}", incoming.data.keys().collect::<Vec<_>>());
                 };
                 let mut slow_arc = std::sync::Arc::new(std::mem::take(&mut slow));
-                restamp(engine, &self.root, &self.standard_root, &mut slow_arc, Some(&mut slow_delta));
+                restamp(engine, &self.root, &self.standard_root, &mut slow_arc, Some(&mut slow_delta), None);
                 let same = |fast: &ComboVal, slow: &ComboVal| {
                     // Not `==`: a NaN inside is never equal to itself.
                     slow.content_hash() == fast.content_hash()
@@ -1925,7 +1935,8 @@ impl Universe {
     fn restamp_thunk_effects(&mut self, engine: &Ouroboros) {
         self.fast_state = None;
         let delta = if self.session_has_delta { Some(&mut self.session_delta) } else { None };
-        restamp(engine, &self.root, &self.standard_root, &mut self.staged, delta);
+        let pin = Some(&self.session_pin_coords);
+        restamp(engine, &self.root, &self.standard_root, &mut self.staged, delta, pin);
     }
 
     /// D112: a root's spread rows read the universe every time. After an
@@ -2513,6 +2524,10 @@ impl Universe {
             }
         }
         let injections = crate::injections::load_all(base_dir)?;
+        // D58/D128: a later pin takes its leaves from what it absorbed
+        // before anything is judged held — a pin of HEAD's own value still
+        // overwrites the earlier pin there.
+        let (injections, replaced) = crate::injections::apply_absorbs(engine, injections);
         self.effect_pending = None;
         // D84 (i): an injection HEAD already holds is not a proposal. The
         // test is per member, against HEAD's root, before pin, discharge,
@@ -2537,7 +2552,6 @@ impl Universe {
         // absorbed; the leaves left are what the commit overwrites.
         // A coordinate an absorbed member wrote as a non-record, which a
         // later pin writes under, was replaced whole by that pin: a leaf too.
-        let (proposals, replaced) = crate::injections::apply_absorbs(engine, proposals);
         self.loaded_pin_leaves = proposals
             .iter()
             .flat_map(|i| pin_leaves(engine, &i.combo, &i.pin_coords))
@@ -3749,19 +3763,68 @@ fn open_record(m: &ComboVal) -> bool {
 fn record_of<'a>(engine: &Ouroboros, v: &'a Value) -> Option<std::borrow::Cow<'a, ComboVal>> {
     match v {
         Value::Combo(m) if open_record(m) => Some(std::borrow::Cow::Borrowed(m)),
-        Value::Thunk { expr, effect, .. }
-            if effect.is_pure()
-                && matches!(&expr.kind, nlang_parser::ast::ExprKind::Combo { closed: false, relations, .. } if relations.is_empty()) =>
+        // Two records met but not yet built — a field reads a name (D118's
+        // frame), or two record literals kept as their recipe (Q-092) — are
+        // a record, field by field.
+        Value::Thunk { expr, closure, .. }
+            if matches!(&expr.kind, nlang_parser::ast::ExprKind::Meet(..))
+                && closure.first().is_some_and(|f| crate::value::is_meet_frame(f)) =>
         {
-            let mut ctx = crate::EvalContext::new(ComboVal::default());
-            ctx.memo_enabled = false;
-            match engine.force(v.clone(), &mut ctx) {
-                Value::Combo(m) if open_record(&m) => Some(std::borrow::Cow::Owned(m)),
-                _ => None,
-            }
+            let mut sides = closure[0].local.values();
+            let (l, r) = (sides.next()?, sides.next()?);
+            meet_record(engine, l, r).map(std::borrow::Cow::Owned)
         }
+        Value::Thunk { expr, closure, context, effect } => match &expr.kind {
+            nlang_parser::ast::ExprKind::Meet(a, b) => {
+                let side = |e: &nlang_parser::ast::Expr| Value::Thunk {
+                    expr: Box::new(e.clone()),
+                    closure: closure.clone(),
+                    context: context.clone(),
+                    effect: *effect,
+                };
+                meet_record(engine, &side(a), &side(b)).map(std::borrow::Cow::Owned)
+            }
+            _ => literal_record(engine, v).map(std::borrow::Cow::Owned),
+        },
         _ => None,
     }
+}
+
+/// A pure record literal still held as written (building it reads nothing).
+fn literal_record(engine: &Ouroboros, v: &Value) -> Option<ComboVal> {
+    let Value::Thunk { expr, effect, .. } = v else { return None };
+    if !(effect.is_pure()
+        && matches!(&expr.kind, nlang_parser::ast::ExprKind::Combo { closed: false, relations, .. } if relations.is_empty()))
+    {
+        return None;
+    }
+    let mut ctx = crate::EvalContext::new(ComboVal::default());
+    ctx.memo_enabled = false;
+    match engine.force(v.clone(), &mut ctx) {
+        Value::Combo(m) if open_record(&m) => Some(m),
+        _ => None,
+    }
+}
+
+/// Two records as one, field by field: a field one side writes is that
+/// side's; a field both write waits as their meet. The record is the node
+/// both were met into (D118): a field reading a sibling resolves there.
+fn meet_record(engine: &Ouroboros, l: &Value, r: &Value) -> Option<ComboVal> {
+    let (l, r) = (record_of(engine, l)?, record_of(engine, r)?);
+    let mut m = l.as_ref().clone();
+    for a in 0u8..6 {
+        for (k, rv) in axis_map(&r, a) {
+            let met = match axis_map(&m, a).get(k) {
+                Some(lv) => crate::value::pending_meet(lv.clone(), rv.clone()),
+                None => rv.clone(),
+            };
+            axis_map_mut(&mut m, a).insert(k.clone(), met);
+        }
+    }
+    m.effect = m.effect.union(r.effect);
+    mark_met(&mut m, &[(l.node_id, &l.merged_from[..]), (r.node_id, &r.merged_from[..])]);
+    fresh_cache(&mut m);
+    Some(m)
 }
 
 fn entries(m: &ComboVal) -> Vec<((u8, String), &Value)> {
@@ -3880,6 +3943,11 @@ fn overwrite_node(engine: &Ouroboros, base: &mut ComboVal, src: &ComboVal, t: &L
             continue;
         }
         let Some(src_child) = record_of(engine, sv) else { continue };
+        // What the definitions beside the leaves met into ⊥ stays ⊥: a leaf
+        // written below it does not make the conflict go away (Q-122).
+        if matches!(axis_map(base, seg.0).get(&seg.1), Some(Value::Bottom(_))) {
+            continue;
+        }
         let src_ids = (src_child.node_id, src_child.merged_from.clone());
         let in_place = matches!(axis_map(base, seg.0).get(&seg.1), Some(Value::Combo(c)) if open_record(c));
         if in_place {
@@ -3941,26 +4009,30 @@ fn remove_node(
     t: &LeafTrie,
     at: &mut PinPath,
     replaced: &mut std::collections::BTreeSet<PinPath>,
-) {
+) -> bool {
+    // What is not there is not taken: a record nothing is taken from is
+    // left as it is stored.
     let mut gone: [std::collections::HashSet<String>; 6] = Default::default();
+    let mut changed = false;
     for (seg, kid) in &t.kids {
+        let Some(v) = axis_map(m, seg.0).get(&seg.1) else { continue };
         if kid.leaf {
             gone[seg.0 as usize].insert(seg.1.clone());
             continue;
         }
-        let Some(v) = axis_map(m, seg.0).get(&seg.1) else { continue };
-        match record_of(engine, v).map(std::borrow::Cow::into_owned) {
-            Some(mut child) => {
-                at.push(seg.clone());
-                remove_node(engine, &mut child, kid, at, replaced);
-                at.pop();
-                if no_entries(&child) {
-                    gone[seg.0 as usize].insert(seg.1.clone());
-                } else {
-                    axis_map_mut(m, seg.0).insert(seg.1.clone(), Value::Combo(child));
-                }
+        at.push(seg.clone());
+        let stripped = strip_value(engine, v, kid, at, replaced);
+        at.pop();
+        match stripped {
+            Strip::Same => {}
+            Strip::Gone => {
+                gone[seg.0 as usize].insert(seg.1.clone());
             }
-            None => {
+            Strip::Now(nv) => {
+                axis_map_mut(m, seg.0).insert(seg.1.clone(), nv);
+                changed = true;
+            }
+            Strip::NotRecord => {
                 // A leaf below a non-record replaces it whole.
                 gone[seg.0 as usize].insert(seg.1.clone());
                 let mut p = at.clone();
@@ -3969,10 +4041,121 @@ fn remove_node(
             }
         }
     }
+    let took_here = gone.iter().any(|g| !g.is_empty());
     for (a, keys) in gone.iter().enumerate() {
         if !keys.is_empty() {
             axis_map_mut(m, a as u8).retain(|k, _| !keys.contains(k));
         }
+    }
+    // D118: a field left reads its node through the literal it was written
+    // in; that literal no longer has what was taken here.
+    if took_here {
+        // The literal it was written in is this node, or one it was met from.
+        let nodes: Vec<u64> = std::iter::once(m.node_id).chain(m.merged_from.iter().copied()).filter(|n| *n != 0).collect();
+        // The fields share their literal: each literal is cut once.
+        let mut cut: std::collections::HashMap<*const ComboVal, std::sync::Arc<ComboVal>> = Default::default();
+        for a in 0u8..6 {
+            for v in axis_map_mut(m, a).values_mut() {
+                if let Value::Thunk { closure, .. } = v {
+                    for f in closure.iter_mut() {
+                        if !nodes.contains(&f.node_id) {
+                            continue;
+                        }
+                        let new = cut
+                            .entry(std::sync::Arc::as_ptr(f))
+                            .or_insert_with(|| {
+                                let mut g = (**f).clone();
+                                for (b, keys) in gone.iter().enumerate() {
+                                    if !keys.is_empty() {
+                                        axis_map_mut(&mut g, b as u8).retain(|k, _| !keys.contains(k));
+                                    }
+                                }
+                                fresh_cache(&mut g);
+                                std::sync::Arc::new(g)
+                            })
+                            .clone();
+                        *f = new;
+                    }
+                }
+            }
+        }
+    }
+    if took_here {
+        fresh_cache(m);
+    }
+    changed || took_here
+}
+
+/// What taking leaves out of a value left.
+enum Strip {
+    /// Nothing was there to take: the value as it is stored.
+    Same,
+    /// Everything was taken.
+    Gone,
+    Now(Value),
+    /// Not a record: a leaf below it replaces it whole.
+    NotRecord,
+}
+
+/// The leaves of `t` taken out of `v`: a record; two records waiting for
+/// their node (D118), each side as it is stored; any other form of a record
+/// as the record it is. What nothing is taken from stays as it is stored.
+fn strip_value(
+    engine: &Ouroboros,
+    v: &Value,
+    t: &LeafTrie,
+    at: &mut PinPath,
+    replaced: &mut std::collections::BTreeSet<PinPath>,
+) -> Strip {
+    match v {
+        Value::Combo(c) if open_record(c) => {
+            let mut child = c.clone();
+            if !remove_node(engine, &mut child, t, at, replaced) {
+                Strip::Same
+            } else if no_entries(&child) {
+                Strip::Gone
+            } else {
+                Strip::Now(Value::Combo(child))
+            }
+        }
+        Value::Thunk { expr, closure, .. }
+            if matches!(&expr.kind, nlang_parser::ast::ExprKind::Meet(..))
+                && closure.first().is_some_and(|f| crate::value::is_meet_frame(f)) =>
+        {
+            let mut sides = closure[0].local.values();
+            let (Some(l), Some(r)) = (sides.next(), sides.next()) else { return Strip::NotRecord };
+            let (sl, sr) = (strip_value(engine, l, t, at, replaced), strip_value(engine, r, t, at, replaced));
+            if matches!((&sl, &sr), (Strip::Same, Strip::Same)) {
+                return Strip::Same;
+            }
+            let side = |orig: &Value, s: Strip| match s {
+                Strip::Same => Ok(Some(orig.clone())),
+                Strip::Gone => Ok(None),
+                Strip::Now(x) => Ok(Some(x)),
+                Strip::NotRecord => Err(()),
+            };
+            match (side(l, sl), side(r, sr)) {
+                (Err(()), _) | (_, Err(())) => Strip::NotRecord,
+                (Ok(None), Ok(None)) => Strip::Gone,
+                (Ok(Some(x)), Ok(None)) | (Ok(None), Ok(Some(x))) => Strip::Now(x),
+                (Ok(Some(x)), Ok(Some(y))) => Strip::Now(crate::value::pending_meet(x, y)),
+            }
+        }
+        // Any other form of a record (a literal held as written, a meet of
+        // literals): as the record it is.
+        _ => match record_of(engine, v) {
+            Some(c) => {
+                let mut child = c.into_owned();
+                if !remove_node(engine, &mut child, t, at, replaced) {
+                    Strip::Same
+                } else if no_entries(&child) {
+                    Strip::Gone
+                } else {
+                    Strip::Now(Value::Combo(child))
+                }
+            }
+            None => Strip::NotRecord,
+        },
     }
 }
 
@@ -3992,6 +4175,6 @@ pub(crate) fn remove_leaves_noting(
     replaced: &mut std::collections::BTreeSet<PinPath>,
 ) -> ComboVal {
     let mut out = m.clone();
-    remove_node(engine, &mut out, &trie_of(leaves), &mut Vec::new(), replaced);
+    let _ = remove_node(engine, &mut out, &trie_of(leaves), &mut Vec::new(), replaced);
     out
 }

@@ -239,14 +239,81 @@ Linux 編譯在閘門裡 Finished 7 m 20 s，interpreter lib 16 則警告，`car
 
 ### 10.1 射程逐項對照
 
+`universe.rs` 與 `q124-r1ref` `f7fabbc` 逐位元組相同。讀數是這支 `oo`（11594304 位元組，mtime 2026-11-06 03:51:35.341016407 +0800）。`oo eval` 讀已提交的根。
+
+*   **R1-M1。** `x: 1`（根 `c9889219c55cccc569f22c0521d5954b54063702a288cf3e7452677e65749aff`）pin `x: 2` 再 pin `x: 1`：`status` 靜止，提交 `already in HEAD`，根與 `_.x` 不動。葉上 `h.k: 7` 再 `h.k: 5`、巢狀 `h: { k: 5 }`、整個記錄 `h: { k: 5, r: 6 }` 都已持有，根留在 `3e81e317b1c96f9587f78ce1e8571291b26206eb63c5153f9639873fbd5e7f82`。旁邊留著別的葉：`h: { k: 7, r: 9 }` 再 `h.k: 5`，以及先 `h.r: 9`、`h.k: 7` 再 `h.k: 5`，都讀 `{ k: 5 r: 9 }`，根 `7d0db397111fc566c427d802cdf2a7085f14525d6c87439843464d2f8dcb97b8`。先已持有再離開（`h.k: 5` 再 `h.k: 7`）讀 `{ k: 7 r: 6 }`，根 `2c574171859cae983ce03afa4786e6e72f2a53a70f232d08ab8144374bfaa3bf`。`x: 2` 再 `x: 3` 讀 `3`，根 `577305451101d1416bef88bd0be0f0023b173313e9628ae964221c5afb404089`。函式 `g: (n -> n + 5)` 再 `g: (n -> n)`，以及連同讀它的 `k: g 1`，都已持有，根 `480693f78e585cd73ec1b81bf8ec511cdcaa2d1b40064852af0a215b41443bd6`，`_.k` 仍是 `1`。
+*   **R1-M2。** 一般寫入 `h: { k: @int, z: 1 }` 再 pin `h.r: 9` 讀 `{ k: 5 r: 9 z: 1 }`，根 `a63231763fc00b9da5105e4cef9a8a16caf32dacc0d8d3903f4ffcca1e17a271`。pin 在別的座標 `g: 1`，`_.h` 讀 `{ k: 5 r: 6 z: 1 }`，根 `ed7d75006f0946f01ccaa595eb53abd44dbe5e95c1f153547c8dfc6f7d210fac`。先 pin `h.r: 9`，再以路徑鍵、巢狀、兩個檔寫 `h.k: 7` 與 `h.r: 8`，三格都讀 `{ k: 7 r: 8 }`，根 `97c7923af91c4ecef33ad86caa62427c48268757c00aa4506af46575cbb07930`。一般寫入 `h.z: 1` 再 pin `h.k: 7`、`h.z: 2` 讀 `{ k: 7 r: 6 z: 2 }`，根 `4cef99cab5b9e4adcd740dba5335ddaafd24e1b0e422786a43d14e5565f59c0f`。配方旁再 pin `h.k: 7` 讀 `{ k: 7 r: 8 }`，根 `24954366599615d6c9f81c0ff6485d60e7c298582c8dcdba7ef90c0037201b93`。
+*   **R1-M3。** pin `h.k: g + 1`、`g: 2` 再一般寫入 `h.z: 1` 讀 `{ k: 3 r: 6 z: 1 }`，根 `1cf404312ea918cc9f778e2dd22323f26cf907a32523146de21e2a75a389b3ae`（Q-123 那格，兩筆都在）。一般寫入讀名字再 pin、pin 再 pin 讀名字、讀兄弟再 pin、pin 讀兄弟再寫、HEAD 已是兩個字面的交會再 pin `h.k: 7`（讀 `{ k: 7 r: 6 }`，根與一層直接寫同一顆 `2c574171…`）、拿掉讀名字那筆記錄的一欄、同一檔寫兩欄、讀 pin 要寫的兄弟、兩筆一般寫入再 pin、pin 再寫兄弟，讀數都與 r9 的宣稱相同。有展開的記錄仍是葉：pin `h.k: 7` 讀 `{ k: 7 }`，根 `308fa4887f08f51781a9283a9c0ba73cb090b4af614486e95a668f6af9c61323`。不帶 pin 的對照讀 `{ k: 0 r: 6 y: 2 z: 1 }`，根 `d128859af49824071bb27c7507360e49e39f6297f4671dd747f32ecc6ded4c6c`。
+*   **R1-M4。** `h: { k: 0, r: 6 }` 之後一般寫入 `h.k: g + 1`、`h.z: 1`、`g: 2`，再 pin `h.r: 9`：演化拒 `#conflict at h`，pin 沒有寫進成員。提交把那筆一般寫入存下，`_.h` 是 `{ k: _|_ ;; %cause: #conflict r: 6 z: 1 }`，`_.h.r` 仍是 `6`，`_.h.z` 是 `1`。根 `c1e2f2222ab87fcf64f45dcd21dbdd6a2a24b9970e6e105d8a6d18933713ea94`。
+*   **另一半。** 移開 HEAD 的值照落地（上面 `x: 3`、`h.k: 7`）。g2 四顆根與上一輪相同。r1–r6 在探針裡仍綠。
+
 ### 10.2 順手改動（逐項指名）
+
+沒有。本回合只動 `universe.rs`，而且是參考實作的位元組。`injections.rs`、`main.rs`、探針、版本、規格、向量、`CHANGELOG` 都沒動。`rustfmt` 未跑。
 
 ### 10.3 工單哪裡是錯的
 
+沒有。
+
 ### 10.4 工單指名要你回答的問題
+
+**R1-Q1。** 逐個成員判已持有的，載入時是 `proposals_at`，而且在 `apply_absorbs` 之後。提交端還有 `head_if_it_holds`。工作集折完沒有可提交內容時，C2 把吸收之後放進 `held_committable` 的成員交進去。等鎖之後（C1，`contended || lost_a_member`）`main.rs` 交的是鎖前 `load_all` 讀到的成員原樣，沒有再跑 `apply_absorbs`。
+
+單行程提交走 C2。`x: 1` 之後 pin `x: 2` 再 pin `x: 1`：`status` 靜止，提交 `already in HEAD`，`_.x` 仍是 `1`，根 `c9889219…`。
+
+C1 要等鎖，而且 C2 沒有先答已持有。造的一格：提交在鎖上等待時把兩個成員檔拿掉（`listed_count < listed_before`）。醒來之後 C2 的 `held_committable` 是空的；C1 拿鎖前那兩筆原樣（`x: 2` 與 `x: 1`）判。`head_if_it_holds` 要每一筆都持有才答已持有，前一筆 `x: 2` 單獨看會移動，所以這條答 `working set consumed by a concurrent commit`，根不動，`_.x` 仍是 `1`。被吸收的成員在這條路上按鎖前的原文算，不按吸收之後的那一份。
+
+**R1-Q2。** 提交前第二個成員，去掉 thunk 框之後：
+
+*   路徑鍵（先 pin `h.r: 9`，再一個檔 `h.k: 7`、`h.r: 8`）：本回合正文 `{ h: { k: 7, r: 8 } }`，`effect_tags: 0`，`pin_coords: ["h"]`。`dfbfdf6` 第二筆演化拒 `#conflict at h.r`，成員只有第一筆 `{ h: { r: 9 } }`。
+*   巢狀 `h: { k: 7, r: 8 }`：去掉框之後本回合與 `dfbfdf6` 都是 `{ h: { k: 7, r: 8 } }`。框不同：`dfbfdf6` 的 `k` 指向共用框，`r` 的框裡同時有 `k` 與 `r`（從工作集取回整份 `h`）；本回合 `k` 的框是這筆字面，`r` 指向那個框。
+*   兩個檔 `h.k: 7` 與 `h.r: 8`：與路徑鍵相同。本回合第二個成員是 `{ h: { k: 7, r: 8 } }`。`dfbfdf6` 拒 `#conflict at h.r`，沒有第二個成員。
+
+對照一般寫入再 pin：本回合第二個成員只有 `{ h: { r: 9 } }`。`dfbfdf6` 的第二個成員是 `{ h: { k: @int, r: 9, z: 1 } }`，把旁邊那筆寫入的欄位帶進了 pin。
+
+**R1-Q3。** pin 的工作階段裡，`restamp` 不從工作集把頂層座標取回成員。它在成員自己身上重算 thunk 的效應，語境與工作集相同：同一筆寫入後面改寫了前面讀的名字，效應跟刷新後的工作集走。
+
+HEAD 是 `g: (n -> n)`、`h: { r: 6 }`，一個 pin 檔先寫 `h.k: g 1` 再寫 `g: (n -> ~%Env.get "HOME")`。成員 563 位元組，標頭 `effect_tags: 0`。`h.k` 的 thunk 外層是 `~%__nlang_effect: #io`；它寫下當下的閉包框裡，同一個 `g 1` 沒有效應標記。反序（先寫 io 的 `g` 再寫 `h.k: g 1`）成員 607 位元組，框裡的 `g 1` 本身就帶 `#io`。只寫 `h.k: g 1` 的成員 297 位元組，沒有效應標記。
+
+**R1-Q4。** 兩筆寫入在工作集裡交會成一個記錄，其中一欄讀名字，或同一欄有兩筆定義。`record_of` 把那個交會當記錄逐欄併，兩邊都寫的欄位成 `pending_meet`。再 pin 同一記錄的別的欄時，演化拒 `#conflict at h`，pin 的成員不寫。已經在工作集裡的寫入照提交，沒有把 pin 落地，也沒有把 `k` 寫成 `@int`。
+
+*   HEAD `h: { r: 6 }`，一般寫入 `h.k: g + 1`、`g: 2`，再 `h.k: @int`，再 pin `h.r: 9`：pin 拒 `#conflict at h`。提交後 `_.h` 讀 `{ k: 3 r: 6 }`，根 `eb588b9924496a8d872d46aedac47d7a076880e8a93d54419014ffa7738a1d97`。
+*   反序（先 `@int` 再 `g + 1`）同：pin 拒，讀數與根與上一格相同。
+*   HEAD `h: { r: 6 }`，一般寫入 `h: { k: g + 1, z: 1 }`、`g: 2`，再 `h.k: @int`，再 pin `h.z: 5`：pin 拒 `#conflict at h`。提交後讀 `{ k: 3 r: 6 z: 1 }`，根 `2476a3febad403c759e338b1ca89db65347ded2a732f916a7e076a77220f1802`。
+*   HEAD `h: { r: 6, z: 0 }`，一個檔 `h.k: z + 1`、`h.y: g`、`g: 3`，再 pin `h.z: 5`：pin 拒 `#conflict at h`。提交後讀 `{ k: 1 r: 6 y: 3 z: 0 }`，根 `9c60d0a2956d159b9b1e492d2f10ccbf1c52ba322c7dd3e794decdd6a1ed5323`。`z` 仍是 `0`。
+
+這四格留在 9.2 新增的射程外。沒有改成落地。
+
+**R1-Q5。** 大的那個 N。對照是 9.3 的 `dfbfdf6` 與參考 `f7fabbc`，本回合沒有重跑那兩支。
+
+| 形 | N | 本回合演化／提交 | `dfbfdf6` | 參考 `f7fabbc` | 讀 |
+| :-- | --: | :-- | :-- | :-- | :-- |
+| pin 一個葉 | 8000 | 0.49／0.63 秒 | 0.40／0.56 秒 | 0.41／0.56 秒 | `k0` 讀 `0` |
+| pin 整份記錄 | 8000 | 1.53／2.81 秒 | 1.29／2.36 秒 | 1.29／2.33 秒 | `k7999` 讀 `0` |
+| 一個檔 N 個頂層欄位 | 4000 | 演化 7.04 秒、提交 0.52 秒 | 演化 9.16 秒 | 演化 4.99 秒 | `k3999` 讀 `0` |
+| 一個檔 N 個路徑鍵 | 4000 | 演化 18.42 秒、提交 1.64 秒 | 演化 22.37 秒 | 演化 15.23 秒 | `k0` 讀 `0` |
+| 吸收（第二個 pin／提交） | 8000 | 2.81／2.96 秒 | 2.79／3.83 秒 | 2.67／2.67 秒 | `k0` 讀 `1`，`k7999` 讀 `0` |
 
 ### 10.5 探針
 
+`a_pin_that_erased_its_neighbours_probe_test` **12／12**。單獨一輪 `finished in 10.70s`（編譯 Finished 25.25 s），EXIT 0。閘門裡 `finished in 10.84s`（`a_pin_that_erased_its_neighbours_probe_test-3b5a0aaa6e6b119f`），r7–r10 都在裡面。探針檔本回合未改。`rustfmt` 未掃。
+
 ### 10.6 數字
 
+`universe.rs` 相對 `6b1a721`：+209／−26。加上本節，交付是這一檔與這份交接。版本仍是 oo `0.123.0`、interpreter `0.2.2`、parser `0.2.2`。
+
+探針 12／12。閘門：GATE 1 2026-11-06T03:54:50+08:00 wall 1985 s（含編譯 7 m 15 s，結束 04:27:55）；GATE 2 04:27:55 wall 1553 s（結束 04:53:48）；GATE 3 04:53:48 wall 1546 s（結束 05:19:34）。正規化 3907 行，sha `aadd4108b80cbf9d00b75412ffc6673d4023740c0fa6a1a97f4bf33b779c25f7`，317 個 `running`、314 個 `Running`，加總 **2959** 通過、0 失敗，`test ` 行 `ok` 2958。三輪正規化相同。原始 sha 前綴 `9fbced42a1acedb8`、`d5bdd8de34891169`、`c27b3267971e5612`。位元組 312352、312197、312197。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q124r1/conf.empty`，前後 `ls -A | wc -l` 都是 0，11 s。
+
+Linux 編譯在閘門裡 Finished 7 m 15 s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-06T05:19:34+08:00 Finished 4.86 s，腳本 wall 5 s，EXIT 0，`^error` 0，interpreter lib 17 則、`cargo fix` 14，留著。`reads_world` 未使用，留著。
+
+`oo` 11594304 位元組，mtime 2026-11-06 03:51:35.341016407 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。
+
+g2：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`h: { a: 1, b: a + 1 }` `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`。
+
 ### 10.7 你認為需要改規格之處
+
+規格已有 D128、D58、D127。這一輪的行為仍是破壞性的：後來的 pin 寫回 HEAD 的值改為已持有；pin 的成員只留它寫的葉，不再把旁邊的欄位帶進去。收尾時記 `CHANGELOG`。本回合未改規格、向量、`CHANGELOG`。
+
+留下的：兩筆寫入在工作集交會於一個記錄、其中一欄讀名字，再 pin 別的欄（上面四格，演化拒 `#conflict at h`）；配方的葉在交會出的節點裡與字面不同根；pin 不能拿掉欄位或縮短清單；並行注入做出的晚到 ⊥；Q-122 的走訪代價；`rollback`。
