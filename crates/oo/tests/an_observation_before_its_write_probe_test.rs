@@ -845,3 +845,98 @@ fn g2_what_does_not_call_the_effect_is_as_before() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// R-2 (2026-11-07) — a helper the universe already holds
+// ════════════════════════════════════════════════════════════════════════
+//
+//   R-1 found the names that carry an effect among the write's own
+//   definitions. A helper already in HEAD — `f: (s -> g s)`, or the recipe
+//   `q: g` — is read through no more: the write makes `g` an effect, `k:
+//   f "x"` reads only `f`, which this write does not write, and so does not
+//   wait. Written before `g`: the effect runs 2–7 times and the two orders
+//   commit two roots. The other way: HEAD's `g` observes, the pin makes it
+//   pure, and `k: f "x"` written first stores HEAD's observation (`"alpha"`)
+//   where the other order stores `"x"`. R1-M1: whatever a field reads
+//   through — a helper is a helper wherever it is defined.
+
+#[test]
+fn r9_a_helper_the_universe_holds() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r9 HEAD f calls g, g new", "f: (s -> g s)", false,
+            &[&format!("k: f \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r9 HEAD f calls g, g new, two files", "f: (s -> g s)", false,
+            &["k: f \"x\"", LOG_G], &[LOG_G, "k: f \"x\""], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r9 HEAD f calls g, pin g pure to effect", "g: (s -> s)\nf: (s -> g s)", true,
+            &[&format!("k: f \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r9 HEAD recipe q: g, pin g pure to effect", "g: (s -> s)\nq: g", true,
+            &[&format!("k: q \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: q \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // HEAD's g observes; the pin makes it pure: `k` reads the pure one.
+        both_logged(&mut bad, "r9 HEAD f calls g, pin g effect to pure",
+            "g: (s -> ~%Env.get \"Q125_A\")\nf: (s -> g s)\nk: f \"x\"", true,
+            &["k: f \"x\"\ng: (s -> s)"], &["g: (s -> s)\nk: f \"x\""], "_.k",
+            "e0 | evolve +0 | status+eval +0 | landed +0 | _.k \"x\"");
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // HEAD's f calls q; this write aliases q to the new g: `k` waits
+        // after `q`, which waits too.
+        both_logged(&mut bad, "r9 HEAD f calls q, q: g here", "f: (s -> q s)", false,
+            &[&format!("k: f \"x\"\nq: g\n{LOG_G}")], &[&format!("{LOG_G}\nq: g\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // The helper is in the working set, evolved before and not committed.
+        let tag = "r9-ws";
+        let (a, ra) = logged_after(&format!("{tag}-1"), "f: (s -> g s)", &[&format!("k: f \"x\"\n{LOG_G}")]);
+        let (b, rb) = logged_after(&format!("{tag}-2"), "f: (s -> g s)", &[&format!("{LOG_G}\nk: f \"x\"")]);
+        check(&mut bad, "r9 working-set f calls g, k first", a, ONCE);
+        check(&mut bad, "r9 working-set f calls g, k last", b, ONCE);
+        check(&mut bad, "r9 working-set f: one root", (ra == rb && !ra.is_empty()).to_string(), "true");
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+/// As `logged`, with `pre` evolved first and left in the working set.
+fn logged_after(tag: &str, pre: &str, srcs: &[&str]) -> (String, String) {
+    let w = Ws::new(tag);
+    let n = || fs::read(w.ws.join("a.log")).map(|v| v.len()).unwrap_or(0);
+    let (_, rc) = w.step(false, &[pre]);
+    if rc != 0 {
+        return ("SETUP".into(), String::new());
+    }
+    let mut out = Vec::new();
+    let (o, rc) = w.step(false, srcs);
+    out.push(if rc == 0 { "e0".to_string() } else { format!("e{rc} {}", o.chars().take(60).collect::<String>()) });
+    out.push(format!("evolve +{}", n()));
+    let _ = w.oo(&["status"]);
+    let _ = w.oo(&["eval", "_.k"]);
+    out.push(format!("status+eval +{}", n()));
+    let c = w.commit();
+    out.push(format!("{c} +{}", n()));
+    out.push(format!("_.k {}", w.eval("_.k")));
+    (out.join(" | "), w.root())
+}
