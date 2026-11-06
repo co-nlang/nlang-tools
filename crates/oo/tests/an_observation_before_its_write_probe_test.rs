@@ -606,3 +606,242 @@ fn g1_the_rest_is_as_before() {
 const PURE_ROOT: &str = "1c3d594f6e7218d9c9dd9abfea8f70253bf5ad7302a4180a97ab468476793dc2";
 /// `k: ~%Env.get "Q125_A"`, `p: 1` (v0.124.0).
 const ALONE_ROOT: &str = "962d02a22a51eef1c274d7597416174a771ce1bd207b127026078ae47f9454b2";
+
+// ════════════════════════════════════════════════════════════════════════
+// R-1 (2026-11-07) — a field that observes because of this write
+// ════════════════════════════════════════════════════════════════════════
+//
+//   The delivery decides which fields wait from the universe before the
+//   write. A field that observes only because of this write does not wait:
+//   `g` is new here and calls an effect; `g` is pinned from pure to an
+//   effect; `k` calls a pure helper that calls `g`; `k` reads `q`, which
+//   calls `g`. Written before `g`, `k` is stored as a recipe: the effect
+//   runs at commit and not at evolve; under a pin it runs at status and
+//   twice more at commit; through a chain, a helper or a record leaf it
+//   runs 2–7 times, and the two orders commit different roots. A pin in
+//   two files runs it three times in either order: the ⊥ check between the
+//   files reads HEAD's `k`, a recipe, once `g` is an effect. The same
+//   invariant as M1 and M3: one write is a set; the effect runs once, at
+//   evolve, whichever line or file the field is on.
+//
+//   `a.log`, relative to the workspace, counts the effect: the same text in
+//   every workspace, so the two orders' roots compare.
+
+/// `g` calls an effect: one byte to `a.log` per call.
+const LOG_G: &str = "g: (s -> ~%Io./append_file (\"a.log\", s))";
+/// The same, as the leaf `h.f`.
+const LOG_HF: &str = "h.f: (s -> ~%Io./append_file (\"a.log\", s))";
+
+/// Evolve (or pin) `srcs` in one command over `base`: the bytes `a.log`
+/// gained after evolve, after status and eval, after commit; what `rd`
+/// reads; and the committed root.
+fn logged(tag: &str, base: &str, pin: bool, srcs: &[&str], rd: &str) -> (String, String) {
+    let w = Ws::new(tag);
+    let n = || fs::read(w.ws.join("a.log")).map(|v| v.len()).unwrap_or(0);
+    if !base.is_empty() {
+        let (_, rc) = w.step(false, &[base]);
+        let c = w.commit();
+        if rc != 0 || c != "landed" {
+            return (format!("SETUP {c}"), String::new());
+        }
+    }
+    let before = n();
+    let mut out = Vec::new();
+    let (o, rc) = w.step(pin, srcs);
+    out.push(if rc == 0 { "e0".to_string() } else { format!("e{rc} {}", o.chars().take(60).collect::<String>()) });
+    out.push(format!("evolve +{}", n() - before));
+    let _ = w.oo(&["status"]);
+    let _ = w.oo(&["eval", rd]);
+    out.push(format!("status+eval +{}", n() - before));
+    let c = w.commit();
+    out.push(format!("{c} +{}", n() - before));
+    out.push(format!("{rd} {}", w.eval(rd)));
+    (out.join(" | "), w.root())
+}
+
+/// Both orders of one write: each reads `want`, and the two roots are one.
+fn both_logged(bad: &mut Vec<String>, label: &str, base: &str, pin: bool, first: &[&str], second: &[&str], rd: &str, want: &str) {
+    let tag = label.replace(' ', "-");
+    let (a, ra) = logged(&format!("{tag}-1"), base, pin, first, rd);
+    let (b, rb) = logged(&format!("{tag}-2"), base, pin, second, rd);
+    check(bad, &format!("{label}, k first"), a, want);
+    check(bad, &format!("{label}, k last"), b, want);
+    check(bad, &format!("{label}: one root"), (ra == rb && !ra.is_empty()).to_string(), "true");
+}
+
+const ONCE: &str = "e0 | evolve +1 | status+eval +1 | landed +1 | _.k #true";
+
+#[test]
+fn r6_a_plain_write_that_makes_its_field_observe() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r6 g new", "", false,
+            &[&format!("k: g \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: g \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r6 g new, read as _.g", "", false,
+            &[&format!("k: _.g \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: _.g \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r6 g new, two files", "", false,
+            &["k: g \"x\"", LOG_G], &[LOG_G, "k: g \"x\""], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r6 through a pure helper f", "", false,
+            &[&format!("k: f \"x\"\nf: (s -> g s)\n{LOG_G}")], &[&format!("{LOG_G}\nf: (s -> g s)\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r6 through q, which calls g", "", false,
+            &[&format!("k: [q]\nq: g \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nq: g \"x\"\nk: [q]")], "_.k.0",
+            "e0 | evolve +1 | status+eval +1 | landed +1 | _.k.0 #true");
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // `q` names `g` or holds it: a call of `q` is a call of `g`.
+        both_logged(&mut bad, "r6 through q: g", "", false,
+            &[&format!("k: q \"x\"\nq: g\n{LOG_G}")], &[&format!("{LOG_G}\nq: g\nk: q \"x\"")], "_.k", ONCE);
+        both_logged(&mut bad, "r6 through q: [g]", "", false,
+            &[&format!("k: q.0 \"x\"\nq: [g]\n{LOG_G}")], &[&format!("{LOG_G}\nq: [g]\nk: q.0 \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+#[test]
+fn r7_a_pin_that_makes_its_field_observe() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r7 g pure to effect, HEAD holds k", "g: (s -> s)\nk: g \"x\"", true,
+            &[&format!("k: g \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: g \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r7 g pure to effect, k new", "g: (s -> s)", true,
+            &[&format!("k: g \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: g \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r7 two files, HEAD holds k", "g: (s -> s)\nk: g \"x\"", true,
+            &["k: g \"x\"", LOG_G], &[LOG_G, "k: g \"x\""], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r7 the record leaf h.f", "h: { f: (s -> s) }\nk: h.f \"x\"", true,
+            &[&format!("k: h.f \"x\"\n{LOG_HF}")], &[&format!("{LOG_HF}\nk: h.f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+/// One `oo repl` line, then `exit`: the line's answers (a function as `fn`,
+/// the effect note dropped), sorted, and the bytes `a.log` gained.
+fn repl_line(tag: &str, line: &str) -> String {
+    use std::io::Write;
+    let w = Ws::new(tag);
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg("ulimit -v 3000000; exec timeout -s KILL 90 \"$0\" \"$@\"")
+        .arg(env!("CARGO_BIN_EXE_oo"))
+        .arg("repl")
+        .current_dir(&w.ws)
+        .env("OO_IDENTITY", w.root.join("identity"))
+        .env("OO_NODE_HOME", w.root.join("node-home"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("oo repl runs");
+    child.stdin.take().unwrap().write_all(format!("{line}\nexit\n").as_bytes()).unwrap();
+    let o = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&o.stdout).to_string();
+    let mut answers: Vec<String> = text
+        .split("=> ")
+        .skip(1)
+        .map(|a| {
+            let a = squash(a.split("n>").next().unwrap_or(""));
+            if a.starts_with("{{") { "fn".to_string() } else { a.split(";;").next().unwrap_or("").trim().to_string() }
+        })
+        .collect();
+    answers.sort();
+    let n = fs::read(w.ws.join("a.log")).map(|v| v.len()).unwrap_or(0);
+    format!("{} +{n}", answers.join(" "))
+}
+
+#[test]
+fn r8_a_repl_line_that_makes_its_field_observe() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        check(&mut bad, "r8 repl, k before g", repl_line("r8-kg", &format!("k: g \"x\", {LOG_G}")), "#true fn +1");
+        check(&mut bad, "r8 repl, g before k", repl_line("r8-gk", &format!("{LOG_G}, k: g \"x\"")), "#true fn +1");
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
+
+// ── g2 ── the other half of R-1 ──
+
+#[test]
+fn g2_what_does_not_call_the_effect_is_as_before() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // `k` holds `g` and does not call it: no effect until a reader calls it.
+        both_logged(&mut bad, "g2 k holds g", "", false,
+            &[&format!("k: [g]\n{LOG_G}")], &[&format!("{LOG_G}\nk: [g]")], "_.k.0 \"y\"",
+            "e0 | evolve +0 | status+eval +0 | landed +0 | _.k.0 \"y\" #true");
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // A conflict beside a field that waits is named where it is.
+        for (i, src) in [format!("k: g \"x\"\nx: 2\n{LOG_G}"), format!("x: 2\n{LOG_G}\nk: g \"x\"")].iter().enumerate() {
+            let w = Ws::new(&format!("g2-conflict-{i}"));
+            let _ = w.step(false, &["x: 1"]);
+            let _ = w.commit();
+            let (o, rc) = w.step(false, &[src]);
+            let n = fs::read(w.ws.join("a.log")).map(|v| v.len()).unwrap_or(0);
+            check(&mut bad, &format!("g2 conflict named, order {i}"), format!("rc={rc} {} +{n}", o.contains("#conflict at x")), "rc=1 true +0");
+            check(&mut bad, &format!("g2 conflict, order {i}: x"), w.eval("_.x"), "1");
+        }
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // A field that waits and makes a definition it does not write read ⊥
+        // is refused at evolve, as Q-122 refuses any (one file or two).
+        for (i, srcs) in [vec![format!("{LOG_G}\nk: g \"x\"")], vec![LOG_G.to_string(), "k: g \"x\"".to_string()]].iter().enumerate() {
+            let w = Ws::new(&format!("g2-late-{i}"));
+            let _ = w.step(false, &["g: (s -> s)\nk: g 1\nm: k + 1"]);
+            let _ = w.commit();
+            let srcs: Vec<&str> = srcs.iter().map(|s| s.as_str()).collect();
+            let (o, rc) = w.step(true, &srcs);
+            check(&mut bad, &format!("g2 late bottom at m refused, {} file(s)", srcs.len()), format!("rc={rc} {}", o.contains("#conflict at m")), "rc=1 true");
+            check(&mut bad, &format!("g2 late bottom, {} file(s): m", srcs.len()), w.eval("_.m"), "2");
+        }
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
