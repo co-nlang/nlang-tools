@@ -869,6 +869,62 @@ impl Universe {
         }
     }
 
+    /// Q-125: the fields of `programs` (one write, or one program) that
+    /// observe an effect and read a name another field of them writes, in the
+    /// order to evolve them after all the others: each after the waiting
+    /// fields it reads (source order when they read each other).
+    pub fn observe_last(&self, engine: &Ouroboros, programs: &[&[Field]]) -> Vec<(usize, usize)> {
+        let mut writers: std::collections::HashMap<String, Vec<(usize, usize)>> = Default::default();
+        for (fi, fields) in programs.iter().enumerate() {
+            for (k, f) in fields.iter().enumerate() {
+                if let Some(t) = write_top(f) {
+                    writers.entry(t).or_default().push((fi, k));
+                }
+            }
+        }
+        let mut waiting: Vec<(usize, usize)> = Vec::new();
+        for (fi, fields) in programs.iter().enumerate() {
+            for (k, f) in fields.iter().enumerate() {
+                let reads = reads_tops(f);
+                let reads_this_write = reads.iter().any(|n| {
+                    writers.get(n).is_some_and(|w| w.iter().any(|&at| at != (fi, k)))
+                });
+                if reads_this_write && self.predicts_effect(engine, f) {
+                    waiting.push((fi, k));
+                }
+            }
+        }
+        let mut order = Vec::with_capacity(waiting.len());
+        while !waiting.is_empty() {
+            let pick = waiting
+                .iter()
+                .position(|&(fi, k)| {
+                    let reads = reads_tops(&programs[fi][k]);
+                    !waiting.iter().any(|&(gi, j)| {
+                        (gi, j) != (fi, k) && write_top(&programs[gi][j]).is_some_and(|t| reads.contains(&t))
+                    })
+                })
+                .unwrap_or(0);
+            order.push(waiting.remove(pick));
+        }
+        order
+    }
+
+    /// Q-125: whether evolving `field` now would observe an effect — its
+    /// definition, as the universe stands, predicts `#io`, `#nondet` or
+    /// `#state`. Such an answer is stored (D110, D46 ②), so it must read the
+    /// bindings of the write it belongs to, not the ones it found first.
+    pub fn predicts_effect(&self, engine: &Ouroboros, field: &Field) -> bool {
+        if is_spread_field(field) || matches!(&field.key, FieldKey::Pattern(_)) {
+            return false;
+        }
+        let mut ctx =
+            crate::EvalContext::new_shared(self.root.clone()).with_standard_root(self.standard_root.clone());
+        ctx.staged = Some(self.staged.clone());
+        ctx.privilege = engine.privilege;
+        observes(engine, &field.value, &ctx)
+    }
+
     fn evolve_field(
         &mut self,
         engine: &Ouroboros,
@@ -919,6 +975,7 @@ impl Universe {
         // phase so expansion re-queues instead of consuming (cocoon face:
         // {{...later, b: 1}} with later defined below).
         ctx.in_evolve = true;
+        ctx.observing = observes(engine, &field.value, &ctx);
 
         // `@{expr}` is a real definition inside a combo. The top is the same
         // container: build that one-field combo and land it. Doing it before
@@ -4177,4 +4234,35 @@ pub(crate) fn remove_leaves_noting(
     let mut out = m.clone();
     let _ = remove_node(engine, &mut out, &trie_of(leaves), &mut Vec::new(), replaced);
     out
+}
+
+/// Q-125: the top-level coordinate a field of a write defines, written as a
+/// name is read (no logic slash).
+pub fn write_top(field: &Field) -> Option<String> {
+    if is_spread_field(field) {
+        return None;
+    }
+    let p = key_path(&field.key)?;
+    let top = p.split('.').next().unwrap_or("").trim_start_matches('/').to_string();
+    (!top.is_empty()).then_some(top)
+}
+
+/// Q-125: the top-level names `field`'s definition reads, as `write_top`
+/// spells them.
+pub fn reads_tops(field: &Field) -> std::collections::HashSet<String> {
+    crate::eval::names_read(&field.value, &Default::default())
+        .into_iter()
+        .map(|n| n.trim_start_matches('/').to_string())
+        .collect()
+}
+
+/// Q-125: whether a definition observes an effect, as the working set reads
+/// its names or as HEAD alone does (`_.` at evolve read HEAD).
+fn observes(engine: &Ouroboros, e: &Expr, ctx: &crate::EvalContext) -> bool {
+    if !engine.predict_effect(e, ctx).is_pure() {
+        return true;
+    }
+    let mut head = ctx.clone();
+    head.staged = None;
+    !engine.predict_effect(e, &head).is_pure()
 }

@@ -84,14 +84,64 @@
 
 ### 8.1 射程逐項對照
 
+引擎四檔與 `q125-ref` `deacfaf` 逐位元組相同。讀數是這支 `oo`（11665528 位元組，mtime 2026-11-06 21:28:20.624163588 +0800）。`oo eval` 讀已提交的根。
+
+*   **M1。** 一筆寫入裡觀測、又讀這筆寫入的頂層名字的欄位，排在它讀的那些欄位之後。pin 與一般寫入、同一個檔或同一指令的另一個檔、名字是新的或被收窄的，兩種順序同根、同讀數。`k: ~%Env.get p`、`p: "Q125_A"` 與反序：`_.k` 讀 `"alpha"`，根 `0c8ecf536c44fa7ee467909c61319d332190f208cc93d59488cb241f4a4fad2a`。鏈 `k: [q, 1]`、`q: ~%Env.get p`、`p: "Q125_A"` 與反序：`_.k.0` 讀 `"alpha"`，根 `3b34adc5a2ae2a3bf2c24442f86605316b45980bf384a52eb7dded894b3703f5`。
+*   **M2。** 觀測欄位裡的 `_.n`（第一段不是 `~`）走根層裸名字的查找：工作集，然後 HEAD。HEAD 的 `g` 是 `(n -> ~%Env.get "Q125_A")`（根 `763b80d2d6d3b7654fd190376f1448efccfe5b8de710804547ab03c4c449849a`），工作集 pin `g: (n -> n)`，再演化 `k: _.g 1`：提交後 `_.k` 讀 `1`，根 `fb651cd9757a8fd36bf001b6ccb518450a309227d5cac67c90fb94be24bb39a8`。同一筆 pin 把兩欄寫在一起，`k` 在前或 `g` 在前，同一顆根、`_.k` 也是 `1`。
+*   **M3。** 探針 r4：`~%Io./append_file` 在演化時寫 1 位元組；`status`、`eval`、提交不再寫。pin 把路徑換成另一個檔時，新檔 1 位元組，舊檔 0。
+*   **M4。** `evolve_files`、`run_one_shot`、`run_test`、`run_repl` 用同一個順序（`write_order`）。`run_eval` 只有一欄，不重排；觀測旗標仍在 `evolve_field` 裡設。探針 r5 綠。
+*   **另一半。** 純欄位兩種順序仍是 `1c3d594f6e7218d9c9dd9abfea8f70253bf5ad7302a4180a97ab468476793dc2`。觀測欄位讀的名字不是這筆寫入寫的，根仍是 `962d02a22a51eef1c274d7597416174a771ce1bd207b127026078ae47f9454b2`。pin 已持有的仍是已持有。衝突仍指名座標。`_.~h` 仍拒。探針 g1 綠。
+
 ### 8.2 順手改動（逐項指名）
+
+沒有。本回合只動 `eval.rs`、`lib.rs`、`universe.rs`、`main.rs`，而且與參考逐位元組相同。探針、版本、規格、向量、`CHANGELOG` 都沒動。`rustfmt` 未跑。
 
 ### 8.3 工單哪裡是錯的
 
+沒有。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 在求值之前預測，不看求值之後的值。`predict_effect` 沿著定義走，讀到的值帶 `#io`、`#nondet` 或 `#state` 就算觀測。視角兩個都看：工作集是 `staged` 蓋在 HEAD 上，HEAD 是把 `staged` 拿掉再預測一次。任一側不純，這欄就是觀測欄位（`observes`）。展開列與模式鍵不算。
+
+兩個視角不一致的那格：HEAD 的 `g` 是 `(n -> ~%Env.get "Q125_A")`，工作集 pin 成 `(n -> n)`，欄位是 `k: _.g 1`。工作集那一側，`_.g 1` 是純呼叫；HEAD 那一側，`g` 仍是帶 `#io` 的函式。兩側取或，所以這欄觀測，`_.g` 讀工作集，存下來的是 `1`。提交後 `_.k` 讀 `1`，根 `fb651cd9757a8fd36bf001b6ccb518450a309227d5cac67c90fb94be24bb39a8`，與同一筆 pin 兩種順序的根相同。驗收方的變異「只看工作集」會漏掉這一格（r1 的 `_.g`）；本回合沒有重跑 `mut.py`。
+
+**Q2。** 等待的欄位彼此按讀到的頂層名字拓撲排序：還有別的等待者寫著它讀的名字，它就先不演化。沒有這樣的人時，取來源順序裡的第一個（成環）。鏈 `k` 讀 `q`、`q` 讀 `p`：`p` 先寫，`q` 再寫，`k` 最後。兩種來源順序，`_.k.0` 都是 `"alpha"`，根都是 `3b34adc5a2ae2a3bf2c24442f86605316b45980bf384a52eb7dded894b3703f5`。
+
+`a: [b]`、`b: [~%Env.get a]`：`a` 預測是純的（名字還沒有值時預測為純），只有 `b` 等。兩種來源順序都是先 `a` 再 `b`，根都是 `cd50e48c6e23c403f63183e7001e026c0cb93af0b6a37010ed5343368612a2f2`。`_.a` 讀 `[[env.get，引數 [_]]]`，`_.b` 讀 `[env.get，引數 [_]]`。
+
+真環 `a: [~%Env.get b]`、`b: [~%Env.get a]`：兩邊都等、互相讀，照來源順序。`a` 在前：根 `cb721065df985408f153f6f91cb104d91a15dece810a5daf3bc80c8f6691a394`，`_.a` 是 `[env.get，引數 _]`，`_.b` 是 `[env.get，引數 [env.get，引數 _]]`。`b` 在前：根 `c1d5a9d748e26cc835d12dc0e038cc64978521a0ac2db6ab9ed972563017a0e2`，讀數對調。先演化的那欄，它讀的名字還不是值，存下的是內建對洞的答案（內建本身的答案不改，§6）；後一欄讀這一筆已經存下的答案。
+
+**Q3。** `_.n` 讀工作集，只發生在演化一個觀測欄位的時候：`ctx.observing` 為真、`staged` 在、第一段不以 `~` 起頭。這時改走裸路徑，範圍清空，與根層裸名字同一條查找（工作集，然後 HEAD）。`observing` 在 `evolve_field` 裡用上面那兩個視角設，不是每條演化求值都設。
+
+`<<_.m>>` 是引用。`predict_effect` 對這個形狀落在純的那一臂，欄位不是觀測欄位，`_.` 不轉向，演化時不綁。`_.~h` 的第一段以 `~` 起頭，不轉向；私有名字仍走原來的根路徑，照拒。探針 g1 這一格綠：演化 rc 0，提交文字裡有 `#private_access_violation at k`。
+
+**Q4。** 欄位自己的 `evolve` 回衝突時，檔名是該欄所在的檔，座標是該欄的鍵。HEAD `k: 1`，第一個檔 `k: ~%Env.get p`、第二個檔 `p: "Q125_A"`：`Evolution Conflict in "m17.n": #conflict at k`。這筆指令不落地，`_.k` 仍是 `1`，`_.p` 仍是 `_`。等待者改放第二個檔：`Evolution Conflict in "m27.n": #conflict at k`。
+
+衝突不在等待者身上時，句子點撞上的那一欄。HEAD `x: 1`，第一個檔 `k: ~%Env.get p`、第二個檔 `x: 2` 與 `p: "Q125_A"`：`Evolution Conflict in "m21.n": #conflict at x`。兩個檔對調：`Evolution Conflict in "m23.n": #conflict at x`，仍是寫著 `x` 的那個檔。`_.x` 仍是 `1`。整筆寫入的晚到 ⊥ 在全部欄位之後另判，那一行是 `Evolution Conflict:`，不帶檔名；上面這四格走的是欄位自己的那一行。
+
+**Q5。** 引擎與 `deacfaf` 逐位元組相同，四個形狀沒有重測。驗收方在 §7 量過的數字就是這支引擎的數字：沒有東西要重排，N=2000 純欄位 1.48／0.19 秒、N=8000 5.90／0.59 秒；讀下一欄的純鏈 N=1000 24.7–24.8 秒、N=2000 72.7–74.3 秒；全部要等的 `~%Env.get p` N=500 0.54 秒、N=2000 2.19 秒；觀測鏈 N=500 30.1／19.5 秒、N=2000 169.7／89.8 秒。對照 v0.124.0 的那一列在工單 §7，本回合沒有另建那一版。
 
 ### 8.5 探針
 
+`an_observation_before_its_write_probe_test` **6／6**。單獨一輪 `finished in 5.27s`（編譯 Finished 1m 17s），EXIT 0（`an_observation_before_its_write_probe_test-e3aab84d70dc8ae2`）。閘門裡 `finished in 4.88s`。探針檔未改。`rustfmt` 未掃。
+
 ### 8.6 數字
 
+相對 `1f3f02a`：`eval.rs` +101、`lib.rs` +21、`universe.rs` +88、`main.rs` +97／−18。加上本節，交付是這四檔與這份交接。版本仍是 oo `0.124.0`、interpreter `0.2.2`、parser `0.2.2`。
+
+探針 6／6。閘門：GATE 1 2026-11-06T21:32:26+08:00 wall 2009 s（編譯 Finished 7m 20s，結束 22:05:55）；GATE 2 22:05:55 wall 1569 s（編譯 Finished 0.39 s，結束 22:32:04）；GATE 3 22:32:04 wall 1571 s（編譯 Finished 0.39 s，結束 22:58:15）。正規化 3917 行，sha `892489e895b0ea76e0e3913ebccf7bc4bf5a6c2dd4bfa8c56727c511ef198188`，318 個 `running`、315 個 `Running`，加總 **2966** 通過、0 失敗，`test ` 行 `ok` 2965。三輪正規化相同。原始 sha 前綴 `0044875d1a911d9e`、`42edde9308ee3013`、`bca4dbcbaac3b914`。位元組 313012、312856、312857。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q125/conf.d/empty`，前後 `ls -A | wc -l` 都是 0，10 s。
+
+Linux 編譯在閘門 1 Finished 7m 20s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-06T22:58:15+08:00 Finished 5.00 s，腳本 wall 5 s，EXIT 0，`^error` 0，interpreter lib 17 則、`cargo fix` 14，留著。`reads_world` 未使用，留著。
+
+`oo` 11665528 位元組，mtime 2026-11-06 21:28:20.624163588 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。
+
+`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`（16029 位元組）。新倉 `layout=9`，`encoding=11`。
+
 ### 8.7 你認為需要改規格之處
+
+不改規格。錯的那個順序的根改成對的那個順序的根，是破壞性的，收尾記 `CHANGELOG`。本回合未改規格、向量、`CHANGELOG`。
+
+留下的，與工單 §6 相同：跨演化（下一次演化才收窄它讀過的名字）；pin 把 IO 的值換成純的之後根仍帶 `#io`；`=` 把效應算進比較；內建對還不是值的運算元答內建本身。成環的兩種來源順序根不同，是「成環照原始順序」的讀數，不是另一條規則。

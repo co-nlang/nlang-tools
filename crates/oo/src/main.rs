@@ -812,6 +812,26 @@ fn refuse_lost_context(
     Ok(())
 }
 
+/// Q-125: the order a program's fields are evolved in — source order, the
+/// fields that observe after the others they read (`Universe::observe_last`).
+fn write_order(
+    universe: &Universe,
+    engine: &Ouroboros,
+    programs: &[&[nlang_parser::ast::Field]],
+) -> Vec<(usize, usize)> {
+    let later = universe.observe_last(engine, programs);
+    let mut order: Vec<(usize, usize)> = Vec::new();
+    for (fi, fields) in programs.iter().enumerate() {
+        for k in 0..fields.len() {
+            if !later.contains(&(fi, k)) {
+                order.push((fi, k));
+            }
+        }
+    }
+    order.extend(later);
+    order
+}
+
 fn evolve_files(
     universe: &mut Universe,
     engine: &Ouroboros,
@@ -820,15 +840,30 @@ fn evolve_files(
     // Q-122: what reads as ⊥ before this evolve; a write that makes one more
     // definition read ⊥ is refused (SPEC_10 §2.3.1 D110 款, §2.2.1).
     let first = universe.bottoms_as_read(engine);
-    let mut all_fields = Vec::new();
+    let mut programs = Vec::new();
     for file in files {
         let input = oo::read_source_file(file).map_err(|m| anyhow::anyhow!("{m}"))?;
-        let program = match parse_program(&input) {
-            Ok(program) => program,
+        match parse_program(&input) {
+            Ok(program) => programs.push((file, program.fields)),
             Err(error) => return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error)),
-        };
+        }
+    }
+    // Q-125: the fields of one write are a set (SYNTAX_03 §2 #1). A field that
+    // observes an effect stores what it observed (D110, D46 ②); it observes
+    // after the fields of this write it reads, whichever file or line they
+    // are on, so it reads the bindings this write makes.
+    let later = {
+        let fields: Vec<&[nlang_parser::ast::Field]> = programs.iter().map(|(_, f)| f.as_slice()).collect();
+        universe.observe_last(engine, &fields)
+    };
+    let mut all_fields = Vec::new();
+    for (fi, (file, fields)) in programs.iter().enumerate() {
         let before = universe.bottoms_as_read(engine);
-        for f in &program.fields {
+        let mut done = Vec::new();
+        for (k, f) in fields.iter().enumerate() {
+            if later.contains(&(fi, k)) {
+                continue;
+            }
             if let Err(e) = universe.evolve(engine, f) {
                 let fb = field_key_label(&f.key);
                 anyhow::bail!(
@@ -837,16 +872,34 @@ fn evolve_files(
                     format_conflict_where(&e, Some(&fb))
                 );
             }
+            done.push(f.clone());
         }
-        if let Some(e) = universe.late_bottom(engine, &before, &program.fields) {
+        if let Some(e) = universe.late_bottom(engine, &before, &done) {
             anyhow::bail!(
                 "Evolution Conflict in \"{}\": {}",
                 file.display(),
                 format_conflict_where(&e, None)
             );
         }
-        all_fields.extend(program.fields);
+        all_fields.extend(done);
     }
+    // The fields that observe, each after the others of this write it reads.
+    let mut done = Vec::new();
+    for &(fi, k) in &later {
+        let (file, fields) = &programs[fi];
+        let f = &fields[k];
+        if let Err(e) = universe.evolve(engine, f) {
+            let fb = field_key_label(&f.key);
+            anyhow::bail!(
+                "Evolution Conflict in \"{}\": {}",
+                file.display(),
+                format_conflict_where(&e, Some(&fb))
+            );
+        }
+        done.push(f.clone());
+    }
+    // Their late bottoms are judged with the whole write's, below.
+    all_fields.extend(done);
     // D112: the root's spread rows read the universe this evolve left.
     if let Err(e) = universe.land_root_spreads(engine) {
         anyhow::bail!("Evolution Conflict: {}", format_conflict_where(&e, None));
@@ -2153,7 +2206,8 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
             Ok(program) => {
                 session.push(input.to_string());
                 let transcript = session.join("\n");
-                for f in &program.fields {
+                let order = write_order(&universe, &engine, &[program.fields.as_slice()]);
+                for f in order.iter().map(|&(_, k)| &program.fields[k]) {
                     let spread = matches!(&f.key, FieldKey::Quoted(name) if name == "...");
                     let known = repl_readback(&f.key).is_ok();
                     let before = if spread || !known {
@@ -2624,6 +2678,7 @@ fn run_one_shot(
 
     let mut sources: Vec<(String, String)> = Vec::new();
     let (outcome, trace) = during_answer(|| -> anyhow::Result<Option<Value>> {
+        let mut programs = Vec::new();
         for file in &files {
             let input = oo::read_source_file(file).map_err(|m| anyhow::anyhow!("{m}"))?;
             sources.push((file.display().to_string(), input.clone()));
@@ -2633,15 +2688,20 @@ fn run_one_shot(
                     return Err(anyhow::anyhow!("Parse Error in {:?}: {}", file, error));
                 }
             };
-            for f in &program.fields {
-                if let Err(e) = universe.evolve(&engine, &f) {
-                    let fb = field_key_label(&f.key);
-                    anyhow::bail!(
-                        "Evolution Conflict in \"{}\": {}",
-                        file.display(),
-                        format_conflict_where(&e, Some(&fb))
-                    );
-                }
+            programs.push((file, program.fields));
+        }
+        // Q-125: one snapshot — the fields that observe after those they read.
+        let fields: Vec<&[nlang_parser::ast::Field]> = programs.iter().map(|(_, f)| f.as_slice()).collect();
+        for (fi, k) in write_order(&universe, &engine, &fields) {
+            let (file, fields) = &programs[fi];
+            let f = &fields[k];
+            if let Err(e) = universe.evolve(&engine, f) {
+                let fb = field_key_label(&f.key);
+                anyhow::bail!(
+                    "Evolution Conflict in \"{}\": {}",
+                    file.display(),
+                    format_conflict_where(&e, Some(&fb))
+                );
             }
         }
         if let Some(path_str) = &observe {
@@ -2920,7 +2980,8 @@ fn run_test(
         let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
 
         let mut evolve_failed = false;
-        for f in &program.fields {
+        let order = write_order(&universe, &engine, &[program.fields.as_slice()]);
+        for f in order.iter().map(|&(_, k)| &program.fields[k]) {
             println!(
                 "Evolving field: {}",
                 match &f.key {

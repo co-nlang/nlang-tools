@@ -180,6 +180,9 @@ pub struct EvalContext {
     /// binding may simply not exist YET); only observation-time force
     /// consumes Top as a true no-op (never-defined / open hole).
     pub in_evolve: bool,
+    /// Q-125: evolve is evaluating a definition that observes an effect; its
+    /// answer is stored, so `_.n` reads the universe the write lands in.
+    pub observing: bool,
     /// Fixed-point fence (union_absorption): while true, union normalize
     /// stays pure dedupe — absorption's internal meets must not re-enter
     /// the absorbing normalizer (single-layer; compare raw branches).
@@ -273,6 +276,7 @@ impl EvalContext {
             cycle_chain: Vec::new(),
             in_math_op: false,
             in_evolve: false,
+            observing: false,
             union_absorb_fence: false,
             context_value: None,
             fuel: 10000,
@@ -4685,6 +4689,23 @@ impl Ouroboros {
         let start_val: Value = match path.anchor {
             PathAnchor::Root => {
                 READ_WORLD.with(|c| c.set(true));
+                // Q-125: at evolve, the universe a definition reads is HEAD and
+                // the working set — `_.n` reads what the root-level name `n`
+                // reads there, not HEAD alone.
+                if ctx.observing
+                    && ctx.staged.is_some()
+                    && path.segments.first().is_some_and(|n| !n.trim().starts_with('~'))
+                {
+                    let bare = Path {
+                        anchor: PathAnchor::Bare,
+                        segments: path.segments.clone(),
+                        ..path.clone()
+                    };
+                    let scopes = std::mem::take(&mut ctx.scopes);
+                    let v = self.resolve_path_internal(&bare, ctx);
+                    ctx.scopes = scopes;
+                    return v;
+                }
                 Value::Combo((*ctx.root).clone())
             }
             PathAnchor::Bare => {

@@ -265,6 +265,107 @@ fn spread_free_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
     out
 }
 
+/// Q-125: the names an expression reads — bare, parent, and `_.`-anchored —
+/// as the first segment of each path, with every key form of a Combo binding.
+pub(crate) fn names_read(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
+    fn walk(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
+        match &expr.kind {
+            ExprKind::Path(p) if matches!(p.anchor, PathAnchor::Bare | PathAnchor::Parent(_) | PathAnchor::Root) => {
+                if let Some(name) = p.segments.first() {
+                    let name = name.trim();
+                    if !bound.contains(name) {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+            ExprKind::Morphism { param, body } => {
+                let mut nested = bound.clone();
+                nested.extend(morphism_parameter_names(param));
+                walk(body, &nested, out);
+            }
+            ExprKind::Combo { fields, .. } => {
+                let mut nested = bound.clone();
+                for field in fields {
+                    match &field.key {
+                        FieldKey::Named { name, .. } | FieldKey::Quoted(name) => {
+                            nested.insert(name.trim().to_string());
+                        }
+                        FieldKey::Path(p) => {
+                            if let Some(first) = p.segments.first() {
+                                nested.insert(first.trim().to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                for field in fields {
+                    walk(&field.value, &nested, out);
+                }
+            }
+            ExprKind::Apply(a, b)
+            | ExprKind::Pipe(a, b)
+            | ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b) => {
+                walk(a, bound, out);
+                walk(b, bound, out);
+            }
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                walk(cond, bound, out);
+                walk(then_branch, bound, out);
+                walk(else_branch, bound, out);
+            }
+            ExprKind::Unary { expr, .. }
+            | ExprKind::AnonSet(expr)
+            | ExprKind::Spread(expr)
+            | ExprKind::Structural(expr)
+            | ExprKind::Complement(expr) => walk(expr, bound, out),
+            ExprKind::List(items) | ExprKind::Tuple(items) => {
+                for item in items {
+                    walk(item, bound, out);
+                }
+            }
+            ExprKind::Interpolated(parts) => {
+                for part in parts {
+                    if let nlang_parser::ast::StringPart::Interpolated(expr) = part {
+                        walk(expr, bound, out);
+                    }
+                }
+            }
+            ExprKind::Range { start, end, step } => {
+                walk(start, bound, out);
+                walk(end, bound, out);
+                if let Some(step) = step {
+                    walk(step, bound, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = HashSet::new();
+    walk(expr, bound, &mut out);
+    out
+}
+
 /// A spread source needs the container it is written in only when it names
 /// something it does not define itself.
 fn spread_source_reads_outside(expr: &Expr) -> bool {
