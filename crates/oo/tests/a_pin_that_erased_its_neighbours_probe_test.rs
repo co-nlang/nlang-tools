@@ -835,3 +835,172 @@ fn r10_a_pin_does_not_erase_a_conflict_beside_it() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ── R-2 (2026-11-06) ────────────────────────────────────────────────────
+//
+// R1-Q1 asked who else judges "already held" member by member. C1 — the
+// commit that waited on the lock and found its working set taken — judges
+// what it read before the wait, and it read the member files as written,
+// before absorption. `x: 2` then `x: 1` pinned is the working set `x: 1`
+// (D58, D128); the other commit lands it and HEAD holds it, yet the commit
+// that lost answered "working set consumed by a concurrent commit", where
+// the same race over the one pin `x: 1` names that HEAD (D86). Same for a
+// leaf (`h.k: 7` then `h.k: 5`) and a record a later leaf pin cut.
+//
+// The other half (D86 「拿走了卻驗證不到 ⟹ 原答」): members that vanished
+// while the commit waited and did not land are not claimed; members that
+// vanished whose working set HEAD already held answer as one member would.
+
+impl Ws {
+    /// `oo commit --grant pin` started and left running, capped like `oo`.
+    fn spawn_commit(&self) -> std::process::Child {
+        Command::new("sh")
+            .arg("-c")
+            .arg("ulimit -v 3000000; exec timeout -s KILL 90 \"$0\" \"$@\"")
+            .arg(env!("CARGO_BIN_EXE_oo"))
+            .args(["commit", "-m", "c", "--grant", "pin"])
+            .current_dir(&self.ws)
+            .env("OO_IDENTITY", self.root.join("identity"))
+            .env("OO_NODE_HOME", self.root.join("node-home"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("oo spawns")
+    }
+
+    fn head_hex(&self) -> String {
+        let h = fs::read_to_string(self.ws.join(".oo").join("HEAD")).unwrap_or_default();
+        h.trim().rsplit(':').next().unwrap_or("").to_string()
+    }
+
+    fn hold_lock(&self) -> fs::File {
+        let lock = fs::OpenOptions::new().read(true).write(true).open(self.ws.join(".oo").join("format")).unwrap();
+        lock.lock().unwrap();
+        lock
+    }
+}
+
+fn joined(c: std::process::Child) -> (String, i32) {
+    let o = c.wait_with_output().unwrap();
+    (
+        format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)).trim().to_string(),
+        o.status.code().unwrap_or(-1),
+    )
+}
+
+/// A refused commit reduced: "held at HEAD" (names the HEAD there now),
+/// "consumed", or the first 80 bytes.
+fn refused(w: &Ws, o: &str) -> String {
+    if o.contains("already in HEAD") && !w.head_hex().is_empty() && o.contains(&w.head_hex()) {
+        "held at HEAD".into()
+    } else if o.contains("consumed by a concurrent commit") {
+        "consumed".into()
+    } else {
+        o.chars().take(80).collect()
+    }
+}
+
+/// Commit `base`, pin `steps`, then two commits race on the lock: what the
+/// one that lost says, and `read` after.
+fn raced_pins(tag: &str, base: &str, steps: &[&str], read: &str) -> (String, String) {
+    let w = Ws::new(tag);
+    let set = w.write(base);
+    if set != "e0 c0" {
+        return (format!("SETUP {set}"), String::new());
+    }
+    for s in steps {
+        let (o, rc) = w.pin(s);
+        if rc != 0 {
+            return (format!("SETUP pin {s}: {}", o.chars().take(80).collect::<String>()), String::new());
+        }
+    }
+    let lock = w.hold_lock();
+    let a = w.spawn_commit();
+    let b = w.spawn_commit();
+    std::thread::sleep(Duration::from_millis(3000));
+    lock.unlock().unwrap();
+    drop(lock);
+    let out = [joined(a), joined(b)];
+    let losers: Vec<&(String, i32)> = out.iter().filter(|(_, rc)| *rc != 0).collect();
+    let answer = if losers.len() == 1 {
+        refused(&w, &losers[0].0)
+    } else {
+        format!("{} refused: {:?}", losers.len(), out.iter().map(|(o, rc)| format!("rc={rc} {}", o.chars().take(60).collect::<String>())).collect::<Vec<_>>())
+    };
+    (answer, w.eval(read))
+}
+
+/// Commit `base`, pin `steps`, then one commit waits while every member
+/// file is removed: what it says, whether HEAD moved, and `read` after.
+fn vanished_pins(tag: &str, base: &str, steps: &[&str], plain: bool, read: &str) -> (String, String) {
+    let w = Ws::new(tag);
+    let set = w.write(base);
+    if set != "e0 c0" {
+        return (format!("SETUP {set}"), String::new());
+    }
+    for s in steps {
+        let (o, rc) = if plain { w.evolve(s) } else { w.pin(s) };
+        if rc != 0 {
+            return (format!("SETUP {s}: {}", o.chars().take(80).collect::<String>()), String::new());
+        }
+    }
+    let head = w.head_hex();
+    let lock = w.hold_lock();
+    let c = w.spawn_commit();
+    std::thread::sleep(Duration::from_millis(3000));
+    let mut n = 0;
+    for e in fs::read_dir(w.ws.join(".oo").join("injections")).unwrap().flatten() {
+        fs::remove_file(e.path()).unwrap();
+        n += 1;
+    }
+    lock.unlock().unwrap();
+    drop(lock);
+    let (o, rc) = joined(c);
+    let moved = if w.head_hex() == head { "same" } else { "moved" };
+    (format!("removed {n} rc={rc} {} head {moved}", refused(&w, &o)), w.eval(read))
+}
+
+// ── r11 ── the commit that lost a race judges its working set absorbed ──
+
+#[test]
+fn r11_the_loser_of_a_race_judges_what_it_read_absorbed() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    let rows: Vec<(&'static str, &'static str, Vec<&'static str>, &'static str, &'static str)> = vec![
+        ("one pin x: 1 (the control)", "x: 0", vec!["x: 1"], "_.x", "1"),
+        ("x: 2 then x: 1", "x: 0", vec!["x: 2", "x: 1"], "_.x", "1"),
+        ("x: 1 then x: 2", "x: 0", vec!["x: 1", "x: 2"], "_.x", "2"),
+        ("one pin h.k: 5 (the control)", "h: { k: 0, r: 6 }", vec!["h.k: 5"], "_.h", "{ k: 5 r: 6 }"),
+        ("h.k: 7 then h.k: 5", "h: { k: 0, r: 6 }", vec!["h.k: 7", "h.k: 5"], "_.h", "{ k: 5 r: 6 }"),
+        ("h: { k: 7, r: 9 } then h.k: 5", "h: { k: 0, r: 6 }", vec!["h: { k: 7, r: 9 }", "h.k: 5"], "_.h", "{ k: 5 r: 9 }"),
+    ];
+    for (i, (label, base, steps, read, want)) in rows.into_iter().enumerate() {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let (said, got) = raced_pins(&format!("r11-{i}"), base, &steps, read);
+            check(&mut bad, &format!("{label}: the commit that lost"), said, "held at HEAD");
+            check(&mut bad, &format!("{label}: {read}"), got, want);
+            bad
+        }));
+    }
+    // The other half.
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let (said, got) = vanished_pins("r11-v0", "x: 0", &["x: 2", "x: 1"], false, "_.x");
+        check(&mut bad, "x: 2 then x: 1 vanished, never landed: not claimed", said, "removed 2 rc=1 consumed head same");
+        check(&mut bad, "x: 2 then x: 1 vanished: _.x", got, "0");
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let (one, _) = vanished_pins("r11-v1", "x: 1", &["x: 1"], true, "_.x");
+        let (two, got) = vanished_pins("r11-v2", "x: 1", &["x: 2", "x: 1"], false, "_.x");
+        check(&mut bad, "x: 1 held, vanished (the control)", one, "removed 1 rc=1 held at HEAD head same");
+        check(&mut bad, "x: 2 then x: 1 over x: 1, vanished: as one member", two, "removed 2 rc=1 held at HEAD head same");
+        check(&mut bad, "x: 2 then x: 1 over x: 1, vanished: _.x", got, "1");
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
