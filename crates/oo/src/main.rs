@@ -1745,6 +1745,9 @@ fn run_commit(
     let listed_before = nlang_interpreter::injections::paths(&cur)?.len();
     let (seen_committable, unverified) = match nlang_interpreter::injections::load_all(&cur) {
         Ok(members) => {
+            // D58 / D128: what was read is the working set those members
+            // make — a later pin has already taken the leaves it absorbed.
+            let (members, _) = nlang_interpreter::injections::apply_absorbs(&engine, members);
             let seen = members
                 .into_iter()
                 .filter(|m| {

@@ -364,14 +364,52 @@ g2：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`�
 
 ### 12.1 射程逐項對照
 
+`main.rs` 與 `q124-r1ref` `61abb0d` 逐位元組相同。讀數是這支 `oo`（11595792 位元組，mtime 2026-11-06 10:40:27.052369147 +0800）。每一格都是兩個提交搶 `.oo/format` 的鎖，握 3 秒再放。輸家的句子含當時的 HEAD。`oo eval` 讀已提交的根。
+
+*   **R2-M1。** 同一個工作集，一個成員與兩個成員，輸家都點名 HEAD，根相同。`x: 0` 之後一個 pin `x: 1`，以及 pin `x: 2` 再 pin `x: 1`：輸家 `already in HEAD`，`_.x` 讀 `1`，根 `c9889219c55cccc569f22c0521d5954b54063702a288cf3e7452677e65749aff`。反序 pin `x: 1` 再 pin `x: 2`：輸家 `already in HEAD`，`_.x` 讀 `2`，根 `f335decf64d0a858aee6b5982d452b6b458e0a39ab4b90c94038f554ab729ccf`。`h: { k: 0, r: 6 }` 之後一個 pin `h.k: 5`，以及 pin `h.k: 7` 再 pin `h.k: 5`：輸家 `already in HEAD`，讀 `{ k: 5 r: 6 }`，根 `3e81e317b1c96f9587f78ce1e8571291b26206eb63c5153f9639873fbd5e7f82`。pin `h: { k: 7, r: 9 }` 再 pin `h.k: 5`：輸家 `already in HEAD`，讀 `{ k: 5 r: 9 }`，根 `7d0db397111fc566c427d802cdf2a7085f14525d6c87439843464d2f8dcb97b8`。兩筆 pin 各寫各的葉（`h.r: 9` 再 `h.k: 7`）輸家也點名 HEAD，讀 `{ k: 7 r: 9 }`，根 `6216701ad87c70310927187628960db44bb7a30c41a5364ccf3cf839b6f243c2`。每一格都是一個贏家、一個輸家。
+*   **另一半。** 沒落地的不認領：HEAD `x: 0`，pin `x: 2` 再 pin `x: 1`，等鎖時兩個成員被刪。答 `working set consumed by a concurrent commit`，根留在 `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`，`_.x` 讀 `0`。HEAD 已持有、成員被刪：已提交 `x: 1`，一個一般寫入 `x: 1` 被刪，與 pin `x: 2` 再 pin `x: 1` 兩個成員被刪，都答 `already in HEAD`，根留在 `c9889219…`，`_.x` 讀 `1`。
+
 ### 12.2 順手改動（逐項指名）
+
+沒有。本回合只動 `main.rs`，而且是參考實作的三行。`universe.rs`、`injections.rs`、探針、版本、規格、向量、`CHANGELOG` 都沒動。`rustfmt` 未跑。
 
 ### 12.3 工單哪裡是錯的
 
+沒有。
+
 ### 12.4 工單指名要你回答的問題
+
+**R2-Q1。** 鎖前 `load_all` 讀到的成員先 `apply_absorbs`。後一個 pin 把它寫的葉從被吸收的成員拿掉。葉被拿光的那個成員（`x: 2` 被 `x: 1` 拿光、`h.k: 7` 被 `h.k: 5` 拿光）變成空記錄。`injection_has_committable_content` 把它和 `v: _`、只有 `~%Config` 的成員一起篩掉，`already_in_head` 只看還有內容的成員。寬記錄那格沒有被拿光：`h: { k: 7, r: 9 }` 被拿走 `k` 之後還留著 `r: 9`，兩個成員都進判斷，合起來是 `{ k: 5, r: 9 }`。
+
+留著空成員、答案也不變。它的 `pin_coords` 還在，欄位已經不在，`pin_leaves` 是空的。`pin_commit_merge` 拿不掉葉、也寫不進葉，觀測到的根與 HEAD 相同，`pin_moves` 不移動。`head_if_it_holds` 要每一個成員都已持有，空的那一個過得了，句子仍點名 HEAD。本回合照參考篩掉。驗收方的存活變異 r2c 量過留著與篩掉同答；本回合沒有重跑那個變異。
+
+**R2-Q2。** D86 的「驗證不到」是清單與讀取之間那道縫：`paths` 數到的成員在 `load_all` 時不見，`load_all` 答 `working set consumed by a concurrent commit`，`unverified` 為真，C1 不呼叫 `already_in_head`。沒讀到的內容維持原句。
+
+「HEAD 已持有、成員被刪」那一格驗證得到，因為刪除發生在讀取之後。`load_all` 成功，兩個成員都讀到了，`unverified` 為假。等鎖期間檔案被刪，`listed_count < listed_before`，於是走 C1。吸收之後的工作集是 `x: 1`，`head_if_it_holds` 對上現在的 HEAD，句子裡帶著那個 HEAD。一個成員的對照走同一句。根與 `_.x` 不動。
+
+沒落地的那格也讀到了成員，所以不是這道縫。吸收之後是 `x: 1`，HEAD 仍是 `x: 0`，`already_in_head` 答沒有，句子留在 `consumed`。根不動。
 
 ### 12.5 探針
 
+`a_pin_that_erased_its_neighbours_probe_test` **13／13**。單獨一輪 `finished in 20.71s`（編譯 Finished 5.33 s），EXIT 0。閘門裡 `finished in 21.48s`（`a_pin_that_erased_its_neighbours_probe_test-3b5a0aaa6e6b119f`），r11 在裡面。探針檔本回合未改。`rustfmt` 未掃。
+
 ### 12.6 數字
 
+`main.rs` 相對 `c9e72f8`：+3／−0。加上本節，交付是這一檔與這份交接。版本仍是 oo `0.123.0`、interpreter `0.2.2`、parser `0.2.2`。
+
+探針 13／13。閘門：GATE 1 2026-11-06T10:42:46+08:00 wall 1591 s（編譯 Finished 2.59 s，釋放檔在單獨探針時已建好，結束 11:09:17）；GATE 2 11:09:17 wall 1608 s（結束 11:36:05）；GATE 3 11:36:05 wall 1655 s（結束 12:03:40）。正規化 3908 行，sha `0b9427cdc276fbe3c320540f1567d0a98a64bdb04a674d8b3f7aa4c72d950318`，317 個 `running`、314 個 `Running`，加總 **2960** 通過、0 失敗，`test ` 行 `ok` 2959。三輪正規化相同。原始 sha 前綴 `88c7f4e8d16f2f6d`、`6f5cec72c33ee3da`、`84fa0e35878d5852`。位元組 312329、312265、312265。`^error` 0，BrokenPipe 0，panicked 0。
+
+conformance **213／213**，空目錄 `/home/gali/tmp/q124r2/conf.empty`，前後 `ls -A | wc -l` 都是 0，10 s。
+
+Linux 編譯在閘門裡 Finished 2.59 s，interpreter lib 16 則警告，`cargo fix` 13，留著。Windows `cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu` 2026-11-06T12:03:40+08:00 Finished 1.10 s，腳本 wall 1 s，EXIT 0，`^error` 0，interpreter lib 17 則、`cargo fix` 14，留著。`reads_world` 未使用，留著。
+
+`oo` 11595792 位元組，mtime 2026-11-06 10:40:27.052369147 +0800。三輪閘門沒有再連結（`cmp` 相同，mtime 未動）。
+
+g2：`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`；`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`；`h: { a: 1, b: a + 1 }` `2284caf43b29be83c7b90aee891418b43fcd91b8495819d95f70ff43f54a0e5e`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`（16029 位元組）。新倉 `layout=9`，`encoding=11`。
+
 ### 12.7 你認為需要改規格之處
+
+規格已有 D86、D58、D128、D127。這一輪的行為仍是破壞性的：等鎖之後判已持有的，是吸收完的工作集；同一個工作集分成幾個成員，輸家的句子相同。收尾時記 `CHANGELOG`。本回合未改規格、向量、`CHANGELOG`。
+
+留下的：兩筆寫入在工作集交會於一個記錄、其中一欄讀名字，再 pin 別的欄（演化拒 `#conflict at h`）；配方的葉在交會出的節點裡與字面不同根；pin 不能拿掉欄位或縮短清單；並行注入做出的晚到 ⊥；Q-122 的走訪代價；`rollback`。
+
