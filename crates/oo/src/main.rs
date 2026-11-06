@@ -856,6 +856,13 @@ fn evolve_files(
         let fields: Vec<&[nlang_parser::ast::Field]> = programs.iter().map(|(_, f)| f.as_slice()).collect();
         universe.observe_last(engine, &fields)
     };
+    // R-1: until they land, the ⊥ checks between the files do not read the
+    // coordinates the waiting fields write — reading the old definition there
+    // would observe it once more. Their late bottoms are the whole write's.
+    universe.read_mask = later
+        .iter()
+        .filter_map(|&(fi, k)| nlang_interpreter::universe::write_top(&programs[fi].1[k]))
+        .collect();
     let mut all_fields = Vec::new();
     for (fi, (file, fields)) in programs.iter().enumerate() {
         let before = universe.bottoms_as_read(engine);
@@ -883,6 +890,7 @@ fn evolve_files(
         }
         all_fields.extend(done);
     }
+    universe.read_mask.clear();
     // The fields that observe, each after the others of this write it reads.
     let mut done = Vec::new();
     for &(fi, k) in &later {

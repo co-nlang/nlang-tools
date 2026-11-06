@@ -613,6 +613,9 @@ pub struct Universe {
     /// The commit overwrites these; every other coordinate meets, the
     /// siblings of a pinned leaf included.
     pub pin_leaves: std::collections::BTreeSet<PinPath>,
+    /// Q-125 R-1: top coordinates `bottoms_as_read` leaves out — the fields
+    /// of the write being evolved that observe and have not landed yet.
+    pub read_mask: Vec<String>,
     /// The members' leaves, as loaded (this session's are added on top).
     loaded_pin_leaves: std::collections::BTreeSet<PinPath>,
     /// Intent: the active effect tags a `runPure` in the staged content
@@ -689,6 +692,7 @@ impl Universe {
             pin_pending: false,
             pin_coords: std::collections::BTreeSet::new(),
             pin_leaves: std::collections::BTreeSet::new(),
+            read_mask: Vec::new(),
             loaded_pin_leaves: std::collections::BTreeSet::new(),
             effect_pending: None,
             session_delta: ComboVal::default(),
@@ -882,14 +886,61 @@ impl Universe {
                 }
             }
         }
+        // R-1: a name this write defines carries an effect when its
+        // definition reads one (a morphism's body included) or reads such a
+        // name of this write. A field reading it observes once it is written,
+        // although the universe before the write predicts it pure.
+        // A name carries what a call of it may do: an effect read inside a
+        // morphism's body, or a carrier read there or held (aliased, put in
+        // a list) outside one. A carrier called outside a body gives an
+        // answer — that field observes and waits, but does not carry.
+        let ctx = self.predict_ctx(engine);
+        let mut defs: Vec<(String, Vec<(String, bool)>)> = Vec::new();
+        let mut carrying: std::collections::HashSet<String> = Default::default();
+        for fields in programs.iter() {
+            for f in fields.iter() {
+                let Some(t) = write_top(f) else { continue };
+                if matches!(&f.key, FieldKey::Pattern(_)) {
+                    continue;
+                }
+                let mut through = Vec::new();
+                for (p, in_body, called) in crate::eval::reads_at(&f.value, &Default::default()) {
+                    if !in_body && called {
+                        continue;
+                    }
+                    if observes(engine, &p, &ctx) {
+                        carrying.insert(t.clone());
+                    }
+                    if let ExprKind::Path(path) = &p.kind {
+                        if let Some(n) = path.segments.first() {
+                            through.push((n.trim().trim_start_matches('/').to_string(), in_body));
+                        }
+                    }
+                }
+                defs.push((t, through));
+            }
+        }
+        loop {
+            let before = carrying.len();
+            for (t, through) in &defs {
+                if !carrying.contains(t) && through.iter().any(|(n, _)| n != t && carrying.contains(n)) {
+                    carrying.insert(t.clone());
+                }
+            }
+            if carrying.len() == before {
+                break;
+            }
+        }
         let mut waiting: Vec<(usize, usize)> = Vec::new();
         for (fi, fields) in programs.iter().enumerate() {
             for (k, f) in fields.iter().enumerate() {
                 let reads = reads_tops(f);
-                let reads_this_write = reads.iter().any(|n| {
-                    writers.get(n).is_some_and(|w| w.iter().any(|&at| at != (fi, k)))
-                });
-                if reads_this_write && self.predicts_effect(engine, f) {
+                let by_other = |n: &String| writers.get(n).is_some_and(|w| w.iter().any(|&at| at != (fi, k)));
+                let reads_this_write = reads.iter().any(by_other);
+                let reads_carrier = !is_spread_field(f)
+                    && !matches!(&f.key, FieldKey::Pattern(_))
+                    && reads.iter().any(|n| carrying.contains(n) && by_other(n));
+                if reads_this_write && (reads_carrier || self.predicts_effect(engine, f)) {
                     waiting.push((fi, k));
                 }
             }
@@ -918,11 +969,15 @@ impl Universe {
         if is_spread_field(field) || matches!(&field.key, FieldKey::Pattern(_)) {
             return false;
         }
+        observes(engine, &field.value, &self.predict_ctx(engine))
+    }
+
+    fn predict_ctx(&self, engine: &Ouroboros) -> crate::EvalContext {
         let mut ctx =
             crate::EvalContext::new_shared(self.root.clone()).with_standard_root(self.standard_root.clone());
         ctx.staged = Some(self.staged.clone());
         ctx.privilege = engine.privilege;
-        observes(engine, &field.value, &ctx)
+        ctx
     }
 
     fn evolve_field(
@@ -2009,7 +2064,7 @@ impl Universe {
         staged.remove_field("~%Config");
         // A pinned coordinate overwrites the root as the commit will
         // (`pin_commit_merge`); every other coordinate meets it.
-        let view = if self.pin_leaves.is_empty() {
+        let mut view = if self.pin_leaves.is_empty() {
             match engine.unify_universe(Value::Combo((*self.root).clone()), Value::Combo(staged)) {
                 Value::Combo(m) => m,
                 _ => return Default::default(),
@@ -2020,6 +2075,10 @@ impl Universe {
                 None => return Default::default(),
             }
         };
+        for t in &self.read_mask {
+            view.remove_field(t);
+            view.remove_field(&format!("/{t}"));
+        }
         read_bottoms_of(engine, &view, &self.standard_root).into_iter().map(|(c, _)| c).collect()
     }
 
