@@ -229,34 +229,50 @@ pub fn load_all(base: &Path) -> Result<Vec<Injection>> {
     Ok(out)
 }
 
+/// D128 (`SPEC_10` §2.2.3): a pin absorbs, from each member it absorbed at
+/// a coordinate, the leaves it writes there — not the coordinate: what the
+/// absorbed member wrote beside those leaves stays. Applied once; the
+/// members come back with nothing left to absorb.
+pub fn apply_absorbs(
+    engine: &Ouroboros,
+    mut injections: Vec<Injection>,
+) -> (Vec<Injection>, BTreeSet<crate::universe::PinPath>) {
+    let mut replaced = BTreeSet::new();
+    let mut cuts: Vec<(String, BTreeSet<crate::universe::PinPath>)> = Vec::new();
+    for b in &injections {
+        for (coord, ids) in &b.absorbs {
+            let one: BTreeSet<String> = [coord.clone()].into_iter().collect();
+            let leaves = crate::universe::pin_leaves(engine, &b.combo, &one);
+            for id in ids {
+                cuts.push((id.clone(), leaves.clone()));
+            }
+        }
+    }
+    for injection in injections.iter_mut() {
+        for (id, leaves) in &cuts {
+            if *id == injection.id {
+                injection.combo =
+                    crate::universe::remove_leaves_noting(engine, &injection.combo, leaves, &mut replaced);
+            }
+        }
+        injection.absorbs.clear();
+    }
+    (injections, replaced)
+}
+
 /// Engine-internal unify loop. Must not be an n/ `&` chain (recon Q16:
 /// N=100 is already `#fuel_exhausted`).
 pub fn fold(
     engine: &Ouroboros,
     injections: impl IntoIterator<Item = Injection>,
 ) -> std::result::Result<ComboVal, BottomDetail> {
-    let injections: Vec<Injection> = injections.into_iter().collect();
-    let mut absorbed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for injection in &injections {
-        for (coord, ids) in &injection.absorbs {
-            absorbed
-                .entry(coord.clone())
-                .or_default()
-                .extend(ids.iter().cloned());
-        }
-    }
+    let (injections, _) = apply_absorbs(engine, injections.into_iter().collect());
     let mut acc = ComboVal::default();
     // D117: the working set is the meet of its members in any order; whether
     // it holds a conflict is judged on the whole, not on each step.
     let mut members: Vec<Value> = Vec::new();
     for injection in injections {
-        let mut c = injection.combo;
-        for (coord, ids) in &absorbed {
-            if ids.contains(&injection.id) {
-                c.remove_field(coord);
-                c.local.shift_remove(coord.as_str());
-            }
-        }
+        let c = injection.combo;
         members.push(Value::Combo(c.clone()));
         match engine.unify_universe(Value::Combo(acc), Value::Combo(c)) {
             Value::Combo(m) => acc = m,

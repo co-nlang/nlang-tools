@@ -1719,7 +1719,7 @@ fn run_squash(
 fn already_in_head(
     engine: &Ouroboros,
     base: &Path,
-    combos: &[nlang_interpreter::value::ComboVal],
+    combos: &[(nlang_interpreter::value::ComboVal, std::collections::BTreeSet<String>)],
 ) -> anyhow::Result<Option<String>> {
     match Universe::head_if_it_holds(engine, base, combos)? {
         Some(head) => Ok(Some(format!("already in HEAD {head}"))),
@@ -1745,6 +1745,9 @@ fn run_commit(
     let listed_before = nlang_interpreter::injections::paths(&cur)?.len();
     let (seen_committable, unverified) = match nlang_interpreter::injections::load_all(&cur) {
         Ok(members) => {
+            // D58 / D128: what was read is the working set those members
+            // make — a later pin has already taken the leaves it absorbed.
+            let (members, _) = nlang_interpreter::injections::apply_absorbs(&engine, members);
             let seen = members
                 .into_iter()
                 .filter(|m| {
@@ -1753,7 +1756,7 @@ fn run_commit(
                         &m.combo,
                     )
                 })
-                .map(|m| m.combo)
+                .map(|m| (m.combo, m.pin_coords))
                 .collect::<Vec<_>>();
             (seen, false)
         }

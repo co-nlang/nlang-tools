@@ -238,15 +238,17 @@ fn r2_a_meet_keeps_both_axes() {
 /// A pin that moves a field to another axis lands.
 #[test]
 fn r3_a_pin_across_axes_lands() {
+    // AMENDED 2026-11-05 for Q-124 (D128): a pin writes the leaves of an open record and keeps the
+    // siblings, so `t: { @int: 1 }` over `{ int: 1 }` keeps `int`. A cocoon is a leaf: pinned whole.
     let w = Ws::new("r3");
-    w.commit("t: { int: 1 }\n");
+    w.commit("t: {{ int: 1 }}\n");
     let before = w.root();
-    fs::write(w.ws.join("b.n"), "t: { @int: 1 }\n").unwrap();
+    fs::write(w.ws.join("b.n"), "t: {{ @int: 1 }}\n").unwrap();
     let (o, rc) = w.oo(&["evolve", "--pin", "--grant", "pin", "b.n"]);
     assert_eq!(rc, 0, "pin evolve: {o}");
     let (o, rc) = w.oo(&["commit", "--grant", "pin", "-m", "b"]);
     assert_eq!(rc, 0, "pin commit: {o}");
-    assert_eq!(w.eval("_.t"), "{ @int: 1 }", "the pinned value must be what HEAD holds");
+    assert_eq!(w.eval("_.t"), "{{ @int: 1 }}", "the pinned value must be what HEAD holds");
     assert_ne!(w.root(), before, "the pinned root is the old root's address");
 }
 
@@ -417,15 +419,18 @@ fn g6_an_ordinary_write_moves_no_declaration() {
 /// After that explicit migrate the same pin lands.
 #[test]
 fn r7_a_pin_an_epoch_1_store_cannot_hold_is_refused_by_name() {
+    // AMENDED 2026-11-05 for Q-124 (D128): a pin writes the leaves of an open record and keeps the
+    // siblings, so `t: { @int: 1 }` over `{ int: 1 }` keeps `int`. A cocoon is a leaf: pinned whole.
     let w = Ws::epoch1("r7");
+    w.commit("c: {{ int: 1 }}\n");
     let head = w.head();
-    fs::write(w.ws.join("b.n"), "t: { @int: 1 }\n").unwrap();
+    fs::write(w.ws.join("b.n"), "c: {{ @int: 1 }}\n").unwrap();
     let (e, erc) = w.oo(&["evolve", "--pin", "--grant", "pin", "b.n"]);
     let (c, crc) = if erc == 0 { w.oo(&["commit", "--grant", "pin", "-m", "b"]) } else { (e.clone(), erc) };
     assert_ne!(crc, 0, "the pin was accepted into an epoch-1 store: {c}");
     assert!(c.contains("migrate"), "the refusal must name the migrate: {c}");
     assert_eq!(w.head(), head, "HEAD moved");
-    assert_eq!(w.eval("_.t"), "{ int: 1 }");
+    assert_eq!(w.eval("_.c"), "{{ int: 1 }}");
     assert_eq!(read_decl(&w, "objects.format"), "encoding=5");
 
     let (m, rc) = w.oo(&["migrate", "--grant", "migrate"]);
@@ -437,7 +442,7 @@ fn r7_a_pin_an_epoch_1_store_cannot_hold_is_refused_by_name() {
     }
     let (o, rc) = w.oo(&["commit", "--grant", "pin", "-m", "b"]);
     assert_eq!(rc, 0, "pin commit after migrate: {o}");
-    assert_eq!(w.eval("_.t"), "{ @int: 1 }");
+    assert_eq!(w.eval("_.c"), "{{ @int: 1 }}");
     let (log, _) = w.oo(&["log"]);
     assert!(log.contains(EPOCH1_HEAD) && log.contains(EPOCH1_FIRST), "history after migrate: {log}");
 }
@@ -507,14 +512,17 @@ fn r11_the_way_out_a_refusal_names_exists() {
     let (m, rc) = w.oo(&["migrate", "--grant", "migrate"]);
     assert_eq!(rc, 0, "layout migrate: {m}");
     assert_eq!(read_decl(&w, "objects.format"), "encoding=3", "precondition: migrate keeps encoding=3: {m}");
+    // AMENDED 2026-11-05 for Q-124 (D128): a pin writes the leaves of an open record and keeps the
+    // siblings, so `t: { @int: 1 }` over `{ int: 1 }` keeps `int`. A cocoon is a leaf: pinned whole.
+    w.commit("c: {{ int: 1 }}\n");
     let head = w.head();
-    fs::write(w.ws.join("b.n"), "t: { @int: 1 }\n").unwrap();
+    fs::write(w.ws.join("b.n"), "c: {{ @int: 1 }}\n").unwrap();
     let (e, erc) = w.oo(&["evolve", "--pin", "--grant", "pin", "b.n"]);
     let (c, crc) = if erc == 0 { w.oo(&["commit", "--grant", "pin", "-m", "b"]) } else { (e.clone(), erc) };
     assert_ne!(crc, 0, "the pin was accepted into an encoding=3 store: {c}");
     assert!(c.contains("#identity_collision"), "the refusal must be named: {c}");
     assert_eq!(w.head(), head, "HEAD moved");
-    assert_eq!(w.eval("_.t"), "{ int: 1 }");
+    assert_eq!(w.eval("_.c"), "{{ int: 1 }}");
     if c.contains("run `oo migrate") {
         let (m, rc) = w.oo(&["migrate", "--grant", "migrate"]);
         assert_eq!(rc, 0, "migrate: {m}");

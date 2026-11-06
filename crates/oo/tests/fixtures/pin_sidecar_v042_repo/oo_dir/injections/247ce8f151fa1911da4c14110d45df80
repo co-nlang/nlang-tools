@@ -1,0 +1,2 @@
+#nlang/store injection
+{ h: { k: { ~%__nlang_thunk: #true ~%__nlang_expr: 7 ~%__nlang_closure: [{ k: { ~%__nlang_thunk: #true ~%__nlang_expr: 7 ~%__nlang_closure: [] } }] } } }
