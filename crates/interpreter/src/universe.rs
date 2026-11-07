@@ -894,9 +894,15 @@ impl Universe {
         // morphism's body, or a carrier read there or held (aliased, put in
         // a list) outside one. A carrier called outside a body gives an
         // answer — that field observes and waits, but does not carry.
+        // R-3: a call gives an answer, unless what is called returns a
+        // carrier — `mk: (u -> g)` holds `g` in its body, so `f: mk 1` is a
+        // carrier too. A name returns a carrier when its body holds one (or
+        // calls or holds a name that returns one), or it names one that does.
         let ctx = self.predict_ctx(engine);
-        let mut defs: Vec<(String, Vec<(String, bool)>)> = Vec::new();
+        // Each definition's reads: (name, inside a morphism's body, called).
+        let mut all: Vec<(String, Vec<(String, bool, bool)>)> = Vec::new();
         let mut carrying: std::collections::HashSet<String> = Default::default();
+        let mut returning: std::collections::HashSet<String> = Default::default();
         for fields in programs.iter() {
             for f in fields.iter() {
                 let Some(t) = write_top(f) else { continue };
@@ -905,19 +911,19 @@ impl Universe {
                 }
                 let mut through = Vec::new();
                 for (p, in_body, called) in crate::eval::reads_at(&f.value, &Default::default()) {
-                    if !in_body && called {
-                        continue;
-                    }
-                    if observes(engine, &p, &ctx) {
+                    if (in_body || !called) && observes(engine, &p, &ctx) {
                         carrying.insert(t.clone());
+                        if in_body && !called {
+                            returning.insert(t.clone());
+                        }
                     }
                     if let ExprKind::Path(path) = &p.kind {
                         if let Some(n) = path.segments.first() {
-                            through.push((n.trim().trim_start_matches('/').to_string(), in_body));
+                            through.push((n.trim().trim_start_matches('/').to_string(), in_body, called));
                         }
                     }
                 }
-                defs.push((t, through));
+                all.push((t, through));
             }
         }
         // R-2: the universe's own definitions are read through as well. A
@@ -926,8 +932,6 @@ impl Universe {
         // holding) a name the write writes or touches, and carries when it so
         // reads a carrier: `f: (s -> g s)` in HEAD, `g` written here. Walked
         // only when some field of the write may observe.
-        let mut all: Vec<(String, Vec<String>)> =
-            defs.into_iter().map(|(t, th)| (t, th.into_iter().map(|(n, _)| n).collect())).collect();
         let mut touched: std::collections::HashSet<String> = writers.keys().cloned().collect();
         // Each field's prediction once; a field that reads no name has none.
         let predicted: Vec<Vec<bool>> = programs
@@ -954,22 +958,36 @@ impl Universe {
                 let mut through = Vec::new();
                 value_reads(v, false, &mut through);
                 if !through.is_empty() {
-                    held.insert(n.clone(), through.clone());
+                    held.insert(n.clone(), through.iter().map(|(m, _, _)| m.clone()).collect());
                     all.push((n.clone(), through));
                 }
             }
         }
         loop {
-            let before = carrying.len() + touched.len();
+            let before = carrying.len() + returning.len() + touched.len();
             for (t, through) in &all {
-                if !carrying.contains(t) && through.iter().any(|n| n != t && carrying.contains(n)) {
+                let carries = through.iter().any(|(n, body, called)| {
+                    n != t
+                        && (((*body || !*called) && carrying.contains(n))
+                            || (!*body && *called && returning.contains(n)))
+                });
+                if carries && !carrying.contains(t) {
                     carrying.insert(t.clone());
                 }
-                if !touched.contains(t) && through.iter().any(|n| n != t && touched.contains(n)) {
+                let returns = through.iter().any(|(n, body, called)| {
+                    n != t
+                        && ((*body && !*called && carrying.contains(n))
+                            || ((*body || !*called) && returning.contains(n)))
+                });
+                if returns && !returning.contains(t) {
+                    returning.insert(t.clone());
+                }
+                // Touched: any read at all — a call of a changed name too.
+                if !touched.contains(t) && through.iter().any(|(n, _, _)| n != t && touched.contains(n)) {
                     touched.insert(t.clone());
                 }
             }
-            if carrying.len() + touched.len() == before {
+            if carrying.len() + returning.len() + touched.len() == before {
                 break;
             }
         }
@@ -4353,11 +4371,10 @@ pub(crate) fn remove_leaves_noting(
     out
 }
 
-/// Q-125 R-2: the names a stored value reads where a call of it, or the
-/// value itself, reads them: a morphism's code (`in_body`), or a recipe's
-/// source outside an application's callee. A name a recipe only calls gives
-/// an answer and is left out, as `reads_at` leaves it in a write.
-fn value_reads(v: &Value, in_body: bool, out: &mut Vec<String>) {
+/// Q-125 R-2: the names a stored value reads, each with whether it is read
+/// in a morphism's code (`in_body`) and whether it is called, as `reads_at`
+/// marks the reads of a write.
+fn value_reads(v: &Value, in_body: bool, out: &mut Vec<(String, bool, bool)>) {
     match v {
         Value::Thunk { expr, .. } => push_reads(expr, in_body, out),
         Value::Code(expr) => push_reads(expr, true, out),
@@ -4376,14 +4393,11 @@ fn value_reads(v: &Value, in_body: bool, out: &mut Vec<String>) {
     }
 }
 
-fn push_reads(expr: &Expr, in_body: bool, out: &mut Vec<String>) {
+fn push_reads(expr: &Expr, in_body: bool, out: &mut Vec<(String, bool, bool)>) {
     for (p, b, called) in crate::eval::reads_at(expr, &Default::default()) {
-        if !(in_body || b) && called {
-            continue;
-        }
         if let ExprKind::Path(path) = &p.kind {
             if let Some(n) = path.segments.first() {
-                out.push(n.trim().trim_start_matches('/').to_string());
+                out.push((n.trim().trim_start_matches('/').to_string(), in_body || b, called));
             }
         }
     }
