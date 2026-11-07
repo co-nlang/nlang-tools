@@ -991,3 +991,59 @@ fn r10_a_call_that_returns_the_effect() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+/// Q-125 R-4: the function a maker returns is built in its body — the effect
+/// is two or more calls away (`mk: (u -> (s -> g s))`), and `f: mk 1` carries
+/// it as `mk: (u -> g)` does. Inline, three deep, held in a record, and with
+/// the maker and `f` in HEAD; and a call through functions that call each
+/// other.
+#[test]
+fn r11_an_effect_two_calls_away() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r11 mk: (u -> (s -> g s)) here", "", false,
+            &[&format!("k: f \"x\"\nf: mk 1\nmk: (u -> (s -> g s))\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk: (u -> (s -> g s))\nf: mk 1\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r11 HEAD mk: (u -> (s -> g s)) and f: mk 1", "mk: (u -> (s -> g s))\nf: mk 1", false,
+            &[&format!("k: f \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r11 mk3 three deep, f: mk3 1 2", "", false,
+            &[&format!("k: f \"x\"\nf: mk3 1 2\nmk3: (a -> (b -> (c -> g c)))\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk3: (a -> (b -> (c -> g c)))\nf: mk3 1 2\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r11 inline effect two deep", "", false,
+            &["k: f \"x\"\nf: mk 1\nmk: (u -> (s -> ~%Io./append_file (\"a.log\", s)))"],
+            &["mk: (u -> (s -> ~%Io./append_file (\"a.log\", s)))\nf: mk 1\nk: f \"x\""], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r11 held in a record", "", false,
+            &[&format!("k: f.h \"x\"\nf: mk 1\nmk: (u -> {{ h: (s -> g s) }})\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk: (u -> {{ h: (s -> g s) }})\nf: mk 1\nk: f.h \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // Functions that call each other go before the field that calls
+        // through them; `a` before `b` in both orders.
+        both_logged(&mut bad, "r11 a call through mutual recursion", "", false,
+            &[&format!("k: (f \"x\").e \"y\"\nf: b 1\na: (u -> {{ e: g, n: b }})\nb: (u -> a)\n{LOG_G}")],
+            &[&format!("{LOG_G}\na: (u -> {{ e: g, n: b }})\nb: (u -> a)\nf: b 1\nk: (f \"x\").e \"y\"")], "_.k", ONCE);
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
