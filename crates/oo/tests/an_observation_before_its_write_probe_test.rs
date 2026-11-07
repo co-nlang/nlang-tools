@@ -940,3 +940,54 @@ fn logged_after(tag: &str, pre: &str, srcs: &[&str]) -> (String, String) {
     out.push(format!("_.k {}", w.eval("_.k")));
     (out.join(" | "), w.root())
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// R-3 (2026-11-07) — a call that returns the effect
+// ════════════════════════════════════════════════════════════════════════
+//
+//   R-1 and R-2 take a call for an answer: `q: g "x"` observes, waits,
+//   and carries nothing on. But what is called may return a function that
+//   calls the effect: `mk: (u -> g)`, `f: mk 1`. Then `f` is a carrier like
+//   `g`. In the delivery `f` waits (it reads the carrier `mk`) and `k: f
+//   "x"`, which reads only `f`, does not — evolved before `f`, `k` is a
+//   recipe and the effect runs at commit in both orders (v0.124.0 ran it
+//   at evolve when `g` came first). With `mk` and `f` in HEAD, `k` first
+//   runs it 2–5 times and the two orders commit two roots.
+
+#[test]
+fn r10_a_call_that_returns_the_effect() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r10 mk and f: mk 1 here", "", false,
+            &[&format!("k: f \"x\"\nf: mk 1\nmk: (u -> g)\n{LOG_G}")], &[&format!("{LOG_G}\nmk: (u -> g)\nf: mk 1\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r10 HEAD mk, f: mk 1 here", "mk: (u -> g)", false,
+            &[&format!("k: f \"x\"\nf: mk 1\n{LOG_G}")], &[&format!("{LOG_G}\nf: mk 1\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r10 HEAD mk and f: mk 1", "mk: (u -> g)\nf: mk 1", false,
+            &[&format!("k: f \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // What returns a carrier is passed on: a maker that calls the maker,
+        // and a name for the maker.
+        both_logged(&mut bad, "r10 mk2: (v -> mk v)", "", false,
+            &[&format!("k: f \"x\"\nf: mk2 1\nmk2: (v -> mk v)\nmk: (u -> g)\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk: (u -> g)\nmk2: (v -> mk v)\nf: mk2 1\nk: f \"x\"")], "_.k", ONCE);
+        both_logged(&mut bad, "r10 mk2: mk", "", false,
+            &[&format!("k: f \"x\"\nf: mk2 1\nmk2: mk\nmk: (u -> g)\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk: (u -> g)\nmk2: mk\nf: mk2 1\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
