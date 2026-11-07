@@ -896,13 +896,17 @@ impl Universe {
         // answer — that field observes and waits, but does not carry.
         // R-3: a call gives an answer, unless what is called returns a
         // carrier — `mk: (u -> g)` holds `g` in its body, so `f: mk 1` is a
-        // carrier too. A name returns a carrier when its body holds one (or
-        // calls or holds a name that returns one), or it names one that does.
+        // carrier too.
+        // R-4: how many calls away the effect is. A name's `depth` has bit
+        // `x` when applying it to `x` arguments may observe: `g: (s -> ..)`
+        // has 1, `mk: (u -> g)` and `mk: (u -> (s -> g s))` have 2. A read
+        // of it inside `d` morphisms with `a` arguments applied gives
+        // `d + max(x - a, 0)`; 0 is an answer observed there (the field's
+        // own evolve), 1 or more is a carrier. Bit 63 stands for 63 or more.
         let ctx = self.predict_ctx(engine);
-        // Each definition's reads: (name, inside a morphism's body, called).
-        let mut all: Vec<(String, Vec<(String, bool, bool)>)> = Vec::new();
-        let mut carrying: std::collections::HashSet<String> = Default::default();
-        let mut returning: std::collections::HashSet<String> = Default::default();
+        // Each definition's reads: (name, morphisms it is inside, arguments applied).
+        let mut all: Vec<(String, Vec<(String, u32, u32)>)> = Vec::new();
+        let mut depth: std::collections::HashMap<String, u64> = Default::default();
         for fields in programs.iter() {
             for f in fields.iter() {
                 let Some(t) = write_top(f) else { continue };
@@ -910,16 +914,15 @@ impl Universe {
                     continue;
                 }
                 let mut through = Vec::new();
-                for (p, in_body, called) in crate::eval::reads_at(&f.value, &Default::default()) {
-                    if (in_body || !called) && observes(engine, &p, &ctx) {
-                        carrying.insert(t.clone());
-                        if in_body && !called {
-                            returning.insert(t.clone());
-                        }
+                for (p, d, a) in crate::eval::reads_at(&f.value, &Default::default()) {
+                    // An observing path observes when called once.
+                    let bits = shift_depth(1 << 1, d, a);
+                    if bits != 0 && observes(engine, &p, &ctx) {
+                        *depth.entry(t.clone()).or_default() |= bits;
                     }
                     if let ExprKind::Path(path) = &p.kind {
                         if let Some(n) = path.segments.first() {
-                            through.push((n.trim().trim_start_matches('/').to_string(), in_body, called));
+                            through.push((n.trim().trim_start_matches('/').to_string(), d, a));
                         }
                     }
                 }
@@ -943,7 +946,7 @@ impl Universe {
                     .collect()
             })
             .collect();
-        let may_observe = !carrying.is_empty() || predicted.iter().flatten().any(|&p| p);
+        let may_observe = !depth.is_empty() || predicted.iter().flatten().any(|&p| p);
         let mut held: std::collections::HashMap<String, Vec<String>> = Default::default();
         if may_observe {
             let names: std::collections::BTreeSet<&String> =
@@ -956,7 +959,7 @@ impl Universe {
                     continue;
                 };
                 let mut through = Vec::new();
-                value_reads(v, false, &mut through);
+                value_reads(v, 0, &mut through);
                 if !through.is_empty() {
                     held.insert(n.clone(), through.iter().map(|(m, _, _)| m.clone()).collect());
                     all.push((n.clone(), through));
@@ -964,33 +967,32 @@ impl Universe {
             }
         }
         loop {
-            let before = carrying.len() + returning.len() + touched.len();
+            let mut changed = false;
             for (t, through) in &all {
-                let carries = through.iter().any(|(n, body, called)| {
-                    n != t
-                        && (((*body || !*called) && carrying.contains(n))
-                            || (!*body && *called && returning.contains(n)))
-                });
-                if carries && !carrying.contains(t) {
-                    carrying.insert(t.clone());
+                let mut bits = 0u64;
+                for (n, d, a) in through {
+                    if n != t {
+                        if let Some(&m) = depth.get(n) {
+                            bits |= shift_depth(m, *d, *a);
+                        }
+                    }
                 }
-                let returns = through.iter().any(|(n, body, called)| {
-                    n != t
-                        && ((*body && !*called && carrying.contains(n))
-                            || ((*body || !*called) && returning.contains(n)))
-                });
-                if returns && !returning.contains(t) {
-                    returning.insert(t.clone());
+                let had = depth.get(t).copied().unwrap_or(0);
+                if bits & !had != 0 {
+                    depth.insert(t.clone(), had | bits);
+                    changed = true;
                 }
                 // Touched: any read at all — a call of a changed name too.
                 if !touched.contains(t) && through.iter().any(|(n, _, _)| n != t && touched.contains(n)) {
                     touched.insert(t.clone());
+                    changed = true;
                 }
             }
-            if carrying.len() + returning.len() + touched.len() == before {
+            if !changed {
                 break;
             }
         }
+        let carrying = |n: &String| depth.get(n).is_some_and(|&m| m != 0);
         let mut waiting: Vec<(usize, usize)> = Vec::new();
         for (fi, fields) in programs.iter().enumerate() {
             for (k, f) in fields.iter().enumerate() {
@@ -1002,7 +1004,7 @@ impl Universe {
                 let reads_this_write = reads.iter().any(reached);
                 let reads_carrier = !is_spread_field(f)
                     && !matches!(&f.key, FieldKey::Pattern(_))
-                    && reads.iter().any(|n| carrying.contains(n) && reached(n));
+                    && reads.iter().any(|n| carrying(n) && reached(n));
                 if reads_this_write && (reads_carrier || predicted[fi][k]) {
                     waiting.push((fi, k));
                 }
@@ -1021,18 +1023,61 @@ impl Universe {
             }
             seen
         };
-        let mut order = Vec::with_capacity(waiting.len());
-        while !waiting.is_empty() {
-            let pick = waiting
-                .iter()
-                .position(|&(fi, k)| {
-                    let reads = reach(reads_tops(&programs[fi][k]));
-                    !waiting.iter().any(|&(gi, j)| {
-                        (gi, j) != (fi, k) && write_top(&programs[gi][j]).is_some_and(|t| reads.contains(&t))
-                    })
-                })
-                .unwrap_or(0);
-            order.push(waiting.remove(pick));
+        // Each waiting field's edges: the waiting fields it reads, through
+        // the universe's definitions.
+        let n = waiting.len();
+        let mut by_top: std::collections::HashMap<String, Vec<usize>> = Default::default();
+        for (j, &(gj, kj)) in waiting.iter().enumerate() {
+            if let Some(t) = write_top(&programs[gj][kj]) {
+                by_top.entry(t).or_default().push(j);
+            }
+        }
+        let edges: Vec<Vec<usize>> = (0..n)
+            .map(|i| {
+                let (fi, k) = waiting[i];
+                let mut e: Vec<usize> = reach(reads_tops(&programs[fi][k]))
+                    .iter()
+                    .flat_map(|t| by_top.get(t).into_iter().flatten().copied())
+                    .filter(|&j| j != i)
+                    .collect();
+                e.sort_unstable();
+                e.dedup();
+                e
+            })
+            .collect();
+        // R-4: fields that read each other — functions calling each other in
+        // their bodies — are one group; a group goes after every group it
+        // reads, so a field reading one of them comes after all of them.
+        // Each step takes the first group (source order) that reads no group
+        // left; its fields in source order. Without such reads every group
+        // is one field and this is the order of R-1.
+        let comp = strong_components(&edges);
+        let groups = comp.iter().copied().max().map_or(0, |m| m + 1);
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); groups];
+        for (i, &c) in comp.iter().enumerate() {
+            members[c].push(i);
+        }
+        let mut out_left = vec![0usize; groups];
+        let mut readers: Vec<Vec<usize>> = vec![Vec::new(); groups];
+        for (i, e) in edges.iter().enumerate() {
+            for &j in e {
+                if comp[i] != comp[j] {
+                    out_left[comp[i]] += 1;
+                    readers[comp[j]].push(comp[i]);
+                }
+            }
+        }
+        let mut by_first: Vec<usize> = (0..groups).collect();
+        by_first.sort_by_key(|&c| members[c][0]);
+        let mut done = vec![false; groups];
+        let mut order = Vec::with_capacity(n);
+        while order.len() < n {
+            let Some(&c) = by_first.iter().find(|&&c| !done[c] && out_left[c] == 0) else { break };
+            done[c] = true;
+            order.extend(members[c].iter().map(|&i| waiting[i]));
+            for &r in &readers[c] {
+                out_left[r] -= 1;
+            }
         }
         order
     }
@@ -4371,13 +4416,13 @@ pub(crate) fn remove_leaves_noting(
     out
 }
 
-/// Q-125 R-2: the names a stored value reads, each with whether it is read
-/// in a morphism's code (`in_body`) and whether it is called, as `reads_at`
-/// marks the reads of a write.
-fn value_reads(v: &Value, in_body: bool, out: &mut Vec<(String, bool, bool)>) {
+/// Q-125 R-2: the names a stored value reads, each with the morphisms it is
+/// read inside (a function's `%code` is its body, one deep) and the
+/// arguments applied to it, as `reads_at` marks the reads of a write.
+fn value_reads(v: &Value, in_body: u32, out: &mut Vec<(String, u32, u32)>) {
     match v {
         Value::Thunk { expr, .. } => push_reads(expr, in_body, out),
-        Value::Code(expr) => push_reads(expr, true, out),
+        Value::Code(expr) => push_reads(expr, in_body + 1, out),
         Value::Combo(c) => {
             let parts = [&c.data, &c.types, &c.rules, &c.meta, &c.system, &c.local];
             for v in parts.into_iter().flat_map(|m| m.values()) {
@@ -4393,14 +4438,84 @@ fn value_reads(v: &Value, in_body: bool, out: &mut Vec<(String, bool, bool)>) {
     }
 }
 
-fn push_reads(expr: &Expr, in_body: bool, out: &mut Vec<(String, bool, bool)>) {
-    for (p, b, called) in crate::eval::reads_at(expr, &Default::default()) {
+fn push_reads(expr: &Expr, in_body: u32, out: &mut Vec<(String, u32, u32)>) {
+    for (p, d, a) in crate::eval::reads_at(expr, &Default::default()) {
         if let ExprKind::Path(path) = &p.kind {
             if let Some(n) = path.segments.first() {
-                out.push((n.trim().trim_start_matches('/').to_string(), in_body || b, called));
+                out.push((n.trim().trim_start_matches('/').to_string(), in_body + d, a));
             }
         }
     }
+}
+
+/// Q-125 R-4: the strongly connected components of `edges` (Tarjan,
+/// without recursion): each node's component.
+fn strong_components(edges: &[Vec<usize>]) -> Vec<usize> {
+    let n = edges.len();
+    let unseen = usize::MAX;
+    let (mut index, mut low, mut on) = (vec![unseen; n], vec![0usize; n], vec![false; n]);
+    let (mut comp, mut stack, mut next, mut groups) = (vec![unseen; n], Vec::new(), 0usize, 0usize);
+    for s in 0..n {
+        if index[s] != unseen {
+            continue;
+        }
+        index[s] = next;
+        low[s] = next;
+        next += 1;
+        stack.push(s);
+        on[s] = true;
+        let mut call: Vec<(usize, usize)> = vec![(s, 0)];
+        while let Some(&(v, pos)) = call.last() {
+            if pos < edges[v].len() {
+                call.last_mut().expect("nonempty").1 += 1;
+                let w = edges[v][pos];
+                if index[w] == unseen {
+                    index[w] = next;
+                    low[w] = next;
+                    next += 1;
+                    stack.push(w);
+                    on[w] = true;
+                    call.push((w, 0));
+                } else if on[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+            } else {
+                call.pop();
+                if let Some(&(u, _)) = call.last() {
+                    low[u] = low[u].min(low[v]);
+                }
+                if low[v] == index[v] {
+                    while let Some(w) = stack.pop() {
+                        on[w] = false;
+                        comp[w] = groups;
+                        if w == v {
+                            break;
+                        }
+                    }
+                    groups += 1;
+                }
+            }
+        }
+    }
+    comp
+}
+
+/// Q-125 R-4: the depths a read gives, inside `d` morphisms with `a`
+/// arguments applied, of a name observing at the depths `m` (bit `x`:
+/// applied to `x` arguments). Depth 0 — an answer — is dropped; 63 stands
+/// for 63 or more.
+fn shift_depth(m: u64, d: u32, a: u32) -> u64 {
+    let mut out = 0u64;
+    for x in 1..64u32 {
+        if m & (1 << x) == 0 {
+            continue;
+        }
+        let y = if x == 63 { 63 } else { (x.saturating_sub(a) + d).min(63) };
+        if y >= 1 {
+            out |= 1 << y;
+        }
+    }
+    out
 }
 
 /// Q-125: the top-level coordinate a field of a write defines, written as a

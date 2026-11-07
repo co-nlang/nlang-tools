@@ -284,10 +284,10 @@ pub(crate) fn paths_read(expr: &Expr, bound: &HashSet<String>) -> Vec<Expr> {
 
 /// Q-125 R-1: every path `expr` reads by name — bare, parent, `_.` and the
 /// `~%` modules — morphism bodies included, less the names they bind; each
-/// with whether it is read inside a morphism's body, and whether it is the
-/// function an application outside one calls.
-pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, bool, bool)> {
-    fn walk(expr: &Expr, bound: &HashSet<String>, at: (bool, bool), out: &mut Vec<(Expr, bool, bool)>) {
+/// with the number of morphisms it is read inside (R-4: a depth, not only
+/// inside or not), and the number of arguments applied to it there.
+pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, u32, u32)> {
+    fn walk(expr: &Expr, bound: &HashSet<String>, at: (u32, u32), out: &mut Vec<(Expr, u32, u32)>) {
         match &expr.kind {
             ExprKind::Path(p) if matches!(p.anchor, PathAnchor::Bare | PathAnchor::Parent(_) | PathAnchor::Root) => {
                 if let Some(name) = p.segments.first() {
@@ -300,7 +300,7 @@ pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, bool,
             ExprKind::Morphism { param, body } => {
                 let mut nested = bound.clone();
                 nested.extend(morphism_parameter_names(param));
-                walk(body, &nested, (true, false), out);
+                walk(body, &nested, (at.0 + 1, 0), out);
             }
             ExprKind::Combo { fields, .. } => {
                 let mut nested = bound.clone();
@@ -318,16 +318,16 @@ pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, bool,
                     }
                 }
                 for field in fields {
-                    walk(&field.value, &nested, (at.0, false), out);
+                    walk(&field.value, &nested, (at.0, 0), out);
                 }
             }
             ExprKind::Apply(a, b) => {
-                walk(a, bound, (at.0, true), out);
-                walk(b, bound, (at.0, false), out);
+                walk(a, bound, (at.0, at.1 + 1), out);
+                walk(b, bound, (at.0, 0), out);
             }
             ExprKind::Pipe(a, b) => {
-                walk(a, bound, (at.0, false), out);
-                walk(b, bound, (at.0, true), out);
+                walk(a, bound, (at.0, 0), out);
+                walk(b, bound, (at.0, 1), out);
             }
             ExprKind::Meet(a, b)
             | ExprKind::Join(a, b)
@@ -347,47 +347,47 @@ pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, bool,
             | ExprKind::Lens(a, b)
             | ExprKind::LatticeEq(a, b)
             | ExprKind::Probe(a, b) => {
-                walk(a, bound, (at.0, false), out);
-                walk(b, bound, (at.0, false), out);
+                walk(a, bound, (at.0, 0), out);
+                walk(b, bound, (at.0, 0), out);
             }
             ExprKind::Ternary {
                 cond,
                 then_branch,
                 else_branch,
             } => {
-                walk(cond, bound, (at.0, false), out);
-                walk(then_branch, bound, (at.0, false), out);
-                walk(else_branch, bound, (at.0, false), out);
+                walk(cond, bound, (at.0, 0), out);
+                walk(then_branch, bound, (at.0, 0), out);
+                walk(else_branch, bound, (at.0, 0), out);
             }
             ExprKind::Unary { expr, .. }
             | ExprKind::AnonSet(expr)
             | ExprKind::Spread(expr)
             | ExprKind::Structural(expr)
-            | ExprKind::Complement(expr) => walk(expr, bound, (at.0, false), out),
+            | ExprKind::Complement(expr) => walk(expr, bound, (at.0, 0), out),
             ExprKind::List(items) | ExprKind::Tuple(items) => {
                 for item in items {
-                    walk(item, bound, (at.0, false), out);
+                    walk(item, bound, (at.0, 0), out);
                 }
             }
             ExprKind::Interpolated(parts) => {
                 for part in parts {
                     if let nlang_parser::ast::StringPart::Interpolated(expr) = part {
-                        walk(expr, bound, (at.0, false), out);
+                        walk(expr, bound, (at.0, 0), out);
                     }
                 }
             }
             ExprKind::Range { start, end, step } => {
-                walk(start, bound, (at.0, false), out);
-                walk(end, bound, (at.0, false), out);
+                walk(start, bound, (at.0, 0), out);
+                walk(end, bound, (at.0, 0), out);
                 if let Some(step) = step {
-                    walk(step, bound, (at.0, false), out);
+                    walk(step, bound, (at.0, 0), out);
                 }
             }
             _ => {}
         }
     }
     let mut out = Vec::new();
-    walk(expr, bound, (false, false), &mut out);
+    walk(expr, bound, (0, 0), &mut out);
     out
 }
 
