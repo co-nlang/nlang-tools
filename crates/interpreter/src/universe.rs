@@ -920,14 +920,56 @@ impl Universe {
                 defs.push((t, through));
             }
         }
-        loop {
-            let before = carrying.len();
-            for (t, through) in &defs {
-                if !carrying.contains(t) && through.iter().any(|(n, _)| n != t && carrying.contains(n)) {
-                    carrying.insert(t.clone());
+        // R-2: the universe's own definitions are read through as well. A
+        // name of the working set or HEAD that this write does not write is
+        // touched by it when its definition reads (in a body, or naming or
+        // holding) a name the write writes or touches, and carries when it so
+        // reads a carrier: `f: (s -> g s)` in HEAD, `g` written here. Walked
+        // only when some field of the write may observe.
+        let mut all: Vec<(String, Vec<String>)> =
+            defs.into_iter().map(|(t, th)| (t, th.into_iter().map(|(n, _)| n).collect())).collect();
+        let mut touched: std::collections::HashSet<String> = writers.keys().cloned().collect();
+        // Each field's prediction once; a field that reads no name has none.
+        let predicted: Vec<Vec<bool>> = programs
+            .iter()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .map(|f| !reads_tops(f).is_empty() && self.predicts_effect(engine, f))
+                    .collect()
+            })
+            .collect();
+        let may_observe = !carrying.is_empty() || predicted.iter().flatten().any(|&p| p);
+        let mut held: std::collections::HashMap<String, Vec<String>> = Default::default();
+        if may_observe {
+            let names: std::collections::BTreeSet<&String> =
+                self.root.data.keys().chain(self.staged.data.keys()).collect();
+            for n in names {
+                if writers.contains_key(n.as_str()) {
+                    continue;
+                }
+                let Some(v) = self.staged.data.get(n.as_str()).or_else(|| self.root.data.get(n.as_str())) else {
+                    continue;
+                };
+                let mut through = Vec::new();
+                value_reads(v, false, &mut through);
+                if !through.is_empty() {
+                    held.insert(n.clone(), through.clone());
+                    all.push((n.clone(), through));
                 }
             }
-            if carrying.len() == before {
+        }
+        loop {
+            let before = carrying.len() + touched.len();
+            for (t, through) in &all {
+                if !carrying.contains(t) && through.iter().any(|n| n != t && carrying.contains(n)) {
+                    carrying.insert(t.clone());
+                }
+                if !touched.contains(t) && through.iter().any(|n| n != t && touched.contains(n)) {
+                    touched.insert(t.clone());
+                }
+            }
+            if carrying.len() + touched.len() == before {
                 break;
             }
         }
@@ -936,21 +978,37 @@ impl Universe {
             for (k, f) in fields.iter().enumerate() {
                 let reads = reads_tops(f);
                 let by_other = |n: &String| writers.get(n).is_some_and(|w| w.iter().any(|&at| at != (fi, k)));
-                let reads_this_write = reads.iter().any(by_other);
+                // A name read: written by another field here, or of the
+                // universe and touched by this write.
+                let reached = |n: &String| by_other(n) || (!writers.contains_key(n) && touched.contains(n));
+                let reads_this_write = reads.iter().any(reached);
                 let reads_carrier = !is_spread_field(f)
                     && !matches!(&f.key, FieldKey::Pattern(_))
-                    && reads.iter().any(|n| carrying.contains(n) && by_other(n));
-                if reads_this_write && (reads_carrier || self.predicts_effect(engine, f)) {
+                    && reads.iter().any(|n| carrying.contains(n) && reached(n));
+                if reads_this_write && (reads_carrier || predicted[fi][k]) {
                     waiting.push((fi, k));
                 }
             }
         }
+        // What a waiting field reads, through the universe's definitions.
+        let reach = |start: std::collections::HashSet<String>| {
+            let mut seen = start.clone();
+            let mut todo: Vec<String> = start.into_iter().collect();
+            while let Some(n) = todo.pop() {
+                for m in held.get(&n).into_iter().flatten() {
+                    if seen.insert(m.clone()) {
+                        todo.push(m.clone());
+                    }
+                }
+            }
+            seen
+        };
         let mut order = Vec::with_capacity(waiting.len());
         while !waiting.is_empty() {
             let pick = waiting
                 .iter()
                 .position(|&(fi, k)| {
-                    let reads = reads_tops(&programs[fi][k]);
+                    let reads = reach(reads_tops(&programs[fi][k]));
                     !waiting.iter().any(|&(gi, j)| {
                         (gi, j) != (fi, k) && write_top(&programs[gi][j]).is_some_and(|t| reads.contains(&t))
                     })
@@ -4293,6 +4351,42 @@ pub(crate) fn remove_leaves_noting(
     let mut out = m.clone();
     let _ = remove_node(engine, &mut out, &trie_of(leaves), &mut Vec::new(), replaced);
     out
+}
+
+/// Q-125 R-2: the names a stored value reads where a call of it, or the
+/// value itself, reads them: a morphism's code (`in_body`), or a recipe's
+/// source outside an application's callee. A name a recipe only calls gives
+/// an answer and is left out, as `reads_at` leaves it in a write.
+fn value_reads(v: &Value, in_body: bool, out: &mut Vec<String>) {
+    match v {
+        Value::Thunk { expr, .. } => push_reads(expr, in_body, out),
+        Value::Code(expr) => push_reads(expr, true, out),
+        Value::Combo(c) => {
+            let parts = [&c.data, &c.types, &c.rules, &c.meta, &c.system, &c.local];
+            for v in parts.into_iter().flat_map(|m| m.values()) {
+                value_reads(v, in_body, out);
+            }
+        }
+        Value::Union(vs) => {
+            for v in vs {
+                value_reads(v, in_body, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_reads(expr: &Expr, in_body: bool, out: &mut Vec<String>) {
+    for (p, b, called) in crate::eval::reads_at(expr, &Default::default()) {
+        if !(in_body || b) && called {
+            continue;
+        }
+        if let ExprKind::Path(path) = &p.kind {
+            if let Some(n) = path.segments.first() {
+                out.push(n.trim().trim_start_matches('/').to_string());
+            }
+        }
+    }
 }
 
 /// Q-125: the top-level coordinate a field of a write defines, written as a
