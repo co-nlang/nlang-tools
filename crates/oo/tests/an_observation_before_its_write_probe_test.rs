@@ -1110,3 +1110,81 @@ fn r12_a_record_is_called_by_its_keys() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// R-6 (2026-11-08) — what HEAD holds, on every axis and in every form
+// ════════════════════════════════════════════════════════════════════════
+//
+//   R-5 walks a held value through its fields, but the walk starts only on
+//   HEAD's data axis and stops at a held reference. `q: <<f>>` is held as a
+//   reference; `~h:`, `/h:`, `@h:` and `%h:` are top-level fields on the
+//   local, rules, types and meta axes. In HEAD or the working set none of
+//   them was walked: `k` evolved first commits `#conflict` or runs the
+//   effect 2–5 times, and the two orders commit two roots. Written in the
+//   same write they were already right. Each root is v0.124.0's with `g`
+//   first. A spelling held on two axes (`h`, `/h`) reads what both read.
+
+/// HEAD holds `base`; this write is `k` and `g`, in both orders.
+fn held(bad: &mut Vec<String>, label: &str, base: &str, k: &str) {
+    both_logged(bad, label, base, false, &[&format!("{k}\n{LOG_G}")], &[&format!("{LOG_G}\n{k}")], "_.k", ONCE);
+}
+
+/// The working set holds `pre`, evolved and not committed.
+fn held_ws(bad: &mut Vec<String>, label: &str, pre: &str, k: &str) {
+    let tag = label.replace(' ', "-");
+    let (a, ra) = logged_after(&format!("{tag}-1"), pre, &[&format!("{k}\n{LOG_G}")]);
+    let (b, rb) = logged_after(&format!("{tag}-2"), pre, &[&format!("{LOG_G}\n{k}")]);
+    check(bad, &format!("{label}, k first"), a, ONCE);
+    check(bad, &format!("{label}, k last"), b, ONCE);
+    check(bad, &format!("{label}: one root"), (ra == rb && !ra.is_empty()).to_string(), "true");
+}
+
+#[test]
+fn r13_what_head_holds_on_every_axis() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    for (label, base, k) in [
+        ("r13 HEAD f, q: <<f>>", "f: (s -> g s)\nq: <<f>>", "k: q \"x\""),
+        ("r13 HEAD q: <<g>>", "q: <<g>>", "k: q \"x\""),
+        ("r13 HEAD f, q: <<_.f>>", "f: (s -> g s)\nq: <<_.f>>", "k: q \"x\""),
+        ("r13 HEAD f, p: <<f>>, q: <<p>>", "f: (s -> g s)\np: <<f>>\nq: <<p>>", "k: q \"x\""),
+        ("r13 HEAD f, ~q: <<f>>", "f: (s -> g s)\n~q: <<f>>", "k: ~q \"x\""),
+        ("r13 HEAD ~h: (s -> g s)", "~h: (s -> g s)", "k: ~h \"x\""),
+        ("r13 HEAD ~h: { _: (s -> g s) }", "~h: { _: (s -> g s) }", "k: ~h 1 \"x\""),
+        ("r13 HEAD /h: (s -> g s)", "/h: (s -> g s)", "k: /h \"x\""),
+        ("r13 HEAD h: 1 and /h: (s -> g s)", "h: 1\n/h: (s -> g s)", "k: /h \"x\""),
+        ("r13 HEAD @h: (s -> g s)", "@h: (s -> g s)", "k: @h \"x\""),
+        ("r13 HEAD %h: (s -> g s)", "%h: (s -> g s)", "k: %h \"x\""),
+    ] {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            held(&mut bad, label, base, k);
+            bad
+        }));
+    }
+    // One spelling on two axes: `h` and `/h` each read a name; `k` must
+    // wait after `m`, which only one of the two reads.
+    for (label, base, k) in [
+        ("r13 HEAD h: (s -> m s) and /h: (s -> z s)", "h: (s -> m s)\n/h: (s -> z s)\nz: (s -> s)", "k: h \"x\""),
+        ("r13 HEAD h: (s -> z s) and /h: (s -> m s)", "h: (s -> z s)\n/h: (s -> m s)\nz: (s -> s)", "k: /h \"x\""),
+    ] {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            both_logged(&mut bad, label, base, false,
+                &[&format!("{k}\nm: (s -> g s)\n{LOG_G}")], &[&format!("{LOG_G}\nm: (s -> g s)\n{k}")], "_.k", ONCE);
+            bad
+        }));
+    }
+    for (label, pre, k) in [
+        ("r13 working set f, q: <<f>>", "f: (s -> g s)\nq: <<f>>", "k: q \"x\""),
+        ("r13 working set ~h: (s -> g s)", "~h: (s -> g s)", "k: ~h \"x\""),
+    ] {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            held_ws(&mut bad, label, pre, k);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
