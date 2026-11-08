@@ -286,14 +286,27 @@ pub(crate) fn paths_read(expr: &Expr, bound: &HashSet<String>) -> Vec<Expr> {
 /// `~%` modules — morphism bodies included, less the names they bind; each
 /// with the number of morphisms it is read inside (R-4: a depth, not only
 /// inside or not), and the number of arguments applied to it there.
+/// R-5: a record, a list, a tuple and a table are functions of their keys
+/// (`{ a: 7 } "a"`, `[7, 8] 1`): what they hold is one deeper, and each
+/// segment a path takes into a name is one argument (`h.f "x"` applies `h`
+/// twice); an open term (a free `$`, bound where it meets `|>`) is a body,
+/// and `|>` gives it no argument — it binds `$`.
 pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, u32, u32)> {
+    let open = u32::from(nlang_parser::tier::has_free_dollar(expr));
+    reads_at_from(expr, bound, open)
+}
+
+/// Q-125 R-5: [`reads_at`] from `depth`, without counting `expr` itself as
+/// an open term (a stored function's or table branch's body binds its `$`).
+pub(crate) fn reads_at_from(expr: &Expr, bound: &HashSet<String>, depth: u32) -> Vec<(Expr, u32, u32)> {
     fn walk(expr: &Expr, bound: &HashSet<String>, at: (u32, u32), out: &mut Vec<(Expr, u32, u32)>) {
         match &expr.kind {
             ExprKind::Path(p) if matches!(p.anchor, PathAnchor::Bare | PathAnchor::Parent(_) | PathAnchor::Root) => {
                 if let Some(name) = p.segments.first() {
                     let name = name.trim();
                     if !bound.contains(name) {
-                        out.push((expr.clone(), at.0, at.1));
+                        let taken = if name.starts_with("~%") { 0 } else { p.segments.len() as u32 - 1 };
+                        out.push((expr.clone(), at.0, at.1 + taken));
                     }
                 }
             }
@@ -318,7 +331,13 @@ pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, u32, 
                     }
                 }
                 for field in fields {
-                    walk(&field.value, &nested, (at.0, 0), out);
+                    if let FieldKey::Pattern(k) = &field.key {
+                        walk(k, &nested, (at.0 + 1, 0), out);
+                        walk(&field.value, &nested, (at.0 + 1, 0), out);
+                    } else {
+                        let open = u32::from(nlang_parser::tier::has_free_dollar(&field.value));
+                        walk(&field.value, &nested, (at.0 + 1 + open, 0), out);
+                    }
                 }
             }
             ExprKind::Apply(a, b) => {
@@ -327,7 +346,8 @@ pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, u32, 
             }
             ExprKind::Pipe(a, b) => {
                 walk(a, bound, (at.0, 0), out);
-                walk(b, bound, (at.0, 1), out);
+                let given = u32::from(!nlang_parser::tier::has_free_dollar(b));
+                walk(b, bound, (at.0, given), out);
             }
             ExprKind::Meet(a, b)
             | ExprKind::Join(a, b)
@@ -366,7 +386,7 @@ pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, u32, 
             | ExprKind::Complement(expr) => walk(expr, bound, (at.0, 0), out),
             ExprKind::List(items) | ExprKind::Tuple(items) => {
                 for item in items {
-                    walk(item, bound, (at.0, 0), out);
+                    walk(item, bound, (at.0 + 1, 0), out);
                 }
             }
             ExprKind::Interpolated(parts) => {
@@ -387,7 +407,7 @@ pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, u32, 
         }
     }
     let mut out = Vec::new();
-    walk(expr, bound, (0, 0), &mut out);
+    walk(expr, bound, (depth, 0), &mut out);
     out
 }
 

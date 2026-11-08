@@ -914,7 +914,13 @@ impl Universe {
                     continue;
                 }
                 let mut through = Vec::new();
-                for (p, d, a) in crate::eval::reads_at(&f.value, &Default::default()) {
+                // R-5: `h.f: …` defines `h`, one key deeper.
+                let keyed = key_path(&f.key).map_or(0, |p| p.split('.').count() as u32 - 1);
+                for (p, d, a) in crate::eval::reads_at_from(
+                    &f.value,
+                    &Default::default(),
+                    keyed + u32::from(nlang_parser::tier::has_free_dollar(&f.value)),
+                ) {
                     // An observing path observes when called once.
                     let bits = shift_depth(1 << 1, d, a);
                     if bits != 0 && observes(engine, &p, &ctx) {
@@ -4420,26 +4426,56 @@ pub(crate) fn remove_leaves_noting(
 /// read inside (a function's `%code` is its body, one deep) and the
 /// arguments applied to it, as `reads_at` marks the reads of a write.
 fn value_reads(v: &Value, in_body: u32, out: &mut Vec<(String, u32, u32)>) {
+    value_reads_in(v, in_body, false, out)
+}
+
+/// R-5: a stored record (a list too) is a function of its keys — each field
+/// one deeper; a function's or a table's `%rules` (`meta` `rules`: the
+/// `%` is the axis) is its body, one deeper, and inside it a branch, its
+/// `%code`, a recipe and what it captured are that one body (`in_rules`),
+/// until a function held there has `%rules` of its own. The rest of `meta`
+/// is not a field.
+fn value_reads_in(v: &Value, in_body: u32, in_rules: bool, out: &mut Vec<(String, u32, u32)>) {
     match v {
-        Value::Thunk { expr, .. } => push_reads(expr, in_body, out),
-        Value::Code(expr) => push_reads(expr, in_body + 1, out),
+        Value::Thunk { expr, .. } => push_reads(expr, in_body, in_rules, out),
+        Value::Code(expr) => push_reads(expr, if in_rules { in_body } else { in_body + 1 }, true, out),
         Value::Combo(c) => {
-            let parts = [&c.data, &c.types, &c.rules, &c.meta, &c.system, &c.local];
-            for v in parts.into_iter().flat_map(|m| m.values()) {
-                value_reads(v, in_body, out);
+            let parts = [
+                (false, &c.data),
+                (false, &c.types),
+                (false, &c.rules),
+                (true, &c.meta),
+                (false, &c.system),
+                (false, &c.local),
+            ];
+            for (meta, m) in parts {
+                for (k, v) in m {
+                    if meta && k == "rules" {
+                        value_reads_in(v, in_body + 1, true, out);
+                    } else if in_rules || meta {
+                        value_reads_in(v, in_body, in_rules, out);
+                    } else {
+                        value_reads_in(v, in_body + 1, false, out);
+                    }
+                }
             }
         }
         Value::Union(vs) => {
             for v in vs {
-                value_reads(v, in_body, out);
+                value_reads_in(v, in_body, in_rules, out);
             }
         }
         _ => {}
     }
 }
 
-fn push_reads(expr: &Expr, in_body: u32, out: &mut Vec<(String, u32, u32)>) {
-    for (p, d, a) in crate::eval::reads_at(expr, &Default::default()) {
+fn push_reads(expr: &Expr, in_body: u32, bound_dollar: bool, out: &mut Vec<(String, u32, u32)>) {
+    let reads = if bound_dollar {
+        crate::eval::reads_at_from(expr, &Default::default(), 0)
+    } else {
+        crate::eval::reads_at(expr, &Default::default())
+    };
+    for (p, d, a) in reads {
         if let ExprKind::Path(path) = &p.kind {
             if let Some(n) = path.segments.first() {
                 out.push((n.trim().trim_start_matches('/').to_string(), in_body + d, a));
