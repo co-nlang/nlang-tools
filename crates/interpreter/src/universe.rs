@@ -955,20 +955,36 @@ impl Universe {
         let may_observe = !depth.is_empty() || predicted.iter().flatten().any(|&p| p);
         let mut held: std::collections::HashMap<String, Vec<String>> = Default::default();
         if may_observe {
-            let names: std::collections::BTreeSet<&String> =
-                self.root.data.keys().chain(self.staged.data.keys()).collect();
-            for n in names {
+            // R-6: a top-level field on any axis a program can name — data,
+            // `@`, `/`, `%`, `~` — spelled as `write_top` spells it (`/` is
+            // trimmed). The system axis holds the modules, not fields.
+            fn axis(c: &crate::value::ComboVal, i: usize) -> &indexmap::IndexMap<String, Value> {
+                match i {
+                    0 => &c.data,
+                    1 => &c.types,
+                    2 => &c.rules,
+                    3 => &c.meta,
+                    _ => &c.local,
+                }
+            }
+            const PREFIX: [&str; 5] = ["", "@", "", "%", "~"];
+            let mut names: std::collections::BTreeSet<(usize, &String)> = Default::default();
+            for i in 0..5 {
+                names.extend(axis(&self.root, i).keys().chain(axis(&self.staged, i).keys()).map(|k| (i, k)));
+            }
+            for (i, k) in names {
+                let n = format!("{}{}", PREFIX[i], k);
                 if writers.contains_key(n.as_str()) {
                     continue;
                 }
-                let Some(v) = self.staged.data.get(n.as_str()).or_else(|| self.root.data.get(n.as_str())) else {
+                let Some(v) = axis(&self.staged, i).get(k.as_str()).or_else(|| axis(&self.root, i).get(k.as_str())) else {
                     continue;
                 };
                 let mut through = Vec::new();
                 value_reads(v, 0, &mut through);
                 if !through.is_empty() {
-                    held.insert(n.clone(), through.iter().map(|(m, _, _)| m.clone()).collect());
-                    all.push((n.clone(), through));
+                    held.entry(n.clone()).or_default().extend(through.iter().map(|(m, _, _)| m.clone()));
+                    all.push((n, through));
                 }
             }
         }
@@ -4463,6 +4479,14 @@ fn value_reads_in(v: &Value, in_body: u32, in_rules: bool, out: &mut Vec<(String
         Value::Union(vs) => {
             for v in vs {
                 value_reads_in(v, in_body, in_rules, out);
+            }
+        }
+        // R-6: a held reference `<<p>>` reads `p` as the path reads it.
+        Value::Ref(r) => {
+            if let Some(n) = r.path.segments.first() {
+                let n = n.trim();
+                let taken = if n.starts_with("~%") { 0 } else { r.path.segments.len() as u32 - 1 };
+                out.push((n.trim_start_matches('/').to_string(), in_body, taken));
             }
         }
         _ => {}
