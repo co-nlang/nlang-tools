@@ -1047,3 +1047,66 @@ fn r11_an_effect_two_calls_away() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+/// Q-125 R-5: a record, a list and a table are functions of their keys —
+/// `mk: { _: (s -> g s) }` returns the function on `mk 1`, as
+/// `mk: (u -> (s -> g s))` does; the same in HEAD, a record holding `g`,
+/// inside a maker, a list in HEAD; an open term `f: g $` that `|>` binds;
+/// and a dotted key.
+#[test]
+fn r12_a_record_is_called_by_its_keys() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r12 mk: { _: (s -> g s) } here", "", false,
+            &[&format!("k: f \"x\"\nf: mk 1\nmk: {{ _: (s -> g s) }}\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk: {{ _: (s -> g s) }}\nf: mk 1\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r12 HEAD mk: { _: (s -> g s) } and f: mk 1", "mk: { _: (s -> g s) }\nf: mk 1", false,
+            &[&format!("k: f \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r12 mk: { _: g }", "", false,
+            &[&format!("k: f \"x\"\nf: mk 1\nmk: {{ _: g }}\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk: {{ _: g }}\nf: mk 1\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r12 mk: (u -> { _: (s -> g s) }), f: mk 1 2", "", false,
+            &[&format!("k: f \"x\"\nf: mk 1 2\nmk: (u -> {{ _: (s -> g s) }})\n{LOG_G}")],
+            &[&format!("{LOG_G}\nmk: (u -> {{ _: (s -> g s) }})\nf: mk 1 2\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        both_logged(&mut bad, "r12 HEAD q: [(s -> g s)] and f: q 0", "q: [(s -> g s)]\nf: q 0", false,
+            &[&format!("k: f \"x\"\n{LOG_G}")], &[&format!("{LOG_G}\nk: f \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // `|>` meets its input with the bound term: `#conflict` either way;
+        // the effect is still done once, at evolve.
+        both_logged(&mut bad, "r12 open term f: g $", "", false,
+            &[&format!("k: \"x\" |> f\nf: g $\n{LOG_G}")], &[&format!("{LOG_G}\nf: g $\nk: \"x\" |> f")], "_.k",
+            "e0 | evolve +1 | status+eval +1 | landed +1 | _.k _|_");
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // `h.f: ...` defines `h` one key deeper: `q: h.f` is the function.
+        both_logged(&mut bad, "r12 h.f: (s -> g s), q: h.f", "", false,
+            &[&format!("k: q \"x\"\nq: h.f\nh.f: (s -> g s)\n{LOG_G}")],
+            &[&format!("{LOG_G}\nh.f: (s -> g s)\nq: h.f\nk: q \"x\"")], "_.k", ONCE);
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
