@@ -265,6 +265,152 @@ fn spread_free_names(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
     out
 }
 
+/// Q-125: the names an expression reads — bare, parent, and `_.`-anchored —
+/// as the first segment of each path, with every key form of a Combo binding.
+pub(crate) fn names_read(expr: &Expr, bound: &HashSet<String>) -> HashSet<String> {
+    paths_read(expr, bound)
+        .into_iter()
+        .filter_map(|e| match &e.kind {
+            ExprKind::Path(p) => p.segments.first().map(|n| n.trim().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Q-125 R-1: the paths of [`reads_at`] alone.
+pub(crate) fn paths_read(expr: &Expr, bound: &HashSet<String>) -> Vec<Expr> {
+    reads_at(expr, bound).into_iter().map(|(e, _, _)| e).collect()
+}
+
+/// Q-125 R-1: every path `expr` reads by name — bare, parent, `_.` and the
+/// `~%` modules — morphism bodies included, less the names they bind; each
+/// with the number of morphisms it is read inside (R-4: a depth, not only
+/// inside or not), and the number of arguments applied to it there.
+/// R-5: a record, a list, a tuple and a table are functions of their keys
+/// (`{ a: 7 } "a"`, `[7, 8] 1`): what they hold is one deeper, and each
+/// segment a path takes into a name is one argument (`h.f "x"` applies `h`
+/// twice); an open term (a free `$`, bound where it meets `|>`) is a body,
+/// and `|>` gives it no argument — it binds `$`.
+pub(crate) fn reads_at(expr: &Expr, bound: &HashSet<String>) -> Vec<(Expr, u32, u32)> {
+    let open = u32::from(nlang_parser::tier::has_free_dollar(expr));
+    reads_at_from(expr, bound, open)
+}
+
+/// Q-125 R-5: [`reads_at`] from `depth`, without counting `expr` itself as
+/// an open term (a stored function's or table branch's body binds its `$`).
+pub(crate) fn reads_at_from(expr: &Expr, bound: &HashSet<String>, depth: u32) -> Vec<(Expr, u32, u32)> {
+    fn walk(expr: &Expr, bound: &HashSet<String>, at: (u32, u32), out: &mut Vec<(Expr, u32, u32)>) {
+        match &expr.kind {
+            ExprKind::Path(p) if matches!(p.anchor, PathAnchor::Bare | PathAnchor::Parent(_) | PathAnchor::Root) => {
+                if let Some(name) = p.segments.first() {
+                    let name = name.trim();
+                    if !bound.contains(name) {
+                        let taken = if name.starts_with("~%") { 0 } else { p.segments.len() as u32 - 1 };
+                        out.push((expr.clone(), at.0, at.1 + taken));
+                    }
+                }
+            }
+            ExprKind::Morphism { param, body } => {
+                let mut nested = bound.clone();
+                nested.extend(morphism_parameter_names(param));
+                walk(body, &nested, (at.0 + 1, 0), out);
+            }
+            ExprKind::Combo { fields, .. } => {
+                let mut nested = bound.clone();
+                for field in fields {
+                    match &field.key {
+                        FieldKey::Named { name, .. } | FieldKey::Quoted(name) => {
+                            nested.insert(name.trim().to_string());
+                        }
+                        FieldKey::Path(p) => {
+                            if let Some(first) = p.segments.first() {
+                                nested.insert(first.trim().to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                for field in fields {
+                    if let FieldKey::Pattern(k) = &field.key {
+                        walk(k, &nested, (at.0 + 1, 0), out);
+                        walk(&field.value, &nested, (at.0 + 1, 0), out);
+                    } else {
+                        let open = u32::from(nlang_parser::tier::has_free_dollar(&field.value));
+                        walk(&field.value, &nested, (at.0 + 1 + open, 0), out);
+                    }
+                }
+            }
+            ExprKind::Apply(a, b) => {
+                walk(a, bound, (at.0, at.1 + 1), out);
+                walk(b, bound, (at.0, 0), out);
+            }
+            ExprKind::Pipe(a, b) => {
+                walk(a, bound, (at.0, 0), out);
+                let given = u32::from(!nlang_parser::tier::has_free_dollar(b));
+                walk(b, bound, (at.0, given), out);
+            }
+            ExprKind::Meet(a, b)
+            | ExprKind::Join(a, b)
+            | ExprKind::Diff(a, b)
+            | ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Rem(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Lte(a, b)
+            | ExprKind::Gte(a, b)
+            | ExprKind::TypeAnnotation(a, b)
+            | ExprKind::Lens(a, b)
+            | ExprKind::LatticeEq(a, b)
+            | ExprKind::Probe(a, b) => {
+                walk(a, bound, (at.0, 0), out);
+                walk(b, bound, (at.0, 0), out);
+            }
+            ExprKind::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                walk(cond, bound, (at.0, 0), out);
+                walk(then_branch, bound, (at.0, 0), out);
+                walk(else_branch, bound, (at.0, 0), out);
+            }
+            ExprKind::Unary { expr, .. }
+            | ExprKind::AnonSet(expr)
+            | ExprKind::Spread(expr)
+            | ExprKind::Structural(expr)
+            | ExprKind::Complement(expr) => walk(expr, bound, (at.0, 0), out),
+            ExprKind::List(items) | ExprKind::Tuple(items) => {
+                for item in items {
+                    walk(item, bound, (at.0 + 1, 0), out);
+                }
+            }
+            ExprKind::Interpolated(parts) => {
+                for part in parts {
+                    if let nlang_parser::ast::StringPart::Interpolated(expr) = part {
+                        walk(expr, bound, (at.0, 0), out);
+                    }
+                }
+            }
+            ExprKind::Range { start, end, step } => {
+                walk(start, bound, (at.0, 0), out);
+                walk(end, bound, (at.0, 0), out);
+                if let Some(step) = step {
+                    walk(step, bound, (at.0, 0), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(expr, bound, (depth, 0), &mut out);
+    out
+}
+
 /// A spread source needs the container it is written in only when it names
 /// something it does not define itself.
 fn spread_source_reads_outside(expr: &Expr) -> bool {

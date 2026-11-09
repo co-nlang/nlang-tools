@@ -613,6 +613,9 @@ pub struct Universe {
     /// The commit overwrites these; every other coordinate meets, the
     /// siblings of a pinned leaf included.
     pub pin_leaves: std::collections::BTreeSet<PinPath>,
+    /// Q-125 R-1: top coordinates `bottoms_as_read` leaves out — the fields
+    /// of the write being evolved that observe and have not landed yet.
+    pub read_mask: Vec<String>,
     /// The members' leaves, as loaded (this session's are added on top).
     loaded_pin_leaves: std::collections::BTreeSet<PinPath>,
     /// Intent: the active effect tags a `runPure` in the staged content
@@ -689,6 +692,7 @@ impl Universe {
             pin_pending: false,
             pin_coords: std::collections::BTreeSet::new(),
             pin_leaves: std::collections::BTreeSet::new(),
+            read_mask: Vec::new(),
             loaded_pin_leaves: std::collections::BTreeSet::new(),
             effect_pending: None,
             session_delta: ComboVal::default(),
@@ -869,6 +873,256 @@ impl Universe {
         }
     }
 
+    /// Q-125: the fields of `programs` (one write, or one program) that
+    /// observe an effect and read a name another field of them writes, in the
+    /// order to evolve them after all the others: each after the waiting
+    /// fields it reads (source order when they read each other).
+    pub fn observe_last(&self, engine: &Ouroboros, programs: &[&[Field]]) -> Vec<(usize, usize)> {
+        let mut writers: std::collections::HashMap<String, Vec<(usize, usize)>> = Default::default();
+        for (fi, fields) in programs.iter().enumerate() {
+            for (k, f) in fields.iter().enumerate() {
+                if let Some(t) = write_top(f) {
+                    writers.entry(t).or_default().push((fi, k));
+                }
+            }
+        }
+        // R-1: a name this write defines carries an effect when its
+        // definition reads one (a morphism's body included) or reads such a
+        // name of this write. A field reading it observes once it is written,
+        // although the universe before the write predicts it pure.
+        // A name carries what a call of it may do: an effect read inside a
+        // morphism's body, or a carrier read there or held (aliased, put in
+        // a list) outside one. A carrier called outside a body gives an
+        // answer — that field observes and waits, but does not carry.
+        // R-3: a call gives an answer, unless what is called returns a
+        // carrier — `mk: (u -> g)` holds `g` in its body, so `f: mk 1` is a
+        // carrier too.
+        // R-4: how many calls away the effect is. A name's `depth` has bit
+        // `x` when applying it to `x` arguments may observe: `g: (s -> ..)`
+        // has 1, `mk: (u -> g)` and `mk: (u -> (s -> g s))` have 2. A read
+        // of it inside `d` morphisms with `a` arguments applied gives
+        // `d + max(x - a, 0)`; 0 is an answer observed there (the field's
+        // own evolve), 1 or more is a carrier. Bit 63 stands for 63 or more.
+        let ctx = self.predict_ctx(engine);
+        // Each definition's reads: (name, morphisms it is inside, arguments applied).
+        let mut all: Vec<(String, Vec<(String, u32, u32)>)> = Vec::new();
+        let mut depth: std::collections::HashMap<String, u64> = Default::default();
+        for fields in programs.iter() {
+            for f in fields.iter() {
+                let Some(t) = write_top(f) else { continue };
+                if matches!(&f.key, FieldKey::Pattern(_)) {
+                    continue;
+                }
+                let mut through = Vec::new();
+                // R-5: `h.f: …` defines `h`, one key deeper.
+                let keyed = key_path(&f.key).map_or(0, |p| p.split('.').count() as u32 - 1);
+                for (p, d, a) in crate::eval::reads_at_from(
+                    &f.value,
+                    &Default::default(),
+                    keyed + u32::from(nlang_parser::tier::has_free_dollar(&f.value)),
+                ) {
+                    // An observing path observes when called once.
+                    let bits = shift_depth(1 << 1, d, a);
+                    if bits != 0 && observes(engine, &p, &ctx) {
+                        *depth.entry(t.clone()).or_default() |= bits;
+                    }
+                    if let ExprKind::Path(path) = &p.kind {
+                        if let Some(n) = path.segments.first() {
+                            through.push((n.trim().trim_start_matches('/').to_string(), d, a));
+                        }
+                    }
+                }
+                all.push((t, through));
+            }
+        }
+        // R-2: the universe's own definitions are read through as well. A
+        // name of the working set or HEAD that this write does not write is
+        // touched by it when its definition reads (in a body, or naming or
+        // holding) a name the write writes or touches, and carries when it so
+        // reads a carrier: `f: (s -> g s)` in HEAD, `g` written here. Walked
+        // only when some field of the write may observe.
+        let mut touched: std::collections::HashSet<String> = writers.keys().cloned().collect();
+        // Each field's prediction once; a field that reads no name has none.
+        let predicted: Vec<Vec<bool>> = programs
+            .iter()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .map(|f| !reads_tops(f).is_empty() && self.predicts_effect(engine, f))
+                    .collect()
+            })
+            .collect();
+        let may_observe = !depth.is_empty() || predicted.iter().flatten().any(|&p| p);
+        let mut held: std::collections::HashMap<String, Vec<String>> = Default::default();
+        if may_observe {
+            // R-6: a top-level field on any axis a program can name — data,
+            // `@`, `/`, `%`, `~` — spelled as `write_top` spells it (`/` is
+            // trimmed). The system axis holds the modules, not fields.
+            fn axis(c: &crate::value::ComboVal, i: usize) -> &indexmap::IndexMap<String, Value> {
+                match i {
+                    0 => &c.data,
+                    1 => &c.types,
+                    2 => &c.rules,
+                    3 => &c.meta,
+                    _ => &c.local,
+                }
+            }
+            const PREFIX: [&str; 5] = ["", "@", "", "%", "~"];
+            let mut names: std::collections::BTreeSet<(usize, &String)> = Default::default();
+            for i in 0..5 {
+                names.extend(axis(&self.root, i).keys().chain(axis(&self.staged, i).keys()).map(|k| (i, k)));
+            }
+            for (i, k) in names {
+                let n = format!("{}{}", PREFIX[i], k);
+                if writers.contains_key(n.as_str()) {
+                    continue;
+                }
+                let Some(v) = axis(&self.staged, i).get(k.as_str()).or_else(|| axis(&self.root, i).get(k.as_str())) else {
+                    continue;
+                };
+                let mut through = Vec::new();
+                value_reads(v, 0, &mut through);
+                if !through.is_empty() {
+                    held.entry(n.clone()).or_default().extend(through.iter().map(|(m, _, _)| m.clone()));
+                    all.push((n, through));
+                }
+            }
+        }
+        loop {
+            let mut changed = false;
+            for (t, through) in &all {
+                let mut bits = 0u64;
+                for (n, d, a) in through {
+                    if n != t {
+                        if let Some(&m) = depth.get(n) {
+                            bits |= shift_depth(m, *d, *a);
+                        }
+                    }
+                }
+                let had = depth.get(t).copied().unwrap_or(0);
+                if bits & !had != 0 {
+                    depth.insert(t.clone(), had | bits);
+                    changed = true;
+                }
+                // Touched: any read at all — a call of a changed name too.
+                if !touched.contains(t) && through.iter().any(|(n, _, _)| n != t && touched.contains(n)) {
+                    touched.insert(t.clone());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let carrying = |n: &String| depth.get(n).is_some_and(|&m| m != 0);
+        let mut waiting: Vec<(usize, usize)> = Vec::new();
+        for (fi, fields) in programs.iter().enumerate() {
+            for (k, f) in fields.iter().enumerate() {
+                let reads = reads_tops(f);
+                let by_other = |n: &String| writers.get(n).is_some_and(|w| w.iter().any(|&at| at != (fi, k)));
+                // A name read: written by another field here, or of the
+                // universe and touched by this write.
+                let reached = |n: &String| by_other(n) || (!writers.contains_key(n) && touched.contains(n));
+                let reads_this_write = reads.iter().any(reached);
+                let reads_carrier = !is_spread_field(f)
+                    && !matches!(&f.key, FieldKey::Pattern(_))
+                    && reads.iter().any(|n| carrying(n) && reached(n));
+                if reads_this_write && (reads_carrier || predicted[fi][k]) {
+                    waiting.push((fi, k));
+                }
+            }
+        }
+        // What a waiting field reads, through the universe's definitions.
+        let reach = |start: std::collections::HashSet<String>| {
+            let mut seen = start.clone();
+            let mut todo: Vec<String> = start.into_iter().collect();
+            while let Some(n) = todo.pop() {
+                for m in held.get(&n).into_iter().flatten() {
+                    if seen.insert(m.clone()) {
+                        todo.push(m.clone());
+                    }
+                }
+            }
+            seen
+        };
+        // Each waiting field's edges: the waiting fields it reads, through
+        // the universe's definitions.
+        let n = waiting.len();
+        let mut by_top: std::collections::HashMap<String, Vec<usize>> = Default::default();
+        for (j, &(gj, kj)) in waiting.iter().enumerate() {
+            if let Some(t) = write_top(&programs[gj][kj]) {
+                by_top.entry(t).or_default().push(j);
+            }
+        }
+        let edges: Vec<Vec<usize>> = (0..n)
+            .map(|i| {
+                let (fi, k) = waiting[i];
+                let mut e: Vec<usize> = reach(reads_tops(&programs[fi][k]))
+                    .iter()
+                    .flat_map(|t| by_top.get(t).into_iter().flatten().copied())
+                    .filter(|&j| j != i)
+                    .collect();
+                e.sort_unstable();
+                e.dedup();
+                e
+            })
+            .collect();
+        // R-4: fields that read each other — functions calling each other in
+        // their bodies — are one group; a group goes after every group it
+        // reads, so a field reading one of them comes after all of them.
+        // Each step takes the first group (source order) that reads no group
+        // left; its fields in source order. Without such reads every group
+        // is one field and this is the order of R-1.
+        let comp = strong_components(&edges);
+        let groups = comp.iter().copied().max().map_or(0, |m| m + 1);
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); groups];
+        for (i, &c) in comp.iter().enumerate() {
+            members[c].push(i);
+        }
+        let mut out_left = vec![0usize; groups];
+        let mut readers: Vec<Vec<usize>> = vec![Vec::new(); groups];
+        for (i, e) in edges.iter().enumerate() {
+            for &j in e {
+                if comp[i] != comp[j] {
+                    out_left[comp[i]] += 1;
+                    readers[comp[j]].push(comp[i]);
+                }
+            }
+        }
+        let mut by_first: Vec<usize> = (0..groups).collect();
+        by_first.sort_by_key(|&c| members[c][0]);
+        let mut done = vec![false; groups];
+        let mut order = Vec::with_capacity(n);
+        while order.len() < n {
+            let Some(&c) = by_first.iter().find(|&&c| !done[c] && out_left[c] == 0) else { break };
+            done[c] = true;
+            order.extend(members[c].iter().map(|&i| waiting[i]));
+            for &r in &readers[c] {
+                out_left[r] -= 1;
+            }
+        }
+        order
+    }
+
+    /// Q-125: whether evolving `field` now would observe an effect — its
+    /// definition, as the universe stands, predicts `#io`, `#nondet` or
+    /// `#state`. Such an answer is stored (D110, D46 ②), so it must read the
+    /// bindings of the write it belongs to, not the ones it found first.
+    pub fn predicts_effect(&self, engine: &Ouroboros, field: &Field) -> bool {
+        if is_spread_field(field) || matches!(&field.key, FieldKey::Pattern(_)) {
+            return false;
+        }
+        observes(engine, &field.value, &self.predict_ctx(engine))
+    }
+
+    fn predict_ctx(&self, engine: &Ouroboros) -> crate::EvalContext {
+        let mut ctx =
+            crate::EvalContext::new_shared(self.root.clone()).with_standard_root(self.standard_root.clone());
+        ctx.staged = Some(self.staged.clone());
+        ctx.privilege = engine.privilege;
+        ctx
+    }
+
     fn evolve_field(
         &mut self,
         engine: &Ouroboros,
@@ -919,6 +1173,7 @@ impl Universe {
         // phase so expansion re-queues instead of consuming (cocoon face:
         // {{...later, b: 1}} with later defined below).
         ctx.in_evolve = true;
+        ctx.observing = observes(engine, &field.value, &ctx);
 
         // `@{expr}` is a real definition inside a combo. The top is the same
         // container: build that one-field combo and land it. Doing it before
@@ -1952,7 +2207,7 @@ impl Universe {
         staged.remove_field("~%Config");
         // A pinned coordinate overwrites the root as the commit will
         // (`pin_commit_merge`); every other coordinate meets it.
-        let view = if self.pin_leaves.is_empty() {
+        let mut view = if self.pin_leaves.is_empty() {
             match engine.unify_universe(Value::Combo((*self.root).clone()), Value::Combo(staged)) {
                 Value::Combo(m) => m,
                 _ => return Default::default(),
@@ -1963,6 +2218,10 @@ impl Universe {
                 None => return Default::default(),
             }
         };
+        for t in &self.read_mask {
+            view.remove_field(t);
+            view.remove_field(&format!("/{t}"));
+        }
         read_bottoms_of(engine, &view, &self.standard_root).into_iter().map(|(c, _)| c).collect()
     }
 
@@ -4177,4 +4436,175 @@ pub(crate) fn remove_leaves_noting(
     let mut out = m.clone();
     let _ = remove_node(engine, &mut out, &trie_of(leaves), &mut Vec::new(), replaced);
     out
+}
+
+/// Q-125 R-2: the names a stored value reads, each with the morphisms it is
+/// read inside (a function's `%code` is its body, one deep) and the
+/// arguments applied to it, as `reads_at` marks the reads of a write.
+fn value_reads(v: &Value, in_body: u32, out: &mut Vec<(String, u32, u32)>) {
+    value_reads_in(v, in_body, false, out)
+}
+
+/// R-5: a stored record (a list too) is a function of its keys — each field
+/// one deeper; a function's or a table's `%rules` (`meta` `rules`: the
+/// `%` is the axis) is its body, one deeper, and inside it a branch, its
+/// `%code`, a recipe and what it captured are that one body (`in_rules`),
+/// until a function held there has `%rules` of its own. The rest of `meta`
+/// is not a field.
+fn value_reads_in(v: &Value, in_body: u32, in_rules: bool, out: &mut Vec<(String, u32, u32)>) {
+    match v {
+        Value::Thunk { expr, .. } => push_reads(expr, in_body, in_rules, out),
+        Value::Code(expr) => push_reads(expr, if in_rules { in_body } else { in_body + 1 }, true, out),
+        Value::Combo(c) => {
+            let parts = [
+                (false, &c.data),
+                (false, &c.types),
+                (false, &c.rules),
+                (true, &c.meta),
+                (false, &c.system),
+                (false, &c.local),
+            ];
+            for (meta, m) in parts {
+                for (k, v) in m {
+                    if meta && k == "rules" {
+                        value_reads_in(v, in_body + 1, true, out);
+                    } else if in_rules || meta {
+                        value_reads_in(v, in_body, in_rules, out);
+                    } else {
+                        value_reads_in(v, in_body + 1, false, out);
+                    }
+                }
+            }
+        }
+        Value::Union(vs) => {
+            for v in vs {
+                value_reads_in(v, in_body, in_rules, out);
+            }
+        }
+        // R-6: a held reference `<<p>>` reads `p` as the path reads it.
+        Value::Ref(r) => {
+            if let Some(n) = r.path.segments.first() {
+                let n = n.trim();
+                let taken = if n.starts_with("~%") { 0 } else { r.path.segments.len() as u32 - 1 };
+                out.push((n.trim_start_matches('/').to_string(), in_body, taken));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_reads(expr: &Expr, in_body: u32, bound_dollar: bool, out: &mut Vec<(String, u32, u32)>) {
+    let reads = if bound_dollar {
+        crate::eval::reads_at_from(expr, &Default::default(), 0)
+    } else {
+        crate::eval::reads_at(expr, &Default::default())
+    };
+    for (p, d, a) in reads {
+        if let ExprKind::Path(path) = &p.kind {
+            if let Some(n) = path.segments.first() {
+                out.push((n.trim().trim_start_matches('/').to_string(), in_body + d, a));
+            }
+        }
+    }
+}
+
+/// Q-125 R-4: the strongly connected components of `edges` (Tarjan,
+/// without recursion): each node's component.
+fn strong_components(edges: &[Vec<usize>]) -> Vec<usize> {
+    let n = edges.len();
+    let unseen = usize::MAX;
+    let (mut index, mut low, mut on) = (vec![unseen; n], vec![0usize; n], vec![false; n]);
+    let (mut comp, mut stack, mut next, mut groups) = (vec![unseen; n], Vec::new(), 0usize, 0usize);
+    for s in 0..n {
+        if index[s] != unseen {
+            continue;
+        }
+        index[s] = next;
+        low[s] = next;
+        next += 1;
+        stack.push(s);
+        on[s] = true;
+        let mut call: Vec<(usize, usize)> = vec![(s, 0)];
+        while let Some(&(v, pos)) = call.last() {
+            if pos < edges[v].len() {
+                call.last_mut().expect("nonempty").1 += 1;
+                let w = edges[v][pos];
+                if index[w] == unseen {
+                    index[w] = next;
+                    low[w] = next;
+                    next += 1;
+                    stack.push(w);
+                    on[w] = true;
+                    call.push((w, 0));
+                } else if on[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+            } else {
+                call.pop();
+                if let Some(&(u, _)) = call.last() {
+                    low[u] = low[u].min(low[v]);
+                }
+                if low[v] == index[v] {
+                    while let Some(w) = stack.pop() {
+                        on[w] = false;
+                        comp[w] = groups;
+                        if w == v {
+                            break;
+                        }
+                    }
+                    groups += 1;
+                }
+            }
+        }
+    }
+    comp
+}
+
+/// Q-125 R-4: the depths a read gives, inside `d` morphisms with `a`
+/// arguments applied, of a name observing at the depths `m` (bit `x`:
+/// applied to `x` arguments). Depth 0 — an answer — is dropped; 63 stands
+/// for 63 or more.
+fn shift_depth(m: u64, d: u32, a: u32) -> u64 {
+    let mut out = 0u64;
+    for x in 1..64u32 {
+        if m & (1 << x) == 0 {
+            continue;
+        }
+        let y = if x == 63 { 63 } else { (x.saturating_sub(a) + d).min(63) };
+        if y >= 1 {
+            out |= 1 << y;
+        }
+    }
+    out
+}
+
+/// Q-125: the top-level coordinate a field of a write defines, written as a
+/// name is read (no logic slash).
+pub fn write_top(field: &Field) -> Option<String> {
+    if is_spread_field(field) {
+        return None;
+    }
+    let p = key_path(&field.key)?;
+    let top = p.split('.').next().unwrap_or("").trim_start_matches('/').to_string();
+    (!top.is_empty()).then_some(top)
+}
+
+/// Q-125: the top-level names `field`'s definition reads, as `write_top`
+/// spells them.
+pub fn reads_tops(field: &Field) -> std::collections::HashSet<String> {
+    crate::eval::names_read(&field.value, &Default::default())
+        .into_iter()
+        .map(|n| n.trim_start_matches('/').to_string())
+        .collect()
+}
+
+/// Q-125: whether a definition observes an effect, as the working set reads
+/// its names or as HEAD alone does (`_.` at evolve read HEAD).
+fn observes(engine: &Ouroboros, e: &Expr, ctx: &crate::EvalContext) -> bool {
+    if !engine.predict_effect(e, ctx).is_pure() {
+        return true;
+    }
+    let mut head = ctx.clone();
+    head.staged = None;
+    !engine.predict_effect(e, &head).is_pure()
 }
