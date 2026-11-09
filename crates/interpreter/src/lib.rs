@@ -152,9 +152,35 @@ pub fn defer_lazy_reads(on: bool) {
 /// many readers it has.
 struct Observed {
     frame: std::sync::Arc<ComboVal>,
-    written: HashMap<(usize, usize), Vec<(Expr, Value)>>,
-    syntax: HashMap<String, Value>,
+    written: HashMap<(usize, usize), Vec<(Expr, Kept)>>,
+    syntax: HashMap<String, Kept>,
     one: HashMap<String, bool>,
+}
+/// Q-126: what a field gave. `did`: forcing it did an effect (reading it is
+/// an observation). Otherwise it gave a record, kept so that the name is
+/// one record, and read only against the universe it was read in (`root`,
+/// held so its address is not reused).
+#[derive(Clone)]
+struct Kept {
+    v: Value,
+    did: bool,
+    root: Arc<ComboVal>,
+}
+
+/// Q-126: the memo is cleared (commit, load, refine); records kept as one
+/// value go with it (they would not be read again — the root moved — but
+/// they hold it). What an effect gave stays.
+fn forget_kept_records() {
+    OBSERVED.with(|m| {
+        let mut m = m.borrow_mut();
+        for o in m.values_mut() {
+            for vs in o.written.values_mut() {
+                vs.retain(|(_, k)| k.did);
+            }
+            o.syntax.retain(|_, k| k.did);
+        }
+        m.retain(|_, o| !o.syntax.is_empty());
+    });
 }
 thread_local! {
     static OBSERVED: std::cell::RefCell<HashMap<(bool, u64), Observed>> = std::cell::RefCell::new(HashMap::new());
@@ -1067,6 +1093,7 @@ impl Ouroboros {
 
     /// Stage 5 (§5b): full clear for coarse events (commit/load/refine).
     pub fn clear_force_memo(&self) {
+        forget_kept_records();
         if let Ok(mut memo) = self.force_memo.write() {
             memo.clear();
         }
@@ -3783,15 +3810,25 @@ impl Ouroboros {
         // Q-126: a field of a written node is one coordinate. Once forcing it
         // did an effect, every later read in this observation reads that.
         let (frames, key) = match &val {
-            // A thunk bound to a `$` (an open term read through `|>`) is
-            // the pipe's, not a field's: not shared here.
-            Value::Thunk { expr, closure, context: None, .. } => {
+            // A thunk bound to a `$` (an open term read through `|>`) is an
+            // application, not a field: not shared here. A field of a record
+            // made in a call carries the call's input and is a field like
+            // any other (a branch body given its input closes over a rule's
+            // frame, which has no node: see below).
+            Value::Thunk { expr, closure, context, .. }
+                if context.is_none() || !nlang_parser::tier::has_free_dollar(expr) =>
+            {
                 let mut fs: Vec<std::sync::Arc<ComboVal>> = Vec::new();
                 if let Some(f) = &ctx.lexical_frame {
                     fs.push(f.clone());
                 }
-                // The frame it was written in.
-                if let Some(f) = closure.last().filter(|f| !crate::value::is_meet_frame(f)) {
+                // The frame it was written in. A thunk carrying a call's
+                // input is shared only on the record that call made.
+                if let Some(f) = closure
+                    .last()
+                    .filter(|f| !crate::value::is_meet_frame(f))
+                    .filter(|f| context.is_none() || frame_node(f).0)
+                {
                     fs.push(f.clone());
                 }
                 (fs, Some(expr.as_ref()))
@@ -3824,12 +3861,17 @@ impl Ouroboros {
                     one.then_some(v)
                 })
             });
-            if let Some(v) = hit {
+            // A record kept as one value is read in the universe it was read in.
+            let hit = hit.filter(|k| k.did || Arc::ptr_eq(&k.root, &ctx.root));
+            if let Some(k) = hit {
                 // Reading what an effect gave observes it: whoever reads it
-                // keeps an answer, as the field did.
-                EFFECTS_RUN.with(|c| c.set(c.get() + 1));
+                // keeps an answer, as the field did. A record kept because
+                // it is one value is not an effect.
+                if k.did {
+                    EFFECTS_RUN.with(|c| c.set(c.get() + 1));
+                }
                 ctx.lexical_frame = None;
-                return v;
+                return k.v;
             }
         }
         let key = key.map(|e| e.clone());
@@ -3838,12 +3880,16 @@ impl Ouroboros {
         // would do an effect is a lazy coordinate it reads.
         let probing = LAZY_PROBE.with(|c| c.get()) > 0 && key.is_some() && frames.iter().any(|f| frame_node(f).0);
         let skipped = EFFECTS_SKIPPED.with(|c| c.get());
+        let root = ctx.root.clone();
         let res = self.force_once_metered(val, ctx);
         if probing && EFFECTS_SKIPPED.with(|c| c.get()) != skipped {
             LAZY_HIT.with(|c| c.set(true));
         }
         if let Some(expr) = key {
-            if effects_run() != before && NO_EFFECTS.with(|c| c.get()) == 0 {
+            // A field that gave a record is one record, whatever its own
+            // fields will do when read: reading the name again reads it.
+            let did = effects_run() != before;
+            if (did || matches!(res, Value::Combo(_))) && NO_EFFECTS.with(|c| c.get()) == 0 {
                 // Kept on the node it was written in (the frame a name was
                 // found on, else the frame it closes over).
                 if let Some(f) = frames.first() {
@@ -3856,8 +3902,9 @@ impl Ouroboros {
                             syntax: HashMap::new(),
                             one: HashMap::new(),
                         });
-                        o.written.entry((expr.span.start, expr.span.end)).or_default().push((expr, res.clone()));
-                        o.syntax.entry(t).or_insert_with(|| res.clone());
+                        let k = Kept { v: res.clone(), did, root };
+                        o.written.entry((expr.span.start, expr.span.end)).or_default().push((expr, k.clone()));
+                        o.syntax.entry(t).or_insert(k);
                     });
                 }
             }
@@ -4137,7 +4184,10 @@ impl Ouroboros {
                         // Memoize only when NonDet is absent (nondet must not
                         // be cached across observations).
                         _ => !res.contains_blur() && !res.effect().contains(EffectTag::NonDet),
-                    } && effects_run() == effects_before;
+                    } && effects_run() == effects_before
+                        // Q-126: a record is where its fields will be
+                        // observed; two applications written alike make two.
+                        && !matches!(res, Value::Combo(_));
                     if memoizable {
                         if let Ok(mut memo) = self.force_memo.write() {
                             const FORCE_MEMO_CAP: usize = 100_000;
