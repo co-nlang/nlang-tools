@@ -119,6 +119,100 @@ thread_local! {
     /// is (`UNMETERED_MERGE` also marks the universe's writes for D118).
     /// `force_recursive` clears it: a definition forced on the way is metered.
     pub(crate) static FREE_MEET: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126: how many times a builtin with an active effect has run here.
+    /// A definition whose evaluation moved it observed an effect.
+    pub(crate) static EFFECTS_RUN: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-126: above 0 while the universe forces a value for its own
+    /// bookkeeping (is it ⊥, did it read the universe, did a call make it).
+    /// An effect is not done there: the builtin answers `_`.
+    pub(crate) static NO_EFFECTS: std::cell::Cell<u32> = std::cell::Cell::new(0);
+    /// Q-126 / D129: set by `oo evolve` — the working set stays lazy.
+    pub(crate) static DEFER_LAZY: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126 / D129: above 0 while a definition is tried without effects to
+    /// learn whether it reads a lazy field that does one.
+    pub(crate) static LAZY_PROBE: std::cell::Cell<u32> = std::cell::Cell::new(0);
+    /// Q-126 / D129: the try forced a field of a written node that does an effect.
+    pub(crate) static LAZY_HIT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126: effects left undone by bookkeeping (answered `_`).
+    pub(crate) static EFFECTS_SKIPPED: std::cell::Cell<u64> = std::cell::Cell::new(0);
+}
+
+/// Q-126 / D129: `oo evolve` leaves a definition that reads a lazy field
+/// doing an effect as its recipe; the commit observes both at once.
+pub fn defer_lazy_reads(on: bool) {
+    DEFER_LAZY.with(|c| c.set(on));
+}
+
+/// Q-126: one entry per written node a field of which did an effect when
+/// forced: the node's frame (kept alive, so its address is not reused);
+/// what each such field gave, by its definition as written (keyed by where
+/// it was written) and by its syntax alone; and, per syntax, whether one
+/// field of the node is written so. One process is one observation (one
+/// `eval`, one evolve, one commit); a field is forced once in it, however
+/// many readers it has.
+struct Observed {
+    frame: std::sync::Arc<ComboVal>,
+    written: HashMap<(usize, usize), Vec<(Expr, Value)>>,
+    syntax: HashMap<String, Value>,
+    one: HashMap<String, bool>,
+}
+thread_local! {
+    static OBSERVED: std::cell::RefCell<HashMap<(bool, u64), Observed>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Q-126: which written node a frame is a view of (D118 `node_id`); a frame
+/// that carries none (read back from the store) is known by itself.
+fn frame_node(f: &std::sync::Arc<ComboVal>) -> (bool, u64) {
+    if f.node_id != 0 {
+        return (true, f.node_id);
+    }
+    let ptr = std::sync::Arc::as_ptr(f) as usize;
+    match crate::value::FRAME_ORIGIN.with(|m| m.borrow().get(&ptr).map(|(_, n)| *n)) {
+        Some(n) => (true, n),
+        None => (false, ptr as u64),
+    }
+}
+
+/// Q-126: is this thunk exactly one field of `frame`? First by its syntax
+/// as written (two fields written alike in one source differ in where); a
+/// frame read back from the store may have no places, so then by syntax
+/// alone. Two fields that match alike are two coordinates: not shared.
+/// `Some(true)`: matched as written; `Some(false)`: by syntax alone;
+/// `None`: not one field.
+fn one_field_of(frame: &ComboVal, expr: &Expr, bare: &Expr) -> Option<bool> {
+    let (mut exact, mut loose) = (0, 0);
+    for axis in [&frame.data, &frame.rules, &frame.types, &frame.meta, &frame.system, &frame.local] {
+        for v in axis.values() {
+            if let Value::Thunk { expr: e, .. } = v {
+                if **e == *expr {
+                    exact += 1;
+                }
+                if e.without_spans() == *bare {
+                    loose += 1;
+                }
+            }
+        }
+    }
+    if exact == 1 {
+        Some(true)
+    } else if exact == 0 && loose == 1 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Q-126: effects run so far on this thread.
+pub(crate) fn effects_run() -> u64 {
+    EFFECTS_RUN.with(|c| c.get())
+}
+
+/// Q-126: run `f` as bookkeeping — no effect is done inside it.
+pub(crate) fn bookkeeping<T>(f: impl FnOnce() -> T) -> T {
+    NO_EFFECTS.with(|c| c.set(c.get() + 1));
+    let r = f();
+    NO_EFFECTS.with(|c| c.set(c.get() - 1));
+    r
 }
 
 #[derive(Debug, Clone)]
@@ -3305,6 +3399,12 @@ impl Ouroboros {
             unified_arg = Value::Combo(read);
         }
         let func = self.builtin_registry.get(builtin_id)?;
+        // Q-126: an effect is done by an observation, never by bookkeeping.
+        let active = c.effect.union(f.effect()).has_active();
+        if active && NO_EFFECTS.with(|c| c.get()) > 0 {
+            EFFECTS_SKIPPED.with(|c| c.set(c.get() + 1));
+            return Some(Value::Top);
+        }
         // O76 / O78 ②: declared keys live in the registry.
         // Missing required keys reuse the existing Top → cocoon
         // path; the builtin is not invoked on an undeclared shape.
@@ -3325,6 +3425,9 @@ impl Ouroboros {
             ctx.builtin_cursor = 0;
             ctx.builtin_apply_cursor = 0;
             let res = if keys_ready {
+                if active {
+                    EFFECTS_RUN.with(|c| c.set(c.get() + 1));
+                }
                 func(unified_arg.clone(), self, ctx)
             } else {
                 Value::Top
@@ -3677,6 +3780,92 @@ impl Ouroboros {
     /// One step of `force`: a recipe whose value is a live reference yields
     /// the reference, unread.
     pub(crate) fn force_once(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        // Q-126: a field of a written node is one coordinate. Once forcing it
+        // did an effect, every later read in this observation reads that.
+        let (frames, key) = match &val {
+            // A thunk bound to a `$` (an open term read through `|>`) is
+            // the pipe's, not a field's: not shared here.
+            Value::Thunk { expr, closure, context: None, .. } => {
+                let mut fs: Vec<std::sync::Arc<ComboVal>> = Vec::new();
+                if let Some(f) = &ctx.lexical_frame {
+                    fs.push(f.clone());
+                }
+                // The frame it was written in.
+                if let Some(f) = closure.last().filter(|f| !crate::value::is_meet_frame(f)) {
+                    fs.push(f.clone());
+                }
+                (fs, Some(expr.as_ref()))
+            }
+            _ => (Vec::new(), None),
+        };
+        if let Some(expr) = &key {
+            let hit = OBSERVED.with(|m| {
+                let mut m = m.borrow_mut();
+                if m.is_empty() {
+                    return None;
+                }
+                let mut text: Option<(Expr, String)> = None;
+                frames.iter().find_map(|f| {
+                    let o = m.get_mut(&frame_node(f))?;
+                    // As written; else by syntax, when one field of the node
+                    // is written so (its places differ between two read-backs
+                    // of the same node).
+                    if let Some(v) = o.written.get(&(expr.span.start, expr.span.end)).and_then(|vs| vs.iter().find(|(e, _)| e == *expr)) {
+                        return Some(v.1.clone());
+                    }
+                    let (bare, t) = text.get_or_insert_with(|| {
+                        let b = expr.without_spans();
+                        let t = b.to_nlang(0);
+                        (b, t)
+                    });
+                    let v = o.syntax.get(t.as_str())?.clone();
+                    let frame = o.frame.clone();
+                    let one = *o.one.entry(t.clone()).or_insert_with(|| one_field_of(&frame, bare, bare).is_some());
+                    one.then_some(v)
+                })
+            });
+            if let Some(v) = hit {
+                // Reading what an effect gave observes it: whoever reads it
+                // keeps an answer, as the field did.
+                EFFECTS_RUN.with(|c| c.set(c.get() + 1));
+                ctx.lexical_frame = None;
+                return v;
+            }
+        }
+        let key = key.map(|e| e.clone());
+        let before = effects_run();
+        // D129: while a definition is tried, a thunk of a written node that
+        // would do an effect is a lazy coordinate it reads.
+        let probing = LAZY_PROBE.with(|c| c.get()) > 0 && key.is_some() && frames.iter().any(|f| frame_node(f).0);
+        let skipped = EFFECTS_SKIPPED.with(|c| c.get());
+        let res = self.force_once_metered(val, ctx);
+        if probing && EFFECTS_SKIPPED.with(|c| c.get()) != skipped {
+            LAZY_HIT.with(|c| c.set(true));
+        }
+        if let Some(expr) = key {
+            if effects_run() != before && NO_EFFECTS.with(|c| c.get()) == 0 {
+                // Kept on the node it was written in (the frame a name was
+                // found on, else the frame it closes over).
+                if let Some(f) = frames.first() {
+                    let t = expr.without_spans().to_nlang(0);
+                    OBSERVED.with(|m| {
+                        let mut m = m.borrow_mut();
+                        let o = m.entry(frame_node(f)).or_insert_with(|| Observed {
+                            frame: f.clone(),
+                            written: HashMap::new(),
+                            syntax: HashMap::new(),
+                            one: HashMap::new(),
+                        });
+                        o.written.entry((expr.span.start, expr.span.end)).or_default().push((expr, res.clone()));
+                        o.syntax.entry(t).or_insert_with(|| res.clone());
+                    });
+                }
+            }
+        }
+        res
+    }
+
+    fn force_once_metered(&self, val: Value, ctx: &mut EvalContext) -> Value {
         // D117: a conflict a meet makes in a field carries no message — the
         // message would depend on the order (a pending meet, D118, too).
         let pending_meet = matches!(&val, Value::Thunk { closure, .. }
@@ -3712,6 +3901,9 @@ impl Ouroboros {
                     }
                 }
                 let fuel_before = ctx.fuel;
+                // Q-126: an answer that did an effect is that observation's,
+                // not a cache entry another coordinate may read.
+                let effects_before = effects_run();
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
                 // staged, which the key does not include.
@@ -3945,7 +4137,7 @@ impl Ouroboros {
                         // Memoize only when NonDet is absent (nondet must not
                         // be cached across observations).
                         _ => !res.contains_blur() && !res.effect().contains(EffectTag::NonDet),
-                    };
+                    } && effects_run() == effects_before;
                     if memoizable {
                         if let Ok(mut memo) = self.force_memo.write() {
                             const FORCE_MEMO_CAP: usize = 100_000;
@@ -4352,8 +4544,15 @@ impl Ouroboros {
                 // reading itself is ⊥.
                 let orig = val.clone();
                 let keep = std::mem::replace(&mut ctx.preserve_refs, false);
+                let before = crate::effects_run();
                 let forced = self.force_each_cell(val, ctx);
                 ctx.preserve_refs = keep;
+                // Q-126: a definition predicted pure that did an effect when
+                // forced observed it; its answer is what the commit keeps
+                // (SPEC_10 §2.3.1), not a recipe every reader would redo.
+                if crate::effects_run() != before {
+                    return forced;
+                }
                 match &forced {
                     Value::Bottom(_) => forced,
                     _ => orig,

@@ -1284,6 +1284,14 @@ pub struct ComboVal {
 
 static NEXT_NODE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+thread_local! {
+    /// Q-126: a frame as read back, which a record then took as its own
+    /// (`own_its_frames` stamps a copy): the node it is. The frame is kept
+    /// alive here so its address names it for the whole process.
+    pub(crate) static FRAME_ORIGIN: std::cell::RefCell<std::collections::HashMap<usize, (std::sync::Arc<ComboVal>, u64)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 pub fn fresh_node_id() -> u64 {
     NEXT_NODE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
@@ -1511,6 +1519,13 @@ pub fn own_its_frames(c: &mut ComboVal) {
                                 }
                                 let mut g = (**f).clone();
                                 g.node_id = *id;
+                                // Q-126: whoever else holds the frame as read
+                                // back (a reader resolved to this field) holds
+                                // a view of the same node.
+                                let node = *id;
+                                FRAME_ORIGIN.with(|m| {
+                                    m.borrow_mut().entry(std::sync::Arc::as_ptr(f) as usize).or_insert_with(|| (std::sync::Arc::clone(f), node));
+                                });
                                 Some(std::sync::Arc::new(g))
                             } else {
                                 None
@@ -1542,6 +1557,26 @@ pub fn own_its_frames(c: &mut ComboVal) {
         }
     }
     c.node_id = id;
+    // Q-126: a field read back is written once in its record and once in the
+    // frame its readers hold; the record's own field takes the frame's
+    // syntax, so one field is one written place whoever reads it.
+    if let Some(g) = own.iter().find_map(|(_, g)| g.clone()) {
+        fn take(axis: &mut IndexMap<String, Value>, frame: &IndexMap<String, Value>) {
+            for (k, fv) in axis.iter_mut() {
+                if let (Value::Thunk { expr, .. }, Some(Value::Thunk { expr: fe, .. })) = (fv, frame.get(k)) {
+                    if expr.without_spans() == fe.without_spans() {
+                        *expr = fe.clone();
+                    }
+                }
+            }
+        }
+        take(&mut c.data, &g.data);
+        take(&mut c.local, &g.local);
+        take(&mut c.rules, &g.rules);
+        take(&mut c.types, &g.types);
+        take(&mut c.meta, &g.meta);
+        take(&mut c.system, &g.system);
+    }
 }
 
 /// Whether frame `f` reads as record `c` (its fields before sealing).
