@@ -582,3 +582,115 @@ fn g1_the_rest_is_as_before() {
 const ROOT_TOP: &str = "847de8cc37a868b9418435a481ab108bc35c5a4c609507975b4a93b83e3b44da";
 const ROOT_HELD: &str = "912f740bce71f62a3d366004ddeb2b56d7d183f6a2fdb3ca531908a8abb9b0e8";
 const ROOT_PURE: &str = "db1c41de6c65bd0d1720d0bd38d63c2895f066edd02f4e0d1c09584d894b4340";
+
+// ── r6 (R-1) ── a name for a record is one record ────────────────────────
+//
+// A name whose value is a record, read twice in one observation, is one
+// record: its fields are observed once. The record may be written in place,
+// nested in another, made in a call, or reached through another name. Two
+// applications are still two (D109): `r: f 1` and `s: f 1` are two records,
+// and `(f 1).a` read twice applies `f` twice.
+//
+// v0.125.0 and the first reference: `{ r: { a: ~%Math./random () }, e: r.a
+// = r.a }.e` is `#false`; committing `q: { r: { a: h "Q126" }, m: [r.a,
+// r.a] }` appends three bytes.
+
+#[test]
+fn r6_a_name_for_a_record_is_one_record() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = vec![
+        kept("r6-nested", "q: { r: { a: h \"Q126\" }, m: [r.a, r.a] }", "_.q.m 1", "\"one\""),
+        kept("r6-nested-arrow", "q: { r: { a: (s -> h s) \"Q126\" }, m: [r.a, r.a] }", "_.q.m 0", "\"one\""),
+        kept("r6-made-in-call", "q: { f: (x -> { a: h x }), r: f \"Q126\", m: [r.a, r.a] }", "_.q.m 1", "\"one\""),
+        kept("r6-top-call", "f: x -> { a: h x }\nr: f \"Q126\"\nm: [r.a, r.a]", "_.m 1", "\"one\""),
+        // The reader of §6 of the order: a top-level alias of a nested field
+        // that reads its sibling.
+        kept("r6-alias-nested", "k: q.r.b\nq: { r: { a: (s -> h s) \"Q126\", b: a } }", "_.k", "\"one\""),
+        one_value("r6-random-nested", "q: { r: { a: ~%Math./random () }, e: r.a = r.a }", &[("_.q.e", "#true")]),
+        one_value("r6-random-arrow", "q: { r: { a: (s -> ~%Math./random ()) 1 }, e: r.a = r.a }", &[("_.q.e", "#true")]),
+        one_value("r6-random-call", "q: { f: (x -> { a: ~%Math./random () }), r: f 1, e: r.a = r.a }", &[("_.q.e", "#true")]),
+        one_value(
+            "r6-random-alias",
+            "k: q.r.b\nq: { r: { a: (s -> ~%Math./random ()) 1, b: a } }",
+            &[("_.k = _.q.r.b", "#true"), ("_.q.r.a = _.q.r.b", "#true")],
+        ),
+    ];
+    // In one `oo eval`, with no history.
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r6-eval");
+        for (e, want) in [
+            ("{ r: { a: ~%Math./random () }, e: r.a = r.a }.e", "#true"),
+            ("{ r: { a: ~%Math./random () }, e: r = r }.e", "#true"),
+            ("{ r: { a: ~%Math./random (), b: a }, e: r.a = r.b }.e", "#true"),
+            ("{ r: { a: ~%Math./random () }, s: r, e: r.a = s.a }.e", "#true"),
+            ("{ r: { s: { a: ~%Math./random () } }, e: r.s.a = r.s.a }.e", "#true"),
+            ("{ r: [{ a: ~%Math./random () }], e: (r 0).a = (r 0).a }.e", "#true"),
+            ("{ f: x -> { a: ~%Math./random () }, r: f 1, e: r.a = r.a }.e", "#true"),
+            ("{ r: 1 |> (x -> { a: ~%Math./random () }), e: r.a = r.a }.e", "#true"),
+            ("{ g: x -> { r: { a: ~%Math./random () }, e: r.a = r.a }, k: (g 1).e }.k", "#true"),
+            // (the effect notes dropped leave a space before each comma)
+            ("~%List./map ((x -> { r: { a: ~%Math./random () }, e: r.a = r.a }.e), [1, 2, 3])", "[#true , #true , #true ]"),
+        ] {
+            check(&mut bad, &format!("r6-eval: {e}"), w.eval_in("two", e), want);
+        }
+        bad
+    }));
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        (format!("{{ r: {{ a: {A} }}, m: [r.a, r.a] }}.m"), "1"),
+        (format!("{{ f: (x -> {{ a: {A} }}), r: f 1, m: [r.a, r.a] }}.m"), "1"),
+        (format!("{{ r: (x -> {{ a: {A} }}) 1, m: [r.a, r.a] }}.m"), "1"),
+        // The other half (D109): two applications are two records.
+        (format!("{{ f: (x -> {{ a: {A} }}), r: f 1, s: f 1, m: [r.a, s.a, r.a] }}.m"), "2"),
+        (format!("{{ f: (x -> {{ a: {A} }}), m: [(f 1).a, (f 1).a] }}.m"), "2"),
+        (format!("{{ f: (x -> {{ g: (y -> {A}) }}), r: f 1, m: [r.g 1, r.g 1] }}.m"), "2"),
+        ("{ q: { a: ~%Io./append_file (\"a.log\", $) }, m: [\"Z\" |> q.a, \"Z\" |> q.a] }.m".to_string(), "2"),
+        (format!("{{ f: (x -> {{ a: {A} }}), m: ~%List./map ((x -> (f x).a), [1, 2, 3]) }}.m"), "3"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r6: {e}"), appended(&format!("r6-{i}"), &e), want);
+            bad
+        }));
+    }
+    // The other half at commit: two applications at the top level are two
+    // records; reads do no more.
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r6-two-apps");
+        check(&mut bad, "r6 two apps: write", w.write(&format!("{H}\nf: x -> {{ a: h \"Q126\" }}\nm: [(f 1).a, (f 1).a]\n")), "e0 landed");
+        check(&mut bad, "r6 two apps: bytes after commit", w.bytes().to_string(), "2");
+        check(&mut bad, "r6 two apps: _.m 1", w.eval_in("two", "_.m 1"), "\"one\"");
+        check(&mut bad, "r6 two apps: bytes after a read", w.bytes().to_string(), "2");
+        bad
+    }));
+    // The other half: two writes that meet in one evolve; a nested record
+    // read by name after the meet reads the met record.
+    for (i, (s1, s2, rd, want)) in [
+        ("q: { a: @int, r: { x: a }, e: r.x }", "q: { a: 1 }", "_.q.e", "1"),
+        ("q: { r: { x: 1 }, e: r }", "q: { r: { y: 2 } }", "_.q.e.y", "2"),
+        ("q: { r: { x: 1 } }\nk: q.r", "q: { r: { y: 2 } }", "_.k.y", "2"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            let w = Ws::new(&format!("r6-meet-{i}"));
+            let f1 = w.file(&format!("{s1}\n"));
+            let f2 = w.file(&format!("{s2}\n"));
+            let (o, rc) = w.oo("one", &["evolve", &f1, &f2]);
+            check(&mut bad, &format!("r6 meet {i}: evolve"), if rc == 0 { "e0".into() } else { squash(&o) }, "e0");
+            let (o, _) = w.oo("one", &["commit", "-m", "c"]);
+            check(&mut bad, &format!("r6 meet {i}: commit"), said(&o), "landed");
+            check(&mut bad, &format!("r6 meet {i}: {rd}"), w.eval_in("two", rd), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
