@@ -122,6 +122,12 @@ thread_local! {
     /// Q-126: how many times a builtin with an active effect has run here.
     /// A definition whose evaluation moved it observed an effect.
     pub(crate) static EFFECTS_RUN: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-126: how many times a `$` has been read here. A force that moved
+    /// it gave an answer that belongs to the input it was read under.
+    pub(crate) static DOLLAR_READ: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-126: the last application's number. Each binding of `$` (a pipe, a
+    /// call, a thunk carrying its input) is one application.
+    pub(crate) static APPLICATIONS: std::cell::Cell<u64> = std::cell::Cell::new(0);
     /// Q-126: above 0 while the universe forces a value for its own
     /// bookkeeping (is it ⊥, did it read the universe, did a call make it).
     /// An effect is not done there: the builtin answers `_`.
@@ -160,11 +166,27 @@ struct Observed {
 /// an observation). Otherwise it gave a record, kept so that the name is
 /// one record, and read only against the universe it was read in (`root`,
 /// held so its address is not reused).
+/// Q-126: a `$` was read.
+pub(crate) fn note_dollar_read() {
+    DOLLAR_READ.with(|c| c.set(c.get() + 1));
+}
+
+/// Q-126: a new application; its number.
+pub(crate) fn next_application() -> u64 {
+    APPLICATIONS.with(|c| {
+        c.set(c.get() + 1);
+        c.get()
+    })
+}
+
 #[derive(Clone)]
 struct Kept {
     v: Value,
     did: bool,
     root: Arc<ComboVal>,
+    /// The application it was read in, when it is that application's: it
+    /// read `$`, or it is a structure made under one (its fields carry it).
+    of: Option<u64>,
 }
 
 /// Q-126: the memo is cleared (commit, load, refine); records kept as one
@@ -308,6 +330,8 @@ pub struct EvalContext {
     /// the absorbing normalizer (single-layer; compare raw branches).
     pub union_absorb_fence: bool,
     pub context_value: Option<Value>,
+    /// Q-126: which application bound `context_value` (0: none did).
+    pub application: u64,
     pub fuel: u64,
     /// Initial fuel budget (config ceiling). Identity for blur CHS; `fuel` is remaining.
     pub fuel_budget: u64,
@@ -399,6 +423,7 @@ impl EvalContext {
             observing: false,
             union_absorb_fence: false,
             context_value: None,
+            application: 0,
             fuel: 10000,
             fuel_budget: 10000,
             timeout_deadline: None,
@@ -3810,13 +3835,12 @@ impl Ouroboros {
         // Q-126: a field of a written node is one coordinate. Once forcing it
         // did an effect, every later read in this observation reads that.
         let (frames, key) = match &val {
-            // A thunk bound to a `$` (an open term read through `|>`) is an
-            // application, not a field: not shared here. A field of a record
-            // made in a call carries the call's input and is a field like
-            // any other (a branch body given its input closes over a rule's
-            // frame, which has no node: see below).
-            Value::Thunk { expr, closure, context, .. }
-                if context.is_none() || !nlang_parser::tier::has_free_dollar(expr) =>
+            // A field of a record made in a call carries the call's input
+            // and is a field like any other (a branch body given its input
+            // closes over a rule's frame, which has no node: see below). An
+            // open term bound through `|>` is a field of the record that
+            // application read: a record read under an input is its own.
+            Value::Thunk { expr, closure, context, .. } =>
             {
                 let mut fs: Vec<std::sync::Arc<ComboVal>> = Vec::new();
                 if let Some(f) = &ctx.lexical_frame {
@@ -3834,6 +3858,20 @@ impl Ouroboros {
                 (fs, Some(expr.as_ref()))
             }
             _ => (Vec::new(), None),
+        };
+        // Q-126: an answer that read `$` is the answer for that input. A
+        // thunk carrying its input is one field of the node it was made on;
+        // one that does not reads the `$` of whoever reads it.
+        let carried = matches!(&val, Value::Thunk { context: Some(_), .. });
+        let here = ctx.application;
+        let bound = ctx.context_value.is_some();
+        let root_now = ctx.root.clone();
+        let reads = move |k: &Kept| {
+            (k.did || Arc::ptr_eq(&k.root, &root_now))
+                && match k.of {
+                    None => true,
+                    Some(a) => !carried && a == here,
+                }
         };
         if let Some(expr) = &key {
             let hit = OBSERVED.with(|m| {
@@ -3861,8 +3899,9 @@ impl Ouroboros {
                     one.then_some(v)
                 })
             });
-            // A record kept as one value is read in the universe it was read in.
-            let hit = hit.filter(|k| k.did || Arc::ptr_eq(&k.root, &ctx.root));
+            // A record kept as one value is read in the universe it was read
+            // in; an answer for an input, in the application that gave it.
+            let hit = hit.filter(|k| reads(k));
             if let Some(k) = hit {
                 // Reading what an effect gave observes it: whoever reads it
                 // keeps an answer, as the field did. A record kept because
@@ -3881,6 +3920,7 @@ impl Ouroboros {
         let probing = LAZY_PROBE.with(|c| c.get()) > 0 && key.is_some() && frames.iter().any(|f| frame_node(f).0);
         let skipped = EFFECTS_SKIPPED.with(|c| c.get());
         let root = ctx.root.clone();
+        let dollars = DOLLAR_READ.with(|c| c.get());
         let res = self.force_once_metered(val, ctx);
         if probing && EFFECTS_SKIPPED.with(|c| c.get()) != skipped {
             LAZY_HIT.with(|c| c.set(true));
@@ -3902,9 +3942,24 @@ impl Ouroboros {
                             syntax: HashMap::new(),
                             one: HashMap::new(),
                         });
-                        let k = Kept { v: res.clone(), did, root };
-                        o.written.entry((expr.span.start, expr.span.end)).or_default().push((expr, k.clone()));
-                        o.syntax.entry(t).or_insert(k);
+                        // Under an input, a structure is that application's
+                        // (what it holds carries the input unread).
+                        let plain = matches!(res, Value::Atom(..) | Value::Top | Value::TopCaused { .. } | Value::Bottom(_) | Value::Blur(_));
+                        let of = (!carried && (DOLLAR_READ.with(|c| c.get()) != dollars || (bound && !plain))).then_some(here);
+                        let k = Kept { v: res.clone(), did, root, of };
+                        // One answer per application is kept: the last.
+                        let at = o.written.entry((expr.span.start, expr.span.end)).or_default();
+                        // (So the first one written alike is the one to read.)
+                        match at.iter_mut().find(|(e, old)| old.of.is_some() && *e == expr) {
+                            Some(old) => old.1 = k.clone(),
+                            None => at.push((expr, k.clone())),
+                        }
+                        match o.syntax.get(&t) {
+                            Some(old) if old.of.is_none() => {}
+                            _ => {
+                                o.syntax.insert(t, k);
+                            }
+                        }
                     });
                 }
             }
@@ -3954,6 +4009,7 @@ impl Ouroboros {
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
                 // staged, which the key does not include.
+                let carries_input = context.is_some();
                 let effective_context: Option<Value> = context
                     .as_ref()
                     .map(|b| (**b).clone())
@@ -4011,6 +4067,10 @@ impl Ouroboros {
                         // miss, so cache warmth cannot affect #blur CAIDs.
                         self.force_memo_hit_count
                             .fetch_add(1, Ordering::Relaxed);
+                        // Q-126: the entry was computed under this input.
+                        if effective_context.is_some() {
+                            note_dollar_read();
+                        }
                         // Stage 5 acceptance fix: a HIT must float the
                         // entry's deps into the active outer collector —
                         // an outer entry built over this hit embeds this
@@ -4098,6 +4158,9 @@ impl Ouroboros {
                     call_ctx.taint_hops += 1;
                 }
                 call_ctx.context_value = effective_context;
+                if carries_input {
+                    call_ctx.application = next_application();
+                }
                 call_ctx.dep_collector = inner_collector;
                 // in_flight rides sub_context clone for nested observation.
                 call_ctx.in_flight.insert(thunk_id.clone());

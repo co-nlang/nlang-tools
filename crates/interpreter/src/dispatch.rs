@@ -859,6 +859,7 @@ impl Ouroboros {
                     ComboVal::new(arg_map, false, IndexMap::new(), EffectTag::Pure, vec![]);
                 call_ctx.scopes.push(std::sync::Arc::new(params));
                 call_ctx.context_value = Some(arg.clone());
+                call_ctx.application = crate::next_application();
 
                 let out = self.eval(expr, &mut call_ctx);
                 ctx.fuel = call_ctx.fuel;
