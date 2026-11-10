@@ -694,3 +694,96 @@ fn r6_a_name_for_a_record_is_one_record() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ── r7 ── an answer for an input is that application's; a name read in a
+//          function's body is the name ──
+
+/// Appends one byte to `a.log`, then gives back `s`.
+const G: &str = "(s -> ~%Io./append_file (\"a.log\", \"Z\") |> (_ -> s))";
+
+#[test]
+fn r7_an_answer_belongs_to_the_input_it_read() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = vec![
+        // A name read in a function's body, the function applied twice.
+        kept("r7-body", "q: { a: h \"Q126\", f: (x -> a), m: [f 1, f 2] }", "_.q.m 1", "\"one\""),
+        kept("r7-body-and-direct", "q: { a: h \"Q126\", f: (x -> a), m: [a, f 1] }", "_.q.m 1", "\"one\""),
+        one_value("r7-random-body", "q: { a: ~%Math./random (), f: (x -> a), e: f 1 = f 2 }", &[("_.q.e", "#true")]),
+    ];
+    // An open term read under two inputs: each input its own answer.
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r7-eval");
+        for (e, want) in [
+            (format!("{{ g: {G}, q: {{ a: g $ }}, m: [\"x\" |> q.a, \"y\" |> q.a] }}.m"), "[\"x\", \"y\"]"),
+            (format!("{{ g: {G}, a: g $, m: [\"x\" |> a, \"y\" |> a] }}.m"), "[\"x\", \"y\"]"),
+            (format!("{{ g: {G}, a: g $, b: a, m: [\"x\" |> (_ -> b), \"y\" |> (_ -> b)] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, q: {{ a: g $, b: a }}, m: [\"x\" |> (_ -> q.b), \"y\" |> (_ -> q.b)] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, r: {{ s: {{ a: g $ }} }}, m: [\"x\" |> (_ -> r.s.a), \"y\" |> (_ -> r.s.a)] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, q: {{ a: g $ }}, f: (s -> q.a), m: [f \"x\", f \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, a: g $, f: (s -> a), m: [f \"x\", f \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, p: $, a: g p, m: [\"x\" |> (_ -> a), \"y\" |> (_ -> a)] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, p: $, a: g p, m: [\"x\" |> (_ -> p), \"x\" |> (_ -> a), \"y\" |> (_ -> a)] }}.m"), "[\"x\", \"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, q: {{ a: g $ }}, k: \"x\" |> (_ -> q), m: [k.a, \"y\" |> (_ -> q.a)] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ g: {G}, a: g $, m: \"x\" |> (_ -> [a, \"y\" |> (_ -> a), a]) }}.m"), "[\"x\" , \"y\" , \"x\" ]"),
+            // Two records a call made, each reading the open name under its own input.
+            (format!("{{ g: {G}, a: g $, mk: (y -> {{ b: a }}), r: mk \"x\", s: mk \"y\", m: [r.b, s.b] }}.m"), "[\"x\" , \"y\" ]"),
+            // A record read with no input, then bound; the name still reads its own.
+            (format!("{{ g: {G}, q: {{ a: g $ }}, w: q = q, k: \"y\" |> q, m: [w, \"x\" |> (_ -> [k.a, q.a]), \"z\" |> (_ -> q.a)] }}.m"), "[#true, [\"y\" , \"x\" ], \"z\" ]"),
+            // Names read in a body, with no effect: the values.
+            ("{ a: 10, f: x -> a + x, m: [f 1, f 2] }.m".to_string(), "[11, 12]"),
+            ("{ a: ~%Math./random (), f: x -> a, g: x -> a, e: f 1 = g 2 }.e".to_string(), "#true"),
+            ("{ a: ~%Math./random (), f: x -> a, e: a = f 1 }.e".to_string(), "#true"),
+        ] {
+            check(&mut bad, &format!("r7-eval: {e}"), w.eval_in("two", &e), want);
+        }
+        bad
+    }));
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        // A name read in a body is one name, however often the body runs.
+        (format!("{{ a: {A}, f: (x -> a), m: [f 1, f 2] }}.m"), "1"),
+        (format!("{{ a: {A}, f: ((x @int) -> a), m: [f 1, f 2] }}.m"), "1"),
+        (format!("{{ a: {A}, m: ~%List./map ((x -> a), [1, 2, 3]) }}.m"), "1"),
+        (format!("{{ a: {A}, f: (x -> (y -> a)), m: [(f 1) 2, (f 3) 4] }}.m"), "1"),
+        (format!("{{ a: {A}, q: {{ f: (x -> a), m: [f 1, f 2] }} }}.q.m"), "1"),
+        (format!("{{ a: {A}, f: (x -> a), m: [1 |> f, 2 |> f] }}.m"), "1"),
+        (format!("{{ mk: (y -> {{ a: {A}, g: (x -> a) }}), r: mk 1, m: [r.g 1, r.g 2] }}.m"), "1"),
+        (format!("{{ r: {{ a: {A} }}, f: (x -> [r.a, r.a]), m: f 1 }}.m"), "1"),
+        // The other half (D109): what a body does, each application does.
+        (format!("{{ f: (x -> {A}), m: [f 1, f 2] }}.m"), "2"),
+        (format!("{{ f: (x -> {{ b: {A}, c: [b, b] }}.c), m: [f 1, f 2] }}.m"), "2"),
+        (format!("{{ mk: (y -> {{ a: {A}, g: (x -> a) }}), r: mk 1, s: mk 2, m: [r.g 1, s.g 1, r.g 2] }}.m"), "2"),
+        // An open term: each application binds it, and does it.
+        ("{ a: ~%Io./append_file (\"a.log\", $), m: [\"Z\" |> a, \"Z\" |> a] }.m".to_string(), "2"),
+        ("{ a: ~%Io./append_file (\"a.log\", $), f: (x -> (\"Z\" |> a)), m: [f 1, f 2] }.m".to_string(), "2"),
+        ("{ a: ~%Io./append_file (\"a.log\", $), b: a, m: [\"Z\" |> (_ -> b), \"Z\" |> (_ -> b)] }.m".to_string(), "2"),
+        // A field carrying its input is one field of its record.
+        (format!("{{ mk: (y -> {{ a: ~%Io./append_file (\"a.log\", $), b: a }}), r: mk \"Z\", s: mk \"Z\", m: [r.b, s.b, r.a, s.a] }}.m"), "2"),
+        (format!("{{ g: {G}, q: {{ a: g $ }}, w: q = q, k: \"y\" |> q, m: [w, k.a, k.a] }}.m"), "1"),
+        ("{ q: { a: ~%Io./append_file (\"a.log\", $) }, m: \"Z\" |> (_ -> [q.a, q.a]) }.m".to_string(), "1"),
+        // One application reads it twice: once.
+        ("{ a: ~%Io./append_file (\"a.log\", $), m: \"Z\" |> (_ -> [a, a]) }.m".to_string(), "1"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r7: {e}"), appended(&format!("r7-{i}"), &e), want);
+            bad
+        }));
+    }
+    // A record holding an open term stays a recipe in the history; read
+    // under two inputs there, each input has its own answer.
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r7-commit");
+        check(&mut bad, "r7 commit: write", w.write(&format!("q: {{ g: {G}, t: {{ a: g $ }}, m: [\"x\" |> t.a, \"y\" |> t.a] }}\n")), "e0 landed");
+        check(&mut bad, "r7 commit: _.q.m", w.eval_in("two", "_.q.m"), "[\"x\", \"y\"]");
+        check(&mut bad, "r7 commit: _.q.m, read again", w.eval_in("two", "_.q.m"), "[\"x\", \"y\"]");
+        bad
+    }));
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
