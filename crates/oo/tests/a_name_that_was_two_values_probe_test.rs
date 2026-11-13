@@ -977,3 +977,107 @@ fn r9_a_function_observed_reads_its_node() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ── r10 ── functions that read each other; a list of calls (R-5) ──
+
+/// "returned" when an observation printed a value.
+fn returned(o: String) -> String {
+    if o.starts_with('{') || o.starts_with('[') {
+        "returned".into()
+    } else {
+        o.chars().take(40).collect()
+    }
+}
+
+#[test]
+fn r10_functions_that_read_each_other() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    // Functions that read each other are observed to the end: printed,
+    // stored under a coordinate, read back and applied. One after another:
+    // an engine without an end here takes 3 GB each.
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r10-even-odd");
+        check(&mut bad, "r10-even-odd: write", w.write("q: { even: (n -> odd n), odd: (n -> even n), z: 1 }\n"), "e0 landed");
+        check(&mut bad, "r10-even-odd: _.q.z", w.eval_in("two", "_.q.z"), "1");
+        check(&mut bad, "r10-even-odd: root", w.root(), "e9fa0e2529d963213e4801ebeb36a86aa52e32b698fff263c3ed3a320c4d03d6");
+        let w = Ws::new("r10-two-records");
+        check(&mut bad, "r10-two-records: write", w.write("q: { r: { a: 1, f: (y -> s) }, s: { b: 2, h: (y -> r) } }\n"), "e0 landed");
+        check(&mut bad, "r10-two-records: applied round", w.eval_in("two", "[((_.q.r.f 1).h 1).a, (((_.q.r.f 1).h 1).f 1).b]"), "[1, 2]");
+        check(&mut bad, "r10-two-records: root", w.root(), "1a648628d6f677ee3f6517defd3b1774361f33e45d26c81a2574a3b79a1a8ba4");
+        check(&mut bad, "r10-two-records: printed from history", returned(w.eval_in("two", "_.q.r")), "returned");
+        let w = Ws::new("r10-printed");
+        for e in [
+            "{ even: (n -> odd n), odd: (n -> even n) }",
+            "{ r: { f: (y -> s) }, s: { h: (y -> r) } }.r",
+        ] {
+            check(&mut bad, &format!("r10-printed: {e}"), returned(w.eval_in("two", e)), "returned");
+        }
+        // Each of two records that read each other does its effect once.
+        let e = format!("{{ r: {{ a: {A}, f: (y -> s.b) }}, s: {{ b: {A}, h: (y -> r.a) }} }}");
+        check(&mut bad, &format!("r10: {e}"), appended("r10-mutual", &e), "2");
+        // N functions written in one node close over the same N names: the
+        // node is read once, not once by each. 80 functions that read each
+        // other, stored (v0.125.0: 3 s; each reading the node again: 75 s).
+        let ring = (1..=80).map(|i| format!("f{i}: (y -> f{} y)", i % 80 + 1)).collect::<Vec<_>>().join(", ");
+        let w = Ws::new("r10-eighty");
+        let start = Instant::now();
+        check(&mut bad, "r10-eighty: write", w.write(&format!("q: {{ {ring}, z: 1 }}\n")), "e0 landed");
+        let took = start.elapsed().as_secs();
+        check(&mut bad, "r10-eighty: seconds", if took < 30 { "under 30".into() } else { took.to_string() }, "under 30");
+        check(&mut bad, "r10-eighty: _.q.z", w.eval_in("two", "_.q.z"), "1");
+        // ... and 160 tables whose bodies call each other (each reading the
+        // node again: 45 s at 160).
+        let ring = (1..=160).map(|i| format!("t{i}: {{ {T}: t{} 0 }}", i % 160 + 1)).collect::<Vec<_>>().join(", ");
+        let w = Ws::new("r10-tables");
+        let start = Instant::now();
+        check(&mut bad, "r10-tables: write", w.write(&format!("q: {{ {ring}, z: 1 }}\n")), "e0 landed");
+        let took = start.elapsed().as_secs();
+        check(&mut bad, "r10-tables: seconds", if took < 30 { "under 30".into() } else { took.to_string() }, "under 30");
+        check(&mut bad, "r10-tables: _.q.z", w.eval_in("two", "_.q.z"), "1");
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r10-eval");
+        let r = "~%Math./random ()";
+        for (e, want) in [
+            // Applied after being printed, as deep as it is applied.
+            ("{ r: { a: 1, f: (y -> r) }, m: [(r.f 1).a, ((r.f 1).f 1).a, (((r.f 1).f 1).f 1).a] }.m".to_string(), "[1, 1, 1]"),
+            ("{ r: { a: 1, f: (y -> s) }, s: { b: 2, h: (y -> r) }, m: [((r.f 1).h 1).a, (((r.f 1).h 1).f 1).b] }.m".to_string(), "[1, 2]"),
+            // The name a function reads through its own record is that record's.
+            (format!("{{ r: {{ a: {r}, f: (y -> r.a) }}, e: [r.f 1 = r.a, r.f 1 = r.f 2] }}.e"), "[#true , #true ]"),
+            // No effect, no call: lists written alike meet as they did.
+            ("[[1, 2] & [@int, @int], [1, 2] & [@int, @int]]".to_string(), "[[1, 2], [1, 2]]"),
+        ] {
+            check(&mut bad, &format!("r10-eval: {e}"), w.eval_in("two", &e), want);
+        }
+        bad
+    }));
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        // A function that reads its own record: the record's effect, once.
+        (format!("{{ r: {{ a: {A}, f: (y -> r.a) }} }}"), "1"),
+        (format!("{{ r: {{ a: {A}, f: (y -> r.a) }} }}.r"), "1"),
+        (format!("{{ r: {{ a: {A}, f: (y -> a) }}, s: r & {{ b: 1 }}, m: [r, s] }}.m"), "1"),
+        // Two calls are two records in a list too, met or not (D109).
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), m: [[f 1] & [{{ q: 1 }}], [f 1] & [{{ q: 1 }}]] }}.m"), "2"),
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), m: [{{ l: [f 1] }} & {{ l: [{{ q: 1 }}] }}, {{ l: [f 1] }} & {{ l: [{{ q: 1 }}] }}] }}.m"), "2"),
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), m: [[f 1], [f 1]] }}.m"), "2"),
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), m: [[[f 1]] & [[{{ q: 1 }}]], [[f 1]] & [[{{ q: 1 }}]]] }}.m"), "2"),
+        // The other half: one name for a list, met twice, is one list.
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), l: [f 1], m: [l & [{{ q: 1 }}], l & [{{ q: 1 }}]] }}.m"), "1"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r10: {e}"), appended(&format!("r10-{i}"), &e), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
