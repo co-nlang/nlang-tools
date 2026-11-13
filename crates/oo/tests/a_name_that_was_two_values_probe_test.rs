@@ -1050,6 +1050,11 @@ fn r10_functions_that_read_each_other() {
             (format!("{{ r: {{ a: {r}, f: (y -> r.a) }}, e: [r.f 1 = r.a, r.f 1 = r.f 2] }}.e"), "[#true , #true ]"),
             // No effect, no call: lists written alike meet as they did.
             ("[[1, 2] & [@int, @int], [1, 2] & [@int, @int]]".to_string(), "[[1, 2], [1, 2]]"),
+            // Two captures of one node that hold different names are two views.
+            (
+                "{ r: { a: 1, b: 2, f: (y -> a), g: (y -> b) } }.r".to_string(),
+                "{ a: 1 b: 2 f: {{ %kind: #logic %morphism: #true %rules: {{ y: {{ %closure: {{ 0: {} 1: { a: 1 } }} %code: a }} }} }} g: {{ %kind: #logic %morphism: #true %rules: {{ y: {{ %closure: {{ 0: {} 1: { b: 2 } }} %code: b }} }} }} }",
+            ),
         ] {
             check(&mut bad, &format!("r10-eval: {e}"), w.eval_in("two", &e), want);
         }

@@ -793,7 +793,9 @@ impl Ouroboros {
         if !nondet && !top_like {
             if let Ok(memo) = self.unify_memo.read() {
                 if let Some((cached_res, met)) = memo.get(&cache_key) {
-                    if *met == nodes {
+                    // A list is no node, and what it holds may be: two
+                    // lists written alike that hold calls are two lists.
+                    if *met == nodes && !holds_a_node(&a, 0) && !holds_a_node(&b, 0) {
                         return cached_res.clone();
                     }
                     again = true;
@@ -1739,5 +1741,22 @@ fn reads_names_of(v: &Value, a: &ComboVal, b: &ComboVal) -> bool {
             || c.types.keys().any(|k| crate::eval::captures(&free, "@", k))
             || c.rules.keys().any(|k| crate::eval::captures(&free, "/", k))
             || c.local.keys().any(|k| crate::eval::captures(&free, "~", k))
+    })
+}
+
+/// Q-126: a record with no node of its own (a list) that holds what has one,
+/// or what has yet to be worked out: which nodes meet is not known from it.
+fn holds_a_node(v: &Value, depth: u8) -> bool {
+    let Value::Combo(c) = v else { return false };
+    if c.node_id != 0 {
+        return false;
+    }
+    [&c.data, &c.local, &c.rules, &c.types].iter().any(|axis| {
+        axis.values().any(|f| match f {
+            Value::Thunk { .. } => true,
+            Value::Combo(g) if g.node_id != 0 => true,
+            Value::Combo(_) => depth < 8 && holds_a_node(f, depth + 1),
+            _ => false,
+        })
     })
 }

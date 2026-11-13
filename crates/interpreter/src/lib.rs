@@ -119,6 +119,9 @@ thread_local! {
     /// is (`UNMETERED_MERGE` also marks the universe's writes for D118).
     /// `force_recursive` clears it: a definition forced on the way is metered.
     pub(crate) static FREE_MEET: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126: the nodes whose view a function's closure is being read on.
+    pub(crate) static READING_NODES: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
     /// Q-126: how many times a builtin with an active effect has run here.
     /// A definition whose evaluation moved it observed an effect.
     pub(crate) static EFFECTS_RUN: std::cell::Cell<u64> = std::cell::Cell::new(0);
@@ -192,10 +195,76 @@ struct Kept {
     of: Option<u64>,
 }
 
+/// Q-126: a node's view as a function's closure read it in this universe:
+/// every name forced as the node's field (`Read`, what a deferred body
+/// holds), and that walked to the end (`Walked`, what an arrow's closure
+/// prints and stores).
+#[derive(Clone)]
+enum ViewRead {
+    Read(std::sync::Arc<ComboVal>),
+    Walked(Value),
+}
+struct ViewKept {
+    names: Vec<String>,
+    root: Arc<ComboVal>,
+    strategy: ObservationStrategy,
+    fuel_budget: u64,
+    ran: u64,
+    /// The fuel reading it spent: reading it again spends the same, so
+    /// where an observation runs out does not depend on what was read before.
+    spent: u64,
+    read: ViewRead,
+}
+thread_local! {
+    static VIEWS_READ: std::cell::RefCell<HashMap<(u64, bool), ViewKept>> = std::cell::RefCell::new(HashMap::new());
+}
+/// The names a view holds, axis by axis: two captures of one node that hold
+/// different names are different views.
+fn view_names(f: &ComboVal) -> Vec<String> {
+    let mut out = Vec::new();
+    for axis in [&f.data, &f.local, &f.rules, &f.types, &f.meta, &f.system] {
+        out.extend(axis.keys().cloned());
+        out.push(String::new());
+    }
+    out
+}
+fn view_read(node: u64, walked: bool, names: &[String], ctx: &mut EvalContext) -> Option<ViewRead> {
+    let (read, ran, spent) = VIEWS_READ.with(|m| {
+        let m = m.borrow();
+        let k = m.get(&(node, walked))?;
+        (k.names == names
+            && Arc::ptr_eq(&k.root, &ctx.root)
+            && k.strategy == ctx.strategy
+            && k.fuel_budget == ctx.fuel_budget)
+            .then(|| (k.read.clone(), k.ran, k.spent))
+    })?;
+    // Not enough left to read it: read it, and run out where reading does.
+    if ctx.fuel < spent {
+        return None;
+    }
+    ctx.fuel -= spent;
+    // Reading what an effect gave observes it, as forcing the names did.
+    EFFECTS_RUN.with(|c| c.set(c.get() + ran));
+    Some(read)
+}
+fn view_keep(node: u64, walked: bool, names: Vec<String>, ctx: &EvalContext, ran: u64, spent: u64, read: ViewRead) {
+    VIEWS_READ.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() >= 4096 {
+            m.clear();
+        }
+        m.insert(
+            (node, walked),
+            ViewKept { names, root: ctx.root.clone(), strategy: ctx.strategy, fuel_budget: ctx.fuel_budget, ran, spent, read },
+        );
+    });
+}
+
 /// Q-126: the memo is cleared (commit, load, refine); records kept as one
 /// value go with it (they would not be read again — the root moved — but
 /// they hold it). What an effect gave stays.
 fn forget_kept_records() {
+    VIEWS_READ.with(|m| m.borrow_mut().clear());
     OBSERVED.with(|m| {
         let mut m = m.borrow_mut();
         for o in m.values_mut() {
@@ -4385,27 +4454,80 @@ impl Ouroboros {
     /// Q-126: a function's closure holds views of the nodes it was written
     /// in. A name the view holds is that node's field: observing the
     /// function (printing it, storing it) reads the field, as the body does.
-    fn read_closure_on_its_nodes(&self, closure: Value, ctx: &mut EvalContext) -> Value {
-        let Value::Combo(mut frames) = closure else {
-            return closure;
+    ///
+    /// A node whose view is already being read is not read again inside
+    /// itself: functions that read each other close over one another, and
+    /// the walk would not end. There the view is left empty, which is what
+    /// a closure two functions deep has always held.
+    ///
+    /// A node is read once: N functions written in one node close over the
+    /// same N names, and each reading them again made N functions cost N³.
+    fn read_closure_on_its_nodes(
+        &self,
+        closure: Value,
+        rebind: &dyn Fn(Value) -> Value,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        let mut frames = match rebind(closure) {
+            Value::Combo(frames) => frames,
+            other => return self.force_recursive(other, ctx),
         };
+        let closed = frames.closed;
         for (_, frame) in frames.data.iter_mut() {
-            let Value::Combo(f) = frame else { continue };
-            if f.node_id == 0 {
-                continue;
-            }
-            let view = std::sync::Arc::new(f.clone());
-            for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
-                for (_, v) in axis.iter_mut() {
-                    if matches!(v, Value::Thunk { .. }) {
-                        ctx.lexical_frame = Some(std::sync::Arc::clone(&view));
-                        *v = self.force(std::mem::replace(v, Value::Top), ctx);
-                        ctx.lexical_frame = None;
+            let forced = match std::mem::replace(frame, Value::Top) {
+                Value::Combo(mut f) if f.node_id != 0 => {
+                    let node = f.node_id;
+                    if READING_NODES.with(|r| r.borrow().contains(&node)) {
+                        for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
+                            axis.clear();
+                        }
+                        Value::Combo(f)
+                    } else {
+                        // What is read inside another node's view is cut
+                        // where that node comes round again; only a view
+                        // read on its own is the same for every reader.
+                        let alone = READING_NODES.with(|r| r.borrow().is_empty());
+                        let names = view_names(&f);
+                        let kept = if alone { view_read(node, true, &names, ctx) } else { None };
+                        match kept {
+                            Some(ViewRead::Walked(v)) => v,
+                            _ => {
+                                let before = effects_run();
+                                let fuel = ctx.fuel;
+                                READING_NODES.with(|r| r.borrow_mut().insert(node));
+                                self.force_view_on_its_node(&mut f, ctx);
+                                let out = self.force_recursive(Value::Combo(f), ctx);
+                                READING_NODES.with(|r| r.borrow_mut().remove(&node));
+                                if alone && !out.contains_blur() {
+                                    view_keep(node, true, names, ctx, effects_run() - before, fuel.saturating_sub(ctx.fuel), ViewRead::Walked(out.clone()));
+                                }
+                                out
+                            }
+                        }
                     }
+                }
+                other => self.force_recursive(other, ctx),
+            };
+            if !closed {
+                frames.effect = frames.effect.union(forced.effect());
+            }
+            *frame = forced;
+        }
+        Value::Combo(frames)
+    }
+
+    /// Q-126: each name a view holds, read as the field of its node.
+    fn force_view_on_its_node(&self, f: &mut ComboVal, ctx: &mut EvalContext) {
+        let view = std::sync::Arc::new(f.clone());
+        for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
+            for (_, v) in axis.iter_mut() {
+                if matches!(v, Value::Thunk { .. }) {
+                    ctx.lexical_frame = Some(std::sync::Arc::clone(&view));
+                    *v = self.force(std::mem::replace(v, Value::Top), ctx);
+                    ctx.lexical_frame = None;
                 }
             }
         }
-        Value::Combo(frames)
     }
 
     /// Q-126: a deferred branch body is code that closes over views of the
@@ -4418,16 +4540,18 @@ impl Ouroboros {
             if frame.node_id == 0 {
                 continue;
             }
-            let view = std::sync::Arc::clone(frame);
+            let node = frame.node_id;
+            let names = view_names(frame);
+            if let Some(ViewRead::Read(v)) = view_read(node, false, &names, ctx) {
+                *frame = v;
+                continue;
+            }
+            let before = effects_run();
+            let fuel = ctx.fuel;
             let f = std::sync::Arc::make_mut(frame);
-            for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
-                for (_, v) in axis.iter_mut() {
-                    if matches!(v, Value::Thunk { .. }) {
-                        ctx.lexical_frame = Some(std::sync::Arc::clone(&view));
-                        *v = self.force(std::mem::replace(v, Value::Top), ctx);
-                        ctx.lexical_frame = None;
-                    }
-                }
+            self.force_view_on_its_node(f, ctx);
+            if !Value::Combo(f.clone()).contains_blur() {
+                view_keep(node, false, names, ctx, effects_run() - before, fuel.saturating_sub(ctx.fuel), ViewRead::Read(std::sync::Arc::clone(frame)));
             }
         }
         Value::Thunk { expr, closure, context, effect }
@@ -4605,8 +4729,11 @@ impl Ouroboros {
                                 }
                                 // Q-126: what a function closes over is a
                                 // view of the node it was written in.
-                                let v = if has_code && k == "closure" { self.read_closure_on_its_nodes(v, ctx) } else { v };
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if has_code && k == "closure" {
+                                    self.read_closure_on_its_nodes(v, &rebind, ctx)
+                                } else {
+                                    self.force_recursive(rebind(v), ctx)
+                                };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
