@@ -523,7 +523,7 @@ pub(crate) fn narrow_deferred_body(v: Value) -> Value {
             close_free_dependencies(&closure, &mut free);
             let closure = closure
                 .iter()
-                .map(|f| std::sync::Arc::new(capture_free_fields(f, &free)))
+                .map(|f| std::sync::Arc::new(capture_of_node(f, &free)))
                 .collect();
             Value::Thunk { expr, closure, context, effect }
         }
@@ -583,7 +583,8 @@ fn capture_free_fields(scope: &ComboVal, free: &HashSet<String>) -> ComboVal {
 
 /// Q-126: what a function closes over is a view of the node it was written
 /// in: a name read in its body is that node's field. (A deferred branch
-/// body's frames stay no node: applying the branch is what does its body.)
+/// body's frames are that view too; the body itself is forced as an
+/// application, `force_applied`.)
 fn capture_of_node(scope: &ComboVal, free: &HashSet<String>) -> ComboVal {
     let mut captured = capture_free_fields(scope, free);
     captured.node_id = scope.node_id;

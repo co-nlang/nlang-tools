@@ -747,6 +747,8 @@ impl Ouroboros {
                         },
                         other => other,
                     };
+                    // Q-126: navigation reads a coordinate (it is not an
+                    // application): read twice, it is one value.
                     return self.force(val, ctx);
                 }
             }
@@ -886,7 +888,7 @@ impl Ouroboros {
                     },
                     other => other,
                 };
-                let forced = self.force(val, ctx);
+                let forced = self.force_applied(val, ctx);
                 if forced.is_morphism() {
                     return self.apply_morphism(forced, arg, ctx);
                 }

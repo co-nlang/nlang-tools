@@ -125,6 +125,9 @@ thread_local! {
     /// Q-126: how many times a `$` has been read here. A force that moved
     /// it gave an answer that belongs to the input it was read under.
     pub(crate) static DOLLAR_READ: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-126: the next force is a chosen branch doing its body: an
+    /// application, not a field of the node the table was written in.
+    pub(crate) static APPLIED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Q-126: the last application's number. Each binding of `$` (a pipe, a
     /// call, a thunk carrying its input) is one application.
     pub(crate) static APPLICATIONS: std::cell::Cell<u64> = std::cell::Cell::new(0);
@@ -3831,7 +3834,17 @@ impl Ouroboros {
 
     /// One step of `force`: a recipe whose value is a live reference yields
     /// the reference, unread.
+    /// Q-126: force a chosen branch's body. What it reads by name is the
+    /// node's field; the body itself is done once per application.
+    pub(crate) fn force_applied(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        APPLIED.with(|c| c.set(true));
+        self.force(val, ctx)
+    }
+
     pub(crate) fn force_once(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        if APPLIED.with(|c| c.replace(false)) {
+            return self.force_once_metered(val, ctx);
+        }
         // Q-126: a field of a written node is one coordinate. Once forcing it
         // did an effect, every later read in this observation reads that.
         let (frames, key) = match &val {
