@@ -787,3 +787,84 @@ fn r7_an_answer_belongs_to_the_input_it_read() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+/// A table with a default branch: `t 0` is 0, anything else does the body.
+const T: &str = "@{ 0 }: 0, _";
+
+#[test]
+fn r8_a_table_is_a_function_too() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = vec![
+        // A name read in a branch's body, the branch chosen twice, and read directly.
+        kept("r8-branch", "q: { a: h \"Q126\", t: { @{ 0 }: 0, _: a }, m: [t 1, t 2, a] }", "_.q.m 1", "\"one\""),
+        one_value("r8-random-branch", "q: { a: ~%Math./random (), t: { @{ 0 }: 0, _: a }, e: [t 1 = t 2, t 1 = a] }", &[("_.q.e", "[#true , #true ]")]),
+    ];
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r8-eval");
+        let r = "~%Math./random ()";
+        for (e, want) in [
+            // The name a branch reads is the name: against a direct read, another
+            // branch, another table, an arrow, a pipe, a table made in a body.
+            (format!("{{ a: {r}, t: {{ {T}: a }}, e: [t 1 = t 2, t 1 = a, a = t 1] }}.e"), "[#true , #true , #true ]"),
+            (format!("{{ a: {r}, t: {{ @{{ 0 }}: a, _: a }}, e: [t 0 = t 1, t 0 = a, t 1 = a] }}.e"), "[#true , #true , #true ]"),
+            (format!("{{ a: {r}, t: {{ {T}: a }}, f: x -> a, e: [t 1 = f 1, f 1 = t 1] }}.e"), "[#true , #true ]"),
+            (format!("{{ a: {r}, t: {{ {T}: a }}, u: {{ {T}: a }}, e: t 1 = u 1 }}.e"), "#true"),
+            (format!("{{ a: {r}, b: a, t: {{ {T}: b }}, e: [t 1 = a, t 1 = b] }}.e"), "[#true , #true ]"),
+            (format!("{{ a: {r}, t: {{ {T}: a }}, e: [(1 |> t) = (2 |> t), (1 |> t) = a] }}.e"), "[#true , #true ]"),
+            (format!("{{ a: {r}, f: x -> {{ {T}: a }} x, e: [f 1 = f 2, f 1 = a] }}.e"), "[#true , #true ]"),
+            // A record a call made: its table reads its own field; two calls, two records.
+            (format!("{{ mk: x -> {{ a: {r}, t: {{ {T}: a }} }}, r: mk 1, s: mk 1, e: [r.t 1 = r.t 2, r.t 1 = r.a, r.t 1 = s.t 1] }}.e"), "[#true , #true , #false ]"),
+            // A branch read by navigation is a coordinate: read twice, one value.
+            (format!("{{ t: {{ @{{ 0 }}: 0, k: {r} }}, e: t.k = t.k }}.e"), "#true"),
+            (format!("{{ a: {r}, t: {{ @{{ 0 }}: 0, k: a }}, e: [t.k = a, t.k = t.k] }}.e"), "[#true , #true ]"),
+            // An open name read in a branch: each input its own answer.
+            (format!("{{ g: {G}, a: g $, t: {{ {T}: a }}, m: [t \"x\", t \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            // The other half: what a branch's body makes is made each time.
+            (format!("{{ t: {{ {T}: {r} }}, e: t 1 = t 1 }}.e"), "#false"),
+            (format!("{{ t: {{ {T}: {{ a: {r}, e: a = a }} }}, e: [(t 1).e, (t 1).a = (t 1).a] }}.e"), "[#true , #false ]"),
+            // No effect: the values.
+            (format!("{{ a: 5, t: {{ {T}: a + $ }}, m: [t 1, t 2, t 1, t 0] }}.m"), "[6, 7, 6, 0]"),
+            (format!("{{ a: $ + 1, t: {{ {T}: a }}, m: [t 1, t 5, t 1] }}.m"), "[2, 6, 2]"),
+            (format!("{{ mk: x -> {{ v: x, t: {{ {T}: v + $ }} }}, r: mk 1, s: mk 2, m: [r.t 10, s.t 10, r.t 20] }}.m"), "[11, 12, 21]"),
+            (format!("{{ a: $ * 2, t: {{ {T}: a + $ }}, m: [10 |> (_ -> t 1), 20 |> (_ -> t 1)] }}.m"), "[3, 3]"),
+            (format!("{{ f: {{ {T}: $ + f ($ - 1) }}, m: [f 3, f 4, f 3] }}.m"), "[6, 10, 6]"),
+        ] {
+            check(&mut bad, &format!("r8-eval: {e}"), w.eval_in("two", &e), want);
+        }
+        bad
+    }));
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        (format!("{{ a: {A}, t: {{ {T}: a }}, m: [t 1, t 2, a] }}.m"), "1"),
+        (format!("{{ a: {A}, t: {{ @{{ 0 }}: a, _: a }}, m: [t 0, t 1] }}.m"), "1"),
+        (format!("{{ a: {A}, t: {{ {T}: a }}, f: (x -> a), m: [f 1, t 1, f 2] }}.m"), "1"),
+        (format!("{{ g: {G}, a: g 1, f: {{ {T}: a + f ($ - 1) }}, m: f 3 }}.m"), "1"),
+        (format!("{{ g: {G}, a: g 1, t: {{ {T}: a }}, u: {{ {T}: a + t $ }}, m: u 1 }}.m"), "1"),
+        (format!("{{ g: {G}, mk: (x -> {{ a: g x, t: {{ {T}: a }} }}), r: mk \"x\", s: mk \"y\", m: [r.t 1, s.t 1, r.t 2, r.a] }}.m"), "2"),
+        // Navigation reads the coordinate once; applying the branch does its body.
+        (format!("{{ g: {G}, t: {{ @{{ 0 }}: 0, k: g \"x\" }}, m: [t.k, t.k] }}.m"), "1"),
+        (format!("{{ g: {G}, t: {{ @{{ 0 }}: 0, k: g \"x\" }}, m: [t.k, t \"k\", t \"k\"] }}.m"), "3"),
+        (format!("{{ g: {G}, a: g \"x\", t: {{ @{{ 0 }}: 0, k: a }}, m: [t.k, t \"k\", a] }}.m"), "1"),
+        // An open name read in a branch: each application does it.
+        (format!("{{ g: {G}, a: g $, t: {{ {T}: a }}, m: [t \"x\", t \"y\"] }}.m"), "2"),
+        (format!("{{ g: {G}, a: g $, t: {{ {T}: a }}, m: [t \"x\", t \"x\"] }}.m"), "2"),
+        // The other half (D109): what a branch's body does, each choice does.
+        (format!("{{ g: {G}, t: {{ {T}: g $ }}, m: [t \"x\", t \"y\", t \"x\"] }}.m"), "3"),
+        (format!("{{ g: {G}, t: {{ {T}: {{ a: g \"x\" }} }}, m: [(t 1).a, (t 1).a] }}.m"), "2"),
+        (format!("{{ g: {G}, a: g \"o\", t: {{ {T}: [a, g $] }}, m: [t \"x\", t \"y\"] }}.m"), "3"),
+        (format!("{{ g: {G}, f: {{ {T}: (g 1) + f ($ - 1) }}, m: f 3 }}.m"), "3"),
+        (format!("{{ g: {G}, t: {{ {T}: g \"x\" }}, m: [t 1, t 1] }}.m"), "2"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r8: {e}"), appended(&format!("r8-{i}"), &e), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
