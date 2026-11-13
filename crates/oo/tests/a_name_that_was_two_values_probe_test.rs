@@ -868,3 +868,112 @@ fn r8_a_table_is_a_function_too() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ── r9 ── two calls are two records; a function observed reads its node ──
+
+#[test]
+fn r9_a_function_observed_reads_its_node() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = vec![
+        // A function stored beside the name it reads: the commit does the
+        // effect once, and from history the function reads the field.
+        kept("r9-stored-arrow", "q: { r: { a: h \"Q126\", f: (y -> a) } }", "[_.q.r.a, _.q.r.f 1]", "[\"one\" , \"one\" ]"),
+        kept("r9-stored-table", "q: { r: { a: h \"Q126\", t: { @{ 0 }: 0, _: a } } }", "[_.q.r.a, _.q.r.t 1, _.q.r.t 2]", "[\"one\" , \"one\" , \"one\" ]"),
+        // ... with the function that does the effect written beside them.
+        kept(
+            "r9-stored-beside",
+            "q: { r: { g: (s -> ~%Io./append_file (\"a.log\", \"Z\") |> (_ -> ~%Env.get s)), a: g \"Q126\", f: (y -> a) } }",
+            "[_.q.r.a, _.q.r.f 1]",
+            "[\"one\" , \"one\" ]",
+        ),
+        one_value(
+            "r9-random-nested",
+            "q: { r: { a: ~%Math./random (), f: (y -> a), t: { @{ 0 }: 0, _: a }, u: { @{ 0 }: 0, k: a } } }",
+            &[("[_.q.r.a = _.q.r.f 1, _.q.r.a = _.q.r.t 1, _.q.r.t 1 = _.q.r.t 2, _.q.r.u.k = _.q.r.a]", "[#true , #true , #true , #true ]")],
+        ),
+        one_value(
+            "r9-random-flat",
+            "q: { a: ~%Math./random (), t: { @{ 0 }: 0, _: a }, u: { @{ 0 }: 0, k: a } }",
+            &[("[_.q.t 1 = _.q.a, _.q.t 1 = _.q.t 2, _.q.u.k = _.q.a]", "[#true , #true , #true ]")],
+        ),
+    ];
+    // The other half: a stored function still follows a later write of the
+    // name it reads, and a later write beside an answered name keeps it.
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r9-later");
+        check(&mut bad, "r9-later: write", w.write("q: { r: { a: @int, f: (y -> a), t: { @{ 0 }: 0, _: a } } }\n"), "e0 landed");
+        check(&mut bad, "r9-later: second write", w.write("q: { r: { a: 5 } }\n"), "e0 landed");
+        check(&mut bad, "r9-later: read", w.eval_in("two", "[_.q.r.a, _.q.r.f 1, _.q.r.t 1]"), "[5, 5, 5]");
+        let w = Ws::new("r9-beside");
+        check(&mut bad, "r9-beside: write", w.write(&format!("{H}\nq: {{ r: {{ a: h \"Q126\", f: (y -> a) }} }}\n")), "e0 landed");
+        check(&mut bad, "r9-beside: second write", w.write("q: { r: { b: 2 } }\n"), "e0 landed");
+        check(&mut bad, "r9-beside: bytes", w.bytes().to_string(), "1");
+        check(&mut bad, "r9-beside: read", w.eval_in("two", "[_.q.r.a, _.q.r.f 1, _.q.r.b]"), "[\"one\" , \"one\" , 2 ]");
+        // A function printed from history: the reading does no effect.
+        let w = Ws::new("r9-printed");
+        check(&mut bad, "r9-printed: write", w.write(&format!("q: {{ g: {G}, a: g \"x\", f: (y -> a) }}\n")), "e0 landed");
+        check(&mut bad, "r9-printed: bytes after commit", w.bytes().to_string(), "1");
+        let _ = w.eval_in("two", "_.q.f");
+        check(&mut bad, "r9-printed: bytes after printing f", w.bytes().to_string(), "1");
+        bad
+    }));
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r9-eval");
+        let r = "~%Math./random ()";
+        for (e, want) in [
+            // One name met twice is one record.
+            (format!("{{ r: {{ p: {r} }}, e: [(r & {{ q: 1 }}).p = (r & {{ q: 1 }}).p, (r & {{ q: 1 }}).p = r.p] }}.e"), "[#true , #true ]"),
+            (format!("{{ f: (y -> {{ p: {r} }}), r: f 1, e: [(r & {{ q: 1 }}).p = (r & {{ q: 1 }}).p, (r & {{ q: 1 }}).p = r.p] }}.e"), "[#true , #true ]"),
+            // No effect: the values.
+            ("{ f: (y -> { p: y + 1 }), m: [f 1 & { q: 1 }, f 2 & { q: 1 }, f 1 & { q: 1 }] }.m".to_string(), "[{ p: 2 q: 1 }, { p: 3 q: 1 }, { p: 2 q: 1 }]"),
+        ] {
+            check(&mut bad, &format!("r9-eval: {e}"), w.eval_in("two", &e), want);
+        }
+        // Meeting again what was met costs what it cost: a 200 field record
+        // a call made, met sixteen times, is still a value.
+        let fields = (1..=200).map(|i| format!("k{i}: {i}")).collect::<Vec<_>>().join(", ");
+        let list = (1..=16).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+        let want = format!("[{}]", (2..=17).map(|i| i.to_string()).collect::<Vec<_>>().join(", "));
+        let e = format!("{{ f: (y -> {{ {fields} }}), m: ~%List./map ((x -> (f 1 & {{ q: 1 }}).k1 + x), [{list}]) }}.m");
+        check(&mut bad, "r9-eval: a record met sixteen times", w.eval_in("two", &e), &want);
+        bad
+    }));
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        // Two calls are two records, met or not (D109).
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), m: [f 1 & {{ q: 1 }}, f 1 & {{ q: 1 }}] }}.m"), "2"),
+        (format!("{{ g: {G}, t: {{ @{{ 1 }}: {{ p: g \"P\" }} }} & {{ @{{ 1 }}: {{ q: g \"Q\" }} }}, m: [t 1, t 1] }}.m"), "4"),
+        (format!("{{ g: {G}, t: {{ @{{ 1 }}: {{ p: g \"P\" }} }} & {{ @{{ 1 }}: {{ q: g \"Q\" }} }}, m: [(t 1).p, (t 1).q, (t 1).p] }}.m"), "3"),
+        (format!("{{ g: {G}, t: (y -> {{ p: g \"P\" }}) & (y -> {{ q: g \"Q\" }}), m: [t 1, t 1] }}.m"), "4"),
+        (format!("{{ g: {G}, t: {{ @{{ 1 }}: {{ p: g \"P\" }} }} & {{ @{{ 1 }}: {{ q: g \"Q\" }} }}, m: [t 1] }}.m"), "2"),
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), h: (y -> {{ q: g \"Q\" }}), m: [(f 1) & (h 1), (f 1) & (h 1)] }}.m"), "4"),
+        (format!("{{ t: {{ @{{ 1 }}: {{ p: {A} }} }} & {{ @{{ 1 }}: {{ q: {A} }} }}, m: [t 1, t 1] }}.m"), "4"),
+        // The other half: one name met twice is one record.
+        (format!("{{ g: {G}, r: {{ p: g \"P\" }}, m: [r & {{ q: 1 }}, r & {{ q: 1 }}, r.p] }}.m"), "1"),
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), r: f 1, m: [r & {{ q: 1 }}, r & {{ q: 1 }}, r.p] }}.m"), "1"),
+        (format!("{{ g: {G}, f: (y -> {{ p: g \"P\" }}), s: f 1 & {{ q: 1 }}, m: [s, s, s.p] }}.m"), "1"),
+        // A function observed reads the names it closes over on their node.
+        (format!("{{ r: {{ a: {A}, f: (y -> a) }} }}.r"), "1"),
+        (format!("{{ r: {{ a: {A}, t: {{ {T}: a }} }} }}.r"), "1"),
+        (format!("{{ a: {A}, f: (y -> a) }}.f"), "1"),
+        (format!("{{ a: {A}, t: {{ {T}: a }} }}.t"), "1"),
+        (format!("{{ r: {{ a: {A}, f: (y -> a) }}, m: [r, r.f 1, r.a] }}.m"), "1"),
+        (format!("{{ r: {{ a: {A}, f: (y -> z -> a) }}, m: [r, (r.f 1) 2] }}.m"), "1"),
+        // The other half: observing a function does not do its body.
+        (format!("{{ r: {{ f: (y -> {A}) }} }}.r"), "0"),
+        (format!("{{ r: {{ t: {{ {T}: {A} }} }} }}.r"), "0"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r9: {e}"), appended(&format!("r9-{i}"), &e), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
