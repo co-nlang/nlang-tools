@@ -1031,7 +1031,7 @@ pub struct Ouroboros {
     pub holds_universe: bool,
     /// Owns the temp tree for [`Self::new_in_memory`]. Drop removes its `.oo/`.
     _ephemeral_root: Option<tempfile::TempDir>,
-    pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), Value>>,
+    pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), (Value, (u64, u64))>>,
     pub force_memo: RwLock<HashMap<ForceMemoKey, MemoEntry>>,
     /// Reverse index: coord → memo keys that read this coord.
     pub force_memo_rev: RwLock<HashMap<String, HashSet<ForceMemoKey>>>,
@@ -4382,6 +4382,57 @@ impl Ouroboros {
         out
     }
 
+    /// Q-126: a function's closure holds views of the nodes it was written
+    /// in. A name the view holds is that node's field: observing the
+    /// function (printing it, storing it) reads the field, as the body does.
+    fn read_closure_on_its_nodes(&self, closure: Value, ctx: &mut EvalContext) -> Value {
+        let Value::Combo(mut frames) = closure else {
+            return closure;
+        };
+        for (_, frame) in frames.data.iter_mut() {
+            let Value::Combo(f) = frame else { continue };
+            if f.node_id == 0 {
+                continue;
+            }
+            let view = std::sync::Arc::new(f.clone());
+            for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
+                for (_, v) in axis.iter_mut() {
+                    if matches!(v, Value::Thunk { .. }) {
+                        ctx.lexical_frame = Some(std::sync::Arc::clone(&view));
+                        *v = self.force(std::mem::replace(v, Value::Top), ctx);
+                        ctx.lexical_frame = None;
+                    }
+                }
+            }
+        }
+        Value::Combo(frames)
+    }
+
+    /// Q-126: a deferred branch body is code that closes over views of the
+    /// nodes it was written in, as an arrow does.
+    fn read_body_on_its_nodes(&self, body: Value, ctx: &mut EvalContext) -> Value {
+        let Value::Thunk { expr, mut closure, context, effect } = body else {
+            return body;
+        };
+        for frame in closure.iter_mut() {
+            if frame.node_id == 0 {
+                continue;
+            }
+            let view = std::sync::Arc::clone(frame);
+            let f = std::sync::Arc::make_mut(frame);
+            for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
+                for (_, v) in axis.iter_mut() {
+                    if matches!(v, Value::Thunk { .. }) {
+                        ctx.lexical_frame = Some(std::sync::Arc::clone(&view));
+                        *v = self.force(std::mem::replace(v, Value::Top), ctx);
+                        ctx.lexical_frame = None;
+                    }
+                }
+            }
+        }
+        Value::Thunk { expr, closure, context, effect }
+    }
+
     fn force_recursive_metered(&self, val: Value, ctx: &mut EvalContext) -> Value {
         // Already-solid combos (cocoon eval forced fields after seal): avoid
         // recursively re-forcing them, but still bill the semantic subspaces
@@ -4513,6 +4564,7 @@ impl Ouroboros {
                             // or has an effect is code until dispatch chooses
                             // the branch. Observing the table does not run it.
                             let is_rule = crate::dispatch::is_rule_cocoon(&c);
+                            let has_code = is_rule || c.get_field("%code").is_some();
                             // D118: a met node's fields resolve in it.
                             let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
                             let views = std::cell::RefCell::new(crate::value::MetViews::new());
@@ -4546,9 +4598,14 @@ impl Ouroboros {
                             }
                             for (k, v) in std::mem::take(&mut c.meta) {
                                 if is_rule && k == "val" && crate::dispatch::is_deferred_body(&v) {
-                                    new_c.meta.insert(k, v);
+                                    // Q-126: the body stays code; the names
+                                    // it closes over are its nodes' fields.
+                                    new_c.meta.insert(k, self.read_body_on_its_nodes(v, ctx));
                                     continue;
                                 }
+                                // Q-126: what a function closes over is a
+                                // view of the node it was written in.
+                                let v = if has_code && k == "closure" { self.read_closure_on_its_nodes(v, ctx) } else { v };
                                 let forced = self.force_recursive(rebind(v), ctx);
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());

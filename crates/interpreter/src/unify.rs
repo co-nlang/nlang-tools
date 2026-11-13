@@ -777,24 +777,38 @@ impl Ouroboros {
             || b.is_top()
             || crate::DEFER_RECIPES.with(|c| c.get()) != 0
             || !ctx.memo_enabled;
-        let cache_key = if id_a.digest <= id_b.digest {
-            (id_a, id_b)
-        } else {
-            (id_b, id_a)
+        let in_order = id_a.digest <= id_b.digest;
+        let cache_key = if in_order { (id_a, id_b) } else { (id_b, id_a) };
+        // Q-126: a record a call made is its own node. Two calls give two
+        // records that are written alike: what one meet of them gave is not
+        // what the other gives (its fields would be the first call's). The
+        // entry is the answer for the nodes that met; others written alike
+        // meet again, and spend what reading the entry spent: nothing.
+        let node = |v: &Value| match v {
+            Value::Combo(c) => c.node_id,
+            _ => 0,
         };
+        let nodes = if in_order { (node(&a), node(&b)) } else { (node(&b), node(&a)) };
+        let mut again = false;
         if !nondet && !top_like {
             if let Ok(memo) = self.unify_memo.read() {
-                if let Some(cached_res) = memo.get(&cache_key) {
-                    return cached_res.clone();
+                if let Some((cached_res, met)) = memo.get(&cache_key) {
+                    if *met == nodes {
+                        return cached_res.clone();
+                    }
+                    again = true;
                 }
             }
         }
+        let free = crate::FREE_MEET.with(|c| c.replace(again || c.get()));
         let mut result = self.do_unify(a.clone(), b.clone(), ctx);
+        crate::FREE_MEET.with(|c| c.set(free));
         let combined_effect = a.effect().union(b.effect());
         if let Value::Combo(ref mut cv) = result {
             cv.effect = cv.effect.union(combined_effect);
         }
-        if !nondet
+        if !again
+            && !nondet
             && !top_like
             && !matches!(result, Value::Bottom(_))
             && !result.contains_blur()
@@ -804,7 +818,7 @@ impl Ouroboros {
                 if memo.len() >= UNIFY_MEMO_CAP {
                     memo.clear();
                 }
-                memo.insert(cache_key, result.clone());
+                memo.insert(cache_key, (result.clone(), nodes));
             }
         }
         result
