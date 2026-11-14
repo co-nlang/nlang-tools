@@ -119,6 +119,278 @@ thread_local! {
     /// is (`UNMETERED_MERGE` also marks the universe's writes for D118).
     /// `force_recursive` clears it: a definition forced on the way is metered.
     pub(crate) static FREE_MEET: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126: the nodes whose view a function's closure is being read on.
+    pub(crate) static READING_NODES: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+    /// Q-126: how many times a builtin with an active effect has run here.
+    /// A definition whose evaluation moved it observed an effect.
+    pub(crate) static EFFECTS_RUN: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-126: how many times a `$` has been read here. A force that moved
+    /// it gave an answer that belongs to the input it was read under.
+    pub(crate) static DOLLAR_READ: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-126: the next force is a chosen branch doing its body: an
+    /// application, not a field of the node the table was written in.
+    pub(crate) static APPLIED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126: the last application's number. Each binding of `$` (a pipe, a
+    /// call, a thunk carrying its input) is one application.
+    pub(crate) static APPLICATIONS: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-126: above 0 while the universe forces a value for its own
+    /// bookkeeping (is it ⊥, did it read the universe, did a call make it).
+    /// An effect is not done there: the builtin answers `_`.
+    pub(crate) static NO_EFFECTS: std::cell::Cell<u32> = std::cell::Cell::new(0);
+    /// Q-126 / D129: set by `oo evolve` — the working set stays lazy.
+    pub(crate) static DEFER_LAZY: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126 / D129: above 0 while a definition is tried without effects to
+    /// learn whether it reads a lazy field that does one.
+    pub(crate) static LAZY_PROBE: std::cell::Cell<u32> = std::cell::Cell::new(0);
+    /// Q-126 / D129: the try forced a field of a written node that does an effect.
+    pub(crate) static LAZY_HIT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Q-126: effects left undone by bookkeeping (answered `_`).
+    pub(crate) static EFFECTS_SKIPPED: std::cell::Cell<u64> = std::cell::Cell::new(0);
+}
+
+/// Q-126 / D129: `oo evolve` leaves a definition that reads a lazy field
+/// doing an effect as its recipe; the commit observes both at once.
+pub fn defer_lazy_reads(on: bool) {
+    DEFER_LAZY.with(|c| c.set(on));
+}
+
+/// Q-126: one entry per written node a field of which did an effect when
+/// forced: the node's frame (kept alive, so its address is not reused);
+/// what each such field gave, by its definition as written (keyed by where
+/// it was written) and by its syntax alone; and, per syntax, whether one
+/// field of the node is written so. One process is one observation (one
+/// `eval`, one evolve, one commit); a field is forced once in it, however
+/// many readers it has.
+struct Observed {
+    frame: std::sync::Arc<ComboVal>,
+    written: HashMap<(usize, usize), Vec<(Expr, Kept)>>,
+    syntax: HashMap<String, Kept>,
+    one: HashMap<String, bool>,
+}
+/// Q-126: what a field gave. `did`: forcing it did an effect (reading it is
+/// an observation). Otherwise it gave a record, kept so that the name is
+/// one record, and read only against the universe it was read in (`root`,
+/// held so its address is not reused).
+/// Q-126: a `$` was read.
+pub(crate) fn note_dollar_read() {
+    DOLLAR_READ.with(|c| c.set(c.get() + 1));
+}
+
+/// Q-126: a new application; its number.
+pub(crate) fn next_application() -> u64 {
+    APPLICATIONS.with(|c| {
+        c.set(c.get() + 1);
+        c.get()
+    })
+}
+
+#[derive(Clone)]
+struct Kept {
+    v: Value,
+    did: bool,
+    root: Arc<ComboVal>,
+    /// The application it was read in, when it is that application's: it
+    /// read `$`, or it is a structure made under one (its fields carry it).
+    of: Option<u64>,
+}
+
+/// Q-126: a node's view as a function's closure read it in this universe:
+/// every name forced as the node's field (`Read`, what a deferred body
+/// holds), and that walked to the end (`Walked`, what an arrow's closure
+/// prints and stores).
+#[derive(Clone)]
+enum ViewRead {
+    Read(std::sync::Arc<ComboVal>),
+    Walked(Value),
+}
+struct ViewKept {
+    names: Vec<String>,
+    root: Arc<ComboVal>,
+    strategy: ObservationStrategy,
+    fuel_budget: u64,
+    ran: u64,
+    /// The fuel reading it spent: reading it again spends the same, so
+    /// where an observation runs out does not depend on what was read before.
+    spent: u64,
+    read: ViewRead,
+}
+thread_local! {
+    static VIEWS_READ: std::cell::RefCell<HashMap<(u64, bool), ViewKept>> = std::cell::RefCell::new(HashMap::new());
+}
+/// The names a view holds, axis by axis: two captures of one node that hold
+/// different names are different views.
+fn view_names(f: &ComboVal) -> Vec<String> {
+    let mut out = Vec::new();
+    for axis in [&f.data, &f.local, &f.rules, &f.types, &f.meta, &f.system] {
+        out.extend(axis.keys().cloned());
+        out.push(String::new());
+    }
+    out
+}
+fn view_read(node: u64, walked: bool, names: &[String], ctx: &mut EvalContext) -> Option<ViewRead> {
+    let (read, ran, spent) = VIEWS_READ.with(|m| {
+        let m = m.borrow();
+        let k = m.get(&(node, walked))?;
+        (k.names == names
+            && Arc::ptr_eq(&k.root, &ctx.root)
+            && k.strategy == ctx.strategy
+            && k.fuel_budget == ctx.fuel_budget)
+            .then(|| (k.read.clone(), k.ran, k.spent))
+    })?;
+    // Not enough left to read it: read it, and run out where reading does.
+    if ctx.fuel < spent {
+        return None;
+    }
+    ctx.fuel -= spent;
+    // Reading what an effect gave observes it, as forcing the names did.
+    EFFECTS_RUN.with(|c| c.set(c.get() + ran));
+    Some(read)
+}
+fn view_keep(node: u64, walked: bool, names: Vec<String>, ctx: &EvalContext, ran: u64, spent: u64, read: ViewRead) {
+    VIEWS_READ.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() >= 4096 {
+            m.clear();
+        }
+        m.insert(
+            (node, walked),
+            ViewKept { names, root: ctx.root.clone(), strategy: ctx.strategy, fuel_budget: ctx.fuel_budget, ran, spent, read },
+        );
+    });
+}
+
+/// Q-126: the memo is cleared (commit, load, refine); records kept as one
+/// value go with it (they would not be read again — the root moved — but
+/// they hold it). What an effect gave stays.
+fn forget_kept_records() {
+    VIEWS_READ.with(|m| m.borrow_mut().clear());
+    OBSERVED.with(|m| {
+        let mut m = m.borrow_mut();
+        for o in m.values_mut() {
+            for vs in o.written.values_mut() {
+                vs.retain(|(_, k)| k.did);
+            }
+            o.syntax.retain(|_, k| k.did);
+        }
+        m.retain(|_, o| !o.syntax.is_empty());
+    });
+}
+thread_local! {
+    static OBSERVED: std::cell::RefCell<HashMap<(bool, u64), Observed>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Q-126: which written node a frame is a view of (D118 `node_id`); a frame
+/// that carries none (read back from the store) is known by itself.
+fn frame_node(f: &std::sync::Arc<ComboVal>) -> (bool, u64) {
+    if f.node_id != 0 {
+        return (true, f.node_id);
+    }
+    let ptr = std::sync::Arc::as_ptr(f) as usize;
+    match crate::value::FRAME_ORIGIN.with(|m| m.borrow().get(&ptr).map(|(_, n)| *n)) {
+        Some(n) => (true, n),
+        None => (false, ptr as u64),
+    }
+}
+
+/// Q-126: is this thunk exactly one field of `frame`? First by its syntax
+/// as written (two fields written alike in one source differ in where); a
+/// frame read back from the store may have no places, so then by syntax
+/// alone. Two fields that match alike are two coordinates: not shared.
+/// `Some(true)`: matched as written; `Some(false)`: by syntax alone;
+/// `None`: not one field.
+fn one_field_of(frame: &ComboVal, expr: &Expr, bare: &Expr) -> Option<bool> {
+    let (mut exact, mut loose) = (0, 0);
+    for axis in [&frame.data, &frame.rules, &frame.types, &frame.meta, &frame.system, &frame.local] {
+        for v in axis.values() {
+            if let Value::Thunk { expr: e, .. } = v {
+                if **e == *expr {
+                    exact += 1;
+                }
+                if e.without_spans() == *bare {
+                    loose += 1;
+                }
+            }
+        }
+    }
+    if exact == 1 {
+        Some(true)
+    } else if exact == 0 && loose == 1 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Q-126: is this value a record, or does it hold one without being one (a
+/// union's member)? A list is a record.
+fn holds_a_record(v: &Value) -> bool {
+    match v {
+        Value::Combo(_) => true,
+        Value::Union(members) => members.iter().any(holds_a_record),
+        _ => false,
+    }
+}
+
+/// Q-126 R-7: could reading this structure read the `$` of whoever reads
+/// it? A thunk it holds that writes `$`, or a name such a thunk reads (found
+/// on the frames it closes over) that could, transitively. One that cannot
+/// is the same value under every input.
+fn reads_its_readers_input(v: &Value) -> bool {
+    fn field<'a>(f: &'a ComboVal, name: &str) -> Option<&'a Value> {
+        [&f.data, &f.local, &f.rules, &f.types, &f.meta, &f.system]
+            .into_iter()
+            .find_map(|axis| axis.get(name))
+    }
+    // Each value with the frame it was found on: a field's thunk reads its
+    // siblings there, not through what it closes over.
+    let mut seen: HashSet<(usize, String)> = HashSet::new();
+    // R-8: however far (every name is followed once; a record or union is
+    // walked once per place it is found).
+    let mut todo: Vec<(&Value, Option<&ComboVal>)> = vec![(v, None)];
+    while let Some((v, on)) = todo.pop() {
+        match v {
+            Value::Combo(c) => {
+                for axis in [&c.data, &c.local, &c.rules, &c.types, &c.meta, &c.system] {
+                    todo.extend(axis.values().map(|x| (x, Some(c))));
+                }
+            }
+            Value::Union(members) => todo.extend(members.iter().map(|x| (x, on))),
+            Value::Thunk { expr, closure, .. } => {
+                if nlang_parser::tier::has_free_dollar(expr) {
+                    return true;
+                }
+                for name in crate::eval::free_bare_names(expr, &HashSet::new()) {
+                    let found = on
+                        .into_iter()
+                        .chain(closure.iter().rev().map(|f| f.as_ref()))
+                        .find(|f| field(f, &name).is_some());
+                    if let Some(f) = found {
+                        if seen.insert((f as *const ComboVal as usize, name.clone())) {
+                            if let Some(x) = field(f, &name) {
+                                todo.push((x, Some(f)));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Q-126: effects run so far on this thread.
+pub(crate) fn effects_run() -> u64 {
+    EFFECTS_RUN.with(|c| c.get())
+}
+
+/// Q-126: run `f` as bookkeeping — no effect is done inside it.
+pub(crate) fn bookkeeping<T>(f: impl FnOnce() -> T) -> T {
+    NO_EFFECTS.with(|c| c.set(c.get() + 1));
+    let r = f();
+    NO_EFFECTS.with(|c| c.set(c.get() - 1));
+    r
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +460,8 @@ pub struct EvalContext {
     /// the absorbing normalizer (single-layer; compare raw branches).
     pub union_absorb_fence: bool,
     pub context_value: Option<Value>,
+    /// Q-126: which application bound `context_value` (0: none did).
+    pub application: u64,
     pub fuel: u64,
     /// Initial fuel budget (config ceiling). Identity for blur CHS; `fuel` is remaining.
     pub fuel_budget: u64,
@@ -279,6 +553,7 @@ impl EvalContext {
             observing: false,
             union_absorb_fence: false,
             context_value: None,
+            application: 0,
             fuel: 10000,
             fuel_budget: 10000,
             timeout_deadline: None,
@@ -813,6 +1088,10 @@ pub struct MemoEntry {
     /// Coordinates (top-level root field names) read during evaluation.
     /// Empty set = C₀ (path-free, $-free — permanent tier).
     pub deps: HashSet<String>,
+    /// Q-126 R-8: computing `value` read a `$` (directly or through a hit
+    /// that did). A hit notes a `$` read only then: an entry that read none
+    /// is the same under every input.
+    pub read_dollar: bool,
 }
 
 /// REAL_03 §6.6 integrity incident (peer-fetch / store read). Minimal log —
@@ -883,7 +1162,7 @@ pub struct Ouroboros {
     pub holds_universe: bool,
     /// Owns the temp tree for [`Self::new_in_memory`]. Drop removes its `.oo/`.
     _ephemeral_root: Option<tempfile::TempDir>,
-    pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), Value>>,
+    pub unify_memo: RwLock<HashMap<(ContentHash, ContentHash), (Value, (u64, u64))>>,
     pub force_memo: RwLock<HashMap<ForceMemoKey, MemoEntry>>,
     /// Reverse index: coord → memo keys that read this coord.
     pub force_memo_rev: RwLock<HashMap<String, HashSet<ForceMemoKey>>>,
@@ -973,6 +1252,7 @@ impl Ouroboros {
 
     /// Stage 5 (§5b): full clear for coarse events (commit/load/refine).
     pub fn clear_force_memo(&self) {
+        forget_kept_records();
         if let Ok(mut memo) = self.force_memo.write() {
             memo.clear();
         }
@@ -3305,6 +3585,12 @@ impl Ouroboros {
             unified_arg = Value::Combo(read);
         }
         let func = self.builtin_registry.get(builtin_id)?;
+        // Q-126: an effect is done by an observation, never by bookkeeping.
+        let active = c.effect.union(f.effect()).has_active();
+        if active && NO_EFFECTS.with(|c| c.get()) > 0 {
+            EFFECTS_SKIPPED.with(|c| c.set(c.get() + 1));
+            return Some(Value::Top);
+        }
         // O76 / O78 ②: declared keys live in the registry.
         // Missing required keys reuse the existing Top → cocoon
         // path; the builtin is not invoked on an undeclared shape.
@@ -3325,6 +3611,9 @@ impl Ouroboros {
             ctx.builtin_cursor = 0;
             ctx.builtin_apply_cursor = 0;
             let res = if keys_ready {
+                if active {
+                    EFFECTS_RUN.with(|c| c.set(c.get() + 1));
+                }
                 func(unified_arg.clone(), self, ctx)
             } else {
                 Value::Top
@@ -3676,7 +3965,156 @@ impl Ouroboros {
 
     /// One step of `force`: a recipe whose value is a live reference yields
     /// the reference, unread.
+    /// Q-126: force a chosen branch's body. What it reads by name is the
+    /// node's field; the body itself is done once per application.
+    pub(crate) fn force_applied(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        APPLIED.with(|c| c.set(true));
+        self.force(val, ctx)
+    }
+
     pub(crate) fn force_once(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        if APPLIED.with(|c| c.replace(false)) {
+            return self.force_once_metered(val, ctx);
+        }
+        // Q-126: a field of a written node is one coordinate. Once forcing it
+        // did an effect, every later read in this observation reads that.
+        let (frames, key) = match &val {
+            // A field of a record made in a call carries the call's input
+            // and is a field like any other (a branch body given its input
+            // closes over a rule's frame, which has no node: see below). An
+            // open term bound through `|>` is a field of the record that
+            // application read: a record read under an input is its own.
+            Value::Thunk { expr, closure, context, .. } =>
+            {
+                let mut fs: Vec<std::sync::Arc<ComboVal>> = Vec::new();
+                if let Some(f) = &ctx.lexical_frame {
+                    fs.push(f.clone());
+                }
+                // The frame it was written in. A thunk carrying a call's
+                // input is shared only on the record that call made.
+                if let Some(f) = closure
+                    .last()
+                    .filter(|f| !crate::value::is_meet_frame(f))
+                    .filter(|f| context.is_none() || frame_node(f).0)
+                {
+                    fs.push(f.clone());
+                }
+                (fs, Some(expr.as_ref()))
+            }
+            _ => (Vec::new(), None),
+        };
+        // Q-126: an answer that read `$` is the answer for that input. A
+        // thunk carrying its input is one field of the node it was made on;
+        // one that does not reads the `$` of whoever reads it.
+        let carried = matches!(&val, Value::Thunk { context: Some(_), .. });
+        let here = ctx.application;
+        let bound = ctx.context_value.is_some();
+        let root_now = ctx.root.clone();
+        let reads = move |k: &Kept| {
+            (k.did || Arc::ptr_eq(&k.root, &root_now))
+                && match k.of {
+                    None => true,
+                    Some(a) => !carried && a == here,
+                }
+        };
+        if let Some(expr) = &key {
+            let hit = OBSERVED.with(|m| {
+                let mut m = m.borrow_mut();
+                if m.is_empty() {
+                    return None;
+                }
+                let mut text: Option<(Expr, String)> = None;
+                frames.iter().find_map(|f| {
+                    let o = m.get_mut(&frame_node(f))?;
+                    // As written; else by syntax, when one field of the node
+                    // is written so (its places differ between two read-backs
+                    // of the same node).
+                    if let Some(v) = o.written.get(&(expr.span.start, expr.span.end)).and_then(|vs| vs.iter().find(|(e, _)| e == *expr)) {
+                        return Some(v.1.clone());
+                    }
+                    let (bare, t) = text.get_or_insert_with(|| {
+                        let b = expr.without_spans();
+                        let t = b.to_nlang(0);
+                        (b, t)
+                    });
+                    let v = o.syntax.get(t.as_str())?.clone();
+                    let frame = o.frame.clone();
+                    let one = *o.one.entry(t.clone()).or_insert_with(|| one_field_of(&frame, bare, bare).is_some());
+                    one.then_some(v)
+                })
+            });
+            // A record kept as one value is read in the universe it was read
+            // in; an answer for an input, in the application that gave it.
+            let hit = hit.filter(|k| reads(k));
+            if let Some(k) = hit {
+                // Reading what an effect gave observes it: whoever reads it
+                // keeps an answer, as the field did. A record kept because
+                // it is one value is not an effect.
+                if k.did {
+                    EFFECTS_RUN.with(|c| c.set(c.get() + 1));
+                }
+                ctx.lexical_frame = None;
+                return k.v;
+            }
+        }
+        let key = key.map(|e| e.clone());
+        let before = effects_run();
+        // D129: while a definition is tried, a thunk of a written node that
+        // would do an effect is a lazy coordinate it reads.
+        let probing = LAZY_PROBE.with(|c| c.get()) > 0 && key.is_some() && frames.iter().any(|f| frame_node(f).0);
+        let skipped = EFFECTS_SKIPPED.with(|c| c.get());
+        let root = ctx.root.clone();
+        let dollars = DOLLAR_READ.with(|c| c.get());
+        let res = self.force_once_metered(val, ctx);
+        if probing && EFFECTS_SKIPPED.with(|c| c.get()) != skipped {
+            LAZY_HIT.with(|c| c.set(true));
+        }
+        if let Some(expr) = key {
+            // A field that gave a record is one record, whatever its own
+            // fields will do when read: reading the name again reads it.
+            let did = effects_run() != before;
+            // (So is a union that holds a record: it holds that record.)
+            if (did || holds_a_record(&res)) && NO_EFFECTS.with(|c| c.get()) == 0 {
+                // Kept on the node it was written in (the frame a name was
+                // found on, else the frame it closes over).
+                if let Some(f) = frames.first() {
+                    let t = expr.without_spans().to_nlang(0);
+                    OBSERVED.with(|m| {
+                        let mut m = m.borrow_mut();
+                        let o = m.entry(frame_node(f)).or_insert_with(|| Observed {
+                            frame: f.clone(),
+                            written: HashMap::new(),
+                            syntax: HashMap::new(),
+                            one: HashMap::new(),
+                        });
+                        // Under an input, a structure is that application's
+                        // (what it holds carries the input unread).
+                        let plain = matches!(res, Value::Atom(..) | Value::Top | Value::TopCaused { .. } | Value::Bottom(_) | Value::Blur(_));
+                        // R-7: a structure that cannot read its reader's
+                        // `$` is one value whoever reads it.
+                        let of = (!carried && (DOLLAR_READ.with(|c| c.get()) != dollars || (bound && !plain && reads_its_readers_input(&res)))).then_some(here);
+                        let k = Kept { v: res.clone(), did, root, of };
+                        // One answer per application is kept: the last.
+                        let at = o.written.entry((expr.span.start, expr.span.end)).or_default();
+                        // (So the first one written alike is the one to read.)
+                        match at.iter_mut().find(|(e, old)| old.of.is_some() && *e == expr) {
+                            Some(old) => old.1 = k.clone(),
+                            None => at.push((expr, k.clone())),
+                        }
+                        match o.syntax.get(&t) {
+                            Some(old) if old.of.is_none() => {}
+                            _ => {
+                                o.syntax.insert(t, k);
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        res
+    }
+
+    fn force_once_metered(&self, val: Value, ctx: &mut EvalContext) -> Value {
         // D117: a conflict a meet makes in a field carries no message — the
         // message would depend on the order (a pending meet, D118, too).
         let pending_meet = matches!(&val, Value::Thunk { closure, .. }
@@ -3712,9 +4150,14 @@ impl Ouroboros {
                     }
                 }
                 let fuel_before = ctx.fuel;
+                // Q-126: an answer that did an effect is that observation's,
+                // not a cache entry another coordinate may read.
+                let effects_before = effects_run();
+                let dollars_before = DOLLAR_READ.with(|c| c.get());
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
                 // staged, which the key does not include.
+                let carries_input = context.is_some();
                 let effective_context: Option<Value> = context
                     .as_ref()
                     .map(|b| (**b).clone())
@@ -3772,6 +4215,11 @@ impl Ouroboros {
                         // miss, so cache warmth cannot affect #blur CAIDs.
                         self.force_memo_hit_count
                             .fetch_add(1, Ordering::Relaxed);
+                        // Q-126: the entry was computed under this input;
+                        // R-8: it read it only if computing it read a `$`.
+                        if effective_context.is_some() && entry.read_dollar {
+                            note_dollar_read();
+                        }
                         // Stage 5 acceptance fix: a HIT must float the
                         // entry's deps into the active outer collector —
                         // an outer entry built over this hit embeds this
@@ -3859,6 +4307,9 @@ impl Ouroboros {
                     call_ctx.taint_hops += 1;
                 }
                 call_ctx.context_value = effective_context;
+                if carries_input {
+                    call_ctx.application = next_application();
+                }
                 call_ctx.dep_collector = inner_collector;
                 // in_flight rides sub_context clone for nested observation.
                 call_ctx.in_flight.insert(thunk_id.clone());
@@ -3945,7 +4396,12 @@ impl Ouroboros {
                         // Memoize only when NonDet is absent (nondet must not
                         // be cached across observations).
                         _ => !res.contains_blur() && !res.effect().contains(EffectTag::NonDet),
-                    };
+                    } && effects_run() == effects_before
+                        // Q-126: a record is where its fields will be
+                        // observed; two applications written alike make two.
+                        // A union that holds a record holds that record:
+                        // written alike twice, two of them.
+                        && !holds_a_record(&res);
                     if memoizable {
                         if let Ok(mut memo) = self.force_memo.write() {
                             const FORCE_MEMO_CAP: usize = 100_000;
@@ -3966,6 +4422,7 @@ impl Ouroboros {
                                     value: res.clone(),
                                     mbu_cost,
                                     deps,
+                                    read_dollar: DOLLAR_READ.with(|c| c.get()) != dollars_before,
                                 },
                             );
                         }
@@ -4062,6 +4519,112 @@ impl Ouroboros {
         let out = f();
         CELL_BUDGET.with(|c| c.set(outer));
         out
+    }
+
+    /// Q-126: a function's closure holds views of the nodes it was written
+    /// in. A name the view holds is that node's field: observing the
+    /// function (printing it, storing it) reads the field, as the body does.
+    ///
+    /// A node whose view is already being read is not read again inside
+    /// itself: functions that read each other close over one another, and
+    /// the walk would not end. There the view is left empty, which is what
+    /// a closure two functions deep has always held.
+    ///
+    /// A node is read once: N functions written in one node close over the
+    /// same N names, and each reading them again made N functions cost N³.
+    fn read_closure_on_its_nodes(
+        &self,
+        closure: Value,
+        rebind: &dyn Fn(Value) -> Value,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        let mut frames = match rebind(closure) {
+            Value::Combo(frames) => frames,
+            other => return self.force_recursive(other, ctx),
+        };
+        let closed = frames.closed;
+        for (_, frame) in frames.data.iter_mut() {
+            let forced = match std::mem::replace(frame, Value::Top) {
+                Value::Combo(mut f) if f.node_id != 0 => {
+                    let node = f.node_id;
+                    if READING_NODES.with(|r| r.borrow().contains(&node)) {
+                        for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
+                            axis.clear();
+                        }
+                        Value::Combo(f)
+                    } else {
+                        // What is read inside another node's view is cut
+                        // where that node comes round again; only a view
+                        // read on its own is the same for every reader.
+                        let alone = READING_NODES.with(|r| r.borrow().is_empty());
+                        let names = view_names(&f);
+                        let kept = if alone { view_read(node, true, &names, ctx) } else { None };
+                        match kept {
+                            Some(ViewRead::Walked(v)) => v,
+                            _ => {
+                                let before = effects_run();
+                                let fuel = ctx.fuel;
+                                READING_NODES.with(|r| r.borrow_mut().insert(node));
+                                self.force_view_on_its_node(&mut f, ctx);
+                                let out = self.force_recursive(Value::Combo(f), ctx);
+                                READING_NODES.with(|r| r.borrow_mut().remove(&node));
+                                if alone && !out.contains_blur() {
+                                    view_keep(node, true, names, ctx, effects_run() - before, fuel.saturating_sub(ctx.fuel), ViewRead::Walked(out.clone()));
+                                }
+                                out
+                            }
+                        }
+                    }
+                }
+                other => self.force_recursive(other, ctx),
+            };
+            if !closed {
+                frames.effect = frames.effect.union(forced.effect());
+            }
+            *frame = forced;
+        }
+        Value::Combo(frames)
+    }
+
+    /// Q-126: each name a view holds, read as the field of its node.
+    fn force_view_on_its_node(&self, f: &mut ComboVal, ctx: &mut EvalContext) {
+        let view = std::sync::Arc::new(f.clone());
+        for axis in [&mut f.data, &mut f.local, &mut f.rules, &mut f.types, &mut f.meta, &mut f.system] {
+            for (_, v) in axis.iter_mut() {
+                if matches!(v, Value::Thunk { .. }) {
+                    ctx.lexical_frame = Some(std::sync::Arc::clone(&view));
+                    *v = self.force(std::mem::replace(v, Value::Top), ctx);
+                    ctx.lexical_frame = None;
+                }
+            }
+        }
+    }
+
+    /// Q-126: a deferred branch body is code that closes over views of the
+    /// nodes it was written in, as an arrow does.
+    fn read_body_on_its_nodes(&self, body: Value, ctx: &mut EvalContext) -> Value {
+        let Value::Thunk { expr, mut closure, context, effect } = body else {
+            return body;
+        };
+        for frame in closure.iter_mut() {
+            if frame.node_id == 0 {
+                continue;
+            }
+            let node = frame.node_id;
+            let names = view_names(frame);
+            if let Some(ViewRead::Read(v)) = view_read(node, false, &names, ctx) {
+                *frame = v;
+                continue;
+            }
+            let before = effects_run();
+            let fuel = ctx.fuel;
+            let f = std::sync::Arc::make_mut(frame);
+            self.force_view_on_its_node(f, ctx);
+            if !Value::Combo(f.clone()).contains_blur() {
+                view_keep(node, false, names, ctx, effects_run() - before, fuel.saturating_sub(ctx.fuel), ViewRead::Read(std::sync::Arc::clone(frame)));
+            }
+        }
+        Value::Thunk { expr, closure, context, effect }
     }
 
     fn force_recursive_metered(&self, val: Value, ctx: &mut EvalContext) -> Value {
@@ -4195,6 +4758,7 @@ impl Ouroboros {
                             // or has an effect is code until dispatch chooses
                             // the branch. Observing the table does not run it.
                             let is_rule = crate::dispatch::is_rule_cocoon(&c);
+                            let has_code = is_rule || c.get_field("%code").is_some();
                             // D118: a met node's fields resolve in it.
                             let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
                             let views = std::cell::RefCell::new(crate::value::MetViews::new());
@@ -4228,10 +4792,18 @@ impl Ouroboros {
                             }
                             for (k, v) in std::mem::take(&mut c.meta) {
                                 if is_rule && k == "val" && crate::dispatch::is_deferred_body(&v) {
-                                    new_c.meta.insert(k, v);
+                                    // Q-126: the body stays code; the names
+                                    // it closes over are its nodes' fields.
+                                    new_c.meta.insert(k, self.read_body_on_its_nodes(v, ctx));
                                     continue;
                                 }
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                // Q-126: what a function closes over is a
+                                // view of the node it was written in.
+                                let forced = if has_code && k == "closure" {
+                                    self.read_closure_on_its_nodes(v, &rebind, ctx)
+                                } else {
+                                    self.force_recursive(rebind(v), ctx)
+                                };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
@@ -4352,8 +4924,15 @@ impl Ouroboros {
                 // reading itself is ⊥.
                 let orig = val.clone();
                 let keep = std::mem::replace(&mut ctx.preserve_refs, false);
+                let before = crate::effects_run();
                 let forced = self.force_each_cell(val, ctx);
                 ctx.preserve_refs = keep;
+                // Q-126: a definition predicted pure that did an effect when
+                // forced observed it; its answer is what the commit keeps
+                // (SPEC_10 §2.3.1), not a recipe every reader would redo.
+                if crate::effects_run() != before {
+                    return forced;
+                }
                 match &forced {
                     Value::Bottom(_) => forced,
                     _ => orig,

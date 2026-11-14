@@ -777,24 +777,40 @@ impl Ouroboros {
             || b.is_top()
             || crate::DEFER_RECIPES.with(|c| c.get()) != 0
             || !ctx.memo_enabled;
-        let cache_key = if id_a.digest <= id_b.digest {
-            (id_a, id_b)
-        } else {
-            (id_b, id_a)
+        let in_order = id_a.digest <= id_b.digest;
+        let cache_key = if in_order { (id_a, id_b) } else { (id_b, id_a) };
+        // Q-126: a record a call made is its own node. Two calls give two
+        // records that are written alike: what one meet of them gave is not
+        // what the other gives (its fields would be the first call's). The
+        // entry is the answer for the nodes that met; others written alike
+        // meet again, and spend what reading the entry spent: nothing.
+        let node = |v: &Value| match v {
+            Value::Combo(c) => c.node_id,
+            _ => 0,
         };
+        let nodes = if in_order { (node(&a), node(&b)) } else { (node(&b), node(&a)) };
+        let mut again = false;
         if !nondet && !top_like {
             if let Ok(memo) = self.unify_memo.read() {
-                if let Some(cached_res) = memo.get(&cache_key) {
-                    return cached_res.clone();
+                if let Some((cached_res, met)) = memo.get(&cache_key) {
+                    // A list or a union is no node, and what it holds may
+                    // be: two written alike that hold calls are two.
+                    if *met == nodes && !holds_a_node(&a, 0) && !holds_a_node(&b, 0) {
+                        return cached_res.clone();
+                    }
+                    again = true;
                 }
             }
         }
+        let free = crate::FREE_MEET.with(|c| c.replace(again || c.get()));
         let mut result = self.do_unify(a.clone(), b.clone(), ctx);
+        crate::FREE_MEET.with(|c| c.set(free));
         let combined_effect = a.effect().union(b.effect());
         if let Value::Combo(ref mut cv) = result {
             cv.effect = cv.effect.union(combined_effect);
         }
-        if !nondet
+        if !again
+            && !nondet
             && !top_like
             && !matches!(result, Value::Bottom(_))
             && !result.contains_blur()
@@ -804,7 +820,7 @@ impl Ouroboros {
                 if memo.len() >= UNIFY_MEMO_CAP {
                     memo.clear();
                 }
-                memo.insert(cache_key, result.clone());
+                memo.insert(cache_key, (result.clone(), nodes));
             }
         }
         result
@@ -1726,4 +1742,23 @@ fn reads_names_of(v: &Value, a: &ComboVal, b: &ComboVal) -> bool {
             || c.rules.keys().any(|k| crate::eval::captures(&free, "/", k))
             || c.local.keys().any(|k| crate::eval::captures(&free, "~", k))
     })
+}
+
+/// Q-126: a value that is no node and holds what is one, or what has yet to
+/// be worked out — a list, a union: which nodes meet is not known from it.
+/// A node itself is known by its own number.
+fn holds_a_node(v: &Value, depth: u8) -> bool {
+    let inside = |f: &Value| match f {
+        Value::Thunk { .. } => true,
+        Value::Combo(g) if g.node_id != 0 => true,
+        // R-7: however deep (a list nested ten deep is still a list).
+        _ => holds_a_node(f, depth.saturating_add(1)),
+    };
+    match v {
+        Value::Combo(c) if c.node_id == 0 => {
+            [&c.data, &c.local, &c.rules, &c.types].iter().any(|axis| axis.values().any(inside))
+        }
+        Value::Union(members) => members.iter().any(inside),
+        _ => false,
+    }
 }

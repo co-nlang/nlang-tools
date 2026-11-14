@@ -837,6 +837,9 @@ fn evolve_files(
     engine: &Ouroboros,
     files: &[PathBuf],
 ) -> anyhow::Result<()> {
+    // D129: the working set stays lazy — a definition reading a lazy field
+    // that does an effect is observed at commit, with that field.
+    nlang_interpreter::defer_lazy_reads(true);
     // Q-122: what reads as ⊥ before this evolve; a write that makes one more
     // definition read ⊥ is refused (SPEC_10 §2.3.1 D110 款, §2.2.1).
     let first = universe.bottoms_as_read(engine);

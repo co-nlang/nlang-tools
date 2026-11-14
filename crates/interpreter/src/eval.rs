@@ -523,7 +523,7 @@ pub(crate) fn narrow_deferred_body(v: Value) -> Value {
             close_free_dependencies(&closure, &mut free);
             let closure = closure
                 .iter()
-                .map(|f| std::sync::Arc::new(capture_free_fields(f, &free)))
+                .map(|f| std::sync::Arc::new(capture_of_node(f, &free)))
                 .collect();
             Value::Thunk { expr, closure, context, effect }
         }
@@ -578,6 +578,16 @@ fn capture_free_fields(scope: &ComboVal, free: &HashSet<String>) -> ComboVal {
     captured.effect = scope.effect;
     captured.relations = scope.relations.clone();
     captured.masa_ref = scope.masa_ref.clone();
+    captured
+}
+
+/// Q-126: what a function closes over is a view of the node it was written
+/// in: a name read in its body is that node's field. (A deferred branch
+/// body's frames are that view too; the body itself is forced as an
+/// application, `force_applied`.)
+fn capture_of_node(scope: &ComboVal, free: &HashSet<String>) -> ComboVal {
+    let mut captured = capture_free_fields(scope, free);
+    captured.node_id = scope.node_id;
     captured
 }
 
@@ -868,7 +878,7 @@ impl Ouroboros {
         let mut closure_fields = IndexMap::new();
         let current_scopes = ctx.scopes.clone();
         for (i, s) in current_scopes.iter().enumerate() {
-            let captured = capture_free_fields(s, &free);
+            let captured = capture_of_node(s, &free);
             closure_fields.insert(i.to_string(), Value::Combo(captured));
         }
         rule_fields.insert(
@@ -1755,6 +1765,7 @@ impl Ouroboros {
         }
         let mut call_ctx = self.sub_context(ctx);
         call_ctx.context_value = Some(lv.clone());
+        call_ctx.application = crate::next_application();
         // Solidify field *thunks* on multi-segment paths like `p.add`
         // (GUIDE_03 §11.4 leaves them unforced) so morphism judgment sees
         // the sealed combo. Do **not** force Refs — Stage 3 live-Ref late
@@ -2398,7 +2409,7 @@ impl Ouroboros {
                 let mut closure_fields = IndexMap::new();
                 let current_scopes = ctx.scopes.clone();
                 for (i, s) in current_scopes.iter().enumerate() {
-                    let captured = capture_free_fields(s, &free);
+                    let captured = capture_of_node(s, &free);
                     // Frame position is semantic for `^` navigation. Keep an
                     // empty frame as an empty frame rather than compressing
                     // the chain and turning a parent reference into another
@@ -2465,7 +2476,10 @@ impl Ouroboros {
             // boundaries (pipe / morphism application); a free $ observed without
             // an enclosing evolution collapses to _|_ #no_context (P3)
             ExprKind::Context => match &ctx.context_value {
-                Some(v) => v.clone(),
+                Some(v) => {
+                    crate::note_dollar_read();
+                    v.clone()
+                }
                 None => Value::Bottom(Box::new(BottomDetail {
                     cause: BottomCause::NoContext,
                     message: Some(

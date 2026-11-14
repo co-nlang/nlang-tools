@@ -273,6 +273,25 @@ fn is_open_term(e: &Expr) -> bool {
     }
 }
 
+/// D129: does this definition read a name that holds a record (not a
+/// function) — in this write, the working set, or HEAD? Only then can it
+/// force a lazy field.
+fn reads_a_record(engine: &Ouroboros, e: &Expr, ctx: &crate::EvalContext) -> bool {
+    let _ = engine;
+    let names = crate::eval::names_read(e, &Default::default());
+    names.iter().any(|n| {
+        let n = n.trim_start_matches('/');
+        let v = ctx
+            .staged
+            .as_ref()
+            .and_then(|s| s.get_field(n).or_else(|| s.get_local_field(n)))
+            .or_else(|| ctx.root.get_field(n).or_else(|| ctx.root.get_local_field(n)));
+        matches!(v, Some(Value::Combo(c)) if c.get_field("%rules").is_none()
+            && c.get_field("%morphism").is_none()
+            && c.get_field("%builtin").is_none())
+    })
+}
+
 /// After evolve-time eval, a `#pure` derived answer is not what injection
 /// stores (D46 (i) / S3). Eval still runs so evolve-boundary reports stay
 /// loud (Config types, `#divergent`, resource horizons). The recipe is
@@ -283,7 +302,15 @@ fn recipe_instead_of_pure_answer(
     val: Value,
     ctx: &crate::EvalContext,
     read_world: bool,
+    ran: bool,
 ) -> Value {
+    // Q-126: a definition whose evaluation did an effect stores what it
+    // observed (SPEC_10 §2.3.1), even when its answer's tag says pure — a
+    // cocoon shields its fields' effects (SPEC_08 §4.2.1), and the commit
+    // must not redo them.
+    if ran {
+        return val;
+    }
     // S3 as measured: `top: 1 + 2` must not land as `3`. Arithmetic is the
     // evolve-time solidification. Other expr kinds keep their eval result
     // (live Refs, `%effect` reads, applications that already ran) -- unless
@@ -302,11 +329,11 @@ fn recipe_instead_of_pure_answer(
         && val.effect().is_pure()
         && {
             let outer = crate::READ_WORLD.with(|c| c.get());
-            let made = engine.made_in_a_call(&val);
+            let made = crate::bookkeeping(|| engine.made_in_a_call(&val));
             crate::READ_WORLD.with(|c| c.set(outer));
             made
         }
-        && engine.answer_syntax(&val).is_none();
+        && crate::bookkeeping(|| engine.answer_syntax(&val)).is_none();
     if !derived_read && !unprintable && !matches!(
         expr.kind,
         ExprKind::Add(_, _)
@@ -1202,6 +1229,8 @@ impl Universe {
         let live = !matches!(field.value.kind, ExprKind::Structural(_) | ExprKind::Combo { .. })
             && crate::eval::has_live_ref(&field.value);
         let mut read_world = false;
+        // Q-126: did evaluating this definition do an effect?
+        let mut ran = false;
         // The answer evolve computed, before it is swapped for its recipe.
         let mut answer: Option<Value> = None;
         let mut val = if ctx.context_value.is_none() && (is_open_term(&field.value) || live) {
@@ -1214,19 +1243,41 @@ impl Universe {
         } else {
             // D110: did this definition's answer read the universe?
             let outer = crate::READ_WORLD.with(|c| c.replace(false));
-            let v = engine.eval(&field.value, &mut ctx);
+            // D129: the working set is lazy. A definition that reads a field
+            // of a record (here, in the working set or HEAD) which does an
+            // effect when forced stays its recipe; the commit observes both.
+            let lazy = crate::DEFER_LAZY.with(|c| c.get()) && reads_a_record(engine, &field.value, &ctx) && {
+                let mut probe = ctx.clone();
+                crate::LAZY_PROBE.with(|c| c.set(c.get() + 1));
+                crate::LAZY_HIT.with(|c| c.set(false));
+                let _ = crate::bookkeeping(|| engine.eval(&field.value, &mut probe));
+                crate::LAZY_PROBE.with(|c| c.set(c.get() - 1));
+                crate::LAZY_HIT.with(|c| c.replace(false))
+            };
+            let before = crate::effects_run();
+            let v = if lazy {
+                Value::Thunk {
+                    expr: Box::new(field.value.clone()),
+                    closure: ctx.scopes.clone(),
+                    context: ctx.context_value.clone().map(Box::new),
+                    effect: engine.predict_effect(&field.value, &ctx),
+                }
+            } else {
+                engine.eval(&field.value, &mut ctx)
+            };
+            ran = crate::effects_run() != before;
             // Q-092: a record's spread reads lazily (at landing); read it now so
             // a spread of the universe is seen as a reading (D110).
             if let Value::Combo(c) = &v {
                 if !c.pending_spreads.is_empty() {
-                    let _ = engine.expand_combo_pending(c.clone(), &mut ctx);
+                    let _ = crate::bookkeeping(|| engine.expand_combo_pending(c.clone(), &mut ctx));
                     // R-2: what a spread lands may be a record a call built.
                     for s in c.pending_spreads.iter().filter(|s| s.effect().is_pure()) {
                         if crate::READ_WORLD.with(|c| c.get()) {
                             break;
                         }
                         // Q-120: looking is bookkeeping; each cell its own budget.
-                        let _ = engine.force_each_cell(s.clone(), &mut ctx);
+                        let _ = crate::bookkeeping(|| engine.force_each_cell(s.clone(), &mut ctx));
                     }
                 }
             }
@@ -1241,7 +1292,7 @@ impl Universe {
             {
                 // Q-120 / D113: whether it read the universe must not depend on
                 // how many fields it holds; each cell gets its own budget.
-                let _ = engine.force_each_cell(v.clone(), &mut ctx);
+                let _ = crate::bookkeeping(|| engine.force_each_cell(v.clone(), &mut ctx));
             }
             let read = crate::READ_WORLD.with(|c| c.get());
             crate::READ_WORLD.with(|c| c.set(outer || read));
@@ -1267,7 +1318,8 @@ impl Universe {
                 &val,
                 Value::TopCaused { cause, .. } if cause == "no_coordinate"
             );
-        if is_forward_open_miss && !is_literal_top(&field.value) {
+        // Q-126: an answer that observed an effect is what was observed, `_` too.
+        if is_forward_open_miss && !ran && !is_literal_top(&field.value) {
             val = Value::Thunk {
                 expr: Box::new(field.value.clone()),
                 closure: ctx.scopes.clone(),
@@ -1276,7 +1328,7 @@ impl Universe {
             };
         } else if !is_root_config_field_write(&field.key) {
             answer = Some(val.clone());
-            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx, read_world);
+            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx, read_world, ran);
         }
         let val_effect = val.effect();
 
@@ -3876,7 +3928,8 @@ pub(crate) fn read_bottoms_of(engine: &Ouroboros, c: &ComboVal, standard: &Combo
     // the commit's own observation.
     ctx.preserve_refs = true;
     let mut out = Vec::new();
-    read_bottoms(engine, &Value::Combo(c.clone()), "", &mut ctx, &mut out);
+    // Q-126: looking for ⊥ is bookkeeping; it does no effect.
+    crate::bookkeeping(|| read_bottoms(engine, &Value::Combo(c.clone()), "", &mut ctx, &mut out));
     out.sort();
     out.dedup();
     out
