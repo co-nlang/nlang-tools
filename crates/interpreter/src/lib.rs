@@ -322,6 +322,16 @@ fn one_field_of(frame: &ComboVal, expr: &Expr, bare: &Expr) -> Option<bool> {
     }
 }
 
+/// Q-126: is this value a record, or does it hold one without being one (a
+/// union's member)? A list is a record.
+fn holds_a_record(v: &Value) -> bool {
+    match v {
+        Value::Combo(_) => true,
+        Value::Union(members) => members.iter().any(holds_a_record),
+        _ => false,
+    }
+}
+
 /// Q-126: effects run so far on this thread.
 pub(crate) fn effects_run() -> u64 {
     EFFECTS_RUN.with(|c| c.get())
@@ -4011,7 +4021,8 @@ impl Ouroboros {
             // A field that gave a record is one record, whatever its own
             // fields will do when read: reading the name again reads it.
             let did = effects_run() != before;
-            if (did || matches!(res, Value::Combo(_))) && NO_EFFECTS.with(|c| c.get()) == 0 {
+            // (So is a union that holds a record: it holds that record.)
+            if (did || holds_a_record(&res)) && NO_EFFECTS.with(|c| c.get()) == 0 {
                 // Kept on the node it was written in (the frame a name was
                 // found on, else the frame it closes over).
                 if let Some(f) = frames.first() {
@@ -4332,7 +4343,9 @@ impl Ouroboros {
                     } && effects_run() == effects_before
                         // Q-126: a record is where its fields will be
                         // observed; two applications written alike make two.
-                        && !matches!(res, Value::Combo(_));
+                        // A union that holds a record holds that record:
+                        // written alike twice, two of them.
+                        && !holds_a_record(&res);
                     if memoizable {
                         if let Ok(mut memo) = self.force_memo.write() {
                             const FORCE_MEMO_CAP: usize = 100_000;
