@@ -1751,7 +1751,8 @@ fn holds_a_node(v: &Value, depth: u8) -> bool {
     let inside = |f: &Value| match f {
         Value::Thunk { .. } => true,
         Value::Combo(g) if g.node_id != 0 => true,
-        _ => depth < 8 && holds_a_node(f, depth + 1),
+        // R-7: however deep (a list nested ten deep is still a list).
+        _ => holds_a_node(f, depth.saturating_add(1)),
     };
     match v {
         Value::Combo(c) if c.node_id == 0 => {

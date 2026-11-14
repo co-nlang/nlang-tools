@@ -332,6 +332,58 @@ fn holds_a_record(v: &Value) -> bool {
     }
 }
 
+/// Q-126 R-7: could reading this structure read the `$` of whoever reads
+/// it? A thunk it holds that writes `$`, or a name such a thunk reads (found
+/// on the frames it closes over) that could, transitively. One that cannot
+/// is the same value under every input.
+fn reads_its_readers_input(v: &Value) -> bool {
+    fn field<'a>(f: &'a ComboVal, name: &str) -> Option<&'a Value> {
+        [&f.data, &f.local, &f.rules, &f.types, &f.meta, &f.system]
+            .into_iter()
+            .find_map(|axis| axis.get(name))
+    }
+    // Each value with the frame it was found on: a field's thunk reads its
+    // siblings there, not through what it closes over.
+    let mut seen: HashSet<(usize, String)> = HashSet::new();
+    let mut todo: Vec<(&Value, Option<&ComboVal>)> = vec![(v, None)];
+    let mut steps = 0usize;
+    while let Some((v, on)) = todo.pop() {
+        steps += 1;
+        if steps > 100_000 {
+            // Too far to tell: as if it could.
+            return true;
+        }
+        match v {
+            Value::Combo(c) => {
+                for axis in [&c.data, &c.local, &c.rules, &c.types, &c.meta, &c.system] {
+                    todo.extend(axis.values().map(|x| (x, Some(c))));
+                }
+            }
+            Value::Union(members) => todo.extend(members.iter().map(|x| (x, on))),
+            Value::Thunk { expr, closure, .. } => {
+                if nlang_parser::tier::has_free_dollar(expr) {
+                    return true;
+                }
+                for name in crate::eval::free_bare_names(expr, &HashSet::new()) {
+                    let found = on
+                        .into_iter()
+                        .chain(closure.iter().rev().map(|f| f.as_ref()))
+                        .find(|f| field(f, &name).is_some());
+                    if let Some(f) = found {
+                        if seen.insert((f as *const ComboVal as usize, name.clone())) {
+                            if let Some(x) = field(f, &name) {
+                                todo.push((x, Some(f)));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Q-126: effects run so far on this thread.
 pub(crate) fn effects_run() -> u64 {
     EFFECTS_RUN.with(|c| c.get())
@@ -4038,7 +4090,9 @@ impl Ouroboros {
                         // Under an input, a structure is that application's
                         // (what it holds carries the input unread).
                         let plain = matches!(res, Value::Atom(..) | Value::Top | Value::TopCaused { .. } | Value::Bottom(_) | Value::Blur(_));
-                        let of = (!carried && (DOLLAR_READ.with(|c| c.get()) != dollars || (bound && !plain))).then_some(here);
+                        // R-7: a structure that cannot read its reader's
+                        // `$` is one value whoever reads it.
+                        let of = (!carried && (DOLLAR_READ.with(|c| c.get()) != dollars || (bound && !plain && reads_its_readers_input(&res)))).then_some(here);
                         let k = Kept { v: res.clone(), did, root, of };
                         // One answer per application is kept: the last.
                         let at = o.written.entry((expr.span.start, expr.span.end)).or_default();
