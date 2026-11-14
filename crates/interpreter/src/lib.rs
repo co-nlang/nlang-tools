@@ -345,14 +345,10 @@ fn reads_its_readers_input(v: &Value) -> bool {
     // Each value with the frame it was found on: a field's thunk reads its
     // siblings there, not through what it closes over.
     let mut seen: HashSet<(usize, String)> = HashSet::new();
+    // R-8: however far (every name is followed once; a record or union is
+    // walked once per place it is found).
     let mut todo: Vec<(&Value, Option<&ComboVal>)> = vec![(v, None)];
-    let mut steps = 0usize;
     while let Some((v, on)) = todo.pop() {
-        steps += 1;
-        if steps > 100_000 {
-            // Too far to tell: as if it could.
-            return true;
-        }
         match v {
             Value::Combo(c) => {
                 for axis in [&c.data, &c.local, &c.rules, &c.types, &c.meta, &c.system] {
@@ -1092,6 +1088,10 @@ pub struct MemoEntry {
     /// Coordinates (top-level root field names) read during evaluation.
     /// Empty set = C₀ (path-free, $-free — permanent tier).
     pub deps: HashSet<String>,
+    /// Q-126 R-8: computing `value` read a `$` (directly or through a hit
+    /// that did). A hit notes a `$` read only then: an entry that read none
+    /// is the same under every input.
+    pub read_dollar: bool,
 }
 
 /// REAL_03 §6.6 integrity incident (peer-fetch / store read). Minimal log —
@@ -4153,6 +4153,7 @@ impl Ouroboros {
                 // Q-126: an answer that did an effect is that observation's,
                 // not a cache entry another coordinate may read.
                 let effects_before = effects_run();
+                let dollars_before = DOLLAR_READ.with(|c| c.get());
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
                 // staged, which the key does not include.
@@ -4214,8 +4215,9 @@ impl Ouroboros {
                         // miss, so cache warmth cannot affect #blur CAIDs.
                         self.force_memo_hit_count
                             .fetch_add(1, Ordering::Relaxed);
-                        // Q-126: the entry was computed under this input.
-                        if effective_context.is_some() {
+                        // Q-126: the entry was computed under this input;
+                        // R-8: it read it only if computing it read a `$`.
+                        if effective_context.is_some() && entry.read_dollar {
                             note_dollar_read();
                         }
                         // Stage 5 acceptance fix: a HIT must float the
@@ -4420,6 +4422,7 @@ impl Ouroboros {
                                     value: res.clone(),
                                     mbu_cost,
                                     deps,
+                                    read_dollar: DOLLAR_READ.with(|c| c.get()) != dollars_before,
                                 },
                             );
                         }
