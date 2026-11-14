@@ -1086,3 +1086,65 @@ fn r10_functions_that_read_each_other() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ── r11 ── a union that holds a record holds that record (R-6) ──
+
+#[test]
+fn r11_a_union_that_holds_a_record() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = vec![one_value(
+        "r11-random-stored",
+        "q: { f: (y -> { p: ~%Math./random () }), w: f 1 | 7 }",
+        &[("[_.q.w = _.q.w]", "[#true ]")],
+    )];
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        // Two fields written alike are two applications, stored.
+        let w = Ws::new("r11-stored");
+        check(&mut bad, "r11-stored: write", w.write(&format!("q: {{ g: {G}, f: (y -> {{ p: g \"P\" }}), a: f 1 | 7, b: f 1 | 7 }}\n")), "e0 landed");
+        check(&mut bad, "r11-stored: bytes after commit", w.bytes().to_string(), "2");
+        let _ = w.eval_in("two", "[_.q.a, _.q.b]");
+        check(&mut bad, "r11-stored: bytes after a read", w.bytes().to_string(), "2");
+        let w = Ws::new("r11-eval");
+        let r = "~%Math./random ()";
+        for (e, want) in [
+            // One name for a union is one value.
+            (format!("{{ f: (y -> {{ p: {r} }}), a: f 1 | 7, e: [a = a] }}.e"), "[#true ]"),
+            (format!("{{ f: (y -> {{ p: {r} }}), r: {{ w: f 1 | 7 }}, e: [r.w = r.w] }}.e"), "[#true ]"),
+            // No effect: the values, each input its own.
+            ("{ f: (y -> { p: y }), m: [{ w: f 1 | 7 }, { w: f 2 | 7 }, { w: f 1 | 7 }] }.m".to_string(), "[{ w: 7 | { p: 1 } }, { w: 7 | { p: 2 } }, { w: 7 | { p: 1 } }]"),
+        ] {
+            check(&mut bad, &format!("r11-eval: {e}"), w.eval_in("two", &e), want);
+        }
+        bad
+    }));
+    let f = format!("g: {G}, f: (y -> {{ p: g \"P\" }})");
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        // Two applications written alike in a union are two (D109): two
+        // fields of one record, two records, two records met.
+        (format!("{{ {f}, r: {{ a: f 1 | 7, b: f 1 | 7 }} }}.r"), "2"),
+        (format!("{{ {f}, m: [{{ w: f 1 | 7 }}, {{ w: f 1 | 7 }}] }}.m"), "2"),
+        (format!("{{ g: {G}, m: [{{ w: {{ p: g \"P\" }} | 7 }}, {{ w: {{ p: g \"P\" }} | 7 }}] }}.m"), "2"),
+        (format!("{{ {f}, m: [{{ w: (f 1 | 7) | 8 }}, {{ w: (f 1 | 7) | 8 }}] }}.m"), "2"),
+        (format!("{{ {f}, m: [(f 1 | 7) & ({{ q: 1 }} | 7), (f 1 | 7) & ({{ q: 1 }} | 7)] }}.m"), "2"),
+        (format!("{{ {f}, m: [[f 1 | 7] & [{{ q: 1 }} | 7], [f 1 | 7] & [{{ q: 1 }} | 7]] }}.m"), "2"),
+        (format!("{{ {f}, m: [{{ w: f 1 | 7 }} & {{ w: {{ q: 1 }} | 7 }}, {{ w: f 1 | 7 }} & {{ w: {{ q: 1 }} | 7 }}] }}.m"), "2"),
+        // The other half: one name for a union, read or met again, is one.
+        (format!("{{ {f}, a: f 1 | 7, m: [a, a, a] }}.m"), "1"),
+        (format!("{{ {f}, a: {{ w: f 1 | 7 }}, m: [a, a] }}.m"), "1"),
+        (format!("{{ {f}, a: f 1 | 7, m: [a & ({{ q: 1 }} | 7), a & ({{ q: 1 }} | 7)] }}.m"), "1"),
+        (format!("{{ {f}, a: {{ w: f 1 | 7 }}, c: {{ w: {{ q: 1 }} | 7 }}, m: [a & c, a & c] }}.m"), "1"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r11: {e}"), appended(&format!("r11-{i}"), &e), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
