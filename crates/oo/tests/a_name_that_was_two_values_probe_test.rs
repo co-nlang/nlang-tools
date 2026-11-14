@@ -1148,3 +1148,87 @@ fn r11_a_union_that_holds_a_record() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ── r12 ── a record read in a body is the name's one record (R-7) ──
+
+/// Lists nested `n` deep around `x`.
+fn nest(n: usize, x: &str) -> String {
+    let mut s = x.to_string();
+    for _ in 0..n {
+        s = format!("[{s}]");
+    }
+    s
+}
+
+#[test]
+fn r12_a_record_read_in_a_body_is_one_record() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r12-eval");
+        let r = "~%Math./random ()";
+        for (e, want) in [
+            // One name for a record, read in a body and directly, is one
+            // value, whichever reader comes first.
+            (format!("{{ a: {{ p: {r} }}, k: (y -> a), e: [k 1 = a, k 1 = k 2] }}.e"), "[#true , #true ]"),
+            (format!("{{ a: {{ p: {r} }}, k: (y -> a), e: [a = k 1] }}.e"), "[#true ]"),
+            (format!("{{ f: (y -> {{ p: {r} }}), a: f 1, k: (y -> a), e: [k 1 = a, k 1 = k 2] }}.e"), "[#true , #true ]"),
+            (format!("{{ f: (y -> {{ p: {r} }}), a: f 1 | 7, k: (y -> a), e: [k 1 = a, k 1 = k 2] }}.e"), "[#true , #true ]"),
+            (format!("{{ a: {{ p: {r} }}, k: (y -> a.p), e: [k 1 = a.p, k 1 = k 2] }}.e"), "[#true , #true ]"),
+            // The other half: a record that reads its reader's `$` is each
+            // input's, by every road to the `$`.
+            (format!("{{ h: {G}, a: {{ p: h $ }}, k: (y -> a.p), m: [k \"x\", k \"y\", k \"x\"] }}.m"), "[\"x\" , \"y\" , \"x\" ]"),
+            (format!("{{ h: {G}, b: h $, c: b, a: {{ p: c }}, k: (y -> a.p), m: [k \"x\", k \"y\", k \"x\"] }}.m"), "[\"x\" , \"y\" , \"x\" ]"),
+            (format!("{{ h: {G}, q: {{ r: {{ c: h $ }} }}, a: {{ p: q.r.c }}, k: (y -> a.p), m: [k \"x\", k \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ h: {G}, u: {{ p: h $ }}, a: u & {{ w: 1 }}, k: (y -> a.p), m: [k \"x\", k \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ h: {G}, b: {{ c: h $ }}, a: {{ p: b }}, k: (y -> a.p.c), m: [k \"x\", k \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ h: {G}, a: {{ p: c, c: h $ }}, k: (y -> a.p), m: [k \"x\", k \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ h: {G}, a: [h $], k: (y -> a.0), m: [k \"x\", k \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+            (format!("{{ h: {G}, a: {{ p: h $ }} | 7, k: (y -> a), m: [k \"x\", k \"y\"] }}.m"), "[7 | { p: \"x\" } , 7 | { p: \"y\" } ]"),
+            (format!("{{ h: {G}, b: [{{ c: h $ }}], a: {{ p: b }}, k: (z -> a.p.0.c), m: [k \"x\", k \"y\"] }}.m"), "[\"x\" , \"y\" ]"),
+        ] {
+            check(&mut bad, &format!("r12-eval: {e}"), w.eval_in("two", &e), want);
+        }
+        bad
+    }));
+    let f = format!("g: {G}, f: (y -> {{ p: g \"P\" }})");
+    let (l10, q10) = (nest(10, "f 1"), nest(10, "{ q: 1 }"));
+    let (u10, v10) = (nest(10, "f 1 | 7"), nest(10, "{ q: 1 } | 7"));
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        // A name for a record read in a body is one name (once), whichever
+        // reader comes first, however the body is applied.
+        (format!("{{ a: {{ p: {A} }}, k: (y -> a), m: [k 1, k 2, a] }}.m"), "1"),
+        (format!("{{ a: {{ p: {A} }}, k: (y -> a), m: [a, k 1, k 2] }}.m"), "1"),
+        (format!("{{ {f}, a: f 1, k: (y -> a), m: [k 1, k 2, a] }}.m"), "1"),
+        (format!("{{ {f}, a: f 1 | 7, k: (y -> a), m: [k 1, k 1, a] }}.m"), "1"),
+        (format!("{{ a: [{A}], k: (y -> a), m: [k 1, k 2, a] }}.m"), "1"),
+        (format!("{{ a: {{ r: {{ p: {A} }} }}, k: (y -> a.r), m: [k 1, k 2, a.r] }}.m"), "1"),
+        (format!("{{ a: {{ p: {A} }}, t: {{ {T}: a }}, m: [t 1, t 2, a] }}.m"), "1"),
+        (format!("{{ a: {{ p: {A} }}, m: [1 |> (_ -> a), 2 |> (_ -> a)] }}.m"), "1"),
+        (format!("{{ a: {{ p: {A} }}, m: ~%List./map ((x -> a), [1, 2, 3]) }}.m"), "1"),
+        (format!("{{ r: {{ a: {{ p: {A} }}, k: (y -> a) }}, m: [r.k 1, r.k 2, r.a] }}.m"), "1"),
+        // Lists nested however deep, met: two records written alike are two.
+        (format!("{{ {f}, m: [{l10} & {q10}, {l10} & {q10}] }}.m"), "2"),
+        (format!("{{ {f}, m: [{u10} & {v10}, {u10} & {v10}] }}.m"), "2"),
+        // The other half: one name for it, met twice, is one; a record that
+        // reads its reader's `$` does it for each input.
+        (format!("{{ {f}, a: {l10}, m: [a & {q10}, a & {q10}] }}.m"), "1"),
+        (format!("{{ h: {G}, a: {{ p: h $ }}, k: (y -> a.p), m: [k \"x\", k \"y\", k \"x\"] }}.m"), "3"),
+        (format!("{{ h: {G}, b: h $, c: b, a: {{ p: c }}, k: (y -> a.p), m: [k \"x\", k \"y\"] }}.m"), "2"),
+        // A record a call made, through a name: one call, once.
+        (format!("{{ h: {G}, mk: (y -> {{ c: h $ }}), b: mk 1, a: {{ p: b }}, k: (z -> a.p.c), m: [k \"x\", k \"y\"] }}.m"), "1"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r12: {e}"), appended(&format!("r12-{i}"), &e), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
