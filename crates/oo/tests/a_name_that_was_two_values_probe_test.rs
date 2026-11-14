@@ -1232,3 +1232,55 @@ fn r12_a_record_read_in_a_body_is_one_record() {
     let n = cells(&mut bad, run);
     verdict(bad, n);
 }
+
+// ── r13 ── a name read first does not make a record its reader's (R-8) ──
+
+#[test]
+fn r13_a_name_read_first_is_not_an_input() {
+    let mut bad = Vec::new();
+    let mut run: Vec<Box<dyn Fn() -> Vec<String> + Send + Sync>> = Vec::new();
+    run.push(Box::new(|| {
+        let mut bad = Vec::new();
+        let w = Ws::new("r13-eval");
+        let r = "~%Math./random ()";
+        for (e, want) in [
+            // A record made by reading a name the body read first is the
+            // name's one record.
+            (format!("{{ n: 1 + 1, t: {{ @{{ 2 }}: {{ p: {r} }}, _: 0 }}, a: t n, k: (y -> [n, a]), e: [(k 1).1 = a, (k 1).1 = (k 2).1] }}.e"), "[#true , #true ]"),
+            (format!("{{ n: 1 + 1, f: (y @int -> {{ p: {r}, q: y }}), a: f n, k: (y -> [n, a]), e: [(k 1).1 = a, (k 1).1 = (k 2).1] }}.e"), "[#true , #true ]"),
+            // The other half: a name that reads `$`, read first, still makes
+            // the record each input's.
+            ("{ b: $, c: b, t: { @{ \"x\" }: { p: 1 }, @{ \"y\" }: { p: 2 }, _: 0 }, a: t c, k: (y -> [c, a.p]), m: [k \"x\", k \"y\", k \"x\"] }.m".to_string(), "[[\"x\", 1], [\"y\", 2], [\"x\", 1]]"),
+            ("{ b: $, c: b, d: c, t: { @{ \"x\" }: { p: 1 }, @{ \"y\" }: { p: 2 }, _: 0 }, a: t d, k: (y -> [d, a.p]), m: [k \"x\", k \"y\"] }.m".to_string(), "[[\"x\", 1], [\"y\", 2]]"),
+            ("{ b: $ + 0, c: b, a: { p: c }, k: (y -> [c, a.p]), m: [k 1, k 2] }.m".to_string(), "[[1, 1], [2, 2]]"),
+        ] {
+            check(&mut bad, &format!("r13-eval: {e}"), w.eval_in("two", &e), want);
+        }
+        bad
+    }));
+    let t = format!("t: {{ @{{ 2 }}: {{ p: {A} }}, _: 0 }}");
+    let tx = format!("t: {{ @{{ \"x\" }}: {{ p: 1, e: {A} }}, @{{ \"y\" }}: {{ p: 2, e: {A} }}, _: 0 }}");
+    // Bytes one `oo eval` appends.
+    for (i, (e, want)) in [
+        (format!("{{ n: 1 + 1, {t}, a: t n, k: (y -> [n, a]), m: [k 1, k 2, a] }}.m"), "1"),
+        (format!("{{ n: 1 + 1, {t}, a: t n, k: (y -> [n, a]), m: [k 1, k 1] }}.m"), "1"),
+        (format!("{{ n: 1 + 1, f: (y @int -> {{ p: {A}, q: y }}), a: f n, k: (y -> [n, a]), m: [k 1, k 2, a] }}.m"), "1"),
+        (format!("{{ n: 1 + 1, c: n, {t}, a: t c, k: (y -> [c, a]), m: [k 1, k 2, a] }}.m"), "1"),
+        // Control: the body does not read the name first.
+        (format!("{{ n: 1 + 1, {t}, a: t n, k: (y -> a), m: [k 1, k 2, a] }}.m"), "1"),
+        // The other half: a record made from a name that reads `$` does its
+        // effect for each application.
+        (format!("{{ b: $, c: b, {tx}, a: t c, k: (y -> [c, a.e]), m: [k \"x\", k \"y\", k \"x\"] }}.m"), "3"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run.push(Box::new(move || {
+            let mut bad = Vec::new();
+            check(&mut bad, &format!("r13: {e}"), appended(&format!("r13-{i}"), &e), want);
+            bad
+        }));
+    }
+    let n = cells(&mut bad, run);
+    verdict(bad, n);
+}
