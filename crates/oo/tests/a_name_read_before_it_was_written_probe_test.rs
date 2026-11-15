@@ -513,3 +513,75 @@ fn g1_what_was_written_stays_written() {
         "#nlang/store injection pin_coords: [] absorbs: {} effect_tags: 0 { out: { ~%__nlang_thunk: #true ~%__nlang_expr: t.%cause ~%__nlang_closure: [] } u: 1 }");
     verdict(bad, cases.len() + 2);
 }
+
+/// Evolve `src` in a new workspace with every in-place landing checked
+/// against the meet and its restamp (`OO_Q117_SHADOW`): the exit code or
+/// `PANIC`, and how many landings were checked.
+fn shadowed(src: &str) -> (String, usize) {
+    let w = Ws::new("shadow");
+    let hits = w.root.join("hits");
+    fs::write(&hits, "").unwrap();
+    fs::write(w.ws.join("f.n"), format!("{src}\n")).unwrap();
+    let o = Command::new("sh")
+        .arg("-c")
+        .arg("ulimit -v 2000000; exec timeout -s KILL 60 \"$0\" \"$@\"")
+        .arg(env!("CARGO_BIN_EXE_oo"))
+        .args(["evolve", "f.n"])
+        .current_dir(&w.ws)
+        .env("OO_IDENTITY", w.root.join("identity"))
+        .env("OO_NODE_HOME", w.root.join("node-home"))
+        .env("OO_Q117_SHADOW", &hits)
+        .stdin(Stdio::null())
+        .output()
+        .expect("oo runs");
+    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    let n = fs::read_to_string(&hits).unwrap_or_default().lines().count();
+    let rc = o.status.code().unwrap_or(-1);
+    (if text.contains("Q-117 shadow") { "PANIC".into() } else { format!("e{rc}") }, n)
+}
+
+/// r3 — A coordinate that reads the name through `_.` is one of its
+/// readers (M2): `_.p` names the root's `p` whatever a record or an arrow
+/// around the path binds. The reader of a reader in the same evolve, the
+/// reader first or the name first, gives one root — the root the bare
+/// spelling gives (`[p]`, `[p | 1]`, `[{ y: p }]`, `@T: [p]`), or, where a
+/// record of the reader binds `p` itself, the root of the name first.
+/// Every in-place landing is the meet's, `_.` read in a list, a union, a
+/// record, a record that binds `p` itself, a sum, a path into the name,
+/// and on the type axis.
+#[test]
+fn r3_a_reader_through_the_root_is_a_reader() {
+    let mut bad = Vec::new();
+    let p = "p: ~%Env.get \"Q128_UNSET\"";
+    let cells = [
+        ("a: [_.p]\nm: [a]", "13419f971787792aa5c81eb51b2cccdd1fa472bb4756cc6f46c974d93c63991c"),
+        ("a: [_.p | 1]\nm: [a]", "1b3454a3c10f9064b573689ecccf5d1d2ec5b6a5ea66bc929adc31260d93a992"),
+        ("a: [{ y: _.p }]\nm: [a]", "84fd03746a5dce2de57c1f7227cebafe1b083e9448acc0c5ef7fbf008aa11c07"),
+        ("@T: [_.p]\nm: [@T]", "a542fcf3aa3879b240ce1a2731a647bc0d34ab2601d340b1513bb24857fef232"),
+        ("a: [{ p: 2, y: _.p }]\nm: [a]", "bddee15f6f09db4213ad05f71803e549105b2417fde6a336a3202473208f8200"),
+    ];
+    for (src, want) in cells {
+        for (label, text) in [("the reader first", format!("{src}\n{p}")), ("the name first", format!("{p}\n{src}"))] {
+            let (_, root, _) = staged_and_root(&[&text], &[]);
+            check(&mut bad, &format!("{src:?}, {label}: root"), root, want);
+        }
+    }
+    let shadow = [
+        "a: [_.p]\nm: [a]",
+        "a: [_.p | 1]\nm: [a]",
+        "a: [{ y: _.p }]\nm: [a]",
+        "@T: [_.p]\nm: [@T]",
+        "a: [{ p: 2, y: _.p }]\nm: [a]",
+        "a: { x: _.p }\nm: [a]",
+        "a: { p: 2, x: _.p }\nm: [a]",
+        "a: { p: 2, x: [_.p] }\nm: [a]",
+        "a: [_.p + \"\"]\nm: [a]",
+        "a: [_.p.v]\nm: [a]",
+    ];
+    for src in shadow {
+        let (got, n) = shadowed(&format!("{src}\n{p}"));
+        check(&mut bad, &format!("{src:?}, the reader first: every landing is the meet's"), got, "e0");
+        check(&mut bad, &format!("{src:?}, the reader first: landings checked"), (n > 0).to_string(), "true");
+    }
+    verdict(bad, cells.len() * 2 + shadow.len() * 2);
+}
