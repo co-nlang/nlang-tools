@@ -439,9 +439,107 @@ fn fast_combo_shell(c: &ComboVal) -> bool {
 
 /// Q-117: every bare name a value reads, anywhere inside it.
 fn collect_reads(v: &Value, out: &mut HashSet<String>) {
+    collect_bare_reads(v, out);
+    root_reads(v, out);
+}
+
+/// Q-128 R-1: the root's names that `_.`-anchored paths read — a reader
+/// through `_.` reads that name as a bare reader does, and nothing around
+/// the path binds it.
+fn root_reads(v: &Value, out: &mut HashSet<String>) {
+    match v {
+        Value::Thunk { expr, closure, .. } => {
+            root_names(expr, out);
+            for f in closure {
+                if f.local.contains_key("__nlang_meet_l") {
+                    for side in f.local.values() {
+                        if matches!(side, Value::Thunk { .. }) {
+                            root_reads(side, out);
+                        }
+                    }
+                }
+            }
+        }
+        Value::Union(items) => items.iter().for_each(|x| root_reads(x, out)),
+        Value::Combo(c) => {
+            for x in c
+                .data
+                .values()
+                .chain(c.types.values())
+                .chain(c.rules.values())
+                .chain(c.meta.values())
+                .chain(c.system.values())
+                .chain(c.local.values())
+                .chain(c.pending_spreads.iter())
+            {
+                root_reads(x, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Q-128 R-1: the first segment of every `_.`-anchored path in `expr`.
+fn root_names(expr: &Expr, out: &mut HashSet<String>) {
+    match &expr.kind {
+        ExprKind::Path(p) if p.anchor == PathAnchor::Root => {
+            if let Some(name) = p.segments.first() {
+                out.insert(name.trim().to_string());
+            }
+        }
+        ExprKind::Morphism { param, body } => {
+            root_names(param, out);
+            root_names(body, out);
+        }
+        ExprKind::Combo { fields, .. } => {
+            for field in fields {
+                if let FieldKey::Pattern(pe) = &field.key {
+                    root_names(pe, out);
+                }
+                root_names(&field.value, out);
+            }
+        }
+        ExprKind::Apply(a, b) | ExprKind::Pipe(a, b) | ExprKind::Meet(a, b)
+        | ExprKind::Join(a, b) | ExprKind::Diff(a, b) | ExprKind::Add(a, b)
+        | ExprKind::Sub(a, b) | ExprKind::Mul(a, b) | ExprKind::Div(a, b)
+        | ExprKind::Rem(a, b) | ExprKind::Eq(a, b) | ExprKind::Ne(a, b)
+        | ExprKind::Lt(a, b) | ExprKind::Gt(a, b) | ExprKind::Lte(a, b)
+        | ExprKind::Gte(a, b) | ExprKind::TypeAnnotation(a, b)
+        | ExprKind::Lens(a, b) | ExprKind::LatticeEq(a, b) | ExprKind::Probe(a, b) => {
+            root_names(a, out);
+            root_names(b, out);
+        }
+        ExprKind::Ternary { cond, then_branch, else_branch } => {
+            root_names(cond, out);
+            root_names(then_branch, out);
+            root_names(else_branch, out);
+        }
+        ExprKind::Unary { expr, .. } | ExprKind::AnonSet(expr) | ExprKind::Spread(expr)
+        | ExprKind::Structural(expr) | ExprKind::Complement(expr) => root_names(expr, out),
+        ExprKind::List(items) | ExprKind::Tuple(items) => items.iter().for_each(|x| root_names(x, out)),
+        ExprKind::Interpolated(parts) => {
+            for part in parts {
+                if let nlang_parser::ast::StringPart::Interpolated(e) = part {
+                    root_names(e, out);
+                }
+            }
+        }
+        ExprKind::Range { start, end, step } => {
+            root_names(start, out);
+            root_names(end, out);
+            if let Some(step) = step {
+                root_names(step, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Q-117: the bare names a value reads (a record's own fields bind theirs).
+fn collect_bare_reads(v: &Value, out: &mut HashSet<String>) {
     match v {
         Value::Thunk { .. } => crate::unify::read_names(v, out),
-        Value::Union(items) => items.iter().for_each(|x| collect_reads(x, out)),
+        Value::Union(items) => items.iter().for_each(|x| collect_bare_reads(x, out)),
         Value::Combo(c) => {
             // A name a record's own field defines is read in that record.
             let mut inner = HashSet::new();
@@ -455,7 +553,7 @@ fn collect_reads(v: &Value, out: &mut HashSet<String>) {
                 .chain(c.local.values())
                 .chain(c.pending_spreads.iter())
             {
-                collect_reads(x, &mut inner);
+                collect_bare_reads(x, &mut inner);
             }
             out.extend(inner.into_iter().filter(|n| {
                 let bare = n.trim_start_matches('~');
