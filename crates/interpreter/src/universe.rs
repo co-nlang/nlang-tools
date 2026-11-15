@@ -469,10 +469,55 @@ fn collect_reads(v: &Value, out: &mut HashSet<String>) {
     }
 }
 
+/// Q-117: what a working set's values read. Q-128: by coordinate, so a
+/// name that arrives later reaches the coordinates that read it and no other.
+struct FastIndex {
+    /// Every name read anywhere in the working set (Q-117).
+    names: HashSet<String>,
+    /// A name read by a top-level coordinate: those coordinates
+    /// (`""` data, `"~"` local) — the ones a new value of it is read by.
+    readers: std::collections::HashMap<String, Vec<(&'static str, String)>>,
+    /// Names read on an axis that is not a coordinate (types, rules, meta,
+    /// system): a new value of one of these goes the meet's way.
+    opaque: HashSet<String>,
+    /// What this session wrote holds a `_` at a coordinate (an in-place
+    /// landing only adds values that are not `_`, so this stays true until
+    /// the index is made again).
+    delta_top: bool,
+}
+
+impl FastIndex {
+    fn add(&mut self, prefix: &'static str, key: &str, reads: &HashSet<String>) {
+        for n in reads {
+            self.names.insert(n.clone());
+            self.readers.entry(n.clone()).or_default().push((prefix, key.to_string()));
+        }
+    }
+    /// The coordinates that read `prefix``key`, or `None` when something
+    /// that is not a coordinate reads it.
+    fn readers_of(&self, prefix: &str, key: &str) -> Option<Vec<(&'static str, String)>> {
+        let named = [key.to_string(), format!("{prefix}{key}")];
+        if named.iter().any(|n| self.opaque.contains(n)) {
+            return None;
+        }
+        let mut out: Vec<(&'static str, String)> = Vec::new();
+        for n in &named {
+            if let Some(rs) = self.readers.get(n) {
+                for r in rs {
+                    if !out.contains(r) {
+                        out.push(r.clone());
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+}
+
 /// Q-117: the names a working set's values read, or `None` when the
 /// working set is not one coordinates can be added to in place (a closed
 /// or table working set, spreads waiting or landed).
-fn fast_index(staged: &ComboVal) -> Option<HashSet<String>> {
+fn fast_index(staged: &ComboVal) -> Option<FastIndex> {
     let fits = !staged.closed
         && matches!(staged.masa_ref, crate::value::MasaRef::Top)
         && staged.pending_spreads.is_empty()
@@ -481,19 +526,33 @@ fn fast_index(staged: &ComboVal) -> Option<HashSet<String>> {
     if !fits {
         return None;
     }
-    let mut reads = HashSet::new();
+    let mut index = FastIndex {
+        names: HashSet::new(),
+        readers: Default::default(),
+        opaque: HashSet::new(),
+        delta_top: false,
+    };
+    for (k, x) in &staged.data {
+        let mut reads = HashSet::new();
+        collect_reads(x, &mut reads);
+        index.add("", k, &reads);
+    }
+    for (k, x) in &staged.local {
+        let mut reads = HashSet::new();
+        collect_reads(x, &mut reads);
+        index.add("~", k, &reads);
+    }
     for x in staged
-        .data
+        .types
         .values()
-        .chain(staged.types.values())
         .chain(staged.rules.values())
         .chain(staged.meta.values())
         .chain(staged.system.values())
-        .chain(staged.local.values())
     {
-        collect_reads(x, &mut reads);
+        collect_reads(x, &mut index.opaque);
     }
-    Some(reads)
+    index.names.extend(index.opaque.iter().cloned());
+    Some(index)
 }
 
 /// Thunk effects read the working set: refresh them after a meet, and keep
@@ -662,7 +721,7 @@ pub struct Universe {
     /// Q-117: `Some(Some(reads))` when coordinates can be added to the
     /// working set in place and its values read the names `reads`;
     /// `Some(None)` when they cannot; `None` when not yet looked.
-    fast_state: Option<Option<HashSet<String>>>,
+    fast_state: Option<Option<FastIndex>>,
     /// D110 is a rule about what a definition stores. A one-shot question
     /// (`oo eval`) is never stored: it is answered where it is asked, so
     /// reading a stored atom stays a read of data (SPEC_10, D91).
@@ -1650,7 +1709,17 @@ impl Universe {
         // their own names and that nothing staged reads, are added in place —
         // a write of one coordinate costs that coordinate, not the working set.
         if self.fast_state.is_none() {
-            self.fast_state = Some(fast_index(&self.staged));
+            let delta_top = self.session_has_delta
+                && self
+                    .session_delta
+                    .data
+                    .values()
+                    .chain(self.session_delta.local.values())
+                    .any(|v| matches!(v, Value::Top | Value::TopCaused { .. }));
+            self.fast_state = Some(fast_index(&self.staged).map(|mut i| {
+                i.delta_top = delta_top;
+                i
+            }));
         }
         let new_keys: Vec<(&str, &String)> = incoming
             .data
@@ -1661,6 +1730,7 @@ impl Universe {
         let delta_fits = !self.session_has_delta
             || (fast_combo_shell(&self.session_delta));
         let mut new_reads = HashSet::new();
+        let mut readers: Vec<(&'static str, String)> = Vec::new();
         let fits = matches!(&self.fast_state, Some(Some(_)))
             && delta_fits
             && fast_combo(&incoming)
@@ -1679,9 +1749,10 @@ impl Universe {
                     collect_reads(v, &mut new_reads);
                 }
                 let Some(Some(index)) = &self.fast_state else { unreachable!() };
-                // A name the new value reads is already there (staged, in
-                // the root, or the system's): a name not there yet is a
-                // forward reading, which the meet settles its own way.
+                // Q-128: a name the new value reads need not be there yet (a
+                // forward reading): what it reads is read when it is read.
+                // A coordinate that already reads a new name is read again
+                // below; anything else that reads it goes the meet's way.
                 let there = |n: &String| {
                     n.starts_with("~%")
                         || [&*self.staged, &*self.root].iter().any(|c| {
@@ -1689,10 +1760,24 @@ impl Universe {
                                 || c.get_local_field(n.trim_start_matches('~')).is_some()
                         })
                 };
-                new_reads.iter().all(there)
-                    && new_keys.iter().all(|(p, k)| {
-                        !crate::eval::captures(index, p, k) && !crate::eval::captures(&new_reads, p, k)
-                    })
+                let forward = !new_reads.iter().all(there);
+                let fits = new_keys.iter().all(|(p, k)| {
+                    !crate::eval::captures(&new_reads, p, k)
+                        && match index.readers_of(p, k) {
+                            Some(rs) => {
+                                for r in rs {
+                                    if !readers.contains(&r) {
+                                        readers.push(r);
+                                    }
+                                }
+                                true
+                            }
+                            None => false,
+                        }
+                });
+                // The meet drops a `_` from what this session wrote; a landing
+                // Q-117 did not take goes that way while there is one.
+                fits && !((forward || !readers.is_empty()) && index.delta_top)
             };
         if fits {
             drop(ctx);
@@ -1729,8 +1814,62 @@ impl Universe {
                 self.session_delta = fresh.clone();
                 self.session_has_delta = true;
             }
+            // Q-128: the coordinates that read a new name read their effect
+            // again, in the working set it is now in (what `restamp` gives
+            // them; every other value reads nothing new).
+            if !readers.is_empty() {
+                let mut fresh_readers: Vec<(&'static str, String, Value)> = Vec::new();
+                {
+                    let mut rctx = crate::EvalContext::new_shared(self.root.clone())
+                        .with_standard_root(self.standard_root.clone());
+                    rctx.staged = Some(self.staged.clone());
+                    for (p, k) in &readers {
+                        let held = if p.is_empty() { self.staged.data.get(k) } else { self.staged.local.get(k) };
+                        if let Some(v) = held {
+                            let mut v = v.clone();
+                            refresh_thunk_effects(engine, &rctx, &mut v);
+                            fresh_readers.push((p, k.clone(), v));
+                        }
+                    }
+                }
+                // The context is gone: the working set is not copied to be written.
+                let staged = std::sync::Arc::make_mut(&mut self.staged);
+                for (p, k, v) in fresh_readers {
+                    if p.is_empty() {
+                        staged.data.insert(k, v);
+                    } else {
+                        staged.local.insert(k, v);
+                    }
+                }
+                *staged.cache_id.write().unwrap() = None;
+                *staged.cycle_frame_id.write().unwrap() = None;
+                // Q-098: what this session wrote holds the working set's value.
+                if self.session_has_delta {
+                    for (p, k) in &readers {
+                        let now = if p.is_empty() { self.staged.data.get(k) } else { self.staged.local.get(k) };
+                        let Some(now) = now.cloned() else { continue };
+                        let slot = if p.is_empty() {
+                            self.session_delta.data.get_mut(k)
+                        } else {
+                            self.session_delta.local.get_mut(k)
+                        };
+                        if let Some(s) = slot {
+                            *s = now;
+                        }
+                    }
+                    *self.session_delta.cache_id.write().unwrap() = None;
+                    *self.session_delta.cycle_frame_id.write().unwrap() = None;
+                }
+            }
             if let Some(Some(index)) = &mut self.fast_state {
-                index.extend(new_reads);
+                for (p, k) in &new_keys {
+                    let v = if p.is_empty() { fresh.data.get(k.as_str()) } else { fresh.local.get(k.as_str()) };
+                    let mut reads = HashSet::new();
+                    if let Some(v) = v {
+                        collect_reads(v, &mut reads);
+                    }
+                    index.add(if p.is_empty() { "" } else { "~" }, k, &reads);
+                }
             }
             self.is_dirty = true;
             if let Some((s0, d0, h0)) = shadow {
