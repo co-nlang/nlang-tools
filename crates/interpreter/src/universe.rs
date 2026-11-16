@@ -782,10 +782,34 @@ fn sig_of(v: &Value) -> Vec<EffectTag> {
 }
 
 /// Q-129: set every thunk label in a value to pure (the start of a settle).
+/// Q-129 R-1: what a record's fields carry (data and local), as its literal
+/// folds them (`eval.rs`).
+fn fields_effect(c: &ComboVal) -> EffectTag {
+    let mut e = EffectTag::Pure;
+    for v in c.data.values().chain(c.local.values()) {
+        e = e.union(v.effect());
+    }
+    e
+}
+
+/// Q-129 R-1: a record's own label after its fields were stamped again: what
+/// it had that its fields did not carry stays; what they carried and no
+/// longer carry goes; what they carry now is on it.
+fn relabel_record(own: EffectTag, before: EffectTag, after: EffectTag) -> EffectTag {
+    let mut e = after;
+    for t in [EffectTag::IO, EffectTag::NonDet, EffectTag::State, EffectTag::Cached] {
+        if own.contains(t) && !before.contains(t) {
+            e = e.union(t);
+        }
+    }
+    e
+}
+
 fn clear_thunk_effects(v: &mut Value) {
     match v {
         Value::Thunk { effect, .. } => *effect = EffectTag::Pure,
         Value::Combo(c) => {
+            let before = fields_effect(c);
             for x in c
                 .data
                 .values_mut()
@@ -799,6 +823,9 @@ fn clear_thunk_effects(v: &mut Value) {
             }
             for x in &mut c.pending_spreads {
                 clear_thunk_effects(x);
+            }
+            if !c.closed {
+                c.effect = relabel_record(c.effect, before, fields_effect(c));
             }
         }
         Value::Union(bs) => {
@@ -994,6 +1021,7 @@ fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut
             *effect = engine.predict_effect(expr, ctx);
         }
         Value::Combo(c) => {
+            let q129_before = fields_effect(c);
             for v in c
                 .data
                 .values_mut()
@@ -1009,14 +1037,11 @@ fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut
                 refresh_thunk_effects(engine, ctx, v);
             }
             // Q-129: a record's own label is its fields' (as when it is built,
-            // `eval.rs` record literal): it gains what they now carry. A
-            // cocoon keeps its own (GUIDE_03 §4.2.1 Shield: the wall stops it).
+            // `eval.rs` record literal): it gains what they now carry, and
+            // loses what they carried and no longer do (R-1). A cocoon keeps
+            // its own (GUIDE_03 §4.2.1 Shield: the wall stops it).
             if !c.closed {
-                let mut e = c.effect;
-                for v in c.data.values().chain(c.local.values()) {
-                    e = e.union(v.effect());
-                }
-                c.effect = e;
+                c.effect = relabel_record(c.effect, q129_before, fields_effect(c));
             }
         }
         Value::Union(branches) => {
