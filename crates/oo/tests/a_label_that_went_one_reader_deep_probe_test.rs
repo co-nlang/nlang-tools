@@ -564,3 +564,75 @@ fn g1_what_was_right_stays() {
     check(&mut bad, "a pure chain of ten", format!("{r} {}", v.join("")), "bf4b5960d07a07e32bf28c320632e37ac44685a3bc017685065eb1f148916465 10");
     verdict(bad, cases.len() * 2 + 1);
 }
+
+/// R-1 — each shape with `p: 7` written first: its root (v0.127.0's).
+const PINS: [(&str, &str); 17] = [
+    ("a: [p]", "9311baeaae5c22b5ed8816894b0cd2a2d9caaa384f8713ac4136d3f0e74cf1bb"),
+    ("a: { x: p }", "72d75ffd0655cc8a2e7dbc1e15657dc34fd8a187979a881dab84a7c8aca47362"),
+    ("a: [b]\nb: [c]\nc: [p]", "39fb4282b904c85ac8bc8a640ed7747b72c963eb8986d4b2d81d859c1702568a"),
+    ("a: [b]\nb: [c]\nc: [d]\nd: [p]", "c692eb0d3d2b8d4e64ccfa05e2a46b222b13d2b5d987731753cdb62cf506afc6"),
+    ("a: { x: b }\nb: { y: p }", "2ca5dae66cb23bb80de8556929166278d4cddd22243d99cd714db6cf115a8ced"),
+    ("a: { x: b }\nb: { y: c }\nc: { z: p }", "86e94568b771add118eb18a31343b410c9d66370963d5ceb941f1f1a8fede3b0"),
+    ("a: { x: b }\nb: [c]\nc: { z: p }", "643c90bc42abd640ed836cb22fe2d31d50596a3dbc8d1b26559e71ef8c40c252"),
+    ("a: [b]\nb: { y: c }\nc: [p]", "c41d847fce03beecbd7fb90583f0b6e1c38fb3e93c3dbbee765b4eb08b1e1d2f"),
+    ("~a: [b]\nb: [~c]\n~c: [p]\nm: [~a]", "c41b1c1f433e2c7fa24a6ecf179e89b30992b2913ba0cce96a43c33d487a3976"),
+    ("a: [@T]\n@T: [c]\nc: [p]", "faaeecb489160cd35cb1e18561f9c231442bf261aa378fd039666074cf0af4d1"),
+    ("a: [/r]\n/r: [c]\nc: [p]", "eca126577d15c94b48cddcbbb07f55b94db7edf696ffa3031fcef5f5b10c7095"),
+    ("a: [_.b]\nb: [_.c]\nc: [_.p]", "4e86ac9263f241c71bb4daafa3f3b9804abc0e00af99db432003159ccdb314fa"),
+    ("a: [b | 1]\nb: [c | 1]\nc: [p | 1]", "22afa8c8ef4115b351201b80e349d470337219791151d7db13738fcd6791e592"),
+    ("a: [b.v]\nb: { v: c }\nc: [p]", "aaaba44d29c52c4b0f34da7dec4154be3c329c084ae5400b1cc43ee40d2d3333"),
+    ("a: { x: { y: p } }", "a1d29c50f5ddd910dc8f501727ae6df5227c1116ab9176fd4660c14263547236"),
+    ("a: [{ x: p }]", "7ab7424e83d33dffceaf412f87247a0878306ca0c7fd0066f3dcb9fa0cdb477c"),
+    ("m: [@T]\n@T: { x: p }", "70123300f51b41977a2840cc53158a08611ac624873a6d5f9aa1ed67ebe06ae9"),
+];
+
+/// R-1 — records with a field that carries `#io` itself, beside a field that
+/// reads `p`: the root once a pin made `p` pure (v0.127.0's).
+const KEPT: [(&str, &str); 3] = [
+    ("k: {{ v: ~%Env.get \"Q129_K\" }}\na: { ...k\n y: p }", "6f625b81ca296b828dea77c7f3b9f47e8eef68c40c7bafe28ead56e2d72ad9cd"),
+    ("k: { v: ~%Env.get \"Q129_K\" }\na: { ...k\n y: p }", "17fe1f6038706851015a7c51f35a38a3043c9a8ac81db1865dc614c37373fb09"),
+    ("a: { v: ~%Env.get \"Q129_K\"\n y: p }", "39c6fbaf2f9d8b3188289a68c58da658daf95a04506e777691f0f9fb372f919e"),
+];
+
+/// `readers` and the name that does IO, the readers first (in one evolve, or
+/// the name in a second), then a pin that makes the name `7`, then a commit:
+/// the exit codes, the root, and `(_.a).%effect`.
+fn pinned_pure(readers: &str, two: bool) -> (String, String) {
+    let w = Ws::new("pinned");
+    let mut rcs = Vec::new();
+    if two {
+        rcs.push(w.evolve(&format!("{readers}\n")));
+        rcs.push(w.evolve(&format!("{P}\n")));
+    } else {
+        rcs.push(w.evolve(&format!("{readers}\n{P}\n")));
+    }
+    fs::write(w.ws.join("pin.n"), "p: 7\n").unwrap();
+    rcs.push(format!("p{}", w.oo(&["evolve", "--pin", "--grant", "pin", "pin.n"]).1));
+    rcs.push(format!("c{}", w.oo(&["commit", "-m", "a", "--grant", "pin"]).1));
+    (format!("{} {}", rcs.join(" "), w.root()), w.eval("(_.a).%effect"))
+}
+
+/// r4 (R-1) — A pin that makes the name pure takes its label back from
+/// every reader, and from every record that had it from a reader: the
+/// readers written first, the name pinned to `7`, store the root of `p: 7`
+/// written with them. A record keeps the label a field of its own still
+/// carries.
+#[test]
+fn r4_a_pin_that_makes_the_name_pure_takes_the_label_back() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    for (readers, want) in PINS {
+        for two in [false, true] {
+            n += 1;
+            let rcs = if two { "e0 e0 p0 c0" } else { "e0 p0 c0" };
+            check(&mut bad, &format!("{readers:?}, the name in {} evolve", if two { "a second" } else { "the same" }),
+                pinned_pure(readers, two).0, &format!("{rcs} {want}"));
+        }
+    }
+    for (readers, want) in KEPT {
+        n += 1;
+        let (r, e) = pinned_pure(readers, false);
+        check(&mut bad, &format!("{readers:?}: a field of its own still carries it"), format!("{r} {e}"), &format!("e0 p0 c0 {want} #io"));
+    }
+    verdict(bad, n);
+}
