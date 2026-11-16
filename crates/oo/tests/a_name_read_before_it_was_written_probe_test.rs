@@ -433,7 +433,8 @@ fn r2_a_late_name_gives_its_readers_its_label() {
         let c: Vec<&str> = calls.iter().map(|s| s.as_str()).collect();
         let (got, root, v) = staged_and_root(&c, &qs);
         check(&mut bad, &format!("{label}: what is staged"), staged(&got),
-            "Staged changes: { a: [p, 1] ;; %effect: #io b: { q: p ;; %effect: #io } c: [p, \"x\"] ;; %effect: #io p: #none ;; %effect: #io ~l: [p] ;; %effect: #io } ;; %effect: #io");
+            // Q-129: the record `b` carries its field's label, as when the name comes first.
+            "Staged changes: { a: [p, 1] ;; %effect: #io b: { q: p ;; %effect: #io } ;; %effect: #io c: [p, \"x\"] ;; %effect: #io p: #none ;; %effect: #io ~l: [p] ;; %effect: #io } ;; %effect: #io");
         check(&mut bad, &format!("{label}: root"), root, &root_first);
         check(&mut bad, &format!("{label}: readings"), v.join(" | "), &v_first.join(" | "));
     }
@@ -448,7 +449,9 @@ fn r2_a_late_name_gives_its_readers_its_label() {
     // and a coordinate that reads them, written between them and the name.
     for (src, want_staged, want_root) in [
         ("@T: [p]\nm: [@T]", "Staged changes: { @T: [p] ;; %effect: #io m: [@T] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "a542fcf3aa3879b240ce1a2731a647bc0d34ab2601d340b1513bb24857fef232"),
-        ("@T: { x: p }\nm: [@T]", "Staged changes: { @T: { x: p ;; %effect: #io } m: [@T] p: #none ;; %effect: #io } ;; %effect: #io", "1fcb801b569e433555b6b191767460a2e0ed71bc9a1a702967d7b286b7f407de"),
+        // Q-129: the type `@T` carries its field's label, `m` reads it, and the
+        // root is the root of the name written first (v0.127.0: two roots).
+        ("@T: { x: p }\nm: [@T]", "Staged changes: { @T: { x: p ;; %effect: #io } ;; %effect: #io m: [@T] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "b2f0c25109a951377ba62090fceacf594bedfee76d17a72a55d8b6d40f514246"),
         ("/r: [p]\nm: [/r]", "Staged changes: { /r: [p] ;; %effect: #io m: [/r] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "6be88ea1e0163cad9d1bc32aae9cf6363f68cf16a6cae4622d8e0925c1ea2f5c"),
         ("%m: [p]\nz: [%m]", "Staged changes: { %m: [p] ;; %effect: #io p: #none ;; %effect: #io z: [%m] ;; %effect: #io } ;; %effect: #io", "e40c2dbca1be781ec77cb3faf37cc5af798c51ed5a70c71266414b953cae3248"),
     ] {
