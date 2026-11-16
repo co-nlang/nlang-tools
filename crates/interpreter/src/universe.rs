@@ -663,9 +663,30 @@ fn restamp(
     delta: Option<&mut ComboVal>,
     pin: Option<&std::collections::BTreeSet<String>>,
 ) {
+    // Q-129: what each value's labels were before this round, to see which changed.
+    let before: Vec<(u8, String, Vec<EffectTag>)> = (0u8..6)
+        .flat_map(|a| axis_map(staged, a).iter().map(move |(k, v)| (a, k.clone(), sig_of(v))))
+        .collect();
+    {
+        let mut ctx = crate::EvalContext::new_shared(root.clone()).with_standard_root(standard_root.clone());
+        ctx.staged = Some(staged.clone());
+        let mut next = (**staged).clone();
+        refresh_combo_thunks(engine, &ctx, &mut next);
+        drop(ctx);
+        *staged = std::sync::Arc::new(next);
+    }
+    let changed: Vec<(u8, String)> = before
+        .into_iter()
+        .filter(|(a, k, sig)| axis_map(staged, *a).get(k).map(sig_of).as_ref() != Some(sig))
+        .map(|(a, k, _)| (a, k))
+        .collect();
+    if !changed.is_empty() {
+        let map = all_readers(staged);
+        let readers = |n: &str| Some(map.get(n).cloned().unwrap_or_default());
+        let _ = settle_labels(engine, root, standard_root, staged, &changed, &readers);
+    }
     let mut ctx = crate::EvalContext::new_shared(root.clone()).with_standard_root(standard_root.clone());
     ctx.staged = Some(staged.clone());
-    refresh_combo_thunks(engine, &ctx, std::sync::Arc::make_mut(staged));
     if let Some(session_delta) = delta {
         // D128: a pin member holds the leaves it wrote, as the working set
         // now reads them — not the working set's coordinate around them
@@ -698,6 +719,255 @@ fn restamp(
         }
         next.spread_rows = session_delta.spread_rows.clone();
         *session_delta = next;
+    }
+}
+
+/// Q-129: the names a reader may spell a key with (`k`, `~k`, `@k`, `/k`,
+/// `%k`, and the key without its prefix).
+fn names_of_key(k: &str) -> Vec<String> {
+    let bare = k.trim_start_matches(['@', '~', '/', '%']).to_string();
+    let mut out = vec![k.to_string(), bare.clone()];
+    for p in ["~", "@", "/", "%"] {
+        out.push(format!("{p}{bare}"));
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Q-129: the effect labels a value's thunks carry, in walk order (what
+/// `refresh_thunk_effects` writes).
+fn effect_sig(v: &Value, out: &mut Vec<EffectTag>) {
+    match v {
+        Value::Thunk { effect, .. } => out.push(*effect),
+        Value::Combo(c) => {
+            out.push(c.effect);
+            for x in c
+                .data
+                .values()
+                .chain(c.types.values())
+                .chain(c.rules.values())
+                .chain(c.meta.values())
+                .chain(c.system.values())
+                .chain(c.local.values())
+                .chain(c.pending_spreads.iter())
+            {
+                effect_sig(x, out);
+            }
+        }
+        Value::Union(bs) => {
+            for b in bs {
+                effect_sig(b, out);
+            }
+        }
+        Value::Range { start, end, step } => {
+            effect_sig(start, out);
+            effect_sig(end, out);
+            if let Some(s) = step {
+                effect_sig(s, out);
+            }
+        }
+        Value::Complement { within, without } => {
+            effect_sig(within, out);
+            effect_sig(without, out);
+        }
+        _ => {}
+    }
+}
+
+fn sig_of(v: &Value) -> Vec<EffectTag> {
+    let mut out = Vec::new();
+    effect_sig(v, &mut out);
+    out
+}
+
+/// Q-129: set every thunk label in a value to pure (the start of a settle).
+fn clear_thunk_effects(v: &mut Value) {
+    match v {
+        Value::Thunk { effect, .. } => *effect = EffectTag::Pure,
+        Value::Combo(c) => {
+            for x in c
+                .data
+                .values_mut()
+                .chain(c.types.values_mut())
+                .chain(c.rules.values_mut())
+                .chain(c.meta.values_mut())
+                .chain(c.system.values_mut())
+                .chain(c.local.values_mut())
+            {
+                clear_thunk_effects(x);
+            }
+            for x in &mut c.pending_spreads {
+                clear_thunk_effects(x);
+            }
+        }
+        Value::Union(bs) => {
+            for b in bs {
+                clear_thunk_effects(b);
+            }
+        }
+        Value::Range { start, end, step } => {
+            clear_thunk_effects(start);
+            clear_thunk_effects(end);
+            if let Some(s) = step {
+                clear_thunk_effects(s);
+            }
+        }
+        Value::Complement { within, without } => {
+            clear_thunk_effects(within);
+            clear_thunk_effects(without);
+        }
+        _ => {}
+    }
+}
+
+/// Q-129: who reads each name, on every axis of a working set.
+fn all_readers(staged: &ComboVal) -> std::collections::HashMap<String, Vec<(u8, String)>> {
+    let mut readers: std::collections::HashMap<String, Vec<(u8, String)>> = Default::default();
+    for a in 0u8..6 {
+        for (k, v) in axis_map(staged, a) {
+            let mut reads = HashSet::new();
+            collect_reads(v, &mut reads);
+            for n in reads {
+                readers.entry(n).or_default().push((a, k.clone()));
+            }
+        }
+    }
+    readers
+}
+
+/// Q-129: a label goes on to the readers of a value whose label changed,
+/// and to theirs, however many hops: what each reads is the working set as
+/// it is after the last round, not before it. The values that read a
+/// changed one (transitively) start again from pure and only gain labels,
+/// round by round, until none changes: the least labels the reads give,
+/// whatever order the values were written in. `readers` answers who reads a
+/// name; `None` when it cannot (then the caller settles the whole set).
+/// Returns the values it touched, or `None` when `readers` could not answer.
+fn settle_labels(
+    engine: &Ouroboros,
+    root: &std::sync::Arc<ComboVal>,
+    standard_root: &ComboVal,
+    staged: &mut std::sync::Arc<ComboVal>,
+    changed: &[(u8, String)],
+    readers: &dyn Fn(&str) -> Option<Vec<(u8, String)>>,
+) -> Option<Vec<(u8, String)>> {
+    // The values that read a changed one, however far.
+    let mut closure: Vec<(u8, String)> = Vec::new();
+    let mut seen: HashSet<(u8, String)> = HashSet::new();
+    let mut queue: std::collections::VecDeque<(u8, String)> = changed.iter().cloned().collect();
+    while let Some((a, k)) = queue.pop_front() {
+        for n in names_of_key(&k) {
+            for r in readers(&n)? {
+                if seen.insert(r.clone()) {
+                    closure.push(r.clone());
+                    queue.push_back(r);
+                }
+            }
+        }
+        let _ = a;
+    }
+    if closure.is_empty() {
+        return Some(closure);
+    }
+    {
+        let s = std::sync::Arc::make_mut(staged);
+        for (a, k) in &closure {
+            if let Some(v) = axis_map_mut(s, *a).get_mut(k) {
+                clear_thunk_effects(v);
+            }
+        }
+    }
+    let mut wave: Vec<(u8, String)> = closure.clone();
+    while !wave.is_empty() {
+        let mut fresh: Vec<(u8, String, Value)> = Vec::new();
+        {
+            let mut ctx = crate::EvalContext::new_shared(root.clone()).with_standard_root(standard_root.clone());
+            ctx.staged = Some(staged.clone());
+            for (a, k) in &wave {
+                if let Some(v0) = axis_map(staged, *a).get(k) {
+                    let mut v = v0.clone();
+                    raise_thunk_effects(engine, &ctx, &mut v);
+                    if sig_of(&v) != sig_of(v0) {
+                        fresh.push((*a, k.clone(), v));
+                    }
+                }
+            }
+        }
+        if fresh.is_empty() {
+            break;
+        }
+        // The context is gone: the working set is not copied to be written.
+        let s = std::sync::Arc::make_mut(staged);
+        let mut next: Vec<(u8, String)> = Vec::new();
+        let mut in_next: HashSet<(u8, String)> = HashSet::new();
+        for (a, k, v) in fresh {
+            axis_map_mut(s, a).insert(k.clone(), v);
+            for n in names_of_key(&k) {
+                for r in readers(&n).unwrap_or_default() {
+                    if seen.contains(&r) && in_next.insert(r.clone()) {
+                        next.push(r);
+                    }
+                }
+            }
+        }
+        *s.cache_id.write().unwrap() = None;
+        *s.cycle_frame_id.write().unwrap() = None;
+        wave = next;
+    }
+    Some(closure)
+}
+
+/// Q-129: `refresh_thunk_effects`, but a label only gains what the reads
+/// give (a settle starts from pure, so it climbs to the least labels).
+fn raise_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut Value) {
+    match val {
+        Value::Thunk { expr, effect, .. } => {
+            *effect = effect.union(engine.predict_effect(expr, ctx));
+        }
+        Value::Combo(c) => {
+            for v in c
+                .data
+                .values_mut()
+                .chain(c.types.values_mut())
+                .chain(c.rules.values_mut())
+                .chain(c.meta.values_mut())
+                .chain(c.system.values_mut())
+                .chain(c.local.values_mut())
+            {
+                raise_thunk_effects(engine, ctx, v);
+            }
+            for v in &mut c.pending_spreads {
+                raise_thunk_effects(engine, ctx, v);
+            }
+            // Q-129: a record's own label is its fields' (as when it is built,
+            // `eval.rs` record literal): it gains what they now carry. A
+            // cocoon keeps its own (GUIDE_03 §4.2.1 Shield: the wall stops it).
+            if !c.closed {
+                let mut e = c.effect;
+                for v in c.data.values().chain(c.local.values()) {
+                    e = e.union(v.effect());
+                }
+                c.effect = e;
+            }
+        }
+        Value::Union(branches) => {
+            for b in branches {
+                raise_thunk_effects(engine, ctx, b);
+            }
+        }
+        Value::Range { start, end, step } => {
+            raise_thunk_effects(engine, ctx, start);
+            raise_thunk_effects(engine, ctx, end);
+            if let Some(s) = step {
+                raise_thunk_effects(engine, ctx, s);
+            }
+        }
+        Value::Complement { within, without } => {
+            raise_thunk_effects(engine, ctx, within);
+            raise_thunk_effects(engine, ctx, without);
+        }
+        _ => {}
     }
 }
 
@@ -737,6 +1007,16 @@ fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut
             }
             for v in &mut c.pending_spreads {
                 refresh_thunk_effects(engine, ctx, v);
+            }
+            // Q-129: a record's own label is its fields' (as when it is built,
+            // `eval.rs` record literal): it gains what they now carry. A
+            // cocoon keeps its own (GUIDE_03 §4.2.1 Shield: the wall stops it).
+            if !c.closed {
+                let mut e = c.effect;
+                for v in c.data.values().chain(c.local.values()) {
+                    e = e.union(v.effect());
+                }
+                c.effect = e;
             }
         }
         Value::Union(branches) => {
@@ -1941,6 +2221,59 @@ impl Universe {
                 }
                 *staged.cache_id.write().unwrap() = None;
                 *staged.cycle_frame_id.write().unwrap() = None;
+                // Q-129: the readers of these readers, and theirs, however
+                // far (through the index; a reader on an axis that is not a
+                // coordinate settles the whole working set).
+                let changed: Vec<(u8, String)> =
+                    readers.iter().map(|(p, k)| (if p.is_empty() { 0u8 } else { 5u8 }, k.clone())).collect();
+                let touched = {
+                    let Some(Some(index)) = &self.fast_state else { unreachable!() };
+                    let ask = |n: &str| -> Option<Vec<(u8, String)>> {
+                        if index.opaque.contains(n) {
+                            return None;
+                        }
+                        Some(
+                            index
+                                .readers
+                                .get(n)
+                                .map(|rs| rs.iter().map(|(p, k)| (if p.is_empty() { 0u8 } else { 5u8 }, k.clone())).collect())
+                                .unwrap_or_default(),
+                        )
+                    };
+                    settle_labels(engine, &self.root, &self.standard_root, &mut self.staged, &changed, &ask)
+                };
+                let touched = match touched {
+                    Some(t) => t,
+                    None => {
+                        let map = all_readers(&self.staged);
+                        let ask = |n: &str| Some(map.get(n).cloned().unwrap_or_default());
+                        settle_labels(engine, &self.root, &self.standard_root, &mut self.staged, &changed, &ask)
+                            .unwrap_or_default()
+                    }
+                };
+                let mut readers = readers.clone();
+                let mut have: HashSet<(&'static str, String)> = readers.iter().cloned().collect();
+                let mut others: Vec<(u8, String)> = Vec::new();
+                for (a, k) in touched {
+                    if a == 0 || a == 5 {
+                        let r = (if a == 0 { "" } else { "~" }, k);
+                        if have.insert(r.clone()) {
+                            readers.push(r);
+                        }
+                    } else {
+                        others.push((a, k));
+                    }
+                }
+                // (An axis that is not a coordinate: what this session wrote follows it too.)
+                if self.session_has_delta {
+                    for (a, k) in &others {
+                        if let Some(v) = axis_map(&self.staged, *a).get(k).cloned() {
+                            if let Some(slot) = axis_map_mut(&mut self.session_delta, *a).get_mut(k) {
+                                *slot = v;
+                            }
+                        }
+                    }
+                }
                 // Q-098: what this session wrote holds the working set's value.
                 if self.session_has_delta {
                     for (p, k) in &readers {
