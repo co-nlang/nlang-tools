@@ -382,11 +382,10 @@ fn recipe_instead_of_pure_answer(
 type HashSet<T> = std::collections::HashSet<T>;
 
 /// Q-117: a value the meet with `_` leaves as it is, and whose own reading
-/// does not change when a coordinate it does not read arrives: atoms, and
-/// thunks with no open term, and records and unions of them. Not `_` (a
-/// meet drops a field that is `_`), not ⊥ (a meet keeps a bare
-/// `#conflict`, D117), not an anchor, a horizon, a reference or a pending
-/// spread.
+/// does not change when a coordinate it does not read arrives: atoms,
+/// thunks with no open term, horizons (Q-130), and records and unions of
+/// them. Not `_` (a meet drops a field that is `_`), not ⊥ (a meet keeps a
+/// bare `#conflict`, D117), not an anchor, a reference or a pending spread.
 fn fast_value(v: &Value) -> bool {
     match v {
         Value::Atom(kind, ..) => matches!(
@@ -406,6 +405,9 @@ fn fast_value(v: &Value) -> bool {
         Value::Combo(c) => {
             fast_combo(c) && c.data.values().chain(c.local.values()).all(fast_value)
         }
+        // Q-130: a horizon is a snapshot (D127): what it reads does not
+        // change when a coordinate arrives.
+        Value::Blur(_) => true,
         _ => false,
     }
 }
