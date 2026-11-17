@@ -406,6 +406,9 @@ fn fast_value(v: &Value) -> bool {
         Value::Combo(c) => {
             fast_combo(c) && c.data.values().chain(c.local.values()).all(fast_value)
         }
+        // Q-130: a horizon is a snapshot (D127): what it reads does not
+        // change when a coordinate arrives.
+        Value::Blur(_) => true,
         _ => false,
     }
 }
