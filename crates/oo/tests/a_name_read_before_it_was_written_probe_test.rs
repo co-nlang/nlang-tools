@@ -424,8 +424,11 @@ fn r2_a_late_name_gives_its_readers_its_label() {
     };
     let (first, root_first, v_first) = staged_and_root(&[&format!("{p}\n{readers}")], &qs);
     check(&mut bad, "the name first: readings", v_first.join(" | "), "#io | #io | #io");
+    // Q-127 pre-revision (2026-11-18): a reader of an IO name that did no
+    // effect itself holds its recipe in the working set, written in either
+    // order (v0.128.0 held the answer name first); the root does not move.
     check(&mut bad, "the name first: what is staged", staged(&first),
-        "Staged changes: { a: [#none ;; %effect: #io, 1] b: { q: p ;; %effect: #io } ;; %effect: #io c: [#none ;; %effect: #io, \"x\"] p: #none ;; %effect: #io ~l: [#none ;; %effect: #io] } ;; %effect: #io");
+        "Staged changes: { a: [p, 1] ;; %effect: #io b: { q: p ;; %effect: #io } ;; %effect: #io c: [p, \"x\"] ;; %effect: #io p: #none ;; %effect: #io ~l: [p] ;; %effect: #io } ;; %effect: #io");
     for (label, calls) in [
         ("the readers first", vec![format!("{readers}\n{p}")]),
         ("the readers in an evolve before", vec![readers.to_string(), p.to_string()]),

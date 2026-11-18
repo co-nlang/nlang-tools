@@ -147,6 +147,163 @@ thread_local! {
     pub(crate) static LAZY_HIT: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Q-126: effects left undone by bookkeeping (answered `_`).
     pub(crate) static EFFECTS_SKIPPED: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-127: the answer the next evolved field takes as is (observed against
+    /// the whole write).
+    pub(crate) static PRESET_ANSWER: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+    /// Q-127: while a try records them, the working-set names it read.
+    pub(crate) static WORK_READS: std::cell::RefCell<Option<HashSet<String>>> = const { std::cell::RefCell::new(None) };
+    /// Q-127: coordinates the scratch write left as recipes (they reached an effect).
+    pub(crate) static EFFECT_RECIPES: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
+    /// Q-127: during the real pass, the next field is a recipe (as the scratch found).
+    pub(crate) static PRESET_RECIPE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Q-127: the real pass after a scratch write: no field is tried again.
+    pub(crate) static KNOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Q-127 step 19: while a definition is evolved, the labels of the
+    /// universe's values it read (the working set, the write, HEAD, the
+    /// standard names).
+    pub(crate) static SEEN_LABEL: std::cell::Cell<Option<EffectTag>> = const { std::cell::Cell::new(None) };
+    /// Q-127 step 19: the effects-off depth the definition is evolved at; a
+    /// look taken deeper (bookkeeping) is not its reading.
+    pub(crate) static SEEN_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Q-127 step 16: the nodes of the cocoons now solidifying their own fields.
+    pub(crate) static SOLIDIFYING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Q-127 step 19: a universe value the evolving definition read carried
+/// these labels (held, and once forced); a deeper look does not count.
+pub(crate) fn note_seen(held: EffectTag, out: EffectTag) {
+    let own = NO_EFFECTS.with(|d| d.get()) == SEEN_DEPTH.with(|d| d.get());
+    SEEN_LABEL.with(|c| {
+        if let (true, Some(t)) = (own, c.get()) {
+            c.set(Some(t.union(held).union(out)));
+        }
+    });
+}
+
+/// Q-127: the coordinates the last scratch pass left as recipes (and forget them).
+pub fn take_effect_recipes() -> HashSet<String> {
+    EFFECT_RECIPES.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Q-127: the real pass — `known` while it runs; `recipe` for the next field.
+pub fn real_pass(known: bool, recipe: bool) {
+    KNOWN.with(|c| c.set(known));
+    PRESET_RECIPE.with(|c| c.set(recipe));
+}
+
+/// Q-127: effects left undone so far (the scratch write).
+pub fn effects_skipped() -> u64 {
+    EFFECTS_SKIPPED.with(|c| c.get())
+}
+
+/// Q-127: an order of items in which each comes after the items whose names it
+/// read (`reads[i]` the names item `i` read, `names[j]` item `j`'s name); a
+/// cycle, and what is left, in the given order. Kahn's algorithm.
+pub fn dependency_order(reads: &[HashSet<String>], names: &[Option<String>]) -> Vec<usize> {
+    let n = names.len();
+    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (j, nm) in names.iter().enumerate() {
+        if let Some(nm) = nm {
+            by_name.entry(nm.as_str()).or_default().push(j);
+        }
+    }
+    let mut indeg = vec![0usize; n];
+    let mut after: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for i in 0..n {
+        let mut seen = HashSet::new();
+        for r in &reads[i] {
+            for &j in by_name.get(r.as_str()).map(|v| v.as_slice()).unwrap_or(&[]) {
+                if j != i && seen.insert(j) {
+                    indeg[i] += 1;
+                    after[j].push(i);
+                }
+            }
+        }
+    }
+    let mut done = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    let mut ready: std::collections::BTreeSet<usize> = (0..n).filter(|&i| indeg[i] == 0).collect();
+    let mut next_cycle = 0usize;
+    while order.len() < n {
+        let i = match ready.iter().next().copied() {
+            Some(i) => {
+                ready.remove(&i);
+                i
+            }
+            None => {
+                // A cycle: the first left, in the given order.
+                while done[next_cycle] {
+                    next_cycle += 1;
+                }
+                next_cycle
+            }
+        };
+        if done[i] {
+            continue;
+        }
+        done[i] = true;
+        order.push(i);
+        for &k in &after[i] {
+            if !done[k] {
+                indeg[k] = indeg[k].saturating_sub(1);
+                if indeg[k] == 0 {
+                    ready.insert(k);
+                }
+            }
+        }
+    }
+    order
+}
+
+/// Q-127: while this lives, lookups are not recorded as the evolving field's
+/// reads (the universe is stamping other coordinates' labels again).
+pub(crate) struct ReadsPaused(Option<HashSet<String>>);
+impl ReadsPaused {
+    pub(crate) fn new() -> Self {
+        ReadsPaused(WORK_READS.with(|r| r.borrow_mut().take()))
+    }
+}
+impl Drop for ReadsPaused {
+    fn drop(&mut self) {
+        let held = self.0.take();
+        WORK_READS.with(|r| *r.borrow_mut() = held);
+    }
+}
+
+/// Q-127: the names a definition's text reads (a guess at an order; what a
+/// pass really read decides).
+pub fn names_in_text(e: &nlang_parser::ast::Expr) -> HashSet<String> {
+    crate::eval::names_read(e, &Default::default())
+        .into_iter()
+        .map(|n| n.trim_start_matches(['/', '~', '@', '%']).to_string())
+        .collect()
+}
+
+/// Q-127: record the names evaluations look up (`true`), or stop and take them.
+pub fn record_reads(on: bool) -> HashSet<String> {
+    WORK_READS.with(|r| {
+        let mut r = r.borrow_mut();
+        let taken = r.take().unwrap_or_default();
+        if on {
+            *r = Some(HashSet::new());
+        }
+        taken
+    })
+}
+
+/// Q-127: the next evolved field takes `v` as its answer.
+pub fn preset_answer(v: Option<Value>) {
+    PRESET_ANSWER.with(|c| *c.borrow_mut() = v);
+}
+
+/// Q-127: run `f` with no effect done (the scratch write).
+pub fn without_effects<T>(f: impl FnOnce() -> T) -> T {
+    bookkeeping(f)
+}
+
+/// Q-127: views read while effects answered `_` are not views of this write.
+pub fn forget_views() {
+    VIEWS_READ.with(|m| m.borrow_mut().clear());
 }
 
 /// Q-126 / D129: `oo evolve` leaves a definition that reads a lazy field
@@ -175,6 +332,11 @@ struct Observed {
 /// Q-126: a `$` was read.
 pub(crate) fn note_dollar_read() {
     DOLLAR_READ.with(|c| c.set(c.get() + 1));
+}
+
+/// Q-127: how many applications there have been.
+pub(crate) fn applications() -> u64 {
+    APPLICATIONS.with(|c| c.get())
 }
 
 /// Q-126: a new application; its number.
@@ -473,6 +635,10 @@ pub struct EvalContext {
     /// staged context). Nested thunk forces install a fresh collector and
     /// merge deps back into the outer one.
     pub dep_collector: Option<HashSet<String>>,
+    /// Q-127: the whole write, read after the working set and before the
+    /// root, except the coordinates being written (`lookahead_skip`).
+    pub lookahead: Option<std::sync::Arc<crate::value::ComboVal>>,
+    pub lookahead_skip: Vec<String>,
     /// Stage 5 acceptance fix: memo participation is restricted to
     /// observation contexts. Engine-internal contexts (eval_context: unify
     /// merges, formatting) run against the pristine system root with no
@@ -559,6 +725,8 @@ impl EvalContext {
             timeout_deadline: None,
             depth: 0,
             dep_collector: None,
+            lookahead: None,
+            lookahead_skip: Vec::new(),
             memo_enabled: true,
             // Fixed salt for disc tie-break only — NOT blur identity (O42).
             horizon_salt: salt,
@@ -4061,7 +4229,13 @@ impl Ouroboros {
         let before = effects_run();
         // D129: while a definition is tried, a thunk of a written node that
         // would do an effect is a lazy coordinate it reads.
-        let probing = LAZY_PROBE.with(|c| c.get()) > 0 && key.is_some() && frames.iter().any(|f| frame_node(f).0);
+        // Step 16: not a cocoon's own frame while it solidifies its fields.
+        let probing = LAZY_PROBE.with(|c| c.get()) > 0
+            && key.is_some()
+            && frames.iter().any(|f| {
+                let (written, n) = frame_node(f);
+                written && !SOLIDIFYING.with(|s| s.borrow().contains(&n))
+            });
         let skipped = EFFECTS_SKIPPED.with(|c| c.get());
         let root = ctx.root.clone();
         let dollars = DOLLAR_READ.with(|c| c.get());
@@ -4153,6 +4327,7 @@ impl Ouroboros {
                 // Q-126: an answer that did an effect is that observation's,
                 // not a cache entry another coordinate may read.
                 let effects_before = effects_run();
+                let skipped_before = EFFECTS_SKIPPED.with(|c| c.get());
                 let dollars_before = DOLLAR_READ.with(|c| c.get());
                 // Stage 4 (§4b): force-level memo with tier strategy.
                 // Stage 5 (§5-pre): staged gate — evolve-time forces read
@@ -4397,6 +4572,8 @@ impl Ouroboros {
                         // be cached across observations).
                         _ => !res.contains_blur() && !res.effect().contains(EffectTag::NonDet),
                     } && effects_run() == effects_before
+                        // Q-127: an answer with an effect left undone is not one.
+                        && EFFECTS_SKIPPED.with(|c| c.get()) == skipped_before
                         // Q-126: a record is where its fields will be
                         // observed; two applications written alike make two.
                         // A union that holds a record holds that record:
@@ -5097,11 +5274,15 @@ impl Ouroboros {
                     if matches!(&val, Value::Ref(_)) {
                         return val;
                     }
-                    if use_coord {
+                    let held = val.effect();
+                    let out = if use_coord {
                         oo.force_coord(n, val, ctx)
                     } else {
                         oo.force(val, ctx)
-                    }
+                    };
+                    // Q-127 step 19: what it read carried this label.
+                    note_seen(held, out.effect());
+                    out
                 };
 
             // Iterate by index so we can call force_lexical without holding
@@ -5149,6 +5330,12 @@ impl Ouroboros {
                 // Local (~private) fields: plain force — re-entry during HOF
                 // application is not a lattice cycle (list.fold + ~f).
                 if let Some(val) = s.get_field(name) {
+                    // Q-127: the working-set names a try read, in that order.
+                    WORK_READS.with(|r| {
+                        if let Some(r) = r.borrow_mut().as_mut() {
+                            r.insert(name.to_string());
+                        }
+                    });
                     return return_or_force(self, name, val.clone(), ctx, true);
                 }
                 if let Some(val) = s.get_local_field(name) {
@@ -5166,6 +5353,20 @@ impl Ouroboros {
                     }
                     if let Some(val) = s.get_local_field(&alt_name) {
                         return return_or_force(self, &alt_name, val.clone(), ctx, false);
+                    }
+                }
+            }
+            // Q-127: a name this write writes, not yet in the working set.
+            if let Some(la) = ctx.lookahead.clone() {
+                if !ctx.lookahead_skip.iter().any(|c| c == name) {
+                    let held = la.get_field(name).map(|v| (v.clone(), true)).or_else(|| la.get_local_field(name).map(|v| (v.clone(), false)));
+                    if let Some((val, data)) = held {
+                        WORK_READS.with(|r| {
+                            if let Some(r) = r.borrow_mut().as_mut() {
+                                r.insert(name.to_string());
+                            }
+                        });
+                        return return_or_force(self, name, val, ctx, data);
                     }
                 }
             }
@@ -5293,6 +5494,11 @@ impl Ouroboros {
                 } else {
                     ""
                 };
+                WORK_READS.with(|r| {
+                    if let Some(r) = r.borrow_mut().as_mut() {
+                        r.insert(name.to_string());
+                    }
+                });
                 let mut found = None;
                 // D118: a hit on a scope frame is a lexical read — the same
                 // force as the single-segment name, in the frame it was on.
@@ -5486,11 +5692,14 @@ impl Ouroboros {
                     Some(v) => {
                         // force_coord only for public root/staged coordinates;
                         // private/local re-entry during HOF is not a cycle.
+                        let held = v.effect();
                         let forced = if name.starts_with('~') {
                             self.force(v, ctx)
                         } else {
                             self.force_coord(name, v, ctx)
                         };
+                        // Q-127 step 19: a path's first segment is a read too.
+                        note_seen(held, forced.effect());
                         if path.segments.len() > 1 {
                             // SYNTAX_07 §2 #4: navigating through a reference
                             // reads the coordinate. It does not bind `$`.

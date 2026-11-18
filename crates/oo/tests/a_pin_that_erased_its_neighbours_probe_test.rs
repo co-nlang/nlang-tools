@@ -823,13 +823,18 @@ fn r10_a_pin_does_not_erase_a_conflict_beside_it() {
         let mut bad = Vec::new();
         let w = Ws::new("r10");
         let _ = w.write("h: { k: 0, r: 6 }");
+        // Q-127 pre-revision (2026-11-18): this setup was the one way to get
+        // the ⊥ beside the pin — a readers-first write meeting HEAD into ⊥,
+        // which v0.128.0 took at evolve and reported at commit. It is now
+        // refused at evolve in either order (Q-127 r6), so there is no ⊥
+        // beside the pin, and the pin lands.
         let (_, rc) = w.evolve("h.k: g + 1\nh.z: 1\ng: 2");
-        check(&mut bad, "the write beside", format!("rc={rc}"), "rc=0");
+        check(&mut bad, "the write beside: refused at evolve", format!("rc={rc}"), "rc=1");
         let (o, rc) = w.pin("h.r: 9");
-        check(&mut bad, "the pin: refused, a conflict", format!("rc={rc} {}", o.contains("#conflict at h")), "rc=1 true");
+        check(&mut bad, "the pin: nothing beside it to conflict with", format!("rc={rc} {}", o.contains("#conflict at h")), "rc=0 false");
         let _ = w.commit_pin();
-        check(&mut bad, "the pin did not land: _.h.r", short(&w.eval("_.h.r")), "6");
-        check(&mut bad, "the conflict is still there: _.h.z", short(&w.eval("_.h.z")), "1");
+        check(&mut bad, "the pin landed: _.h.r", short(&w.eval("_.h.r")), "9");
+        check(&mut bad, "the refused write is not there: _.h.z", short(&w.eval("_.h.z")), "_");
         bad
     }));
     let n = cells(&mut bad, run);
