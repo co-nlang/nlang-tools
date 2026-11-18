@@ -2034,11 +2034,9 @@ impl Universe {
                 // forward reading): what it reads is read when it is read.
                 // A coordinate that already reads a new name is read again
                 // below; anything else that reads it goes the meet's way.
-                // Q-127: a name of this write (the whole write, `lookahead`)
-                // is there too: a field reads it from the whole write.
                 let there = |n: &String| {
                     n.starts_with("~%")
-                        || [&*self.staged, &*self.root].into_iter().chain(self.lookahead.as_deref()).any(|c| {
+                        || [&*self.staged, &*self.root].iter().any(|c| {
                             c.get_field(n).is_some()
                                 || c.get_local_field(n.trim_start_matches('~')).is_some()
                         })
@@ -2716,12 +2714,6 @@ impl Universe {
     }
 
     fn restamp_thunk_effects(&mut self, engine: &Ouroboros) {
-        // Q-127: in the scratch write (effects answered `_`) the labels are
-        // refreshed once at the end of a pass (`relabel`).
-        if crate::NO_EFFECTS.with(|c| c.get()) > 0 {
-            self.fast_state = None;
-            return;
-        }
         self.relabel(engine);
     }
 
