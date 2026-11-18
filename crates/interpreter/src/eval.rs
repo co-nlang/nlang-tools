@@ -1497,6 +1497,12 @@ impl Ouroboros {
                     return EffectTag::Pure;
                 }
                 let first = path.segments[0].trim();
+                // Q-127: a label reads the name too.
+                crate::WORK_READS.with(|r| {
+                    if let Some(r) = r.borrow_mut().as_mut() {
+                        r.insert(first.to_string());
+                    }
+                });
                 let mut found: Option<Value> = None;
                 for scope in ctx.scopes.iter().rev() {
                     if let Some(v) = scope.get_field(first) {
@@ -1535,6 +1541,19 @@ impl Ouroboros {
                     } else {
                         let ln = format!("/{}", first);
                         if let Some(v) = s.get_field(&ln) {
+                            found = Some(v.clone());
+                        }
+                    }
+                }
+                // Q-127: a name this write writes, not yet in the working set.
+                if let Some(la) = &ctx.lookahead {
+                    let ln = format!("/{}", first);
+                    let in_staged = ctx
+                        .staged
+                        .as_ref()
+                        .is_some_and(|s| s.get_field(first).is_some() || s.get_field(&ln).is_some());
+                    if !in_staged && !ctx.lookahead_skip.iter().any(|c| c == first) {
+                        if let Some(v) = la.get_field(first).or_else(|| la.get_field(&ln)) {
                             found = Some(v.clone());
                         }
                     }
@@ -2255,7 +2274,16 @@ impl Ouroboros {
                         _ => true,
                     };
                     if !(would_hit_ceiling && flat) {
+                        // Q-127 step 16: its own fields, not a lazy coordinate it reads.
+                        let node = match &res {
+                            Value::Combo(c) => c.node_id,
+                            _ => 0,
+                        };
+                        crate::SOLIDIFYING.with(|s| s.borrow_mut().push(node));
                         res = self.force_recursive(res, ctx);
+                        crate::SOLIDIFYING.with(|s| {
+                            s.borrow_mut().pop();
+                        });
                         me = me.union(res.effect());
                         if let Value::Combo(ref mut cv) = res {
                             cv.effect = me;

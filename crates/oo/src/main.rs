@@ -812,24 +812,227 @@ fn refuse_lost_context(
     Ok(())
 }
 
-/// Q-125: the order a program's fields are evolved in — source order, the
-/// fields that observe after the others they read (`Universe::observe_last`).
-fn write_order(
-    universe: &Universe,
+/// Q-127: evolve one field of a write as `observe_the_write` found it.
+fn evolve_planned(
+    universe: &mut Universe,
     engine: &Ouroboros,
-    programs: &[&[nlang_parser::ast::Field]],
-) -> Vec<(usize, usize)> {
-    let later = universe.observe_last(engine, programs);
-    let mut order: Vec<(usize, usize)> = Vec::new();
-    for (fi, fields) in programs.iter().enumerate() {
-        for k in 0..fields.len() {
-            if !later.contains(&(fi, k)) {
-                order.push((fi, k));
+    f: &nlang_parser::ast::Field,
+    plan: &Option<Option<Value>>,
+) -> Result<(), BottomDetail> {
+    if let Some(Some(a)) = plan {
+        nlang_interpreter::preset_answer(Some(a.clone()));
+    }
+    nlang_interpreter::real_pass(true, matches!(plan, Some(None)));
+    let r = universe.evolve(engine, f);
+    nlang_interpreter::preset_answer(None);
+    nlang_interpreter::real_pass(false, false);
+    r
+}
+
+/// Q-127: what each field of a write is, observed against the whole write:
+/// `Some(Some(answer))` it observed an effect; `Some(None)` it stays a recipe
+/// (it reached an effect through a lazy record field, D129); `None` it is
+/// evaluated as written. The universe is left as it was before the write.
+fn observe_the_write(
+    universe: &mut Universe,
+    engine: &Ouroboros,
+    programs: &[(&PathBuf, Vec<nlang_parser::ast::Field>)],
+) -> (Vec<Vec<Option<Option<Value>>>>, Vec<Vec<bool>>, Option<Universe>, Vec<usize>) {
+    let saved = universe.clone();
+    // The scratch write is repeated, each pass reading the last as the whole
+    // write, until it no longer changes: what a definition reads (and the
+    // effect labels it carries) is the whole write's, whatever the order.
+    // Labels only grow, so a chain through every field settles within as many
+    // passes as there are fields, plus one to see it settled.
+    let passes = programs.iter().map(|(_, f)| f.len()).sum::<usize>() + 1;
+    let mut last: Option<std::sync::Arc<nlang_interpreter::value::ComboVal>> = None;
+    let mut recipes = std::collections::HashSet::new();
+    let mut clean = false;
+    let flat: Vec<&nlang_parser::ast::Field> = programs.iter().flat_map(|(_, f)| f.iter()).collect();
+    let tops: Vec<Option<String>> = flat
+        .iter()
+        .map(|f| match &f.key {
+            FieldKey::Path(p) => p.segments.first().map(|s| s.trim().to_string()),
+            FieldKey::Named { name, .. } => Some(name.trim().split('.').next().unwrap_or("").to_string()),
+            _ => None,
+        })
+        .collect();
+    let source: Vec<usize> = (0..flat.len()).collect();
+    let mut recorded: Option<Vec<usize>> = None;
+    // Step 1: every name each field has read in any pass so far; the order
+    // those reads give; and whether they hold a cycle (then the passes are
+    // compared, as before).
+    let mut read_so_far: Vec<std::collections::HashSet<String>> = vec![Default::default(); flat.len()];
+    let mut by_reads: Vec<usize> = source.clone();
+    let mut cyclic = false;
+    let mut landed_in: Vec<usize> = source.clone();
+    let guess_tops: Vec<Option<String>> = tops
+        .iter()
+        .map(|t| t.as_ref().map(|t| t.trim_start_matches(['/', '~', '@', '%']).to_string()))
+        .collect();
+    let writers: std::collections::HashMap<&str, Vec<usize>> = {
+        let mut m: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+        for (j, t) in tops.iter().enumerate() {
+            if let Some(t) = t {
+                m.entry(t.as_str()).or_default().push(j);
             }
         }
+        m
+    };
+    // The first pass knows the names the write writes (each `_` until a pass
+    // has read them), so a field reading a later one is not a forward read.
+    let mut names_only = nlang_interpreter::value::ComboVal::default();
+    for t in tops.iter().flatten() {
+        names_only.insert_field(t, Value::Top);
     }
-    order.extend(later);
-    order
+    let names_only = std::sync::Arc::new(names_only);
+    {
+        let guess: Vec<std::collections::HashSet<String>> =
+            flat.iter().map(|f| nlang_interpreter::names_in_text(&f.value)).collect();
+        by_reads = nlang_interpreter::dependency_order(&guess, &guess_tops);
+    }
+    for pass in 0..passes {
+        *universe = saved.clone();
+        universe.lookahead = Some(last.clone().unwrap_or_else(|| names_only.clone()));
+        let _ = nlang_interpreter::take_effect_recipes();
+        let skipped = nlang_interpreter::effects_skipped();
+        // The first pass in source order, noting what each field read; then
+        // in the order those reads give (a chain lands in one pass), then in
+        // source order again, to compare.
+        let order: Vec<usize> = if !cyclic {
+            by_reads.clone()
+        } else {
+            match (&recorded, pass % 2) {
+                (Some(o), 1) => o.clone(),
+                _ => source.clone(),
+            }
+        };
+        let straight = !cyclic;
+        landed_in = order.clone();
+        let mut reads: Vec<std::collections::HashSet<String>> = vec![Default::default(); flat.len()];
+        let failed = nlang_interpreter::without_effects(|| {
+            for &i in &order {
+                if pass == 0 || straight {
+                    nlang_interpreter::record_reads(true);
+                }
+                let r = universe.evolve(engine, flat[i]);
+                if pass == 0 || straight {
+                    reads[i] = nlang_interpreter::record_reads(false);
+                }
+                if r.is_err() {
+                    return true;
+                }
+            }
+            false
+        });
+        universe.relabel(engine);
+        // Step 1: did a field read a name this pass landed after it?
+        let mut in_order = false;
+        if straight {
+            let mut pos = vec![0usize; flat.len()];
+            for (k, &i) in order.iter().enumerate() {
+                pos[i] = k;
+            }
+            let ahead = |rs: &[std::collections::HashSet<String>], pos: &[usize]| {
+                (0..flat.len()).any(|i| {
+                    rs[i].iter().any(|r| {
+                        writers.get(r.as_str()).is_some_and(|w| w.iter().any(|&j| j != i && pos[j] > pos[i]))
+                    })
+                })
+            };
+            let forward = ahead(&reads, &pos);
+            for (i, r) in reads.iter().enumerate() {
+                read_so_far[i].extend(r.iter().cloned());
+            }
+            if !forward {
+                in_order = true;
+            } else {
+                let o = nlang_interpreter::dependency_order(&read_so_far, &tops);
+                let mut p2 = vec![0usize; flat.len()];
+                for (k, &i) in o.iter().enumerate() {
+                    p2[i] = k;
+                }
+                if ahead(&read_so_far, &p2) {
+                    cyclic = true;
+                    if o != source {
+                        recorded = Some(o);
+                    }
+                } else {
+                    by_reads = o;
+                }
+            }
+        }
+        clean = !failed && nlang_interpreter::effects_skipped() == skipped;
+        recipes = nlang_interpreter::take_effect_recipes();
+        let now = universe.staged.clone();
+        let _ = pass;
+        // (Compared as written out, labels included: the content hash
+        // does not carry the effect labels the root does.)
+        // Field by field (a pass in another order lays the fields out in it).
+        let settled = last.as_ref().is_some_and(|l| {
+            tops.iter().flatten().all(|t| {
+                let a = l.get_field(t).or_else(|| l.get_local_field(t)).map(|v| v.to_nlang(0));
+                let b = now.get_field(t).or_else(|| now.get_local_field(t)).map(|v| v.to_nlang(0));
+                a == b
+            })
+        }) && (recorded.is_none() || pass % 2 == 0);
+        let settled = if straight { in_order } else { settled };
+        if std::env::var_os("OO_Q127_PASSES").is_some() {
+            if let Some(l) = &last {
+                let mut nd = 0;
+                for t in tops.iter().flatten() {
+                    let a = l.get_field(t).map(|v| v.to_nlang(0));
+                    let b = now.get_field(t).map(|v| v.to_nlang(0));
+                    if a != b {
+                        if nd == 0 { eprintln!("q127 diff {t}: {:?} -> {:?}", a.map(|x| x.chars().take(60).collect::<String>()), b.map(|x| x.chars().take(60).collect::<String>())); }
+                        nd += 1;
+                    }
+                }
+                eprintln!("q127 ndiff {nd}");
+            }
+        }
+        last = Some(now);
+        if std::env::var_os("OO_Q127_PASSES").is_some() {
+            eprintln!("q127 pass {pass} settled={settled} straight={straight} cyclic={cyclic} reordered={} fields={}", recorded.is_some(), flat.len());
+        }
+        if settled {
+            break;
+        }
+    }
+    universe.lookahead = None;
+    // A settled scratch that left no effect undone and failed nowhere is the
+    // write itself: the real pass would compute it again from the same inputs.
+    let settled_write = clean.then(|| universe.clone());
+    let all: Vec<&nlang_parser::ast::Field> = programs.iter().flat_map(|(_, f)| f.iter()).collect();
+    let (flat, late_flat) = universe.observe_write(engine, &all);
+    // The whole write, its observed fields as observed.
+    let mut whole = (*universe.staged).clone();
+    let mut out = Vec::new();
+    for ((f, a), late) in all.iter().zip(flat.into_iter()).zip(late_flat.iter()) {
+        let top = match &f.key {
+            FieldKey::Path(p) => p.segments.first().map(|s| s.trim().to_string()),
+            FieldKey::Named { name, .. } => Some(name.trim().to_string()),
+            _ => None,
+        };
+        match a {
+            Some(a) => {
+                if let Some(t) = &top {
+                    whole.insert_field(t, a.clone());
+                }
+                out.push(Some(Some(a)));
+            }
+            None if *late || top.as_ref().is_some_and(|t| recipes.contains(t)) => out.push(Some(None)),
+            None => out.push(None),
+        }
+    }
+    *universe = saved;
+    universe.lookahead = Some(std::sync::Arc::new(whole));
+    nlang_interpreter::forget_views();
+    let mut it = out.into_iter();
+    let mut lt = late_flat.into_iter();
+    let plans = programs.iter().map(|(_, f)| (0..f.len()).map(|_| it.next().unwrap_or(None)).collect()).collect();
+    let lates = programs.iter().map(|(_, f)| (0..f.len()).map(|_| lt.next().unwrap_or(false)).collect()).collect();
+    (plans, lates, settled_write, landed_in)
 }
 
 fn evolve_files(
@@ -855,10 +1058,29 @@ fn evolve_files(
     // observes an effect stores what it observed (D110, D46 ②); it observes
     // after the fields of this write it reads, whichever file or line they
     // are on, so it reads the bindings this write makes.
-    let later = {
-        let fields: Vec<&[nlang_parser::ast::Field]> = programs.iter().map(|(_, f)| f.as_slice()).collect();
-        universe.observe_last(engine, &fields)
-    };
+    // Q-127: no prediction of who observes. The write is evolved once with
+    // effects answered `_`; in one observation over that whole write, each
+    // field that reaches an effect is observed; then the universe before the
+    // write is restored and the write evolved with those answers.
+    // (`late` is not evolve's: there D129 leaves those to the commit.)
+    let (answers, _, settled, landed_in) = observe_the_write(universe, engine, &programs);
+    // A write that observes nothing and settled clean is taken as it settled
+    // (the whole write's ⊥ judged first; otherwise the real pass names files).
+    if let Some(mut u) = settled {
+        let all: Vec<nlang_parser::ast::Field> = programs.iter().flat_map(|(_, f)| f.iter().cloned()).collect();
+        if u.late_bottom(engine, &first, &all).is_none() {
+            u.lookahead = None;
+            *universe = u;
+            if let Err(e) = universe.land_root_spreads(engine) {
+                anyhow::bail!("Evolution Conflict: {}", format_conflict_where(&e, None));
+            }
+            if let Some(e) = universe.late_bottom(engine, &first, &all) {
+                anyhow::bail!("Evolution Conflict: {}", format_conflict_where(&e, None));
+            }
+            return Ok(());
+        }
+    }
+    let later: Vec<(usize, usize)> = Vec::new();
     // R-1: until they land, the ⊥ checks between the files do not read the
     // coordinates the waiting fields write — reading the old definition there
     // would observe it once more. Their late bottoms are the whole write's.
@@ -867,14 +1089,23 @@ fn evolve_files(
         .filter_map(|&(fi, k)| nlang_interpreter::universe::write_top(&programs[fi].1[k]))
         .collect();
     let mut all_fields = Vec::new();
-    for (fi, (file, fields)) in programs.iter().enumerate() {
+    {
+        // Step 10: the fields land in the settled pass's order; a field's
+        // refusal names its file; the late bottoms are judged file by file
+        // once the whole write has landed.
         let before = universe.bottoms_as_read(engine);
-        let mut done = Vec::new();
-        for (k, f) in fields.iter().enumerate() {
-            if later.contains(&(fi, k)) {
-                continue;
+        let mut at: Vec<(usize, usize)> = Vec::new();
+        for (fi, (_, fields)) in programs.iter().enumerate() {
+            for k in 0..fields.len() {
+                at.push((fi, k));
             }
-            if let Err(e) = universe.evolve(engine, f) {
+        }
+        for &i in &landed_in {
+            let (fi, k) = at[i];
+            let (file, fields) = &programs[fi];
+            let f = &fields[k];
+            let r = evolve_planned(universe, engine, f, &answers[fi][k]);
+            if let Err(e) = r {
                 let fb = field_key_label(&f.key);
                 anyhow::bail!(
                     "Evolution Conflict in \"{}\": {}",
@@ -882,18 +1113,24 @@ fn evolve_files(
                     format_conflict_where(&e, Some(&fb))
                 );
             }
-            done.push(f.clone());
         }
-        if let Some(e) = universe.late_bottom(engine, &before, &done) {
-            anyhow::bail!(
-                "Evolution Conflict in \"{}\": {}",
-                file.display(),
-                format_conflict_where(&e, None)
-            );
+        for (_, fields) in programs.iter() {
+            all_fields.extend(fields.iter().cloned());
         }
-        all_fields.extend(done);
+        if universe.late_bottom(engine, &before, &all_fields).is_some() {
+            for (file, fields) in programs.iter() {
+                if let Some(e) = universe.late_bottom(engine, &before, fields) {
+                    anyhow::bail!(
+                        "Evolution Conflict in \"{}\": {}",
+                        file.display(),
+                        format_conflict_where(&e, None)
+                    );
+                }
+            }
+        }
     }
     universe.read_mask.clear();
+    universe.lookahead = None;
     // The fields that observe, each after the others of this write it reads.
     let mut done = Vec::new();
     for &(fi, k) in &later {
@@ -2217,25 +2454,36 @@ fn run_repl(universe_dir: Option<PathBuf>, ephemeral: bool) -> anyhow::Result<()
             Ok(program) => {
                 session.push(input.to_string());
                 let transcript = session.join("\n");
-                let order = write_order(&universe, &engine, &[program.fields.as_slice()]);
-                for f in order.iter().map(|&(_, k)| &program.fields[k]) {
+                // Q-127: the line is one write. It lands whole (each field's
+                // new coordinates noted as it lands), what observes through a
+                // lazy field it made is observed on the records it made, then
+                // each field is printed.
+                let line = PathBuf::from("<repl>");
+                let (plan, late, _, landed_in) = observe_the_write(&mut universe, &engine, &[(&line, program.fields.clone())]);
+                let mut landed: Vec<(usize, Option<(Vec<String>, Vec<String>)>)> = Vec::new();
+                // Q-127 step 18: the fields land in the settled pass's order.
+                for &k in &landed_in {
+                    let f = &program.fields[k];
                     let spread = matches!(&f.key, FieldKey::Quoted(name) if name == "...");
                     let known = repl_readback(&f.key).is_ok();
-                    let before = if spread || !known {
-                        Some(staged_coord_names(&universe))
-                    } else {
-                        None
-                    };
-                    let (pairs, trace) = during_answer(|| -> Vec<(String, Value)> {
-                        if let Err(e) = universe.evolve(&engine, &f) {
+                    let before = if spread || !known { Some(staged_coord_names(&universe)) } else { None };
+                    match evolve_planned(&mut universe, &engine, f, &plan[0][k]) {
+                        Ok(()) => landed.push((k, before.map(|b| (b, staged_coord_names(&universe))))),
+                        Err(e) => {
                             let fb = field_key_label(&f.key);
                             println!("{}", format_evolution_conflict(&e, Some(&fb)));
-                            return Vec::new();
                         }
+                    }
+                }
+                universe.lookahead = None;
+                let all: Vec<&nlang_parser::ast::Field> = program.fields.iter().collect();
+                universe.observe_late(&engine, &all, &late[0]);
+                landed.sort_by_key(|(k, _)| *k);
+                for (k, noted) in landed {
+                    let f = &program.fields[k];
+                    let (pairs, trace) = during_answer(|| -> Vec<(String, Value)> {
                         let mut pairs = Vec::new();
-                        if spread || !known {
-                            let after = staged_coord_names(&universe);
-                            let before = before.unwrap_or_default();
+                        if let Some((before, after)) = noted {
                             let mut any = false;
                             for name in &after {
                                 if !before.iter().any(|b| b == name) {
@@ -2702,11 +2950,19 @@ fn run_one_shot(
             programs.push((file, program.fields));
         }
         // Q-125: one snapshot — the fields that observe after those they read.
-        let fields: Vec<&[nlang_parser::ast::Field]> = programs.iter().map(|(_, f)| f.as_slice()).collect();
-        for (fi, k) in write_order(&universe, &engine, &fields) {
+        // Q-127: one write, observed after it is whole.
+        let (plan, late, _, landed_in) = observe_the_write(&mut universe, &engine, &programs);
+        // Q-127 step 18: the fields land in the settled pass's order.
+        let at: Vec<(usize, usize)> = programs
+            .iter()
+            .enumerate()
+            .flat_map(|(fi, (_, fields))| (0..fields.len()).map(move |k| (fi, k)))
+            .collect();
+        for &i in &landed_in {
+            let (fi, k) = at[i];
             let (file, fields) = &programs[fi];
             let f = &fields[k];
-            if let Err(e) = universe.evolve(&engine, f) {
+            if let Err(e) = evolve_planned(&mut universe, &engine, f, &plan[fi][k]) {
                 let fb = field_key_label(&f.key);
                 anyhow::bail!(
                     "Evolution Conflict in \"{}\": {}",
@@ -2715,6 +2971,10 @@ fn run_one_shot(
                 );
             }
         }
+        universe.lookahead = None;
+        let all: Vec<&nlang_parser::ast::Field> = programs.iter().flat_map(|(_, f)| f.iter()).collect();
+        let late: Vec<bool> = late.into_iter().flatten().collect();
+        universe.observe_late(&engine, &all, &late);
         if let Some(path_str) = &observe {
             let path = parse_path_only(path_str)?;
             Ok(Some(universe.observe(&engine, &path)))
@@ -2991,8 +3251,12 @@ fn run_test(
         let mut universe = one_shot_view(&engine, &cur, universe_dir.is_some())?;
 
         let mut evolve_failed = false;
-        let order = write_order(&universe, &engine, &[program.fields.as_slice()]);
-        for f in order.iter().map(|&(_, k)| &program.fields[k]) {
+        // Q-127: one write, observed after it is whole.
+        let line = PathBuf::from("<test>");
+        let (plan, late, _, landed_in) = observe_the_write(&mut universe, &engine, &[(&line, program.fields.clone())]);
+        // Q-127 step 18: the fields land in the settled pass's order.
+        for &k in &landed_in {
+            let f = &program.fields[k];
             println!(
                 "Evolving field: {}",
                 match &f.key {
@@ -3002,7 +3266,7 @@ fn run_test(
                     _ => "unknown".to_string(),
                 }
             );
-            if let Err(e) = universe.evolve(&engine, f) {
+            if let Err(e) = evolve_planned(&mut universe, &engine, f, &plan[0][k]) {
                 let fb = field_key_label(&f.key);
                 println!(
                     "FAIL: {:?} ({})",
@@ -3013,6 +3277,11 @@ fn run_test(
                 evolve_failed = true;
                 break;
             }
+        }
+        universe.lookahead = None;
+        if !evolve_failed {
+            let all: Vec<&nlang_parser::ast::Field> = program.fields.iter().collect();
+            universe.observe_late(&engine, &all, &late[0]);
         }
         if evolve_failed {
             continue;

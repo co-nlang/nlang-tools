@@ -273,29 +273,49 @@ fn is_open_term(e: &Expr) -> bool {
     }
 }
 
-/// D129: does this definition read a name that holds a record (not a
-/// function) — in this write, the working set, or HEAD? Only then can it
-/// force a lazy field.
-fn reads_a_record(engine: &Ouroboros, e: &Expr, ctx: &crate::EvalContext) -> bool {
-    let _ = engine;
-    let names = crate::eval::names_read(e, &Default::default());
-    names.iter().any(|n| {
-        let n = n.trim_start_matches('/');
-        let v = ctx
-            .staged
-            .as_ref()
-            .and_then(|s| s.get_field(n).or_else(|| s.get_local_field(n)))
-            .or_else(|| ctx.root.get_field(n).or_else(|| ctx.root.get_local_field(n)));
-        matches!(v, Some(Value::Combo(c)) if c.get_field("%rules").is_none()
-            && c.get_field("%morphism").is_none()
-            && c.get_field("%builtin").is_none())
-    })
-}
-
 /// After evolve-time eval, a `#pure` derived answer is not what injection
 /// stores (D46 (i) / S3). Eval still runs so evolve-boundary reports stay
 /// loud (Config types, `#divergent`, resource horizons). The recipe is
 /// what goes into staged; the answer is discarded.
+/// Q-127: does this value hold a recipe that carries an effect label — an
+/// effect not yet done?
+fn holds_an_effect_to_do(v: &Value) -> bool {
+    match v {
+        Value::Thunk { effect, .. } => !effect.is_pure(),
+        Value::Combo(c) => c
+            .data
+            .values()
+            .chain(c.types.values())
+            .chain(c.rules.values())
+            .chain(c.meta.values())
+            .chain(c.system.values())
+            .chain(c.local.values())
+            .chain(c.pending_spreads.iter())
+            .any(holds_an_effect_to_do),
+        Value::Union(bs) => bs.iter().any(holds_an_effect_to_do),
+        _ => false,
+    }
+}
+
+/// Q-127 step 17: does any piece of `v` carry a label (a cocoon shields its
+/// fields' labels from its own, SPEC_08 §4.2.1)?
+fn label_inside(v: &Value) -> bool {
+    !v.effect().is_pure()
+        || match v {
+            Value::Combo(c) => c
+                .data
+                .values()
+                .chain(c.types.values())
+                .chain(c.rules.values())
+                .chain(c.meta.values())
+                .chain(c.system.values())
+                .chain(c.local.values())
+                .any(label_inside),
+            Value::Union(bs) => bs.iter().any(label_inside),
+            _ => false,
+        }
+}
+
 fn recipe_instead_of_pure_answer(
     engine: &Ouroboros,
     expr: &Expr,
@@ -303,6 +323,8 @@ fn recipe_instead_of_pure_answer(
     ctx: &crate::EvalContext,
     read_world: bool,
     ran: bool,
+    applied: bool,
+    seen: EffectTag,
 ) -> Value {
     // Q-126: a definition whose evaluation did an effect stores what it
     // observed (SPEC_10 §2.3.1), even when its answer's tag says pure — a
@@ -318,7 +340,15 @@ fn recipe_instead_of_pure_answer(
     // universe as it is now, and the recipe is what stays true. A literal
     // that reads nothing (a record's fields are lazy, an arrow's body is
     // code) never sets the flag; a table whose patterns read a name does.
-    let derived_read = read_world && engine.predict_effect(expr, ctx).is_pure();
+    // Step 4b: this definition did no effect itself (`ran` returned above). An
+    // answer carrying a label was handed that label by what it read: its
+    // recipe is what stays true when that name changes (D110).
+    // Step 19: "what it read carried no label" is recorded as it read, not
+    // predicted from the text.
+    let derived_read = read_world
+        && (seen.is_pure()
+            || (!val.effect().is_pure()
+                && !(applied && holds_an_effect_to_do(&val))));
     // R-4: an answer that holds a function a call made, and does not print
     // back as what it reads (the function captured the call's names), keeps
     // its recipe, which does -- whatever brought it here: a call, a field
@@ -369,7 +399,7 @@ fn recipe_instead_of_pure_answer(
         }
         Value::Bottom(_) | Value::Blur(_) | Value::Thunk { .. } => val,
         Value::Top | Value::TopCaused { .. } | Value::Ref(_) => val,
-        _ if val.effect().is_pure() => Value::Thunk {
+        _ if val.effect().is_pure() || derived_read => Value::Thunk {
             expr: Box::new(expr.clone()),
             closure: ctx.scopes.clone(),
             context: ctx.context_value.clone().map(Box::new),
@@ -571,6 +601,7 @@ fn collect_bare_reads(v: &Value, out: &mut HashSet<String>) {
 
 /// Q-117: what a working set's values read. Q-128: by coordinate, so a
 /// name that arrives later reaches the coordinates that read it and no other.
+#[derive(Clone)]
 struct FastIndex {
     /// Every name read anywhere in the working set (Q-117).
     names: HashSet<String>,
@@ -665,6 +696,7 @@ fn restamp(
     delta: Option<&mut ComboVal>,
     pin: Option<&std::collections::BTreeSet<String>>,
 ) {
+    let _paused = crate::ReadsPaused::new();
     // Q-129: what each value's labels were before this round, to see which changed.
     let before: Vec<(u8, String, Vec<EffectTag>)> = (0u8..6)
         .flat_map(|a| axis_map(staged, a).iter().map(move |(k, v)| (a, k.clone(), sig_of(v))))
@@ -809,7 +841,18 @@ fn relabel_record(own: EffectTag, before: EffectTag, after: EffectTag) -> Effect
 
 fn clear_thunk_effects(v: &mut Value) {
     match v {
-        Value::Thunk { effect, .. } => *effect = EffectTag::Pure,
+        Value::Thunk { effect, closure, .. } => {
+            if !effect.is_pure() {
+                for f in closure.iter_mut() {
+                    let mut v = Value::Combo((**f).clone());
+                    clear_thunk_effects(&mut v);
+                    if let Value::Combo(c) = v {
+                        *f = std::sync::Arc::new(c);
+                    }
+                }
+            }
+            *effect = EffectTag::Pure;
+        }
         Value::Combo(c) => {
             let before = fields_effect(c);
             for x in c
@@ -881,6 +924,7 @@ fn settle_labels(
     changed: &[(u8, String)],
     readers: &dyn Fn(&str) -> Option<Vec<(u8, String)>>,
 ) -> Option<Vec<(u8, String)>> {
+    let _paused = crate::ReadsPaused::new();
     // The values that read a changed one, however far.
     let mut closure: Vec<(u8, String)> = Vec::new();
     let mut seen: HashSet<(u8, String)> = HashSet::new();
@@ -951,8 +995,18 @@ fn settle_labels(
 /// give (a settle starts from pure, so it climbs to the least labels).
 fn raise_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut Value) {
     match val {
-        Value::Thunk { expr, effect, .. } => {
-            *effect = effect.union(engine.predict_effect(expr, ctx));
+        Value::Thunk { expr, effect, closure, .. } => {
+            let now = effect.union(engine.predict_effect(expr, ctx));
+            if now != *effect {
+                for f in closure.iter_mut() {
+                    let mut v = Value::Combo((**f).clone());
+                    raise_thunk_effects(engine, ctx, &mut v);
+                    if let Value::Combo(c) = v {
+                        *f = std::sync::Arc::new(c);
+                    }
+                }
+            }
+            *effect = now;
         }
         Value::Combo(c) => {
             for v in c
@@ -1019,8 +1073,18 @@ fn refresh_combo_thunks(engine: &Ouroboros, ctx: &crate::EvalContext, c: &mut Co
 
 fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut Value) {
     match val {
-        Value::Thunk { expr, effect, .. } => {
-            *effect = engine.predict_effect(expr, ctx);
+        Value::Thunk { expr, effect, closure, .. } => {
+            let now = engine.predict_effect(expr, ctx);
+            if now != *effect {
+                for f in closure.iter_mut() {
+                    let mut v = Value::Combo((**f).clone());
+                    refresh_thunk_effects(engine, ctx, &mut v);
+                    if let Value::Combo(c) = v {
+                        *f = std::sync::Arc::new(c);
+                    }
+                }
+            }
+            *effect = now;
         }
         Value::Combo(c) => {
             let q129_before = fields_effect(c);
@@ -1077,6 +1141,7 @@ fn is_literal_top(expr: &Expr) -> bool {
     }
 }
 
+#[derive(Clone)]
 pub struct Universe {
     pub head: Option<ContentHash>,
     pub root: std::sync::Arc<ComboVal>,
@@ -1162,6 +1227,9 @@ pub struct Universe {
     in_spread_retry: bool,
     /// D112: landing the root's spread rows again after an evolve.
     relanding: bool,
+    /// Q-127: the whole write's working set (scratch, observed answers in):
+    /// each field of the write is evaluated against it, its own coordinate out.
+    pub lookahead: Option<std::sync::Arc<ComboVal>>,
 }
 impl Universe {
     pub fn new(head: Option<ContentHash>, root: ComboVal) -> Self {
@@ -1202,6 +1270,7 @@ impl Universe {
             deferred_spreads: Vec::new(),
             in_spread_retry: false,
             relanding: false,
+            lookahead: None,
         }
     }
 
@@ -1364,256 +1433,6 @@ impl Universe {
         }
     }
 
-    /// Q-125: the fields of `programs` (one write, or one program) that
-    /// observe an effect and read a name another field of them writes, in the
-    /// order to evolve them after all the others: each after the waiting
-    /// fields it reads (source order when they read each other).
-    pub fn observe_last(&self, engine: &Ouroboros, programs: &[&[Field]]) -> Vec<(usize, usize)> {
-        let mut writers: std::collections::HashMap<String, Vec<(usize, usize)>> = Default::default();
-        for (fi, fields) in programs.iter().enumerate() {
-            for (k, f) in fields.iter().enumerate() {
-                if let Some(t) = write_top(f) {
-                    writers.entry(t).or_default().push((fi, k));
-                }
-            }
-        }
-        // R-1: a name this write defines carries an effect when its
-        // definition reads one (a morphism's body included) or reads such a
-        // name of this write. A field reading it observes once it is written,
-        // although the universe before the write predicts it pure.
-        // A name carries what a call of it may do: an effect read inside a
-        // morphism's body, or a carrier read there or held (aliased, put in
-        // a list) outside one. A carrier called outside a body gives an
-        // answer — that field observes and waits, but does not carry.
-        // R-3: a call gives an answer, unless what is called returns a
-        // carrier — `mk: (u -> g)` holds `g` in its body, so `f: mk 1` is a
-        // carrier too.
-        // R-4: how many calls away the effect is. A name's `depth` has bit
-        // `x` when applying it to `x` arguments may observe: `g: (s -> ..)`
-        // has 1, `mk: (u -> g)` and `mk: (u -> (s -> g s))` have 2. A read
-        // of it inside `d` morphisms with `a` arguments applied gives
-        // `d + max(x - a, 0)`; 0 is an answer observed there (the field's
-        // own evolve), 1 or more is a carrier. Bit 63 stands for 63 or more.
-        let ctx = self.predict_ctx(engine);
-        // Each definition's reads: (name, morphisms it is inside, arguments applied).
-        let mut all: Vec<(String, Vec<(String, u32, u32)>)> = Vec::new();
-        let mut depth: std::collections::HashMap<String, u64> = Default::default();
-        for fields in programs.iter() {
-            for f in fields.iter() {
-                let Some(t) = write_top(f) else { continue };
-                if matches!(&f.key, FieldKey::Pattern(_)) {
-                    continue;
-                }
-                let mut through = Vec::new();
-                // R-5: `h.f: …` defines `h`, one key deeper.
-                let keyed = key_path(&f.key).map_or(0, |p| p.split('.').count() as u32 - 1);
-                for (p, d, a) in crate::eval::reads_at_from(
-                    &f.value,
-                    &Default::default(),
-                    keyed + u32::from(nlang_parser::tier::has_free_dollar(&f.value)),
-                ) {
-                    // An observing path observes when called once.
-                    let bits = shift_depth(1 << 1, d, a);
-                    if bits != 0 && observes(engine, &p, &ctx) {
-                        *depth.entry(t.clone()).or_default() |= bits;
-                    }
-                    if let ExprKind::Path(path) = &p.kind {
-                        if let Some(n) = path.segments.first() {
-                            through.push((n.trim().trim_start_matches('/').to_string(), d, a));
-                        }
-                    }
-                }
-                all.push((t, through));
-            }
-        }
-        // R-2: the universe's own definitions are read through as well. A
-        // name of the working set or HEAD that this write does not write is
-        // touched by it when its definition reads (in a body, or naming or
-        // holding) a name the write writes or touches, and carries when it so
-        // reads a carrier: `f: (s -> g s)` in HEAD, `g` written here. Walked
-        // only when some field of the write may observe.
-        let mut touched: std::collections::HashSet<String> = writers.keys().cloned().collect();
-        // Each field's prediction once; a field that reads no name has none.
-        let predicted: Vec<Vec<bool>> = programs
-            .iter()
-            .map(|fields| {
-                fields
-                    .iter()
-                    .map(|f| !reads_tops(f).is_empty() && self.predicts_effect(engine, f))
-                    .collect()
-            })
-            .collect();
-        let may_observe = !depth.is_empty() || predicted.iter().flatten().any(|&p| p);
-        let mut held: std::collections::HashMap<String, Vec<String>> = Default::default();
-        if may_observe {
-            // R-6: a top-level field on any axis a program can name — data,
-            // `@`, `/`, `%`, `~` — spelled as `write_top` spells it (`/` is
-            // trimmed). The system axis holds the modules, not fields.
-            fn axis(c: &crate::value::ComboVal, i: usize) -> &indexmap::IndexMap<String, Value> {
-                match i {
-                    0 => &c.data,
-                    1 => &c.types,
-                    2 => &c.rules,
-                    3 => &c.meta,
-                    _ => &c.local,
-                }
-            }
-            const PREFIX: [&str; 5] = ["", "@", "", "%", "~"];
-            let mut names: std::collections::BTreeSet<(usize, &String)> = Default::default();
-            for i in 0..5 {
-                names.extend(axis(&self.root, i).keys().chain(axis(&self.staged, i).keys()).map(|k| (i, k)));
-            }
-            for (i, k) in names {
-                let n = format!("{}{}", PREFIX[i], k);
-                if writers.contains_key(n.as_str()) {
-                    continue;
-                }
-                let Some(v) = axis(&self.staged, i).get(k.as_str()).or_else(|| axis(&self.root, i).get(k.as_str())) else {
-                    continue;
-                };
-                let mut through = Vec::new();
-                value_reads(v, 0, &mut through);
-                if !through.is_empty() {
-                    held.entry(n.clone()).or_default().extend(through.iter().map(|(m, _, _)| m.clone()));
-                    all.push((n, through));
-                }
-            }
-        }
-        loop {
-            let mut changed = false;
-            for (t, through) in &all {
-                let mut bits = 0u64;
-                for (n, d, a) in through {
-                    if n != t {
-                        if let Some(&m) = depth.get(n) {
-                            bits |= shift_depth(m, *d, *a);
-                        }
-                    }
-                }
-                let had = depth.get(t).copied().unwrap_or(0);
-                if bits & !had != 0 {
-                    depth.insert(t.clone(), had | bits);
-                    changed = true;
-                }
-                // Touched: any read at all — a call of a changed name too.
-                if !touched.contains(t) && through.iter().any(|(n, _, _)| n != t && touched.contains(n)) {
-                    touched.insert(t.clone());
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        let carrying = |n: &String| depth.get(n).is_some_and(|&m| m != 0);
-        let mut waiting: Vec<(usize, usize)> = Vec::new();
-        for (fi, fields) in programs.iter().enumerate() {
-            for (k, f) in fields.iter().enumerate() {
-                let reads = reads_tops(f);
-                let by_other = |n: &String| writers.get(n).is_some_and(|w| w.iter().any(|&at| at != (fi, k)));
-                // A name read: written by another field here, or of the
-                // universe and touched by this write.
-                let reached = |n: &String| by_other(n) || (!writers.contains_key(n) && touched.contains(n));
-                let reads_this_write = reads.iter().any(reached);
-                let reads_carrier = !is_spread_field(f)
-                    && !matches!(&f.key, FieldKey::Pattern(_))
-                    && reads.iter().any(|n| carrying(n) && reached(n));
-                if reads_this_write && (reads_carrier || predicted[fi][k]) {
-                    waiting.push((fi, k));
-                }
-            }
-        }
-        // What a waiting field reads, through the universe's definitions.
-        let reach = |start: std::collections::HashSet<String>| {
-            let mut seen = start.clone();
-            let mut todo: Vec<String> = start.into_iter().collect();
-            while let Some(n) = todo.pop() {
-                for m in held.get(&n).into_iter().flatten() {
-                    if seen.insert(m.clone()) {
-                        todo.push(m.clone());
-                    }
-                }
-            }
-            seen
-        };
-        // Each waiting field's edges: the waiting fields it reads, through
-        // the universe's definitions.
-        let n = waiting.len();
-        let mut by_top: std::collections::HashMap<String, Vec<usize>> = Default::default();
-        for (j, &(gj, kj)) in waiting.iter().enumerate() {
-            if let Some(t) = write_top(&programs[gj][kj]) {
-                by_top.entry(t).or_default().push(j);
-            }
-        }
-        let edges: Vec<Vec<usize>> = (0..n)
-            .map(|i| {
-                let (fi, k) = waiting[i];
-                let mut e: Vec<usize> = reach(reads_tops(&programs[fi][k]))
-                    .iter()
-                    .flat_map(|t| by_top.get(t).into_iter().flatten().copied())
-                    .filter(|&j| j != i)
-                    .collect();
-                e.sort_unstable();
-                e.dedup();
-                e
-            })
-            .collect();
-        // R-4: fields that read each other — functions calling each other in
-        // their bodies — are one group; a group goes after every group it
-        // reads, so a field reading one of them comes after all of them.
-        // Each step takes the first group (source order) that reads no group
-        // left; its fields in source order. Without such reads every group
-        // is one field and this is the order of R-1.
-        let comp = strong_components(&edges);
-        let groups = comp.iter().copied().max().map_or(0, |m| m + 1);
-        let mut members: Vec<Vec<usize>> = vec![Vec::new(); groups];
-        for (i, &c) in comp.iter().enumerate() {
-            members[c].push(i);
-        }
-        let mut out_left = vec![0usize; groups];
-        let mut readers: Vec<Vec<usize>> = vec![Vec::new(); groups];
-        for (i, e) in edges.iter().enumerate() {
-            for &j in e {
-                if comp[i] != comp[j] {
-                    out_left[comp[i]] += 1;
-                    readers[comp[j]].push(comp[i]);
-                }
-            }
-        }
-        let mut by_first: Vec<usize> = (0..groups).collect();
-        by_first.sort_by_key(|&c| members[c][0]);
-        let mut done = vec![false; groups];
-        let mut order = Vec::with_capacity(n);
-        while order.len() < n {
-            let Some(&c) = by_first.iter().find(|&&c| !done[c] && out_left[c] == 0) else { break };
-            done[c] = true;
-            order.extend(members[c].iter().map(|&i| waiting[i]));
-            for &r in &readers[c] {
-                out_left[r] -= 1;
-            }
-        }
-        order
-    }
-
-    /// Q-125: whether evolving `field` now would observe an effect — its
-    /// definition, as the universe stands, predicts `#io`, `#nondet` or
-    /// `#state`. Such an answer is stored (D110, D46 ②), so it must read the
-    /// bindings of the write it belongs to, not the ones it found first.
-    pub fn predicts_effect(&self, engine: &Ouroboros, field: &Field) -> bool {
-        if is_spread_field(field) || matches!(&field.key, FieldKey::Pattern(_)) {
-            return false;
-        }
-        observes(engine, &field.value, &self.predict_ctx(engine))
-    }
-
-    fn predict_ctx(&self, engine: &Ouroboros) -> crate::EvalContext {
-        let mut ctx =
-            crate::EvalContext::new_shared(self.root.clone()).with_standard_root(self.standard_root.clone());
-        ctx.staged = Some(self.staged.clone());
-        ctx.privilege = engine.privilege;
-        ctx
-    }
-
     fn evolve_field(
         &mut self,
         engine: &Ouroboros,
@@ -1642,6 +1461,10 @@ impl Universe {
         let mut ctx =
             crate::EvalContext::new_shared(self.root.clone()).with_standard_root(self.standard_root.clone());
         ctx.staged = Some(self.staged.clone());
+        // Q-127: the write is a set (SYNTAX_03 §2 #1): a field reads the whole
+        // write, its own coordinate as it was before the write.
+        ctx.lookahead = self.lookahead.clone();
+        ctx.lookahead_skip = field_coords(&field.key);
         // O42: no clock salt — blur identity is CHS (budgets + partial).
         // EvalContext keeps a fixed disc tie-break salt from ::new only.
         ctx.privilege = engine.privilege;
@@ -1664,7 +1487,10 @@ impl Universe {
         // phase so expansion re-queues instead of consuming (cocoon face:
         // {{...later, b: 1}} with later defined below).
         ctx.in_evolve = true;
-        ctx.observing = observes(engine, &field.value, &ctx);
+        // Q-127: who observes is not predicted; in a write (the scratch, the
+        // real pass) `_.` reads the working set as a bare name does, in every
+        // definition. A question (`oo eval`) is not a write.
+        ctx.observing = crate::KNOWN.with(|c| c.get()) || crate::NO_EFFECTS.with(|c| c.get()) > 0;
 
         // `@{expr}` is a real definition inside a combo. The top is the same
         // container: build that one-field combo and land it. Doing it before
@@ -1693,8 +1519,12 @@ impl Universe {
         let live = !matches!(field.value.kind, ExprKind::Structural(_) | ExprKind::Combo { .. })
             && crate::eval::has_live_ref(&field.value);
         let mut read_world = false;
+        // Q-127 step 19: the labels of what it read.
+        let mut seen_label = EffectTag::Pure;
         // Q-126: did evaluating this definition do an effect?
         let mut ran = false;
+        // Q-127: did it apply anything?
+        let applications_before = crate::applications();
         // The answer evolve computed, before it is swapped for its recipe.
         let mut answer: Option<Value> = None;
         let mut val = if ctx.context_value.is_none() && (is_open_term(&field.value) || live) {
@@ -1707,19 +1537,40 @@ impl Universe {
         } else {
             // D110: did this definition's answer read the universe?
             let outer = crate::READ_WORLD.with(|c| c.replace(false));
+            // Step 19: and did what it read carry a label?
+            let outer_seen = crate::SEEN_LABEL.with(|c| c.replace(Some(EffectTag::Pure)));
+            let outer_depth = crate::SEEN_DEPTH.with(|c| c.replace(crate::NO_EFFECTS.with(|d| d.get())));
             // D129: the working set is lazy. A definition that reads a field
             // of a record (here, in the working set or HEAD) which does an
             // effect when forced stays its recipe; the commit observes both.
-            let lazy = crate::DEFER_LAZY.with(|c| c.get()) && reads_a_record(engine, &field.value, &ctx) && {
+            // Q-127: an answer observed against the whole write is taken as is.
+            let preset = crate::PRESET_ANSWER.with(|c| c.borrow_mut().take());
+            // Q-127: evolve tries every definition with effects answered `_`.
+            // One that reaches an effect stays its recipe here (D129: a lazy
+            // field's, for the commit; its own, observed in the second pass).
+            let quiet = crate::NO_EFFECTS.with(|c| c.get()) > 0;
+            let recipe = crate::PRESET_RECIPE.with(|c| c.replace(false));
+            let known = crate::KNOWN.with(|c| c.get());
+            let lazy = preset.is_none() && !quiet && (recipe || !known) && (recipe || crate::DEFER_LAZY.with(|c| c.get())) && (recipe || {
                 let mut probe = ctx.clone();
+                let skipped = crate::EFFECTS_SKIPPED.with(|c| c.get());
                 crate::LAZY_PROBE.with(|c| c.set(c.get() + 1));
                 crate::LAZY_HIT.with(|c| c.set(false));
                 let _ = crate::bookkeeping(|| engine.eval(&field.value, &mut probe));
                 crate::LAZY_PROBE.with(|c| c.set(c.get() - 1));
-                crate::LAZY_HIT.with(|c| c.replace(false))
-            };
+                let hit = crate::LAZY_HIT.with(|c| c.replace(false));
+                hit || crate::EFFECTS_SKIPPED.with(|c| c.get()) != skipped
+            });
             let before = crate::effects_run();
-            let v = if lazy {
+            let observed = preset.is_some();
+            let quiet_skipped = crate::EFFECTS_SKIPPED.with(|c| c.get());
+            if quiet {
+                crate::LAZY_PROBE.with(|c| c.set(c.get() + 1));
+                crate::LAZY_HIT.with(|c| c.set(false));
+            }
+            let v = if let Some(p) = preset {
+                p
+            } else if lazy {
                 Value::Thunk {
                     expr: Box::new(field.value.clone()),
                     closure: ctx.scopes.clone(),
@@ -1729,7 +1580,26 @@ impl Universe {
             } else {
                 engine.eval(&field.value, &mut ctx)
             };
-            ran = crate::effects_run() != before;
+            // Q-127: in the scratch write (effects answered `_`) one evaluation
+            // is its own try: one that reached an effect becomes its recipe.
+            let v = if quiet {
+                crate::LAZY_PROBE.with(|c| c.set(c.get() - 1));
+                let hit = crate::LAZY_HIT.with(|c| c.replace(false));
+                if hit || crate::EFFECTS_SKIPPED.with(|c| c.get()) != quiet_skipped {
+                    crate::EFFECT_RECIPES.with(|r| r.borrow_mut().extend(coords.iter().cloned()));
+                    Value::Thunk {
+                        expr: Box::new(field.value.clone()),
+                        closure: ctx.scopes.clone(),
+                        context: ctx.context_value.clone().map(Box::new),
+                        effect: engine.predict_effect(&field.value, &ctx),
+                    }
+                } else {
+                    v
+                }
+            } else {
+                v
+            };
+            ran = crate::effects_run() != before || observed;
             // Q-092: a record's spread reads lazily (at landing); read it now so
             // a spread of the universe is seen as a reading (D110).
             if let Value::Combo(c) = &v {
@@ -1749,9 +1619,10 @@ impl Universe {
             // fields lazy, bound to the call's names (and so does a field
             // taken from one); reading it in full may read the universe. A
             // record literal's fields are its own syntax and stay as they are.
+            // Q-127 step 15: a value carrying a label is looked at too; under
+            // bookkeeping no effect runs, so the look only records what it read.
             if matches!(v, Value::Combo(_) | Value::Thunk { .. })
                 && !matches!(field.value.kind, ExprKind::Combo { .. })
-                && v.effect().is_pure()
                 && !crate::READ_WORLD.with(|c| c.get())
             {
                 // Q-120 / D113: whether it read the universe must not depend on
@@ -1761,6 +1632,10 @@ impl Universe {
             let read = crate::READ_WORLD.with(|c| c.get());
             crate::READ_WORLD.with(|c| c.set(outer || read));
             read_world = read && !self.answer_in_place;
+            let seen = crate::SEEN_LABEL.with(|c| c.get()).unwrap_or(EffectTag::Pure);
+            crate::SEEN_LABEL.with(|c| c.set(outer_seen.map(|o| o.union(seen))));
+            crate::SEEN_DEPTH.with(|c| c.set(outer_depth));
+            seen_label = seen;
             v
         };
         for c in &coords {
@@ -1792,7 +1667,8 @@ impl Universe {
             };
         } else if !is_root_config_field_write(&field.key) {
             answer = Some(val.clone());
-            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx, read_world, ran);
+            let applied = crate::applications() != applications_before;
+            val = recipe_instead_of_pure_answer(engine, &field.value, val, &ctx, read_world, ran, applied, seen_label);
         }
         let val_effect = val.effect();
 
@@ -2158,9 +2034,11 @@ impl Universe {
                 // forward reading): what it reads is read when it is read.
                 // A coordinate that already reads a new name is read again
                 // below; anything else that reads it goes the meet's way.
+                // Q-127: a name of this write (the whole write, `lookahead`)
+                // is there too: a field reads it from the whole write.
                 let there = |n: &String| {
                     n.starts_with("~%")
-                        || [&*self.staged, &*self.root].iter().any(|c| {
+                        || [&*self.staged, &*self.root].into_iter().chain(self.lookahead.as_deref()).any(|c| {
                             c.get_field(n).is_some()
                                 || c.get_local_field(n.trim_start_matches('~')).is_some()
                         })
@@ -2232,6 +2110,7 @@ impl Universe {
                         let held = if p.is_empty() { self.staged.data.get(k) } else { self.staged.local.get(k) };
                         if let Some(v) = held {
                             let mut v = v.clone();
+                            let _paused = crate::ReadsPaused::new();
                             refresh_thunk_effects(engine, &rctx, &mut v);
                             fresh_readers.push((p, k.clone(), v));
                         }
@@ -2837,6 +2716,17 @@ impl Universe {
     }
 
     fn restamp_thunk_effects(&mut self, engine: &Ouroboros) {
+        // Q-127: in the scratch write (effects answered `_`) the labels are
+        // refreshed once at the end of a pass (`relabel`).
+        if crate::NO_EFFECTS.with(|c| c.get()) > 0 {
+            self.fast_state = None;
+            return;
+        }
+        self.relabel(engine);
+    }
+
+    /// Q-127: refresh the working set's labels from the working set.
+    pub fn relabel(&mut self, engine: &Ouroboros) {
         self.fast_state = None;
         let delta = if self.session_has_delta { Some(&mut self.session_delta) } else { None };
         let pin = Some(&self.session_pin_coords);
@@ -4139,6 +4029,137 @@ impl Universe {
     /// it is evaluated like any definition, then observes that field's value
     /// with the field taken back out: `<<_.>>` and `_.` are the universe's
     /// root, not the root plus the question (SYNTAX_07 §2 #4).
+    /// Q-127: the frame evolve reads a definition in (the root with the
+    /// working set over it, so a pin replaces).
+    fn write_frame(&self, engine: &Ouroboros) -> crate::EvalContext {
+        let mut base = crate::EvalContext::new_shared(self.root.clone()).with_standard_root(self.standard_root.clone());
+        base.staged = Some(self.staged.clone());
+        base.privilege = engine.privilege;
+        if let Some(Value::Combo(_)) = self.staged.get_field("~%Config") {
+            if let Some(eff) = effective_config(&self.root, &self.standard_root, Some(&self.staged)) {
+                base.apply_horizon_config(&eff, true, false);
+            }
+        }
+        base.in_evolve = true;
+        base.observing = true;
+        base
+    }
+
+    /// Q-127: a write's top-level name, when it is one coordinate.
+    fn top_name(f: &Field) -> Option<String> {
+        match &f.key {
+            FieldKey::Named { name, prefix: None } if !name.trim().contains('.') => Some(name.trim().to_string()),
+            FieldKey::Path(p) if matches!(p.anchor, PathAnchor::Bare) && p.segments.len() == 1 => {
+                Some(p.segments[0].trim().to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// Q-127: try `f` with effects answered `_`: (did it leave an effect
+    /// undone, through a lazy record field, the working-set names it read).
+    fn try_field(engine: &Ouroboros, f: &Field, ctx: &crate::EvalContext) -> (bool, bool, HashSet<String>) {
+        let skipped = crate::EFFECTS_SKIPPED.with(|c| c.get());
+        crate::LAZY_PROBE.with(|c| c.set(c.get() + 1));
+        crate::LAZY_HIT.with(|c| c.set(false));
+        crate::WORK_READS.with(|r| *r.borrow_mut() = Some(HashSet::new()));
+        let mut probe = ctx.clone();
+        let _ = crate::bookkeeping(|| engine.eval(&f.value, &mut probe));
+        let read = crate::WORK_READS.with(|r| r.borrow_mut().take()).unwrap_or_default();
+        crate::LAZY_PROBE.with(|c| c.set(c.get() - 1));
+        let hit = crate::LAZY_HIT.with(|c| c.replace(false));
+        (crate::EFFECTS_SKIPPED.with(|c| c.get()) != skipped, hit, read)
+    }
+
+    /// Q-127: observe `picked` fields once each, in one frame: a field after
+    /// the picked fields its try read (what it read before reaching the
+    /// effect is exact), a cycle in source order; each later one reads the
+    /// answers before it. Evaluated as evolve evaluates a definition.
+    fn observe_picked(
+        engine: &Ouroboros,
+        fields: &[&Field],
+        picked: &[(usize, String, HashSet<String>)],
+        ctx: &mut crate::EvalContext,
+    ) -> Vec<(usize, String, Value, bool)> {
+        let names: Vec<Option<String>> = picked.iter().map(|(_, n, _)| Some(n.clone())).collect();
+        let reads: Vec<HashSet<String>> = picked.iter().map(|(_, _, r)| r.clone()).collect();
+        let order = crate::dependency_order(&reads, &names);
+        let mut view = std::sync::Arc::new(ctx.staged.as_ref().map(|s| (**s).clone()).unwrap_or_default());
+        let mut out = Vec::new();
+        for j in order {
+            let (i, n, _) = &picked[j];
+            ctx.staged = Some(view.clone());
+            // Each definition its own budget, as evolve gives it (Q-120).
+            ctx.fuel = ctx.fuel_budget;
+            let before = crate::effects_run();
+            let v = engine.eval(&fields[*i].value, ctx);
+            let ran = crate::effects_run() != before;
+            ctx.staged = None;
+            std::sync::Arc::make_mut(&mut view).insert_field(n, v.clone());
+            out.push((*i, n.clone(), v, ran));
+        }
+        ctx.staged = Some(view);
+        out
+    }
+
+    /// Q-127: over the whole (scratch) write, in one frame: each top-level
+    /// field is tried with effects answered `_`. One that left an effect
+    /// undone directly is observed here (the answer, `Some`). One that did it
+    /// through a lazy record field stays a recipe — in `oo evolve` for the
+    /// commit (D129); elsewhere it is observed after the write lands
+    /// (`late`), on the records the write made.
+    pub fn observe_write(&self, engine: &Ouroboros, fields: &[&Field]) -> (Vec<Option<Value>>, Vec<bool>) {
+        let mut ctx = self.write_frame(engine);
+        let defer = crate::DEFER_LAZY.with(|c| c.get());
+        let mut picked = Vec::new();
+        let mut late = vec![false; fields.len()];
+        for (i, f) in fields.iter().enumerate() {
+            let Some(n) = Self::top_name(f) else { continue };
+            if !matches!(self.staged.data.get(&n), Some(Value::Thunk { .. })) {
+                continue;
+            }
+            let (skipped, hit, read) = Self::try_field(engine, f, &ctx);
+            if skipped && !hit {
+                picked.push((i, n, read));
+            } else if skipped && hit && !defer {
+                late[i] = true;
+            }
+        }
+        let mut out = vec![None; fields.len()];
+        for (i, _, v, ran) in Self::observe_picked(engine, fields, &picked, &mut ctx) {
+            // Step 17: pure all through, not only on its face (a cocoon).
+            if ran || !label_inside(&v) {
+                out[i] = Some(v);
+            }
+        }
+        (out, late)
+    }
+
+    /// Q-127: the `late` fields, observed once the write has landed, on the
+    /// records it made; the answers replace their recipes.
+    pub fn observe_late(&mut self, engine: &Ouroboros, fields: &[&Field], late: &[bool]) {
+        if !late.iter().any(|b| *b) {
+            return;
+        }
+        let mut ctx = self.write_frame(engine);
+        let mut picked = Vec::new();
+        for (i, f) in fields.iter().enumerate() {
+            if !late[i] {
+                continue;
+            }
+            if let Some(n) = Self::top_name(f) {
+                let (_, _, read) = Self::try_field(engine, f, &ctx);
+                picked.push((i, n, read));
+            }
+        }
+        for (_, n, v, _) in Self::observe_picked(engine, fields, &picked, &mut ctx) {
+            if self.session_delta.data.contains_key(&n) {
+                self.session_delta.data.insert(n.clone(), v.clone());
+            }
+            std::sync::Arc::make_mut(&mut self.staged).insert_field(&n, v);
+        }
+    }
+
     pub fn observe_field_apart(&mut self, engine: &Ouroboros, name: &str) -> Value {
         let held = std::sync::Arc::make_mut(&mut self.staged).data.shift_remove(name);
         let path = Path {
@@ -5088,146 +5109,6 @@ pub(crate) fn remove_leaves_noting(
     out
 }
 
-/// Q-125 R-2: the names a stored value reads, each with the morphisms it is
-/// read inside (a function's `%code` is its body, one deep) and the
-/// arguments applied to it, as `reads_at` marks the reads of a write.
-fn value_reads(v: &Value, in_body: u32, out: &mut Vec<(String, u32, u32)>) {
-    value_reads_in(v, in_body, false, out)
-}
-
-/// R-5: a stored record (a list too) is a function of its keys — each field
-/// one deeper; a function's or a table's `%rules` (`meta` `rules`: the
-/// `%` is the axis) is its body, one deeper, and inside it a branch, its
-/// `%code`, a recipe and what it captured are that one body (`in_rules`),
-/// until a function held there has `%rules` of its own. The rest of `meta`
-/// is not a field.
-fn value_reads_in(v: &Value, in_body: u32, in_rules: bool, out: &mut Vec<(String, u32, u32)>) {
-    match v {
-        Value::Thunk { expr, .. } => push_reads(expr, in_body, in_rules, out),
-        Value::Code(expr) => push_reads(expr, if in_rules { in_body } else { in_body + 1 }, true, out),
-        Value::Combo(c) => {
-            let parts = [
-                (false, &c.data),
-                (false, &c.types),
-                (false, &c.rules),
-                (true, &c.meta),
-                (false, &c.system),
-                (false, &c.local),
-            ];
-            for (meta, m) in parts {
-                for (k, v) in m {
-                    if meta && k == "rules" {
-                        value_reads_in(v, in_body + 1, true, out);
-                    } else if in_rules || meta {
-                        value_reads_in(v, in_body, in_rules, out);
-                    } else {
-                        value_reads_in(v, in_body + 1, false, out);
-                    }
-                }
-            }
-        }
-        Value::Union(vs) => {
-            for v in vs {
-                value_reads_in(v, in_body, in_rules, out);
-            }
-        }
-        // R-6: a held reference `<<p>>` reads `p` as the path reads it.
-        Value::Ref(r) => {
-            if let Some(n) = r.path.segments.first() {
-                let n = n.trim();
-                let taken = if n.starts_with("~%") { 0 } else { r.path.segments.len() as u32 - 1 };
-                out.push((n.trim_start_matches('/').to_string(), in_body, taken));
-            }
-        }
-        _ => {}
-    }
-}
-
-fn push_reads(expr: &Expr, in_body: u32, bound_dollar: bool, out: &mut Vec<(String, u32, u32)>) {
-    let reads = if bound_dollar {
-        crate::eval::reads_at_from(expr, &Default::default(), 0)
-    } else {
-        crate::eval::reads_at(expr, &Default::default())
-    };
-    for (p, d, a) in reads {
-        if let ExprKind::Path(path) = &p.kind {
-            if let Some(n) = path.segments.first() {
-                out.push((n.trim().trim_start_matches('/').to_string(), in_body + d, a));
-            }
-        }
-    }
-}
-
-/// Q-125 R-4: the strongly connected components of `edges` (Tarjan,
-/// without recursion): each node's component.
-fn strong_components(edges: &[Vec<usize>]) -> Vec<usize> {
-    let n = edges.len();
-    let unseen = usize::MAX;
-    let (mut index, mut low, mut on) = (vec![unseen; n], vec![0usize; n], vec![false; n]);
-    let (mut comp, mut stack, mut next, mut groups) = (vec![unseen; n], Vec::new(), 0usize, 0usize);
-    for s in 0..n {
-        if index[s] != unseen {
-            continue;
-        }
-        index[s] = next;
-        low[s] = next;
-        next += 1;
-        stack.push(s);
-        on[s] = true;
-        let mut call: Vec<(usize, usize)> = vec![(s, 0)];
-        while let Some(&(v, pos)) = call.last() {
-            if pos < edges[v].len() {
-                call.last_mut().expect("nonempty").1 += 1;
-                let w = edges[v][pos];
-                if index[w] == unseen {
-                    index[w] = next;
-                    low[w] = next;
-                    next += 1;
-                    stack.push(w);
-                    on[w] = true;
-                    call.push((w, 0));
-                } else if on[w] {
-                    low[v] = low[v].min(index[w]);
-                }
-            } else {
-                call.pop();
-                if let Some(&(u, _)) = call.last() {
-                    low[u] = low[u].min(low[v]);
-                }
-                if low[v] == index[v] {
-                    while let Some(w) = stack.pop() {
-                        on[w] = false;
-                        comp[w] = groups;
-                        if w == v {
-                            break;
-                        }
-                    }
-                    groups += 1;
-                }
-            }
-        }
-    }
-    comp
-}
-
-/// Q-125 R-4: the depths a read gives, inside `d` morphisms with `a`
-/// arguments applied, of a name observing at the depths `m` (bit `x`:
-/// applied to `x` arguments). Depth 0 — an answer — is dropped; 63 stands
-/// for 63 or more.
-fn shift_depth(m: u64, d: u32, a: u32) -> u64 {
-    let mut out = 0u64;
-    for x in 1..64u32 {
-        if m & (1 << x) == 0 {
-            continue;
-        }
-        let y = if x == 63 { 63 } else { (x.saturating_sub(a) + d).min(63) };
-        if y >= 1 {
-            out |= 1 << y;
-        }
-    }
-    out
-}
-
 /// Q-125: the top-level coordinate a field of a write defines, written as a
 /// name is read (no logic slash).
 pub fn write_top(field: &Field) -> Option<String> {
@@ -5246,15 +5127,4 @@ pub fn reads_tops(field: &Field) -> std::collections::HashSet<String> {
         .into_iter()
         .map(|n| n.trim_start_matches('/').to_string())
         .collect()
-}
-
-/// Q-125: whether a definition observes an effect, as the working set reads
-/// its names or as HEAD alone does (`_.` at evolve read HEAD).
-fn observes(engine: &Ouroboros, e: &Expr, ctx: &crate::EvalContext) -> bool {
-    if !engine.predict_effect(e, ctx).is_pure() {
-        return true;
-    }
-    let mut head = ctx.clone();
-    head.staged = None;
-    !engine.predict_effect(e, &head).is_pure()
 }
