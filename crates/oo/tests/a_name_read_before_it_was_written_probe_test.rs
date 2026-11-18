@@ -424,8 +424,11 @@ fn r2_a_late_name_gives_its_readers_its_label() {
     };
     let (first, root_first, v_first) = staged_and_root(&[&format!("{p}\n{readers}")], &qs);
     check(&mut bad, "the name first: readings", v_first.join(" | "), "#io | #io | #io");
+    // Q-127 pre-revision (2026-11-18): a reader of an IO name that did no
+    // effect itself holds its recipe in the working set, written in either
+    // order (v0.128.0 held the answer name first); the root does not move.
     check(&mut bad, "the name first: what is staged", staged(&first),
-        "Staged changes: { a: [#none ;; %effect: #io, 1] b: { q: p ;; %effect: #io } ;; %effect: #io c: [#none ;; %effect: #io, \"x\"] p: #none ;; %effect: #io ~l: [#none ;; %effect: #io] } ;; %effect: #io");
+        "Staged changes: { a: [p, 1] ;; %effect: #io b: { q: p ;; %effect: #io } ;; %effect: #io c: [p, \"x\"] ;; %effect: #io p: #none ;; %effect: #io ~l: [p] ;; %effect: #io } ;; %effect: #io");
     for (label, calls) in [
         ("the readers first", vec![format!("{readers}\n{p}")]),
         ("the readers in an evolve before", vec![readers.to_string(), p.to_string()]),
@@ -512,8 +515,11 @@ fn g1_what_was_written_stays_written() {
                 .collect()
         })
         .unwrap_or_default();
+    // Q-127 pre-revision (2026-11-18): the session keeps `t: _` as written.
+    // v0.128.0 kept it for `t: _`, `u: 1` and dropped it once a reader came
+    // after (`acc/q127b/tinj.sh`); the write lands whole either way.
     check(&mut bad, "a `_` before a forward reading: what the session stores", body.join(" || "),
-        "#nlang/store injection pin_coords: [] absorbs: {} effect_tags: 0 { out: { ~%__nlang_thunk: #true ~%__nlang_expr: t.%cause ~%__nlang_closure: [] } u: 1 }");
+        "#nlang/store injection pin_coords: [] absorbs: {} effect_tags: 0 { out: { ~%__nlang_thunk: #true ~%__nlang_expr: t.%cause ~%__nlang_closure: [] } t: _ u: 1 }");
     verdict(bad, cases.len() + 2);
 }
 

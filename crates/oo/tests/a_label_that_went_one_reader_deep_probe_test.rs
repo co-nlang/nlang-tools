@@ -587,11 +587,16 @@ const PINS: [(&str, &str); 17] = [
 ];
 
 /// R-1 — records with a field that carries `#io` itself, beside a field that
-/// reads `p`: the root once a pin made `p` pure (v0.127.0's).
-const KEPT: [(&str, &str); 3] = [
-    ("k: {{ v: ~%Env.get \"Q129_K\" }}\na: { ...k\n y: p }", "6f625b81ca296b828dea77c7f3b9f47e8eef68c40c7bafe28ead56e2d72ad9cd"),
-    ("k: { v: ~%Env.get \"Q129_K\" }\na: { ...k\n y: p }", "17fe1f6038706851015a7c51f35a38a3043c9a8ac81db1865dc614c37373fb09"),
-    ("a: { v: ~%Env.get \"Q129_K\"\n y: p }", "39c6fbaf2f9d8b3188289a68c58da658daf95a04506e777691f0f9fb372f919e"),
+/// reads `p`: the root once a pin made `p` pure, and `(_.a).%effect`.
+/// Q-127 pre-revision (2026-11-18): the roots first pinned here were
+/// v0.128.0's after the pin (`6f625b81…`, `17fe1f60…`, `39c6fbaf…`), not the
+/// roots of `p: 7` written with the readers — the acceptor pinned the
+/// defect. These are the pure roots (v0.128.0 and v0.129.0 store them
+/// written pure); a cocoon's own label is `#pure` (L2-84).
+const KEPT: [(&str, &str, &str); 3] = [
+    ("k: {{ v: ~%Env.get \"Q129_K\" }}\na: { ...k\n y: p }", "821a21be04fb786afcd7ab9dfd11a53e4cfcb943a1838ac8d5b5cb2aadd0bc66", "#pure"),
+    ("k: { v: ~%Env.get \"Q129_K\" }\na: { ...k\n y: p }", "55adb533df5c9f257fda3d2ffdf4700903e64e6d92960de306d40fcdbb68ca39", "#io"),
+    ("a: { v: ~%Env.get \"Q129_K\"\n y: p }", "9d7737187c7d9ef49901986563bf6f124ace50819c32a03101a96f36cf67d93d", "#io"),
 ];
 
 /// `readers` and the name that does IO, the readers first (in one evolve, or
@@ -629,10 +634,10 @@ fn r4_a_pin_that_makes_the_name_pure_takes_the_label_back() {
                 pinned_pure(readers, two).0, &format!("{rcs} {want}"));
         }
     }
-    for (readers, want) in KEPT {
+    for (readers, want, eff) in KEPT {
         n += 1;
         let (r, e) = pinned_pure(readers, false);
-        check(&mut bad, &format!("{readers:?}: a field of its own still carries it"), format!("{r} {e}"), &format!("e0 p0 c0 {want} #io"));
+        check(&mut bad, &format!("{readers:?}: a field of its own still carries it"), format!("{r} {e}"), &format!("e0 p0 c0 {want} {eff}"));
     }
     verdict(bad, n);
 }
