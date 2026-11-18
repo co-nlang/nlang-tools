@@ -172,6 +172,58 @@ fn reversed(src: &str) -> String {
     src.lines().rev().collect::<Vec<_>>().join("\n")
 }
 
+/// g3 — The scratch write lands in place as the meet would (Q-117): with
+/// `OO_Q117_SHADOW` on, every in-place landing — the scratch passes
+/// included, which `oo evolve` keeps when they settle clean — equals
+/// `unify_universe` plus `restamp`, in both orders, under `oo evolve` and
+/// `oo run`; and the shapes do land in place. (R-1: the first reference
+/// skipped the restamp in the scratch and let a name of the write count as
+/// there; seven conformance vectors panicked under the shadow.)
+#[test]
+fn g3_the_scratch_lands_as_the_meet_would() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    let mut hits = 0;
+    for r in [
+        "t: _\nout: t.%cause",
+        "t: _\nout: t.%cause\nu: 1",
+        "q: { a: 1, ...{ a: 2 } }\nout: (q.a).%cause",
+        "q: { ...#ok }\nout: q.%val",
+        "q: { a: 1, ...5 }\nout: q.a",
+        "p: { x: 1, ..._ }\nout: p.x",
+        "m: { ...~%Math }\nout: { r: m./random }.%effect",
+        "m: { ...~%Math }\nout: { r: m./add }.%effect",
+    ] {
+        for src in [r.to_string(), reversed(r)] {
+            for run in [false, true] {
+                let w = Ws::new("shadow");
+                let f = w.file(&src);
+                let log = w.root.join("shadow-hits");
+                let args: Vec<&str> = if run { vec!["run", "--ephemeral", "--observe", "out", &f] } else { vec!["evolve", &f] };
+                let o = Command::new("sh")
+                    .arg("-c")
+                    .arg("ulimit -v 2000000; exec \"$0\" \"$@\"")
+                    .arg(env!("CARGO_BIN_EXE_oo"))
+                    .args(&args)
+                    .current_dir(&w.ws)
+                    .env("OO_IDENTITY", w.root.join("identity"))
+                    .env("OO_NODE_HOME", w.root.join("node-home"))
+                    .env("OO_Q117_SHADOW", &log)
+                    .stdin(Stdio::null())
+                    .output()
+                    .expect("oo runs");
+                let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                let got = if text.contains("Q-117 shadow") { "PANIC".to_string() } else { format!("rc={}", o.status.code().unwrap_or(-1)) };
+                check(&mut bad, &format!("{} {src:?}", if run { "oo run" } else { "oo evolve" }), got, "rc=0");
+                hits += fs::read_to_string(&log).map(|t| t.lines().filter(|l| *l == "hit").count()).unwrap_or(0);
+                n += 1;
+            }
+        }
+    }
+    check(&mut bad, "landings in place", format!("{}", hits > 0), "true");
+    verdict(bad, n + 1);
+}
+
 /// r1 — The fields of one write are a set: written readers first or name
 /// first, the same fields store one root, whatever operator the reader
 /// applies to an IO name (no prediction of the label it will carry).
@@ -255,8 +307,18 @@ fn r4_the_order_does_not_change_the_cost() {
     let (fr, ff) = (w.file(&rf), w.file(&nf));
     let (_, rr, tr) = w.oo_for(&["run", "--ephemeral", "--observe", "k0", &fr], Duration::from_secs(120));
     let (_, rn, tn) = w.oo_for(&["run", "--ephemeral", "--observe", "k0", &ff], Duration::from_secs(120));
-    assert!(rr == 0 && rn == 0, "N={n}: run exited {rr} / {rn}");
-    assert!(tr < 3.0 * tn.max(0.5), "N={n} pure chain: readers first {tr:.2} s, name first {tn:.2} s");
+    // R-1: `oo evolve` too. Through `oo run` alone v0.129.0 was ~4x (11.24 /
+    // 2.82 s, 10.72 / 2.60 s; one delivery machine under 3x); through
+    // `oo evolve` it walks each reader's recipe, ~10x (33 / 3.3 s).
+    let (we, wf) = (Ws::new("cost-e"), Ws::new("cost-f"));
+    let (fe, fn_) = (we.file(&rf), wf.file(&nf));
+    let (_, er, te) = we.oo_for(&["evolve", &fe], Duration::from_secs(120));
+    let (_, en, tf) = wf.oo_for(&["evolve", &fn_], Duration::from_secs(120));
+    assert!(rr == 0 && rn == 0 && er == 0 && en == 0, "N={n}: run exited {rr} / {rn}, evolve {er} / {en}");
+    assert!(
+        tr < 3.0 * tn.max(0.5) && te < 3.0 * tf.max(0.5),
+        "N={n} pure chain: oo run readers first {tr:.2} s, name first {tn:.2} s; oo evolve {te:.2} s, {tf:.2} s"
+    );
 }
 
 /// r5 — An effect is done once: a list holding a record whose field does

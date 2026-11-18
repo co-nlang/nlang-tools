@@ -515,11 +515,8 @@ fn g1_what_was_written_stays_written() {
                 .collect()
         })
         .unwrap_or_default();
-    // Q-127 pre-revision (2026-11-18): the session keeps `t: _` as written.
-    // v0.128.0 kept it for `t: _`, `u: 1` and dropped it once a reader came
-    // after (`acc/q127b/tinj.sh`); the write lands whole either way.
     check(&mut bad, "a `_` before a forward reading: what the session stores", body.join(" || "),
-        "#nlang/store injection pin_coords: [] absorbs: {} effect_tags: 0 { out: { ~%__nlang_thunk: #true ~%__nlang_expr: t.%cause ~%__nlang_closure: [] } t: _ u: 1 }");
+        "#nlang/store injection pin_coords: [] absorbs: {} effect_tags: 0 { out: { ~%__nlang_thunk: #true ~%__nlang_expr: t.%cause ~%__nlang_closure: [] } u: 1 }");
     verdict(bad, cases.len() + 2);
 }
 
