@@ -4050,8 +4050,9 @@ impl Universe {
 
     /// Q-127: try `f` with effects answered `_`: (did it leave an effect
     /// undone, through a lazy record field, the working-set names it read).
-    fn try_field(engine: &Ouroboros, f: &Field, ctx: &crate::EvalContext) -> (bool, bool, HashSet<String>) {
+    fn try_field(engine: &Ouroboros, f: &Field, ctx: &crate::EvalContext) -> (bool, bool, bool, HashSet<String>) {
         let skipped = crate::EFFECTS_SKIPPED.with(|c| c.get());
+        let other = crate::OTHER_SKIPPED.with(|c| c.get());
         crate::LAZY_PROBE.with(|c| c.set(c.get() + 1));
         crate::LAZY_HIT.with(|c| c.set(false));
         crate::WORK_READS.with(|r| *r.borrow_mut() = Some(HashSet::new()));
@@ -4060,7 +4061,11 @@ impl Universe {
         let read = crate::WORK_READS.with(|r| r.borrow_mut().take()).unwrap_or_default();
         crate::LAZY_PROBE.with(|c| c.set(c.get() - 1));
         let hit = crate::LAZY_HIT.with(|c| c.replace(false));
-        (crate::EFFECTS_SKIPPED.with(|c| c.get()) != skipped, hit, read)
+        // Q-131: did it reach an effect of its own — not only inside another
+        // recipe of the write it read?
+        let all = crate::EFFECTS_SKIPPED.with(|c| c.get()) - skipped;
+        let others = crate::OTHER_SKIPPED.with(|c| c.get()) - other;
+        (all > 0, all > others, hit, read)
     }
 
     /// Q-127: observe `picked` fields once each, in one frame: a field after
@@ -4070,16 +4075,78 @@ impl Universe {
     fn observe_picked(
         engine: &Ouroboros,
         fields: &[&Field],
-        picked: &[(usize, String, HashSet<String>)],
+        picked: &[(usize, String, HashSet<String>, bool)],
         ctx: &mut crate::EvalContext,
     ) -> Vec<(usize, String, Value, bool)> {
-        let names: Vec<Option<String>> = picked.iter().map(|(_, n, _)| Some(n.clone())).collect();
-        let reads: Vec<HashSet<String>> = picked.iter().map(|(_, _, r)| r.clone()).collect();
+        let names: Vec<Option<String>> = picked.iter().map(|(_, n, _, _)| Some(n.clone())).collect();
+        let reads: Vec<HashSet<String>> = picked.iter().map(|(_, _, r, _)| r.clone()).collect();
+        let own: Vec<bool> = picked.iter().map(|(_, _, _, o)| *o).collect();
         let order = crate::dependency_order(&reads, &names);
         let mut view = std::sync::Arc::new(ctx.staged.as_ref().map(|s| (**s).clone()).unwrap_or_default());
+        // Q-131: the cells on one cycle with each other (each reads the other,
+        // through any names of the write): strongly connected components.
+        let at: std::collections::HashMap<&str, usize> = picked.iter().enumerate().map(|(k, (_, n, _, _))| (n.as_str(), k)).collect();
+        let edges: Vec<Vec<usize>> = reads.iter().map(|r| r.iter().filter_map(|n| at.get(n.as_str()).copied()).collect()).collect();
+        let component = {
+            // Tarjan, iterative.
+            let m = picked.len();
+            let (mut index, mut low, mut on, mut comp) = (vec![usize::MAX; m], vec![0; m], vec![false; m], vec![usize::MAX; m]);
+            let (mut next, mut ncomp, mut stack) = (0usize, 0usize, Vec::new());
+            for root in 0..m {
+                if index[root] != usize::MAX {
+                    continue;
+                }
+                let mut work = vec![(root, 0usize)];
+                index[root] = next; low[root] = next; next += 1; stack.push(root); on[root] = true;
+                while let Some(&mut (v, ref mut e)) = work.last_mut() {
+                    if *e < edges[v].len() {
+                        let w = edges[v][*e];
+                        *e += 1;
+                        if index[w] == usize::MAX {
+                            index[w] = next; low[w] = next; next += 1; stack.push(w); on[w] = true;
+                            work.push((w, 0));
+                        } else if on[w] {
+                            low[v] = low[v].min(index[w]);
+                        }
+                    } else {
+                        work.pop();
+                        if let Some(&(u, _)) = work.last() {
+                            low[u] = low[u].min(low[v]);
+                        }
+                        if low[v] == index[v] {
+                            while let Some(w) = stack.pop() {
+                                on[w] = false;
+                                comp[w] = ncomp;
+                                if w == v {
+                                    break;
+                                }
+                            }
+                            ncomp += 1;
+                        }
+                    }
+                }
+            }
+            comp
+        };
+        let cycle = |j: usize, k: usize| component[j] == component[k];
+        // Q-131: the cells with an effect of their own are observed first; one
+        // that reaches an effect only through other recipes of the write,
+        // after (it reads their answers; on a cycle there is no other order).
+        let after = |j: usize| !own[j];
+        let order: Vec<usize> = order.iter().copied().filter(|&j| !after(j)).chain(order.iter().copied().filter(|&j| after(j))).collect();
         let mut out = Vec::new();
         for j in order {
-            let (i, n, _) = &picked[j];
+            let (i, n, _, _) = &picked[j];
+            // Q-131: while it is observed, the field read again is the cycle
+            // (SPEC_12 §2.2), as a pure `a: [a]` reads itself — not its
+            // recipe evaluated once more (an effect done twice). So is every
+            // cell with an effect of its own on a cycle with it: each is
+            // observed from itself, its effect once, whatever the order.
+            for k in 0..picked.len() {
+                if k == j || (own[j] && own[k] && cycle(j, k)) {
+                    std::sync::Arc::make_mut(&mut view).insert_field(&picked[k].1, crate::value::BottomCause::Divergent.into());
+                }
+            }
             ctx.staged = Some(view.clone());
             // Each definition its own budget, as evolve gives it (Q-120).
             ctx.fuel = ctx.fuel_budget;
@@ -4105,18 +4172,20 @@ impl Universe {
         let defer = crate::DEFER_LAZY.with(|c| c.get());
         let mut picked = Vec::new();
         let mut late = vec![false; fields.len()];
+        crate::WRITE_NAMES.with(|w| *w.borrow_mut() = Some(fields.iter().filter_map(|f| Self::top_name(f)).collect()));
         for (i, f) in fields.iter().enumerate() {
             let Some(n) = Self::top_name(f) else { continue };
             if !matches!(self.staged.data.get(&n), Some(Value::Thunk { .. })) {
                 continue;
             }
-            let (skipped, hit, read) = Self::try_field(engine, f, &ctx);
+            let (skipped, own, hit, read) = Self::try_field(engine, f, &ctx);
             if skipped && !hit {
-                picked.push((i, n, read));
+                picked.push((i, n, read, own));
             } else if skipped && hit && !defer {
                 late[i] = true;
             }
         }
+        crate::WRITE_NAMES.with(|w| *w.borrow_mut() = None);
         let mut out = vec![None; fields.len()];
         for (i, _, v, ran) in Self::observe_picked(engine, fields, &picked, &mut ctx) {
             // Step 17: pure all through, not only on its face (a cocoon).
@@ -4140,8 +4209,8 @@ impl Universe {
                 continue;
             }
             if let Some(n) = Self::top_name(f) {
-                let (_, _, read) = Self::try_field(engine, f, &ctx);
-                picked.push((i, n, read));
+                let (_, _, _, read) = Self::try_field(engine, f, &ctx);
+                picked.push((i, n, read, true));
             }
         }
         for (_, n, v, _) in Self::observe_picked(engine, fields, &picked, &mut ctx) {

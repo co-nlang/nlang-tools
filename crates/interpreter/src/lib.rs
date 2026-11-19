@@ -147,6 +147,20 @@ thread_local! {
     pub(crate) static LAZY_HIT: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Q-126: effects left undone by bookkeeping (answered `_`).
     pub(crate) static EFFECTS_SKIPPED: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    /// Q-131: the top-level names of the write being tried.
+    pub(crate) static WRITE_NAMES: std::cell::RefCell<Option<HashSet<String>>> = const { std::cell::RefCell::new(None) };
+    /// Q-131: of those, effects left undone while another recipe of the
+    /// write was forced (counted at the outermost such read).
+    pub(crate) static OTHER_SKIPPED: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    static OTHER_DEPTH: std::cell::Cell<u32> = std::cell::Cell::new(0);
+    /// Q-131: the records the commit is projecting (node, coordinate), and
+    /// the coordinate it is at.
+    static PROJECTING: std::cell::RefCell<Vec<(u64, Vec<String>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PROJ_PATH: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Q-131: while a commit projects its root, each record's coordinate in
+    /// it, and the records on the path being forced.
+    static HOMES: std::cell::RefCell<HashMap<u64, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
+    static FORCING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Q-127: the answer the next evolved field takes as is (observed against
     /// the whole write).
     pub(crate) static PRESET_ANSWER: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
@@ -420,6 +434,26 @@ fn view_keep(node: u64, walked: bool, names: Vec<String>, ctx: &EvalContext, ran
             ViewKept { names, root: ctx.root.clone(), strategy: ctx.strategy, fuel_budget: ctx.fuel_budget, ran, spent, read },
         );
     });
+}
+
+/// Q-131: `force` a name's value; while a write is tried, a recipe of that
+/// write read by name counts the effects it leaves undone as that recipe's
+/// (`OTHER_SKIPPED`, at the outermost such read), not the reader's.
+fn other_recipe(n: &str, val: &Value, force: impl FnOnce() -> Value) -> Value {
+    let other = OTHER_DEPTH.with(|c| c.get()) == 0
+        && LAZY_PROBE.with(|c| c.get()) > 0
+        && matches!(val, Value::Thunk { .. })
+        && WRITE_NAMES.with(|w| w.borrow().as_ref().is_some_and(|s| s.contains(n)));
+    if !other {
+        return force();
+    }
+    let skipped = EFFECTS_SKIPPED.with(|c| c.get());
+    OTHER_DEPTH.with(|c| c.set(1));
+    let out = force();
+    OTHER_DEPTH.with(|c| c.set(0));
+    let d = EFFECTS_SKIPPED.with(|c| c.get()) - skipped;
+    OTHER_SKIPPED.with(|c| c.set(c.get() + d));
+    out
 }
 
 /// Q-126: the memo is cleared (commit, load, refine); records kept as one
@@ -4883,6 +4917,41 @@ impl Ouroboros {
         // to what the coordinate holds now. It binds no `$`: only an evolution
         // does (SPEC_07 §4.2 P1, P3).
         let val = Self::as_one_definition(|| self.force(val, ctx));
+        // Q-131: forcing a field the commit stores as its answer, a record
+        // the commit is projecting comes round again: what is stored there is
+        // the recipe of that coordinate, as the pure record holds it (lazy,
+        // SPEC_12 §3.2) — not the record unrolled until the depth runs out.
+        if let Value::Combo(c) = &val {
+            if c.node_id != 0 {
+                let projecting = PROJECTING.with(|p| p.borrow().iter().find(|(n, _)| *n == c.node_id).map(|(_, at)| at.clone()));
+                let again = projecting.is_some() || FORCING.with(|f| f.borrow().contains(&c.node_id));
+                let home = HOMES.with(|h| h.borrow().get(&c.node_id).cloned());
+                let at = if again { home.or(projecting) } else { None };
+                if let Some(segments) = at.filter(|s| !s.is_empty()) {
+                    ctx.depth -= 1;
+                    return Value::Thunk {
+                        expr: Box::new(nlang_parser::ast::Expr {
+                            kind: ExprKind::Path(nlang_parser::ast::Path {
+                                anchor: nlang_parser::ast::PathAnchor::Root,
+                                segments,
+                                span: nlang_parser::ast::Span::unknown(),
+                            }),
+                            span: nlang_parser::ast::Span::unknown(),
+                        }),
+                        closure: Vec::new(),
+                        context: None,
+                        effect: c.effect,
+                    };
+                }
+            }
+        }
+        let forcing = match &val {
+            Value::Combo(c) if c.node_id != 0 && HOMES.with(|h| !h.borrow().is_empty()) => {
+                FORCING.with(|f| f.borrow_mut().push(c.node_id));
+                true
+            }
+            _ => false,
+        };
         let res = match val {
             // Residual thunk after force (path field leave): peel without
             // double-counting depth (Thunk arm above).
@@ -5035,6 +5104,9 @@ impl Ouroboros {
             }
             _ => val,
         };
+        if forcing {
+            FORCING.with(|f| f.borrow_mut().pop());
+        }
         ctx.depth -= 1;
         // O74 ②: after solidification, an open combo's effect is the actual
         // obstruction of its fields — not the construction-time prediction.
@@ -5047,6 +5119,52 @@ impl Ouroboros {
     /// not what a parent commit happened to hold. Exception: ⊥ is kept
     /// (D33/D44 — a divergent definition must still say why).
     pub fn project_for_commit(
+        &self,
+        val: Value,
+        parent: Option<&Value>,
+        ctx: &mut EvalContext,
+    ) -> Value {
+        // Q-131: a record being projected, at its coordinate.
+        let node = match &val {
+            Value::Combo(c) if c.node_id != 0 => Some(c.node_id),
+            _ => None,
+        };
+        // The root: where each record of it is written.
+        let top = PROJECTING.with(|p| p.borrow().is_empty()) && PROJ_PATH.with(|p| p.borrow().is_empty());
+        if top {
+            if let Value::Combo(c) = &val {
+                fn walk(c: &ComboVal, at: &mut Vec<String>, homes: &mut HashMap<u64, Vec<String>>) {
+                    for (k, v) in c.data.iter() {
+                        if let Value::Combo(cc) = v {
+                            at.push(k.clone());
+                            if cc.node_id != 0 {
+                                homes.entry(cc.node_id).or_insert_with(|| at.clone());
+                            }
+                            walk(cc, at, homes);
+                            at.pop();
+                        }
+                    }
+                }
+                let mut homes = HashMap::new();
+                walk(c, &mut Vec::new(), &mut homes);
+                HOMES.with(|h| *h.borrow_mut() = homes);
+            }
+        }
+        if let Some(n) = node {
+            let at = PROJ_PATH.with(|p| p.borrow().clone());
+            PROJECTING.with(|p| p.borrow_mut().push((n, at)));
+        }
+        let out = self.project_for_commit_at(val, parent, ctx);
+        if node.is_some() {
+            PROJECTING.with(|p| p.borrow_mut().pop());
+        }
+        if top {
+            HOMES.with(|h| h.borrow_mut().clear());
+        }
+        out
+    }
+
+    fn project_for_commit_at(
         &self,
         val: Value,
         parent: Option<&Value>,
@@ -5147,7 +5265,9 @@ impl Ouroboros {
                         let is_rule = crate::dispatch::is_rule_cocoon(&c);
                         for (k, v) in std::mem::take(&mut c.data) {
                             let p = parent_c.and_then(|pc| pc.data.get(&k));
+                            PROJ_PATH.with(|p| p.borrow_mut().push(k.clone()));
                             let projected = if reads_node(&v) { v } else { self.project_for_commit(v, p, ctx) };
+                            PROJ_PATH.with(|p| p.borrow_mut().pop());
                             if !closed {
                                 new_c.effect = new_c.effect.union(projected.effect());
                             }
@@ -5275,11 +5395,11 @@ impl Ouroboros {
                         return val;
                     }
                     let held = val.effect();
-                    let out = if use_coord {
-                        oo.force_coord(n, val, ctx)
+                    let out = other_recipe(n, &val, || if use_coord {
+                        oo.force_coord(n, val.clone(), ctx)
                     } else {
-                        oo.force(val, ctx)
-                    };
+                        oo.force(val.clone(), ctx)
+                    });
                     // Q-127 step 19: what it read carried this label.
                     note_seen(held, out.effect());
                     out
@@ -5693,11 +5813,11 @@ impl Ouroboros {
                         // force_coord only for public root/staged coordinates;
                         // private/local re-entry during HOF is not a cycle.
                         let held = v.effect();
-                        let forced = if name.starts_with('~') {
-                            self.force(v, ctx)
+                        let forced = other_recipe(name, &v, || if name.starts_with('~') {
+                            self.force(v.clone(), ctx)
                         } else {
-                            self.force_coord(name, v, ctx)
-                        };
+                            self.force_coord(name, v.clone(), ctx)
+                        });
                         // Q-127 step 19: a path's first segment is a read too.
                         note_seen(held, forced.effect());
                         if path.segments.len() > 1 {
