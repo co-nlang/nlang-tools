@@ -492,6 +492,8 @@ fn root_reads(v: &Value, out: &mut HashSet<String>) {
                 }
             }
         }
+        // Q-132 R-1: a function value's code (see `collect_bare_reads`).
+        Value::Code(expr) => root_names(expr, out),
         Value::Union(items) => items.iter().for_each(|x| root_reads(x, out)),
         Value::Combo(c) => {
             for x in c
@@ -571,6 +573,10 @@ fn root_names(expr: &Expr, out: &mut HashSet<String>) {
 fn collect_bare_reads(v: &Value, out: &mut HashSet<String>) {
     match v {
         Value::Thunk { .. } => crate::unify::read_names(v, out),
+        // Q-132 R-1: a function value's body is code, labelled from what it
+        // reads (`relabel_function`), so the value reads it — the parameter
+        // too, as the label's prediction resolves it.
+        Value::Code(expr) => out.extend(crate::eval::free_bare_names(expr, &HashSet::new())),
         Value::Union(items) => items.iter().for_each(|x| collect_bare_reads(x, out)),
         Value::Combo(c) => {
             // A name a record's own field defines is read in that record.
@@ -927,6 +933,39 @@ fn relabel_record(own: EffectTag, before: EffectTag, after: EffectTag) -> Effect
     e
 }
 
+/// Q-132 R-1: a function value (`eval.rs`, the `Morphism` arm and
+/// `eval_pattern_morphism`) keeps its body as code (`%code`); when it is
+/// built, each rule, `%rules` and the value itself are labelled with what
+/// predicting the body gives. A pass labels it again the same way: `rule`
+/// gives a rule's new label from its old one and its body; `%rules` and the
+/// value take what their rules carry (with `gain`, they only gain it). A
+/// value whose rules are not all code (a builtin, a table) is left as it is.
+fn relabel_function(c: &mut ComboVal, rule: &dyn Fn(EffectTag, &Expr) -> EffectTag, gain: bool) {
+    if !c.closed || !c.meta.contains_key("morphism") {
+        return;
+    }
+    let Some(Value::Combo(rules)) = c.meta.get_mut("rules") else {
+        return;
+    };
+    let is_code = |r: &Value| matches!(r, Value::Combo(rc) if matches!(rc.meta.get("code"), Some(Value::Code(_))));
+    if rules.data.is_empty() || !rules.data.values().all(is_code) {
+        return;
+    }
+    let mut e = EffectTag::Pure;
+    for r in rules.data.values_mut() {
+        if let Value::Combo(rc) = r {
+            let now = match rc.meta.get("code") {
+                Some(Value::Code(body)) => rule(rc.effect, body),
+                _ => rc.effect,
+            };
+            rc.effect = now;
+            e = e.union(now);
+        }
+    }
+    rules.effect = if gain { rules.effect.union(e) } else { e };
+    c.effect = if gain { c.effect.union(e) } else { e };
+}
+
 fn clear_thunk_effects(v: &mut Value) {
     let _scope = PassScope::enter();
     match v {
@@ -954,6 +993,8 @@ fn clear_thunk_effects(v: &mut Value) {
             if !c.closed {
                 c.effect = relabel_record(c.effect, before, fields_effect(c));
             }
+            // Q-132 R-1: a function value is labelled from its code.
+            relabel_function(c, &|_, _| EffectTag::Pure, false);
         }
         Value::Union(bs) => {
             for b in bs {
@@ -1105,6 +1146,8 @@ fn raise_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut V
             if !c.closed {
                 c.effect = c.effect.union(fields_effect(c));
             }
+            // Q-132 R-1: a function value is labelled from its code.
+            relabel_function(c, &|own, body| own.union(engine.predict_effect(body, ctx)), true);
         }
         Value::Union(branches) => {
             for b in branches {
@@ -1176,6 +1219,8 @@ fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut
             if !c.closed {
                 c.effect = relabel_record(c.effect, q129_before, fields_effect(c));
             }
+            // Q-132 R-1: a function value is labelled from its code.
+            relabel_function(c, &|_, body| engine.predict_effect(body, ctx), false);
         }
         Value::Union(branches) => {
             for b in branches {
