@@ -360,16 +360,16 @@ fn g1_labels_already_right_keep_their_root() {
     let mut bad = Vec::new();
     let mut n = 0;
     for (shape, want) in [
-        ("a: { e: (n -> n), x: b }\nb: { f: %V% }", "4551aadaac0772aab9140d7210708eab984a23c45f24667480e43b761b028cd8"),
-        ("a: { e: (n -> n), x: b }\nb: { y: a, f: %V% }", "75bd4d2e524c4de7f82aa35ed9ae1bebef6316ab4455e7fa555e2ec82d75321a"),
-        ("a: { e: %E%, x: b }\nb: { y: a }", "aa6dde8e7adf869bf49a8f25fda8df4537a487264d8cee7777aa31a962e8227f"),
+        ("a: { e: (n -> n), x: b }\nb: { f: %V% }", "bef786b23abb9ca919ef6d6f3a83982e29f66a3c692e8df05640ce897df843ea"),
+        ("a: { e: (n -> n), x: b }\nb: { y: a, f: %V% }", "f97d0d7a2c0f6be325ade7aef9982dc93c1b5ffaa44d050c4a6fc6408ad2af46"),
+        ("a: { e: %E%, x: b }\nb: { y: a }", "14abb184f7fe6e6596b5220bc4426a6a0822bfe2ac3ac94d27a41b2caee7db25"),
         ("a: { c: %K%, y: b }\nb: [p]\np: 7", "d525ae901225f9853ff0aeee63eefb966aca4be2a15339666c253f411c5a9ecf"),
-        ("a: { @T: %K%\n y: p }\nm: [a]\np: 7", "930d6a7159f3616d9c65ae4658aac1464b1594b85122b736580cf3b44fb2aa7e"),
+        ("a: { @T: %K%\n y: p }\nm: [a]\np: 7", "06c86724f96482f8e0c7d160a3924ab5c0ad13bb19039f1ffa9393394d6cbf08"),
         ("a: { e: (n -> n), x: b }\nb: { y: a }", "eaeddaeab676fe9791060811635c97f77c289d762c61de7fdea465044b98b5d3"),
         ("a: { x: b }\nb: { y: a }", "628ca75d9dd3e671ab984df798f6eafa258cbda5f39040d17073280a674c5d20"),
         ("f: (n -> n + 1)\nq: f 2", "c4c16816fbb485cd77e6082cf10df069710b7c09331b1ee4bd0d618e620b60a9"),
         ("a: { y: 1 }\nm: [a]", "4e7bccdba70c5b073a0e158413ce6e5fb9e07f400536a2d092dc3c807bd2d8d6"),
-        ("a: { @T: %K%\n y: 1 }\nm: [a]", "b09a0d19a8316794f90b4d9e2cffdfc9d59ba6bfd731f8e0bd4c10fe8d48304e"),
+        ("a: { @T: %K%\n y: 1 }\nm: [a]", "a5651e098c5ba3b24ea908c54e2298a95e6aad09a5d449f856f76517d2078c27"),
     ] {
         let src = spelled(shape);
         check(&mut bad, &format!("{src:?}"), written(&src), &format!("e0 c0 {want}"));
@@ -476,12 +476,12 @@ fn g2_one_write_of_a_function_value_keeps_its_root() {
         ("l: [(n -> b)]\nb: { f: %V% }", "65fc5ba074119f66cedb351085ed0e36ed8c43f3881753b54cbe84c5ad74bc86"),
         ("f: (n -> b)\nb: [%V%]", "09f373970eb504f3f05f5cdaa5d3aa9edce649b485396f2f0159d185bdedbef1"),
         ("f: (n -> b)\nb: { y: f, f: %V% }", "6114996ae74daafa44e81f9542a2779d001f28392516d1c38f2b8cc891e8186f"),
-        ("f: (n -> b)\nb: { f: %V% }\nm: [f]", "774757423d740820557f1b4720ae3641b072a456fd44ac6ce0c59f9ea88ef3ba"),
+        ("f: (n -> b)\nb: { f: %V% }\nm: [f]", "037a9447df2960e810ebbf5460ef664e606745c32b9a606035f8e0ceda4044ce"),
         ("f: (n -> g)\ng: (n -> b)\nb: { f: %V% }", "94fdeb8c3b59db830a23453a839c343255b6650b957f48cc2cfa5f8153c96237"),
         ("f: (0 -> b)\nb: { f: %V% }", "63072700c5563ca14700085a1ac0c144431b4e8a0cb4ac7f60d2eb14e4d527eb"),
         ("f: (n -> p)\nm: [f]\np: 7", "4c9f6f527762f8aa0da62f4d24f8d0f8924d70c0b4c1229d2e17b92c86486c91"),
         ("f: (0 -> p)\nm: [f]\np: 7", "241d15f67921d7a129377d49d5ffec9e724060d706e290b7102b932047b68ca3"),
-        ("g: f\nf: (n -> b)\nb: { f: %V% }", "74fb7ef3743335b24783077359d08c90dc58d4f1fb121bb1f48be9ad7d0d6e09"),
+        ("g: f\nf: (n -> b)\nb: { f: %V% }", "6adcd071638e89b61f2751ab73d059985ea8b37176604c20dd80759b6277109c"),
         ("f: (n -> b) & (n -> b)\nb: { f: %V% }", "8800fc11b1777c046a400c01c07c9e9bedb529f4c58cebdf8a3adf77ac562f7e"),
     ] {
         let src = spelled(src);

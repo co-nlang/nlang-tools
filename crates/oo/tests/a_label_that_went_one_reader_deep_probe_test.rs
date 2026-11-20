@@ -428,21 +428,23 @@ fn five_ways(readers: &str) -> Vec<(String, String)> {
 
 /// The readers of a late name, however many hops away: a list, a record, a
 /// list and a record in turn, a local coordinate, a type and a rule in the
-/// middle, sums, `_.` paths, unions, a path into a record.
+/// middle, sums, `_.` paths, unions, a path into a record. (Q-133
+/// pre-revision, D131: a reader that does no effect itself stores its
+/// recipe; the roots below are those, and the `_.` spelling's is its own.)
 const CELLS: [(&str, &str); 13] = [
-    ("a: [b]\nb: [c]\nc: [p]", "4b37801ae93f6a98600142e5ab68f0ddec29f67a034c5ecd85c0c21233f79383"),
-    ("a: [b]\nb: [c]\nc: [d]\nd: [p]", "6f02383e0134fb1794e2efe64fac3dcaee447d0c96bf3116e33a48185f418587"),
-    ("a: { x: b }\nb: { y: p }", "66eea80e16a2a83e322277196a7e43b9ed0ae43313740ae4eafdba7c4fae37f9"),
-    ("a: { x: b }\nb: { y: c }\nc: { z: p }", "a771c43e5cb2956be924491f097a44f75b94b4dd0d3c90e33be4212dfb197481"),
-    ("a: { x: b }\nb: [c]\nc: { z: p }", "77b284a533fe32aacb96fd745aafc0e1731a0358a543b23005c1477f5d7eecb8"),
-    ("a: [b]\nb: { y: c }\nc: [p]", "3c95263fcdc5fb562be74f94ea704585c19bd887c86c848ed6a09732479ba7f0"),
-    ("m: [~a]\n~a: [b]\nb: [~c]\n~c: [p]", "9d6ed5acc777df85fea10c46a4eb2813fddd4c4a6debcccacd1e984ae90aa2a9"),
-    ("a: [@T]\n@T: [c]\nc: [p]", "7cd6116691a8095698438a784b3903b5fa29dc7540c0330738da84dded243cb2"),
-    ("a: [/r]\n/r: [c]\nc: [p]", "03ada6df286d104f026891a1b98c7bf024bf09bfec00be55ad647348686d80d1"),
-    ("a: b + \"\"\nb: c + \"\"\nc: [p]", "8b2cc1ba1f40d7b923bcca1445314adf9473e380004bbfc0eabcf8690f40be01"),
-    ("a: [_.b]\nb: [_.c]\nc: [_.p]", "4b37801ae93f6a98600142e5ab68f0ddec29f67a034c5ecd85c0c21233f79383"),
-    ("a: [b | 1]\nb: [c | 1]\nc: [p | 1]", "3024ccd89ce677a680e5cadbb2f367d963c8789f332ac4fe961f78636893c068"),
-    ("a: [b.v]\nb: { v: c }\nc: [p]", "843323d0736a957ef26239baadc7722807d548edf74586af6702a80ce2bb012c"),
+    ("a: [b]\nb: [c]\nc: [p]", "141dcf15f9320be277421d7829d64b1b6ddbd8eca8d6a0ee90bd245cce64f83a"),
+    ("a: [b]\nb: [c]\nc: [d]\nd: [p]", "b13306ef1f9e0a9f789eda164baba9c5a3954ca9faba1ad83d01d8345513aa24"),
+    ("a: { x: b }\nb: { y: p }", "cfe2bb4602b095bac40c030204f2a4bd9d020e9b8d1a1082d7aa5a4fc97378a6"),
+    ("a: { x: b }\nb: { y: c }\nc: { z: p }", "8b534738e6cb95bd24286d862cc260e0228080ef2705a4e275b27cec273d6247"),
+    ("a: { x: b }\nb: [c]\nc: { z: p }", "3c9aabe10313571e17aea2f92fe25e803e8c4b7a3c448c5df301048f416ae455"),
+    ("a: [b]\nb: { y: c }\nc: [p]", "e05e95a5703ac1381d061f78c9fd3c2d3e09bc91f22d5a8cb42c4b1b8188d245"),
+    ("m: [~a]\n~a: [b]\nb: [~c]\n~c: [p]", "a5b8dd18483357267a2f701e9284c6b8c912796b0504ce1295a27887f76fae40"),
+    ("a: [@T]\n@T: [c]\nc: [p]", "a0577734b919373d2eb026d4023bfc2fdc890c29ec69e188b0ea83fe577022bf"),
+    ("a: [/r]\n/r: [c]\nc: [p]", "db6864d116a0a11b1949bb0d56aef09007af47e54a6761f1f8e9e5c0213c2c76"),
+    ("a: b + \"\"\nb: c + \"\"\nc: [p]", "4e33cd4fb6d4e68ff58371203cc09e14500e853ba441604f9734141ce092dabc"),
+    ("a: [_.b]\nb: [_.c]\nc: [_.p]", "e6e08298728836c9603902b8db0eed466fb1459800e8cd78675025f4896ae0f9"),
+    ("a: [b | 1]\nb: [c | 1]\nc: [p | 1]", "1131fb18e21e912c1b017916f01532fecbc687fa1881b380650bbd16da01799a"),
+    ("a: [b.v]\nb: { v: c }\nc: [p]", "20c3591095239aa42d44180af3994d3d0c2de38a2845c041d0920502ff1c8fbd"),
 ];
 
 /// r1 — Every reader of a name that arrives later has its label, however
@@ -538,14 +540,14 @@ fn r3_a_label_that_goes_on_costs_its_readers() {
 fn g1_what_was_right_stays() {
     let mut bad = Vec::new();
     let cases = [
-        ("a: [p]", P, "96ed881ea6245a1be0ac7d7ff6fe7452c30d02f80023e8a24d01eb93613a8056", "#io"),
-        ("a: [b]\nb: [p]", P, "ecb464236a861ebb4f85453381e0e481f1764c0beb2c193d9ee449a791c63dc3", "#io"),
-        ("a: { x: p }", P, "67a2e235685479f6cc9c7721d5746fc05c25572d2b73bac3ba56f9e29d5dcf9b", "#io"),
+        ("a: [p]", P, "95bdcf364ef222bd17612242f6f1a7d1b8d26f2de7c160b354134a7de5e712e4", "#io"),
+        ("a: [b]\nb: [p]", P, "c9f958e98a33b0de5b32983567d4b1f28805b2b82418175734b1548fdc7be996", "#io"),
+        ("a: { x: p }", P, "695f67191a3b56079357ba241e37a9da87bba2db13a06665e5e37844ab020c66", "#io"),
         ("a: (x -> b x)\nb: (x -> c x)", "c: (x -> ~%Env.get x)", "6fe052ffc699496a34638095ef7b56fd0bb0a0d05d73faf7a0b07ee3d15f5332", "#io"),
         ("a: [b]\nb: [c]\nc: [p]", "p: 7", "39fb4282b904c85ac8bc8a640ed7747b72c963eb8986d4b2d81d859c1702568a", "#pure"),
         // A cocoon in the chain keeps its own label (GUIDE_03 §4.2.1 Shield).
-        ("a: [b]\nb: {{ v: c }}\nc: [p]", P, "e17bcda4e4c2808e4b163b0240ae24cf70e5ebee3b3c9f7ee4fed9dd79968c30", "#io"),
-        ("a: [b]\nb: { w: {{ v: c }} }\nc: [p]", P, "a710eafec10b97943b00ec2ce432a24189e42f2e51f6e54cd66ccafc12d5a1b3", "#io"),
+        ("a: [b]\nb: {{ v: c }}\nc: [p]", P, "5335da056fabbde8c17fb6670f791829275a67330a151a69a5cbd6e076998671", "#io"),
+        ("a: [b]\nb: { w: {{ v: c }} }\nc: [p]", P, "3ec9bd5f19814a4d7793a43e32c0ddd9de0495403e713c4a5d0c343cbec8052a", "#io"),
     ];
     for (readers, name, root, label) in cases {
         let rev = {
