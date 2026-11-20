@@ -29,6 +29,20 @@
 //
 // The other half: a write whose labels were already right keeps its root.
 //
+// ── R-1 (the first acceptance) ──────────────────────────────────────────
+//
+//   A function written as a value, not as a record field's thunk (`f: (n ->
+//   b)` at the top, in a list, in a chain, on a cycle; an arrow or a pattern
+//   arrow), keeps its body as code (`%code`) in a closed record. Building it
+//   labels it with what predicting its body gives (`eval.rs`), but the label
+//   passes stop at a closed record and the reader index does not read code:
+//
+//   * `f: (n -> b)`, `b: { f: ~%Env.get … }` evolved `f` then `b` stores a
+//     pure `f`; one write, `#io`. Since v0.127.0 (r4).
+//   * `f: (n -> p)`, `m: [f]`, `p` pinned pure: `f` keeps `#io` (r5).
+//
+//   g2: one write of each keeps the root v0.131.0 stores.
+//
 // Every `oo` here runs under a 2 GB address-space cap and a kill inside
 // the probe (60 s).
 //
@@ -358,6 +372,119 @@ fn g1_labels_already_right_keep_their_root() {
         ("a: { @T: %K%\n y: 1 }\nm: [a]", "b09a0d19a8316794f90b4d9e2cffdfc9d59ba6bfd731f8e0bd4c10fe8d48304e"),
     ] {
         let src = spelled(shape);
+        check(&mut bad, &format!("{src:?}"), written(&src), &format!("e0 c0 {want}"));
+        n += 1;
+    }
+    verdict(bad, n);
+}
+
+// ── R-1 ── a function value is labelled from its code ────────────────────
+
+/// Function values that are not a record field's thunk, reading a name
+/// written in the same write: at the top, read through a path, a list or
+/// `_.`, in a list, on a cycle, read by a list, in a chain of functions,
+/// named by an alias, met with itself; an arrow and a pattern arrow.
+const VALUES: [&str; 13] = [
+    "f: (n -> b)\nb: { f: %V% }",
+    "f: (n -> b)\nb: { f: %E% }",
+    "f: (n -> b.f)\nb: { f: %V% }",
+    "f: (n -> [b])\nb: { f: %V% }",
+    "f: (n -> _.b)\nb: { f: %V% }",
+    "l: [(n -> b)]\nb: { f: %V% }",
+    "f: (n -> b)\nb: [%V%]",
+    "f: (n -> b)\nb: { y: f, f: %V% }",
+    "f: (n -> b)\nb: { f: %V% }\nm: [f]",
+    "f: (n -> g)\ng: (n -> b)\nb: { f: %V% }",
+    "f: (0 -> b)\nb: { f: %V% }",
+    "g: f\nf: (n -> b)\nb: { f: %V% }",
+    "f: (n -> b) & (n -> b)\nb: { f: %V% }",
+];
+
+/// r4 — A function value written before the name its body reads: every
+/// shape in `VALUES`, every order of its lines, written as one evolve and as
+/// one evolve per line, stores the root one evolve of the lines as listed
+/// stores, and evolves under `OO_Q117_SHADOW` without a panic. (v0.131.0:
+/// a function written first keeps the label it was built with, pure.)
+#[test]
+fn r4_a_function_value_is_labelled_from_its_code() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    for shape in VALUES {
+        let listed = spelled(shape);
+        let one = written(&listed);
+        check(&mut bad, &format!("{listed:?} one evolve"), one.split(' ').take(2).collect::<Vec<_>>().join(" "), "e0 c0");
+        let root = one.rsplit(' ').next().unwrap_or("").to_string();
+        n += 1;
+        for src in orders(&listed) {
+            let k = src.lines().count();
+            check(&mut bad, &format!("{src:?} one evolve"), written(&src), &format!("e0 c0 {root}"));
+            check(&mut bad, &format!("{src:?} one evolve per line"), split(&src), &format!("{} c0 {root}", vec!["e0"; k].join(" ")));
+            let w = Ws::new("fn-shadow-one");
+            check(&mut bad, &format!("{src:?} one evolve, shadow"), w.evolve_shadow(&src), "e0");
+            let w = Ws::new("fn-shadow-split");
+            let got: Vec<String> = src.lines().map(|l| w.evolve_shadow(l)).collect();
+            check(&mut bad, &format!("{src:?} one evolve per line, shadow"), got.join(" "), &vec!["e0"; k].join(" "));
+            n += 4;
+        }
+    }
+    verdict(bad, n);
+}
+
+/// r5 — Pinned pure is written pure, for a function value: a reader of an IO
+/// name `p` that is a function value (read by a list or a record, so the
+/// working set is not a solid record), written in either order with `p`,
+/// then `p: 7` pinned, stores the root of the same lines written with `p: 7`
+/// from the start. (v0.131.0: the function keeps `#io`.) A working set left
+/// a solid record keeps its own label after a pin — Inbox「pin 把一個 IO 的值
+/// 換成純的之後，根照帶 `#io`」, not this card.
+#[test]
+fn r5_a_function_value_pinned_pure_is_written_pure() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    for readers in [
+        "f: (n -> p)\nm: [f]",
+        "l: [(n -> p)]\nm: [l]",
+        "f: (0 -> p)\nm: [f]",
+        "f: (n -> g)\ng: (n -> p)\nm: [f]",
+        "f: (n -> b)\nb: { y: p }\nm: [f]",
+        "f: (n -> p)\nm: { k: f }",
+    ] {
+        let pure = written(&format!("{readers}\np: 7"));
+        let root = pure.rsplit(' ').next().unwrap_or("").to_string();
+        check(&mut bad, &format!("{readers:?} with p: 7"), pure.split(' ').take(2).collect::<Vec<_>>().join(" "), "e0 c0");
+        for src in [format!("{readers}\n{P}"), format!("{P}\n{readers}")] {
+            check(&mut bad, &format!("{src:?} then p: 7 pinned"), pinned(&src), &format!("e0 p0 c0 {root}"));
+            n += 1;
+        }
+        n += 1;
+    }
+    verdict(bad, n);
+}
+
+/// g2 — One write of a function value keeps its root: the roots v0.131.0
+/// stores (the delivery of the first round stores the same).
+#[test]
+fn g2_one_write_of_a_function_value_keeps_its_root() {
+    let mut bad = Vec::new();
+    let mut n = 0;
+    for (src, want) in [
+        ("f: (n -> b)\nb: { f: %V% }", "8800fc11b1777c046a400c01c07c9e9bedb529f4c58cebdf8a3adf77ac562f7e"),
+        ("f: (n -> b)\nb: { f: %E% }", "4645e424ffed422db264f0b5a8a2ff5f0e6e03ff95159c4e6e74ab4d76efda5a"),
+        ("f: (n -> b.f)\nb: { f: %V% }", "b41147e756a1e0d2046e3d3074170635e03d009e6fae21c5b5c6025f2dbef048"),
+        ("f: (n -> [b])\nb: { f: %V% }", "7b524e0d328e277895a21b0a3a90d141a93ee4d51bceef724aa3ec48d65dc3b2"),
+        ("f: (n -> _.b)\nb: { f: %V% }", "2b95d5339ad807c4855d1aad4d17abd6cd8c1c6da4a729b3df453fa9f42427ee"),
+        ("l: [(n -> b)]\nb: { f: %V% }", "65fc5ba074119f66cedb351085ed0e36ed8c43f3881753b54cbe84c5ad74bc86"),
+        ("f: (n -> b)\nb: [%V%]", "09f373970eb504f3f05f5cdaa5d3aa9edce649b485396f2f0159d185bdedbef1"),
+        ("f: (n -> b)\nb: { y: f, f: %V% }", "6114996ae74daafa44e81f9542a2779d001f28392516d1c38f2b8cc891e8186f"),
+        ("f: (n -> b)\nb: { f: %V% }\nm: [f]", "774757423d740820557f1b4720ae3641b072a456fd44ac6ce0c59f9ea88ef3ba"),
+        ("f: (n -> g)\ng: (n -> b)\nb: { f: %V% }", "94fdeb8c3b59db830a23453a839c343255b6650b957f48cc2cfa5f8153c96237"),
+        ("f: (0 -> b)\nb: { f: %V% }", "63072700c5563ca14700085a1ac0c144431b4e8a0cb4ac7f60d2eb14e4d527eb"),
+        ("f: (n -> p)\nm: [f]\np: 7", "4c9f6f527762f8aa0da62f4d24f8d0f8924d70c0b4c1229d2e17b92c86486c91"),
+        ("f: (0 -> p)\nm: [f]\np: 7", "241d15f67921d7a129377d49d5ffec9e724060d706e290b7102b932047b68ca3"),
+        ("g: f\nf: (n -> b)\nb: { f: %V% }", "74fb7ef3743335b24783077359d08c90dc58d4f1fb121bb1f48be9ad7d0d6e09"),
+        ("f: (n -> b) & (n -> b)\nb: { f: %V% }", "8800fc11b1777c046a400c01c07c9e9bedb529f4c58cebdf8a3adf77ac562f7e"),
+    ] {
+        let src = spelled(src);
         check(&mut bad, &format!("{src:?}"), written(&src), &format!("e0 c0 {want}"));
         n += 1;
     }
