@@ -492,6 +492,8 @@ fn root_reads(v: &Value, out: &mut HashSet<String>) {
                 }
             }
         }
+        // Q-132 R-1: a function value's code (see `collect_bare_reads`).
+        Value::Code(expr) => root_names(expr, out),
         Value::Union(items) => items.iter().for_each(|x| root_reads(x, out)),
         Value::Combo(c) => {
             for x in c
@@ -571,6 +573,10 @@ fn root_names(expr: &Expr, out: &mut HashSet<String>) {
 fn collect_bare_reads(v: &Value, out: &mut HashSet<String>) {
     match v {
         Value::Thunk { .. } => crate::unify::read_names(v, out),
+        // Q-132 R-1: a function value's body is code, labelled from what it
+        // reads (`relabel_function`), so the value reads it — the parameter
+        // too, as the label's prediction resolves it.
+        Value::Code(expr) => out.extend(crate::eval::free_bare_names(expr, &HashSet::new())),
         Value::Union(items) => items.iter().for_each(|x| collect_bare_reads(x, out)),
         Value::Combo(c) => {
             // A name a record's own field defines is read in that record.
@@ -773,22 +779,33 @@ fn names_of_key(k: &str) -> Vec<String> {
 /// `refresh_thunk_effects` writes).
 fn effect_sig(v: &Value, out: &mut Vec<EffectTag>) {
     match v {
+        // A frame is a view of its node's fields (`capture_free_fields`): a
+        // label that moves in it moves in the node's field too, which the
+        // signature sees.
         Value::Thunk { effect, .. } => out.push(*effect),
-        Value::Combo(c) => {
-            out.push(c.effect);
-            for x in c
-                .data
-                .values()
-                .chain(c.types.values())
-                .chain(c.rules.values())
-                .chain(c.meta.values())
-                .chain(c.system.values())
-                .chain(c.local.values())
-                .chain(c.pending_spreads.iter())
-            {
-                effect_sig(x, out);
-            }
-        }
+        Value::Combo(c) => combo_sig(c, out),
+        _ => effect_sig_rest(v, out),
+    }
+}
+
+fn combo_sig(c: &ComboVal, out: &mut Vec<EffectTag>) {
+    out.push(c.effect);
+    for x in c
+        .data
+        .values()
+        .chain(c.types.values())
+        .chain(c.rules.values())
+        .chain(c.meta.values())
+        .chain(c.system.values())
+        .chain(c.local.values())
+        .chain(c.pending_spreads.iter())
+    {
+        effect_sig(x, out);
+    }
+}
+
+fn effect_sig_rest(v: &Value, out: &mut Vec<EffectTag>) {
+    match v {
         Value::Union(bs) => {
             for b in bs {
                 effect_sig(b, out);
@@ -816,14 +833,91 @@ fn sig_of(v: &Value) -> Vec<EffectTag> {
 }
 
 /// Q-129: set every thunk label in a value to pure (the start of a settle).
-/// Q-129 R-1: what a record's fields carry (data and local), as its literal
-/// folds them (`eval.rs`).
+/// Q-129 R-1: what a record's fields carry, as its literal folds them
+/// (`eval.rs`). Q-132: data, types, rules, meta and local (a record literal
+/// with an IO type field is `#io`), not only data and local.
 fn fields_effect(c: &ComboVal) -> EffectTag {
     let mut e = EffectTag::Pure;
-    for v in c.data.values().chain(c.local.values()) {
+    for v in c
+        .data
+        .values()
+        .chain(c.types.values())
+        .chain(c.rules.values())
+        .chain(c.meta.values())
+        .chain(c.local.values())
+    {
         e = e.union(v.effect());
     }
     e
+}
+
+/// Q-132: run a label pass over each frame a thunk carries; a frame is
+/// replaced only when a label in it moved (the frame is shared otherwise).
+///
+/// The fields of a record share one frame (`seal_defining_scope`): within one
+/// pass (one call from outside the passes, so one working set) each frame is
+/// passed once and its result shared, or a record of N fields costs N².
+fn in_frames(kind: u8, closure: &mut [std::sync::Arc<ComboVal>], mut pass: impl FnMut(&mut Value)) {
+    for f in closure.iter_mut() {
+        let key = (kind, std::sync::Arc::as_ptr(f) as usize);
+        let done = FRAMES_PASSED.with(|m| m.borrow().as_ref().and_then(|m| m.get(&key).map(|(_, out)| out.clone())));
+        if let Some(out) = done {
+            *f = out;
+            continue;
+        }
+        let mut v = Value::Combo((**f).clone());
+        pass(&mut v);
+        let out = match v {
+            Value::Combo(c) => {
+                let mut was = Vec::new();
+                combo_sig(f, &mut was);
+                let mut now = Vec::new();
+                combo_sig(&c, &mut now);
+                if was != now { std::sync::Arc::new(c) } else { f.clone() }
+            }
+            _ => f.clone(),
+        };
+        // The frame passed is kept with its result, so its address is not reused.
+        FRAMES_PASSED.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                m.insert(key, (f.clone(), out.clone()));
+            }
+        });
+        *f = out;
+    }
+}
+
+type FramesPassed = std::collections::HashMap<(u8, usize), (std::sync::Arc<ComboVal>, std::sync::Arc<ComboVal>)>;
+
+thread_local! {
+    /// Q-132: the frames one label pass has passed (see `in_frames`).
+    static FRAMES_PASSED: std::cell::RefCell<Option<FramesPassed>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Q-132: opens the memo of one label pass on the outermost call and closes
+/// it when that call returns; inner calls share it.
+struct PassScope(bool);
+
+impl PassScope {
+    fn enter() -> Self {
+        FRAMES_PASSED.with(|m| {
+            let mut m = m.borrow_mut();
+            if m.is_none() {
+                *m = Some(std::collections::HashMap::new());
+                PassScope(true)
+            } else {
+                PassScope(false)
+            }
+        })
+    }
+}
+
+impl Drop for PassScope {
+    fn drop(&mut self) {
+        if self.0 {
+            FRAMES_PASSED.with(|m| *m.borrow_mut() = None);
+        }
+    }
 }
 
 /// Q-129 R-1: a record's own label after its fields were stamped again: what
@@ -839,18 +933,45 @@ fn relabel_record(own: EffectTag, before: EffectTag, after: EffectTag) -> Effect
     e
 }
 
+/// Q-132 R-1: a function value (`eval.rs`, the `Morphism` arm and
+/// `eval_pattern_morphism`) keeps its body as code (`%code`); when it is
+/// built, each rule, `%rules` and the value itself are labelled with what
+/// predicting the body gives. A pass labels it again the same way: `rule`
+/// gives a rule's new label from its old one and its body; `%rules` and the
+/// value take what their rules carry (with `gain`, they only gain it). A
+/// value whose rules are not all code (a builtin, a table) is left as it is.
+fn relabel_function(c: &mut ComboVal, rule: &dyn Fn(EffectTag, &Expr) -> EffectTag, gain: bool) {
+    if !c.closed || !c.meta.contains_key("morphism") {
+        return;
+    }
+    let Some(Value::Combo(rules)) = c.meta.get_mut("rules") else {
+        return;
+    };
+    let is_code = |r: &Value| matches!(r, Value::Combo(rc) if matches!(rc.meta.get("code"), Some(Value::Code(_))));
+    if rules.data.is_empty() || !rules.data.values().all(is_code) {
+        return;
+    }
+    let mut e = EffectTag::Pure;
+    for r in rules.data.values_mut() {
+        if let Value::Combo(rc) = r {
+            let now = match rc.meta.get("code") {
+                Some(Value::Code(body)) => rule(rc.effect, body),
+                _ => rc.effect,
+            };
+            rc.effect = now;
+            e = e.union(now);
+        }
+    }
+    rules.effect = if gain { rules.effect.union(e) } else { e };
+    c.effect = if gain { c.effect.union(e) } else { e };
+}
+
 fn clear_thunk_effects(v: &mut Value) {
+    let _scope = PassScope::enter();
     match v {
         Value::Thunk { effect, closure, .. } => {
-            if !effect.is_pure() {
-                for f in closure.iter_mut() {
-                    let mut v = Value::Combo((**f).clone());
-                    clear_thunk_effects(&mut v);
-                    if let Value::Combo(c) = v {
-                        *f = std::sync::Arc::new(c);
-                    }
-                }
-            }
+            // Q-132: the frame it carries holds labels too, whatever its own was.
+            in_frames(0, closure, clear_thunk_effects);
             *effect = EffectTag::Pure;
         }
         Value::Combo(c) => {
@@ -872,6 +993,8 @@ fn clear_thunk_effects(v: &mut Value) {
             if !c.closed {
                 c.effect = relabel_record(c.effect, before, fields_effect(c));
             }
+            // Q-132 R-1: a function value is labelled from its code.
+            relabel_function(c, &|_, _| EffectTag::Pure, false);
         }
         Value::Union(bs) => {
             for b in bs {
@@ -994,18 +1117,12 @@ fn settle_labels(
 /// Q-129: `refresh_thunk_effects`, but a label only gains what the reads
 /// give (a settle starts from pure, so it climbs to the least labels).
 fn raise_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut Value) {
+    let _scope = PassScope::enter();
     match val {
         Value::Thunk { expr, effect, closure, .. } => {
             let now = effect.union(engine.predict_effect(expr, ctx));
-            if now != *effect {
-                for f in closure.iter_mut() {
-                    let mut v = Value::Combo((**f).clone());
-                    raise_thunk_effects(engine, ctx, &mut v);
-                    if let Value::Combo(c) = v {
-                        *f = std::sync::Arc::new(c);
-                    }
-                }
-            }
+            // Q-132: the frame it carries, whether or not its own label moved.
+            in_frames(1, closure, |v| raise_thunk_effects(engine, ctx, v));
             *effect = now;
         }
         Value::Combo(c) => {
@@ -1027,12 +1144,10 @@ fn raise_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut V
             // `eval.rs` record literal): it gains what they now carry. A
             // cocoon keeps its own (GUIDE_03 §4.2.1 Shield: the wall stops it).
             if !c.closed {
-                let mut e = c.effect;
-                for v in c.data.values().chain(c.local.values()) {
-                    e = e.union(v.effect());
-                }
-                c.effect = e;
+                c.effect = c.effect.union(fields_effect(c));
             }
+            // Q-132 R-1: a function value is labelled from its code.
+            relabel_function(c, &|own, body| own.union(engine.predict_effect(body, ctx)), true);
         }
         Value::Union(branches) => {
             for b in branches {
@@ -1055,6 +1170,7 @@ fn raise_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut V
 }
 
 fn refresh_combo_thunks(engine: &Ouroboros, ctx: &crate::EvalContext, c: &mut ComboVal) {
+    let _scope = PassScope::enter();
     for v in c
         .data
         .values_mut()
@@ -1072,18 +1188,12 @@ fn refresh_combo_thunks(engine: &Ouroboros, ctx: &crate::EvalContext, c: &mut Co
 }
 
 fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut Value) {
+    let _scope = PassScope::enter();
     match val {
         Value::Thunk { expr, effect, closure, .. } => {
             let now = engine.predict_effect(expr, ctx);
-            if now != *effect {
-                for f in closure.iter_mut() {
-                    let mut v = Value::Combo((**f).clone());
-                    refresh_thunk_effects(engine, ctx, &mut v);
-                    if let Value::Combo(c) = v {
-                        *f = std::sync::Arc::new(c);
-                    }
-                }
-            }
+            // Q-132: the frame it carries, whether or not its own label moved.
+            in_frames(2, closure, |v| refresh_thunk_effects(engine, ctx, v));
             *effect = now;
         }
         Value::Combo(c) => {
@@ -1109,6 +1219,8 @@ fn refresh_thunk_effects(engine: &Ouroboros, ctx: &crate::EvalContext, val: &mut
             if !c.closed {
                 c.effect = relabel_record(c.effect, q129_before, fields_effect(c));
             }
+            // Q-132 R-1: a function value is labelled from its code.
+            relabel_function(c, &|_, body| engine.predict_effect(body, ctx), false);
         }
         Value::Union(branches) => {
             for b in branches {
@@ -2095,6 +2207,19 @@ impl Universe {
                 self.session_delta = fresh.clone();
                 self.session_has_delta = true;
             }
+            // Q-132: what the new values read is in the index before their
+            // readers settle: on a cycle through a new name, the new value is a
+            // reader of its readers and settles with them (as `restamp` finds it).
+            if let Some(Some(index)) = &mut self.fast_state {
+                for (p, k) in &new_keys {
+                    let v = if p.is_empty() { fresh.data.get(k.as_str()) } else { fresh.local.get(k.as_str()) };
+                    let mut reads = HashSet::new();
+                    if let Some(v) = v {
+                        collect_reads(v, &mut reads);
+                    }
+                    index.add(if p.is_empty() { "" } else { "~" }, k, &reads);
+                }
+            }
             // Q-128: the coordinates that read a new name read their effect
             // again, in the working set it is now in (what `restamp` gives
             // them; every other value reads nothing new).
@@ -2194,16 +2319,6 @@ impl Universe {
                     }
                     *self.session_delta.cache_id.write().unwrap() = None;
                     *self.session_delta.cycle_frame_id.write().unwrap() = None;
-                }
-            }
-            if let Some(Some(index)) = &mut self.fast_state {
-                for (p, k) in &new_keys {
-                    let v = if p.is_empty() { fresh.data.get(k.as_str()) } else { fresh.local.get(k.as_str()) };
-                    let mut reads = HashSet::new();
-                    if let Some(v) = v {
-                        collect_reads(v, &mut reads);
-                    }
-                    index.add(if p.is_empty() { "" } else { "~" }, k, &reads);
                 }
             }
             self.is_dirty = true;
