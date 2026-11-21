@@ -1519,7 +1519,21 @@ impl Universe {
         engine: &Ouroboros,
         field: &Field,
     ) -> std::result::Result<(), crate::value::BottomDetail> {
+        // Q-134: a new coordinate makes stale what read its name; a meet on
+        // one the working set holds, or a spread, changes what was read.
+        let top = write_top(field);
+        let held = top.as_ref().is_some_and(|t| {
+            let bare = t.trim_start_matches(['/', '@', '~', '%']);
+            ["", "/", "@", "~", "~%"].iter().any(|p| {
+                let n = format!("{p}{bare}");
+                self.staged.get_field(&n).is_some() || self.staged.get_local_field(&n).is_some()
+            })
+        });
         let r = self.evolve_field(engine, field);
+        match top {
+            Some(t) if !held => crate::landed_new(&t),
+            _ => crate::bump_world(),
+        }
         if r.is_ok() && !self.in_spread_retry && !self.deferred_spreads.is_empty() {
             self.in_spread_retry = true;
             let out = self.retry_deferred_spreads(engine);
@@ -2834,6 +2848,7 @@ impl Universe {
 
     /// Q-127: refresh the working set's labels from the working set.
     pub fn relabel(&mut self, engine: &Ouroboros) {
+        crate::bump_world();
         self.fast_state = None;
         let delta = if self.session_has_delta { Some(&mut self.session_delta) } else { None };
         let pin = Some(&self.session_pin_coords);
@@ -2935,6 +2950,11 @@ impl Universe {
             });
         }
         None
+    }
+
+    /// Q-134: whether [`Self::land_root_spreads`] has a row to land.
+    pub fn has_root_spreads(&self) -> bool {
+        !self.root.spread_rows.is_empty() || !self.staged.spread_rows.is_empty()
     }
 
     pub fn land_root_spreads(

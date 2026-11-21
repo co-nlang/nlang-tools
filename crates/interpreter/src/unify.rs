@@ -1564,14 +1564,22 @@ impl Ouroboros {
     pub(crate) fn settle_pending(&self, v: Value, ctx: &mut EvalContext) -> Value {
         match v {
             Value::Combo(mut c) => {
-                let snap = c.clone();
+                // Q-134: the snapshot is read only to rebind a pending meet;
+                // without one, copying the record at every level of a nested
+                // value cost its depth squared on each settle.
+                let is_pend = |v: &Value| matches!(v, Value::Thunk { closure, .. }
+                    if closure.first().map(|fr| crate::value::is_meet_frame(fr)).unwrap_or(false));
+                let snap = [&c.data, &c.types, &c.local]
+                    .iter()
+                    .any(|m| m.values().any(is_pend))
+                    .then(|| c.clone());
                 for map in [&mut c.data, &mut c.types, &mut c.local] {
                     for (_, f) in map.iter_mut() {
                         let cur = std::mem::replace(f, Value::Top);
-                        let pend = matches!(&cur, Value::Thunk { closure, .. }
-                            if closure.first().map(|fr| crate::value::is_meet_frame(fr)).unwrap_or(false));
+                        let pend = is_pend(&cur);
                         *f = if pend {
-                            self.force(crate::value::rebind_to_met(&snap, cur), ctx)
+                            let snap = snap.as_ref().expect("a pending field was seen");
+                            self.force(crate::value::rebind_to_met(snap, cur), ctx)
                         } else if matches!(cur, Value::Combo(_)) {
                             self.settle_pending(cur, ctx)
                         } else { cur };
