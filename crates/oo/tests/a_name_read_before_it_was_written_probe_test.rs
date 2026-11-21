@@ -446,17 +446,17 @@ fn r2_a_late_name_gives_its_readers_its_label() {
     let (got, root, v) = staged_and_root(&[&format!("a: [p]\nm: [a]\n{p}")], &["(_.m).%effect"]);
     check(&mut bad, "a reader of a reader: what is staged", staged(&got),
         "Staged changes: { a: [p] ;; %effect: #io m: [a] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io");
-    check(&mut bad, "a reader of a reader: root", root, "13419f971787792aa5c81eb51b2cccdd1fa472bb4756cc6f46c974d93c63991c");
+    check(&mut bad, "a reader of a reader: root", root, "9711e7579daf2ede942f84acf4dd6b7414f27d39eaeecaa1b86a7f40c9ebe1c2");
     check(&mut bad, "a reader of a reader: reading", v.join(" | "), "#io");
     // Readers that are not coordinates — a type, a rule, a meta field —
     // and a coordinate that reads them, written between them and the name.
     for (src, want_staged, want_root) in [
-        ("@T: [p]\nm: [@T]", "Staged changes: { @T: [p] ;; %effect: #io m: [@T] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "a542fcf3aa3879b240ce1a2731a647bc0d34ab2601d340b1513bb24857fef232"),
+        ("@T: [p]\nm: [@T]", "Staged changes: { @T: [p] ;; %effect: #io m: [@T] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "c567cd9407f97461fba91e8ddff439ea7a911bb7f845c721ab755c48e0a9f7a2"),
         // Q-129: the type `@T` carries its field's label, `m` reads it, and the
         // root is the root of the name written first (v0.127.0: two roots).
-        ("@T: { x: p }\nm: [@T]", "Staged changes: { @T: { x: p ;; %effect: #io } ;; %effect: #io m: [@T] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "b2f0c25109a951377ba62090fceacf594bedfee76d17a72a55d8b6d40f514246"),
-        ("/r: [p]\nm: [/r]", "Staged changes: { /r: [p] ;; %effect: #io m: [/r] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "6be88ea1e0163cad9d1bc32aae9cf6363f68cf16a6cae4622d8e0925c1ea2f5c"),
-        ("%m: [p]\nz: [%m]", "Staged changes: { %m: [p] ;; %effect: #io p: #none ;; %effect: #io z: [%m] ;; %effect: #io } ;; %effect: #io", "e40c2dbca1be781ec77cb3faf37cc5af798c51ed5a70c71266414b953cae3248"),
+        ("@T: { x: p }\nm: [@T]", "Staged changes: { @T: { x: p ;; %effect: #io } ;; %effect: #io m: [@T] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "d7bee9e527147c2534d5b28c5515f2c6f00e9434a5290567edfcee548c44083f"),
+        ("/r: [p]\nm: [/r]", "Staged changes: { /r: [p] ;; %effect: #io m: [/r] ;; %effect: #io p: #none ;; %effect: #io } ;; %effect: #io", "8441a3b63b7fae8f77e4cb6e148f67daa2eadd80d5d1394523342bed45e3fcbd"),
+        ("%m: [p]\nz: [%m]", "Staged changes: { %m: [p] ;; %effect: #io p: #none ;; %effect: #io z: [%m] ;; %effect: #io } ;; %effect: #io", "fad1ba9f7259eb72cdc0e910ca4de205caa1f1e90d072694cf66ea98bc8e52d7"),
     ] {
         let (got, root, _) = staged_and_root(&[&format!("{src}\n{p}")], &[]);
         check(&mut bad, &format!("{src:?}, the name after: what is staged"), staged(&got), want_staged);
@@ -549,9 +549,9 @@ fn shadowed(src: &str) -> (String, usize) {
 /// r3 — A coordinate that reads the name through `_.` is one of its
 /// readers (M2): `_.p` names the root's `p` whatever a record or an arrow
 /// around the path binds. The reader of a reader in the same evolve, the
-/// reader first or the name first, gives one root — the root the bare
-/// spelling gives (`[p]`, `[p | 1]`, `[{ y: p }]`, `@T: [p]`), or, where a
-/// record of the reader binds `p` itself, the root of the name first.
+/// reader first or the name first, gives one root. (Q-133 pre-revision,
+/// D131: a reader that does no effect itself stores its recipe, which keeps
+/// its `_.` spelling — the root is no longer the bare spelling's.)
 /// Every in-place landing is the meet's, `_.` read in a list, a union, a
 /// record, a record that binds `p` itself, a sum, a path into the name,
 /// and on the type axis.
@@ -560,11 +560,11 @@ fn r3_a_reader_through_the_root_is_a_reader() {
     let mut bad = Vec::new();
     let p = "p: ~%Env.get \"Q128_UNSET\"";
     let cells = [
-        ("a: [_.p]\nm: [a]", "13419f971787792aa5c81eb51b2cccdd1fa472bb4756cc6f46c974d93c63991c"),
-        ("a: [_.p | 1]\nm: [a]", "1b3454a3c10f9064b573689ecccf5d1d2ec5b6a5ea66bc929adc31260d93a992"),
-        ("a: [{ y: _.p }]\nm: [a]", "84fd03746a5dce2de57c1f7227cebafe1b083e9448acc0c5ef7fbf008aa11c07"),
-        ("@T: [_.p]\nm: [@T]", "a542fcf3aa3879b240ce1a2731a647bc0d34ab2601d340b1513bb24857fef232"),
-        ("a: [{ p: 2, y: _.p }]\nm: [a]", "bddee15f6f09db4213ad05f71803e549105b2417fde6a336a3202473208f8200"),
+        ("a: [_.p]\nm: [a]", "7240c9d456b242b9338134c2b3ec21a8b4d273217b59887a54d26b6abc682e56"),
+        ("a: [_.p | 1]\nm: [a]", "9b64df03f3b649a0f5857e4769bb43dc28c0a14d4b0c1646496f72f49082278e"),
+        ("a: [{ y: _.p }]\nm: [a]", "f8888f5424367492ccdd344933844826dfe0058a391d8aed117c08afb8fcebd2"),
+        ("@T: [_.p]\nm: [@T]", "4d6517a58b9629721425856bbebb7150f2f5126ffae916830285a4678a0f45f5"),
+        ("a: [{ p: 2, y: _.p }]\nm: [a]", "25842506003ac72ceed4a2edbc0471091db1a0df5897da5119204b8953337d96"),
     ];
     for (src, want) in cells {
         for (label, text) in [("the reader first", format!("{src}\n{p}")), ("the name first", format!("{p}\n{src}"))] {

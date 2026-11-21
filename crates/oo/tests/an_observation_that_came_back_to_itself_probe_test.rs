@@ -269,7 +269,10 @@ fn r2_one_root_in_every_order() {
 /// holds there: `a: [E, a]` reads `[#true, ⊥ #divergent]` as `a: [a]` reads
 /// `[⊥ #divergent]`; `a: [E, b]`, `b: [a]` reads `[#true, [⊥ #divergent]]`
 /// as `a: [b]`, `b: [a]` reads `[[⊥ #divergent]]`; `b` keeps the answer of
-/// `a` it read. `_.` spells the same root as the bare name.
+/// `a` it read. The `_.` spelling stores one root in every order and reads
+/// what the bare spelling reads. (Q-133 pre-revision, D131: `b` reads `a`
+/// and stores its recipe, which keeps its spelling — the root is no longer
+/// the bare spelling's.)
 #[test]
 fn r3_the_cycle_point_is_what_the_pure_cycle_holds() {
     let mut bad = Vec::new();
@@ -290,10 +293,14 @@ fn r3_the_cycle_point_is_what_the_pure_cycle_holds() {
     }
     let (_, _, v) = wrote_all("a: [b]\nb: [a]", &["_.a"]);
     check(&mut bad, "a: [b], b: [a] (pure): _.a", v.join(" | "), &format!("[[{cut}]]"));
-    let bare = wrote_all(&spelled("a: [%E%, b]\nb: [a]"), &[]).0;
-    for src in orders(&spelled("a: [%E%, _.b]\nb: [_.a]")) {
-        n += 1;
-        check(&mut bad, &format!("{src:?}: the root of the bare spelling"), wrote_all(&src, &[]).0, &bare);
+    let bare = wrote_all(&spelled("a: [%E%, b]\nb: [a]"), &["_.a", "_.b"]).2.join(" | ");
+    let rooted = orders(&spelled("a: [%E%, _.b]\nb: [_.a]"));
+    let first = wrote_all(&rooted[0], &[]).0;
+    for src in &rooted {
+        n += 2;
+        let (root, _, v) = wrote_all(src, &["_.a", "_.b"]);
+        check(&mut bad, &format!("{src:?}: one root in every order"), root, &first);
+        check(&mut bad, &format!("{src:?}: reads what the bare spelling reads"), v.join(" | "), &bare);
     }
     verdict(bad, n + 2);
 }
@@ -353,9 +360,9 @@ fn g1_what_does_not_come_back_keeps_its_root() {
         ("a: [b, 1]\nb: [a, 2]", "041689feed8a897be3ddaf2cc061bca309ee2fdefb1231bec56f3b3234b5a9b1"),
         ("a: [a]\nm: [a]", "a4990a40edda0ff3967fea5a28e68dddff6c8d16bb2ce3e2a1d741058a29575e"),
         ("a: b\nb: a", "9e5fdfb1d7250293edf11ad0ae7c61198d460fed18c0bbb411cc21103fe217ee"),
-        ("a: [b, p]\nb: [a]\np: @P@", "d0b936c8bad0f347cab222fa6de0cda090fd1fbab670422a0a75b00925c69000"),
-        ("a: { x: b.y, q: p }\nb: { y: 1, z: a }\np: @P@", "3344366566355b4d360be4c45524dff202c38c0bc62bf8ff870b7b53be1933e7"),
-        ("a: { x: b }\nb: { y: a }\nm: { e: p }\np: @P@", "a8011ec6c05a0e02276727e595c96532a0ce7708b0d4536b9e7446e307d195e9"),
+        ("a: [b, p]\nb: [a]\np: @P@", "072f5bdc25a7cd9c22f2eccc88ffd7c7eb61407dbdacf0fbae27d81ee11cc4c5"),
+        ("a: { x: b.y, q: p }\nb: { y: 1, z: a }\np: @P@", "70447fb35d3006467861276807687dc6dcf7fef749d6f6cf7514b5098b793b42"),
+        ("a: { x: b }\nb: { y: a }\nm: { e: p }\np: @P@", "67f4dd3dbe2fafb9e179c104411f08c1caed5de8e930d2e2b34397791201deae"),
         ("a: { x: b, q: p }\nb: { y: a }\np: 7", "b2a9697915ee3cd0de09e37dcabdc9b92e1bf6e0392eff84a1a8e033500949b3"),
     ] {
         let shape = shape.replace("p: @P@", P);

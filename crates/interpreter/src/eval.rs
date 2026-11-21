@@ -1483,6 +1483,35 @@ impl Ouroboros {
         Value::Combo(c)
     }
 
+    /// D131: the effect a cell's own expression does — what it would do if
+    /// every coordinate it reads (outside a call) were already observed.
+    /// A cell whose effect is all in what it reads keeps its recipe at
+    /// commit; the cells it reads store their answers (D46).
+    pub(crate) fn own_effect(&self, expr: &Expr, ctx: &EvalContext) -> EffectTag {
+        let outer = OWN_EFFECT.with(|c| c.replace(true));
+        let e = self.predict_effect(expr, ctx);
+        OWN_EFFECT.with(|c| c.set(outer));
+        e
+    }
+
+    /// D131: inside a call every read counts (a name may be the function
+    /// the call applies, or one it hands to a builtin).
+    fn in_a_call(f: impl FnOnce() -> EffectTag) -> EffectTag {
+        let outer = OWN_EFFECT.with(|c| c.replace(false));
+        let e = f();
+        OWN_EFFECT.with(|c| c.set(outer));
+        e
+    }
+
+    /// D131: what applying `f` does: an arrow literal does what its body
+    /// does (`predict_effect` labels the literal itself pure).
+    fn called(&self, f: &Expr, ctx: &EvalContext) -> EffectTag {
+        match &f.kind {
+            ExprKind::Morphism { body, .. } => self.predict_effect(f, ctx).union(self.predict_effect(body, ctx)),
+            _ => self.predict_effect(f, ctx),
+        }
+    }
+
     pub fn predict_effect(&self, expr: &Expr, ctx: &EvalContext) -> EffectTag {
         match &expr.kind {
             ExprKind::Atom(_) => EffectTag::Pure,
@@ -1514,6 +1543,14 @@ impl Ouroboros {
                         found = Some(v.clone());
                         break;
                     }
+                }
+                let in_scope = found.is_some();
+                // D131: what a cell does itself does not count a coordinate
+                // of the root it reads: that cell's own effect is stored
+                // with it. A sibling in the cell's frame counts (the frame's
+                // copy of it is its recipe).
+                if OWN_EFFECT.with(|c| c.get()) && !in_scope && !first.starts_with("~%") {
+                    return EffectTag::Pure;
                 }
                 if found.is_none() {
                     if let Some(v) = ctx.root.get_field(first) {
@@ -1599,8 +1636,14 @@ impl Ouroboros {
                         return EffectTag::Pure;
                     }
                 }
+                if OWN_EFFECT.with(|c| c.get()) {
+                    return Self::in_a_call(|| self.called(f, ctx).union(self.predict_effect(arg, ctx)));
+                }
                 self.predict_effect(f, ctx)
                     .union(self.predict_effect(arg, ctx))
+            }
+            ExprKind::Pipe(l, r) if OWN_EFFECT.with(|c| c.get()) => {
+                Self::in_a_call(|| self.predict_effect(l, ctx).union(self.called(r, ctx)))
             }
             ExprKind::Pipe(l, r) => self
                 .predict_effect(l, ctx)
@@ -3698,4 +3741,9 @@ impl Ouroboros {
 thread_local! {
     static SPREADING: std::cell::RefCell<Vec<crate::value::ContentHash>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    /// D131: `own_effect` is predicting (names read outside a call are pure).
+    static OWN_EFFECT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }

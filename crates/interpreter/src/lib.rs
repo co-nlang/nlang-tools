@@ -5199,6 +5199,17 @@ impl Ouroboros {
                 // D110: unless building it read the universe (`x @T` with a
                 // user type): then the recipe is what stays true.
                 let pure = effect.is_pure();
+                // D131: its effect is all in the cells it reads, which store
+                // their answers; reading it again reads those.
+                if !pure {
+                    let mut at = ctx.clone();
+                    if let Value::Thunk { closure, .. } = &val {
+                        at.scopes = closure.clone();
+                    }
+                    if self.own_effect(expr, &at).is_pure() {
+                        return val;
+                    }
+                }
                 let orig = val.clone();
                 let outer = READ_WORLD.with(|c| c.replace(false));
                 let keep = std::mem::replace(&mut ctx.preserve_refs, false);
