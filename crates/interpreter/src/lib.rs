@@ -164,6 +164,17 @@ thread_local! {
     /// Q-127: the answer the next evolved field takes as is (observed against
     /// the whole write).
     pub(crate) static PRESET_ANSWER: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+    /// Q-134: what the working set is, for the coordinate cache: bumped
+    /// where it changes other than by a new coordinate landing.
+    pub(crate) static WORLD: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Q-134: the deepest `ctx.depth` an evaluation has reached so far.
+    pub(crate) static DEEPEST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Q-134: cycle re-entries met so far.
+    pub(crate) static CYCLES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Q-134: coordinates of the working set forced in this observation.
+    static COORDS: std::cell::RefCell<HashMap<CoordKey, CoordKept>> = std::cell::RefCell::new(HashMap::new());
+    /// Q-134: names the working set did not hold, read by each value being kept.
+    static OPEN_READS: std::cell::RefCell<Vec<HashSet<String>>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Q-127: while a try records them, the working-set names it read.
     pub(crate) static WORK_READS: std::cell::RefCell<Option<HashSet<String>>> = const { std::cell::RefCell::new(None) };
     /// Q-127: coordinates the scratch write left as recipes (they reached an effect).
@@ -303,6 +314,77 @@ pub fn record_reads(on: bool) -> HashSet<String> {
         }
         taken
     })
+}
+
+/// Q-134: the working set changed other than by a new coordinate landing.
+pub fn bump_world() {
+    WORLD.with(|c| c.set(c.get().wrapping_add(1)));
+    COORDS.with(|m| m.borrow_mut().clear());
+}
+
+/// Q-134: a coordinate the working set did not hold landed: what read its
+/// name (and found something else there, or nothing) is stale.
+pub fn landed_new(name: &str) {
+    let names = spellings(name);
+    COORDS.with(|m| m.borrow_mut().retain(|_, kept| !names.iter().any(|n| kept.open.contains(n))));
+}
+
+/// Q-134: a name under each prefix spelling the resolver tries.
+fn spellings(name: &str) -> Vec<String> {
+    let bare = name.trim_start_matches(['/', '@', '~', '%']);
+    let mut v: Vec<String> = ["", "/", "@", "~", "~%"].iter().map(|p| format!("{p}{bare}")).collect();
+    v.push(name.to_string());
+    v
+}
+
+/// Q-134: a value being kept read `name`, which the working set did not hold.
+fn note_open_read(name: &str) {
+    OPEN_READS.with(|s| {
+        if let Some(top) = s.borrow_mut().last_mut() {
+            top.extend(spellings(name));
+        }
+    });
+}
+
+/// Q-134: the evaluation modes a force reads, for the cache key.
+fn memo_modes() -> u16 {
+    let b = |x: bool, i: u16| if x { 1u16 << i } else { 0 };
+    b(CELL_BUDGET.with(|c| c.get()), 0)
+        | b(DEFER_RECIPES.with(|c| c.get()) != 0, 1)
+        | b(UNMETERED_MERGE.with(|c| c.get()), 2)
+        | b(FREE_MEET.with(|c| c.get()), 3)
+        | b(NO_EFFECTS.with(|c| c.get()) != 0, 4)
+        | b(DEFER_LAZY.with(|c| c.get()), 5)
+        | b(LAZY_PROBE.with(|c| c.get()) != 0, 6)
+        | b(PRESET_RECIPE.with(|c| c.get()), 7)
+        | b(KNOWN.with(|c| c.get()), 8)
+        | b(WRITE_NAMES.with(|c| c.borrow().is_some()), 9)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CoordKey {
+    name: String,
+    world: u64,
+    lookahead: usize,
+    modes: u16,
+    strategy: ObservationStrategy,
+    fuel_budget: u64,
+}
+
+#[derive(Clone)]
+struct CoordKept {
+    value: Value,
+    mbu_cost: u64,
+    /// Names it read that the working set did not hold.
+    open: HashSet<String>,
+    /// Working-set names it read (Q-127 orders the fields by them).
+    reads: HashSet<String>,
+    depth_span: u32,
+    /// What computing it noted, replayed on a hit.
+    skipped: u64,
+    other_skipped: u64,
+    recipes: HashSet<String>,
+    lazy: bool,
 }
 
 /// Q-127: the next evolved field takes `v` as its answer.
@@ -1099,6 +1181,7 @@ pub(crate) fn drop_idle_hops(ctx: &mut EvalContext, key: &str) {
 /// mutual cycle minted members ["a"] only, misreading 互指 as 自指 — the
 /// ruling makes loop SHAPE readable from the member list).
 fn cycle_reentry(ctx: &EvalContext, reentered: Option<&str>, key: &str) -> Value {
+    CYCLES.with(|c| c.set(c.get() + 1));
     let transformed = ctx.chain_transform_taint
         && ctx.entry_hops.get(key).map_or(true, |h| ctx.taint_hops > *h);
     if transformed {
@@ -1455,6 +1538,7 @@ impl Ouroboros {
     /// Stage 5 (§5b): full clear for coarse events (commit/load/refine).
     pub fn clear_force_memo(&self) {
         forget_kept_records();
+        COORDS.with(|m| m.borrow_mut().clear());
         if let Ok(mut memo) = self.force_memo.write() {
             memo.clear();
         }
@@ -5406,11 +5490,126 @@ impl Ouroboros {
                         return val;
                     }
                     let held = val.effect();
+                    // Q-134: a coordinate of the working set is one value in
+                    // this observation (Q-126 2); a later reader reads it.
+                    let key = (use_coord
+                        && ctx.staged.is_some()
+                        && ctx.memo_enabled
+                        && ctx.context_value.is_none()
+                        && matches!(&val, Value::Thunk { .. })
+                        && !ctx.computing.contains(n)
+                        && PRESET_ANSWER.with(|c| c.borrow().is_none()))
+                    .then(|| CoordKey {
+                        name: n.to_string(),
+                        world: WORLD.with(|c| c.get()),
+                        lookahead: ctx.lookahead.as_ref().map_or(0, |a| std::sync::Arc::as_ptr(a) as usize),
+                        modes: memo_modes(),
+                        strategy: ctx.strategy,
+                        fuel_budget: ctx.fuel_budget,
+                    });
+                    if let Some(k) = &key {
+                        let kept = COORDS.with(|m| m.borrow().get(k).cloned()).filter(|e| {
+                            ctx.depth.saturating_add(e.depth_span) <= ctx.max_unification_depth as u32
+                        });
+                        if let Some(e) = kept {
+                            if ctx.check_resources(e.mbu_cost).is_ok() {
+                                DEEPEST.with(|d| d.set(d.get().max(ctx.depth.saturating_add(e.depth_span))));
+                                OPEN_READS.with(|s| {
+                                    if let Some(top) = s.borrow_mut().last_mut() {
+                                        top.extend(e.open.iter().cloned());
+                                    }
+                                });
+                                WORK_READS.with(|r| {
+                                    if let Some(r) = r.borrow_mut().as_mut() {
+                                        r.extend(e.reads.iter().cloned());
+                                    }
+                                });
+                                READ_WORLD.with(|c| c.set(true));
+                                EFFECTS_SKIPPED.with(|c| c.set(c.get() + e.skipped));
+                                OTHER_SKIPPED.with(|c| c.set(c.get() + e.other_skipped));
+                                if !e.recipes.is_empty() {
+                                    EFFECT_RECIPES.with(|r| r.borrow_mut().extend(e.recipes.iter().cloned()));
+                                }
+                                if e.lazy {
+                                    LAZY_HIT.with(|c| c.set(true));
+                                }
+                                note_seen(held, e.value.effect());
+                                return e.value;
+                            }
+                        }
+                    }
+                    let before = key.as_ref().map(|_| {
+                        OPEN_READS.with(|s| s.borrow_mut().push(HashSet::new()));
+                        (
+                            effects_run(),
+                            EFFECTS_SKIPPED.with(|c| c.get()),
+                            OTHER_SKIPPED.with(|c| c.get()),
+                            DOLLAR_READ.with(|c| c.get()),
+                            LAZY_HIT.with(|c| c.replace(false)),
+                            EFFECT_RECIPES.with(|r| r.borrow().clone()),
+                            ctx.fuel,
+                            DEEPEST.with(|d| d.replace(ctx.depth)),
+                            CYCLES.with(|c| c.get()),
+                            WORK_READS.with(|r| r.borrow_mut().as_mut().map(std::mem::take)),
+                        )
+                    });
                     let out = other_recipe(n, &val, || if use_coord {
                         oo.force_coord(n, val.clone(), ctx)
                     } else {
                         oo.force(val.clone(), ctx)
                     });
+                    if let (Some(k), Some((run, skipped, other, dollars, lazy, recipes, fuel, deepest, cycles, outer_reads))) = (key, before) {
+                        let open = OPEN_READS.with(|s| {
+                            let mut s = s.borrow_mut();
+                            let mine = s.pop().unwrap_or_default();
+                            if let Some(up) = s.last_mut() {
+                                up.extend(mine.iter().cloned());
+                            }
+                            mine
+                        });
+                        let reads = WORK_READS.with(|r| {
+                            let mut r = r.borrow_mut();
+                            match (r.as_mut(), outer_reads) {
+                                (Some(cur), Some(mut outer)) => {
+                                    let mine = std::mem::take(cur);
+                                    outer.extend(mine.iter().cloned());
+                                    *cur = outer;
+                                    mine
+                                }
+                                _ => HashSet::new(),
+                            }
+                        });
+                        let span_top = DEEPEST.with(|d| d.get());
+                        DEEPEST.with(|d| d.set(span_top.max(deepest)));
+                        let hit_lazy = LAZY_HIT.with(|c| c.get());
+                        LAZY_HIT.with(|c| c.set(lazy || hit_lazy));
+                        let new_recipes: HashSet<String> =
+                            EFFECT_RECIPES.with(|r| r.borrow().difference(&recipes).cloned().collect());
+                        // Not kept: an effect done, a `$` read, a cycle met
+                        // (its value is the cycle's from where it was entered),
+                        // the depth horizon met (another from elsewhere).
+                        let clean = effects_run() == run
+                            && DOLLAR_READ.with(|c| c.get()) == dollars
+                            && CYCLES.with(|c| c.get()) == cycles
+                            && span_top < ctx.max_unification_depth as u32
+                            && !out.contains_blur()
+                            && !matches!(&out, Value::Thunk { .. } | Value::Ref(_))
+                            && WORLD.with(|c| c.get()) == k.world;
+                        if clean {
+                            let kept = CoordKept {
+                                value: out.clone(),
+                                mbu_cost: fuel.saturating_sub(ctx.fuel),
+                                open,
+                                reads,
+                                depth_span: span_top.saturating_sub(ctx.depth),
+                                skipped: EFFECTS_SKIPPED.with(|c| c.get()) - skipped,
+                                other_skipped: OTHER_SKIPPED.with(|c| c.get()) - other,
+                                recipes: new_recipes,
+                                lazy: hit_lazy,
+                            };
+                            COORDS.with(|m| m.borrow_mut().insert(k, kept));
+                        }
+                    }
                     // Q-127 step 19: what it read carried this label.
                     note_seen(held, out.effect());
                     out
@@ -5487,6 +5686,9 @@ impl Ouroboros {
                     }
                 }
             }
+            // Q-134: past the working set: a later landing of this name is
+            // what a kept value that read it did not see.
+            note_open_read(name);
             // Q-127: a name this write writes, not yet in the working set.
             if let Some(la) = ctx.lookahead.clone() {
                 if !ctx.lookahead_skip.iter().any(|c| c == name) {
@@ -5731,6 +5933,9 @@ impl Ouroboros {
                             }
                         }
                     }
+                }
+                if found.is_none() {
+                    note_open_read(name);
                 }
                 if found.is_none() {
                     if let Some(val) = ctx

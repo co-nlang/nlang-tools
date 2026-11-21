@@ -1686,6 +1686,7 @@ impl Ouroboros {
 
     pub fn eval(&self, expr: &Expr, ctx: &mut EvalContext) -> Value {
         ctx.depth += 1;
+        crate::DEEPEST.with(|d| if ctx.depth > d.get() { d.set(ctx.depth) });
         let res = self.eval_internal(expr, ctx);
         ctx.depth -= 1;
         res

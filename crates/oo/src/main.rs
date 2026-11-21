@@ -893,6 +893,7 @@ fn observe_the_write(
     }
     for pass in 0..passes {
         *universe = saved.clone();
+        nlang_interpreter::bump_world();
         universe.lookahead = Some(last.clone().unwrap_or_else(|| names_only.clone()));
         let _ = nlang_interpreter::take_effect_recipes();
         let skipped = nlang_interpreter::effects_skipped();
@@ -1026,6 +1027,7 @@ fn observe_the_write(
         }
     }
     *universe = saved;
+    nlang_interpreter::bump_world();
     universe.lookahead = Some(std::sync::Arc::new(whole));
     nlang_interpreter::forget_views();
     let mut it = out.into_iter();
@@ -1068,9 +1070,19 @@ fn evolve_files(
     // (the whole write's ⊥ judged first; otherwise the real pass names files).
     if let Some(mut u) = settled {
         let all: Vec<nlang_parser::ast::Field> = programs.iter().flat_map(|(_, f)| f.iter().cloned()).collect();
-        if u.late_bottom(engine, &first, &all).is_none() {
+        // Q-134: with no root spread to land, the universe judged here is the
+        // one adopted; its late bottoms are read once.
+        if !u.has_root_spreads() {
+            u.lookahead = None;
+            if u.late_bottom(engine, &first, &all).is_none() {
+                *universe = u;
+                nlang_interpreter::bump_world();
+                return Ok(());
+            }
+        } else if u.late_bottom(engine, &first, &all).is_none() {
             u.lookahead = None;
             *universe = u;
+            nlang_interpreter::bump_world();
             if let Err(e) = universe.land_root_spreads(engine) {
                 anyhow::bail!("Evolution Conflict: {}", format_conflict_where(&e, None));
             }
