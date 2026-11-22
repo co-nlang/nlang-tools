@@ -161,6 +161,11 @@ thread_local! {
     /// it, and the records on the path being forced.
     static HOMES: std::cell::RefCell<HashMap<u64, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
     static FORCING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Q-135: the thunks a bookkeeping walk is inside (keyed as L2-17 keys a
+    /// thunk under force), outermost first.
+    static WALKING: std::cell::RefCell<Vec<ContentHash>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Q-135: the walk has just entered this thunk (its key is on `WALKING`).
+    static WALK_ENTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Q-127: the answer the next evolved field takes as is (observed against
     /// the whole write).
     pub(crate) static PRESET_ANSWER: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
@@ -4952,6 +4957,24 @@ impl Ouroboros {
         // Thunk peel without stacking force_recursive depth: force alone runs
         // eval (cocoon post-seal solidify charges depth once). Nested
         // force_recursive(Thunk) used to add a second/third unit per level.
+        // Q-135 (`SPEC_10` §2.3.1, Q-120): the universe's walk spends a
+        // budget on each cell it passes — each cell as written. A record
+        // that holds a way back to itself (`a: { e: x, x: a }`) is reached
+        // again through the same thunk; what it holds is being walked by the
+        // visit already on the path, not 2^depth new cells.
+        let entered = WALK_ENTERED.with(|c| c.replace(false));
+        let walk_at = if !entered && CELL_BUDGET.with(|c| c.get()) { walk_key(&val) } else { None };
+        if let Some(at) = &walk_at {
+            if walking(at) {
+                return val;
+            }
+        }
+        if let Some(at) = walk_at {
+            return walking_in(at, || {
+                WALK_ENTERED.with(|c| c.set(true));
+                self.force_recursive_metered(val, ctx)
+            });
+        }
         if matches!(val, Value::Thunk { .. }) {
             let mut v = val;
             let mut peel = 0u32;
@@ -6732,4 +6755,30 @@ impl Ouroboros {
 thread_local! {
     pub(crate) static EXPANDING_FRAMES: std::cell::RefCell<Vec<usize>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Q-135: is this thunk one a bookkeeping walk is already inside?
+pub(crate) fn walking(at: &ContentHash) -> bool {
+    WALKING.with(|w| w.borrow().contains(at))
+}
+
+/// Q-135: walk `f` inside the thunk `at` (see `walking`).
+pub(crate) fn walking_in<T>(at: ContentHash, f: impl FnOnce() -> T) -> T {
+    WALKING.with(|w| w.borrow_mut().push(at));
+    let out = f();
+    WALKING.with(|w| w.borrow_mut().pop());
+    out
+}
+
+/// Q-135: the next walk starts on the thunk just put on `WALKING`.
+pub(crate) fn walk_entered() {
+    WALK_ENTERED.with(|c| c.set(true));
+}
+
+/// Q-135: a thunk's walk key (as L2-17 keys a thunk under force).
+pub(crate) fn walk_key(v: &Value) -> Option<ContentHash> {
+    match v {
+        Value::Thunk { expr, closure, context, effect } => Some(thunk_cycle_id(expr, closure, context, *effect)),
+        _ => None,
+    }
 }

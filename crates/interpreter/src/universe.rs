@@ -4777,10 +4777,19 @@ fn read_bottoms(engine: &Ouroboros, v: &Value, path: &str, ctx: &mut EvalContext
         // An open term reads its input where it is used, not here.
         Value::Thunk { expr, .. } if nlang_parser::tier::has_free_dollar(expr) => {}
         Value::Thunk { .. } => {
-            let forced = engine.force_each_cell(v.clone(), ctx);
-            if !matches!(forced, Value::Thunk { .. }) {
-                read_bottoms(engine, &forced, path, ctx, out);
+            // Q-135: a thunk this walk is already inside is being looked at by
+            // the visit on the path (`a: { e: x, x: a }`).
+            let at = crate::walk_key(v).expect("a thunk");
+            if crate::walking(&at) {
+                return;
             }
+            crate::walking_in(at, || {
+                crate::walk_entered();
+                let forced = engine.force_each_cell(v.clone(), ctx);
+                if !matches!(forced, Value::Thunk { .. }) {
+                    read_bottoms(engine, &forced, path, ctx, out);
+                }
+            });
         }
         _ => {}
     }
