@@ -21,15 +21,45 @@
 //      a record read twice, records calls make, recursion, bottoms three
 //      levels down, keep the root and readings v0.134.0 gives.
 //
+// R-1 (D132: a late bottom is counted per cell). A walk that left a thunk
+// once it had walked it walked the next way to it again: in a ring where
+// every record has two ways to the next, 2^L. And a bottom read along every
+// path is a coordinate per path, as many as the paths.
+//
+// r3 — evolve costs the cells written, however many ways each record has
+//      to the next: rings of 64 records with two ways (a field, its
+//      sibling, a list, a closure's frame, itself), 32 with four, 16 through
+//      a call; a chain of 2000 records each holding a bottom; each evolve
+//      within 20 s. A ring with two ways that closes over a bottom is
+//      refused as the ring with one way is.
+// r4 — D132: a write is refused when a cell it did not write reads a bottom
+//      it did not read, at the coordinate the cell reads it (the shortest
+//      way); a cell that already read that bottom gains nothing. The commit
+//      lists each bottom once, at its own cell.
+//
 // Not here: reading such a record whole (`oo eval '{ a: { e: x, x: a } }.a'`)
 // copies the value at each level of one observation and runs out of memory
-// — v0.120.0 does too; the Inbox row on values not shared.
+// — v0.120.0 does too; the Inbox row on values not shared. Committing a
+// ring where every record has two ways: the commit's projection forces each
+// pure cell whole to see whether it is ⊥, and an unshared value of such a
+// ring is 2^L (the same Inbox row; R-1 scope, user 2026-11-22).
 
 use std::fs;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const ENV: &str = "~%Env.get \"Q135_A\"";
+// r3 / r4: what the reference (q135-r1-ref) answers; the coordinate is the
+// shortest way the cell reads the bottom.
+const WANT_CLOSE_ONE: &str = "e0 e1 | Error: Evolution Conflict in \"f1.n\": #conflict at n4.w0.w0.w0.w0.w0.z";
+const WANT_CLOSE_TWO: &str = "e0 e1 | Error: Evolution Conflict in \"f1.n\": #conflict at n4.w0.w0.w0.w0.w0.z";
+const WANT_LATE_RECORD: &str = "e0 c0 e1 | Error: Evolution Conflict in \"f1.n\": #conflict at a.w.z";
+const WANT_LATE_SECOND: &str = "e0 c0 e1 | Error: Evolution Conflict in \"f1.n\": #conflict at a.x.z";
+const WANT_LATE_RING: &str = "e0 c0 e1 | Error: Evolution Conflict in \"f1.n\": #conflict at n4.w0.w0.w0.w0.w0.z";
+const WANT_LATE_NAME: &str = "e0 c0 e1 | Error: Evolution Conflict in \"f1.n\": #conflict at q";
+const WANT_LATE_NONE: &str = "e0 c0 e0 | ";
+const WANT_LATE_SHORT: &str = "e0 c0 e1 | Error: Evolution Conflict in \"f1.n\": #conflict at a.p.z";
+const WANT_LIST_RECORD: &str = "c.z";
 
 struct Ws {
     _scratch: nlang_interpreter::ScratchDir,
@@ -121,6 +151,19 @@ impl Ws {
         let (o, rc) = self.oo(&["commit", "-m", "a"], kill);
         rcs.push(Ws::code(&o, rc, "c"));
         rcs
+    }
+
+    /// Evolve each file in turn, each within `kill`: the rc letter and what
+    /// it printed, squashed.
+    fn evolve_each(&self, files: &[String], kill: Duration) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (k, src) in files.iter().enumerate() {
+            let f = format!("f{k}.n");
+            self.file(&f, src);
+            let (o, rc) = self.oo(&["evolve", &f], kill);
+            out.push((Ws::code(&o, rc, "e"), squash(&o)));
+        }
+        out
     }
 
     fn read(&self, q: &str) -> String {
@@ -290,4 +333,117 @@ fn g1_what_is_stored_and_read_does_not_change() {
         check(&mut bad, label, got, want);
     }
     verdict(bad, shapes.len());
+}
+
+// ── r3 ── every record has two ways to the next ────────────────────────
+
+/// A ring of `l` records, each with `m` edges of one kind to the next.
+fn ring_of(kind: &str, l: usize, m: usize) -> String {
+    let edges = |i: usize, t: &str| -> Vec<String> {
+        match kind {
+            "a field" => (0..m).map(|j| format!("w{j}: {t}")).collect(),
+            "its sibling" => std::iter::once(format!("x: {t}")).chain((1..m).map(|j| format!("e{j}: x"))).collect(),
+            "a list" => (0..m).map(|j| format!("l{j}: [{t}]")).collect(),
+            "a closure's frame" => std::iter::once(format!("x: {t}")).chain((1..m).map(|j| format!("k{j}: (u -> x)"))).collect(),
+            "itself" => std::iter::once(format!("x: {t}")).chain((1..m).map(|j| format!("s{j}: n{i}"))).collect(),
+            "a call" => (0..m).map(|j| format!("c{j}: id {t}")).collect(),
+            _ => unreachable!(),
+        }
+    };
+    let mut f = vec!["id: (x -> x)".to_string()];
+    for i in 0..l {
+        let mut fields = vec![format!("v: {i}")];
+        fields.extend(edges(i, &format!("n{}", (i + 1) % l)));
+        f.push(format!("n{i}: {{ {} }}", fields.join(", ")));
+    }
+    f.join("\n")
+}
+
+/// r3 — Rings where every record has two (or four) ways to the next, and a
+/// chain of 2000 records each holding a bottom: each evolves within 20 s.
+/// A ring with two ways, its far half written first with a bottom in it,
+/// refuses the near half as the ring with one way does. (v0.134.0 and the
+/// first delivery: the rings do not return from 5 records on; the chain
+/// from about 1000.)
+#[test]
+fn r3_evolve_costs_the_cells_written() {
+    let mut shapes: Vec<(String, String)> = Vec::new();
+    for kind in ["a field", "its sibling", "a list", "a closure's frame", "itself"] {
+        shapes.push((format!("64 records, two ways by {kind}"), ring_of(kind, 64, 2)));
+    }
+    shapes.push(("32 records, four ways by a field".into(), ring_of("a field", 32, 4)));
+    shapes.push(("16 records, two ways by a call".into(), ring_of("a call", 16, 2)));
+    let chain = (0..2000).map(|i| format!("k{i}: {{ z: 1 & 2, n: k{} }}", i + 1)).collect::<Vec<_>>().join("\n") + "\nk2000: { z: 1 & 2 }";
+    shapes.push(("2000 records, each holding a bottom".into(), chain));
+    let mut bad = Vec::new();
+    for (shape, src) in &shapes {
+        let w = Ws::new("r3");
+        let out = w.evolve_each(&[src.clone()], Duration::from_secs(20));
+        check(&mut bad, &format!("{shape}: evolve within 20 s"), out[0].0.clone(), "e0");
+    }
+    // the ring closes over a bottom its far half holds
+    let near = "n0: { v: 0, w0: n1, w1: n1 }\nn1: { v: 1, w0: n2, w1: n2 }\nn2: { v: 2, w0: n3, w1: n3 }";
+    let far = "n3: { v: 3, w0: n4, w1: n4 }\nn4: { v: 4, w0: n0, w1: n0, z: 1 & 2 }";
+    let one = "n3: { v: 3, w0: n4 }\nn4: { v: 4, w0: n0, z: 1 & 2 }";
+    let near_one = "n0: { v: 0, w0: n1 }\nn1: { v: 1, w0: n2 }\nn2: { v: 2, w0: n3 }";
+    for (shape, files, want) in [
+        ("one way, the ring closes over a bottom", vec![one.to_string(), near_one.to_string()], WANT_CLOSE_ONE),
+        ("two ways, the ring closes over a bottom", vec![far.to_string(), near.to_string()], WANT_CLOSE_TWO),
+    ] {
+        let w = Ws::new("r3-close");
+        let out = w.evolve_each(&files, Duration::from_secs(20));
+        check(&mut bad, shape, format!("{} {} | {}", out[0].0, out[1].0, out[1].1), want);
+    }
+    verdict(bad, shapes.len() + 2);
+}
+
+// ── r4 ── a late bottom is counted per cell (D132) ──────────────────────
+
+/// r4 — D132. A write is refused where a cell it did not write comes to read
+/// a bottom it did not read: through a record (`a.w.z`), a second field of a
+/// record that already read it by the first (`a.x.z`), a ring that closes
+/// over its own bottom (the shortest way round), a record that reads it by
+/// two ways (the shorter is reported). A write that reads no
+/// bottom lands. The commit lists each bottom once, at its own cell: not
+/// once more for every cell that reads it. (v0.134.0: the ring is reported
+/// at a coordinate going round to the depth horizon; the commit lists
+/// `a.w.z` beside `c.z`, and 5151 bottoms for a chain of 100 records each
+/// holding one.)
+#[test]
+fn r4_a_late_bottom_is_counted_per_cell() {
+    let cases: [(&str, [&str; 2], &str); 6] = [
+        ("a record comes to read a bottom", ["a: { w: b }\nc: { z: 1 & 2 }", "b: c"], WANT_LATE_RECORD),
+        ("a second field of a record that read it", ["a: { w: c, x: b }\nc: { z: 1 & 2 }", "b: c"], WANT_LATE_SECOND),
+        ("a ring closes over its own bottom", ["n3: { v: 3, w0: n4 }\nn4: { v: 4, w0: n0, z: 1 & 2 }", "n0: { v: 0, w0: n1 }\nn1: { v: 1, w0: n2 }\nn2: { v: 2, w0: n3 }"], WANT_LATE_RING),
+        ("a name read before it is written", ["q: c", "p: c\nc: \"x\" + 1"], WANT_LATE_NAME),
+        ("a record reads it two ways, the shorter reported", ["a: { q: { r: b }, p: b }", "b: { z: 1 & 2 }"], WANT_LATE_SHORT),
+        ("a write that reads no bottom", ["n3: { v: 3, w0: n4 }\nn4: { v: 4, w0: n0, z: 1 & 2 }", "n0: { v: 0, w0: n1 }\nn1: { v: 1, w0: n2 }\nn2: { v: 2, w0: q }\nq: { v: 9 }"], WANT_LATE_NONE),
+    ];
+    let mut bad = Vec::new();
+    for (label, files, want) in cases {
+        let w = Ws::new("r4");
+        let f: Vec<String> = files.iter().map(|x| x.to_string()).collect();
+        w.file("f0.n", &f[0]);
+        let (o0, rc0) = w.oo(&["evolve", "f0.n"], Duration::from_secs(20));
+        let (o1, rc1) = w.oo(&["commit", "-m", "a"], Duration::from_secs(20));
+        w.file("f1.n", &f[1]);
+        let (o2, rc2) = w.oo(&["evolve", "f1.n"], Duration::from_secs(20));
+        let got = format!("{} {} {} | {}", Ws::code(&o0, rc0, "e"), Ws::code(&o1, rc1, "c"), Ws::code(&o2, rc2, "e"), squash(&o2));
+        check(&mut bad, label, got, want);
+    }
+    // the commit's list
+    let lists = [
+        ("a record that reads a bottom", "a: { w: c }\nc: { z: 1 & 2 }".to_string(), WANT_LIST_RECORD.to_string()),
+        ("100 records each holding a bottom", (0..100).map(|i| format!("k{i}: {{ z: 1 & 2, n: k{} }}", i + 1)).collect::<Vec<_>>().join("\n") + "\nk100: { z: 1 & 2 }", "101".to_string()),
+    ];
+    for (label, src, want) in &lists {
+        let w = Ws::new("r4-list");
+        w.file("f0.n", src);
+        let (_, rc0) = w.oo(&["evolve", "f0.n"], Duration::from_secs(20));
+        let (o, rc) = w.oo(&["commit", "-m", "a"], Duration::from_secs(20));
+        let listed: Vec<&str> = o.split_whitespace().collect::<Vec<_>>().windows(3).filter(|x| x[0] == "#conflict" && x[1] == "at").map(|x| x[2]).collect();
+        let got = if label.starts_with("100") { format!("{}", listed.len()) } else { listed.join(" ") };
+        check(&mut bad, &format!("commit lists, {label} (rc {rc0} {rc})"), got, want);
+    }
+    verdict(bad, cases.len() + lists.len());
 }
