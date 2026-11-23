@@ -166,6 +166,9 @@ thread_local! {
     static WALKING: std::cell::RefCell<Vec<ContentHash>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Q-135: the walk has just entered this thunk (its key is on `WALKING`).
     static WALK_ENTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Q-135 R-1 (D132): a cell is forced to its top; the fields of the
+    /// record it comes to stay as written, each a cell of its own.
+    static ONE_LEVEL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Q-127: the answer the next evolved field takes as is (observed against
     /// the whole write).
     pub(crate) static PRESET_ANSWER: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
@@ -4816,8 +4819,20 @@ impl Ouroboros {
     /// even inside a bookkeeping walk.
     fn as_one_definition<T>(f: impl FnOnce() -> T) -> T {
         let outer = CELL_BUDGET.with(|c| c.replace(false));
+        let one = ONE_LEVEL.with(|c| c.replace(false));
         let out = f();
+        ONE_LEVEL.with(|c| c.set(one));
         CELL_BUDGET.with(|c| c.set(outer));
+        out
+    }
+
+    /// Q-135 R-1 (D132): one cell worked out on its own budget (Q-120), to
+    /// its top. A record it comes to keeps its fields as written: the walk
+    /// that asked reads each of them as a cell of its own.
+    pub(crate) fn force_cell(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        let one = ONE_LEVEL.with(|c| c.replace(true));
+        let out = self.force_each_cell(val, ctx);
+        ONE_LEVEL.with(|c| c.set(one));
         out
     }
 
@@ -5112,6 +5127,8 @@ impl Ouroboros {
                             // the branch. Observing the table does not run it.
                             let is_rule = crate::dispatch::is_rule_cocoon(&c);
                             let has_code = is_rule || c.get_field("%code").is_some();
+                            // Q-135 R-1: one level — the fields stay as written.
+                            let one = ONE_LEVEL.with(|c| c.get());
                             // D118: a met node's fields resolve in it.
                             let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
                             let views = std::cell::RefCell::new(crate::value::MetViews::new());
@@ -5123,21 +5140,21 @@ impl Ouroboros {
                             // re-routes a data key named `@t` onto the type
                             // axis (Q1).
                             for (k, v) in std::mem::take(&mut c.data) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.data.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.types) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.types.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.rules) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
@@ -5152,7 +5169,9 @@ impl Ouroboros {
                                 }
                                 // Q-126: what a function closes over is a
                                 // view of the node it was written in.
-                                let forced = if has_code && k == "closure" {
+                                let forced = if one {
+                                    rebind(v)
+                                } else if has_code && k == "closure" {
                                     self.read_closure_on_its_nodes(v, &rebind, ctx)
                                 } else {
                                     self.force_recursive(rebind(v), ctx)
@@ -5163,14 +5182,14 @@ impl Ouroboros {
                                 new_c.meta.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.system) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.system.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.local) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }

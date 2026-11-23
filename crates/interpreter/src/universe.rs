@@ -2863,7 +2863,7 @@ impl Universe {
     /// shape a reader reads counts, not only the cells already stored as ⊥:
     /// a kept recipe, a list element, a field read in its node. Nothing that
     /// carries an effect is forced (evolve observes nothing, D46 ②).
-    pub fn bottoms_as_read(&self, engine: &Ouroboros) -> std::collections::BTreeSet<String> {
+    pub fn bottoms_as_read(&self, engine: &Ouroboros) -> BottomsRead {
         let mut staged = (*self.staged).clone();
         staged.remove_field("~%Config");
         // A pinned coordinate overwrites the root as the commit will
@@ -2883,7 +2883,7 @@ impl Universe {
             view.remove_field(t);
             view.remove_field(&format!("/{t}"));
         }
-        read_bottoms_of(engine, &view, &self.standard_root).into_iter().map(|(c, _)| c).collect()
+        read_bottoms_of(engine, &view, &self.standard_root, true).pairs
     }
 
     /// Q-122 (`SPEC_10` §2.3.1 D110 款「存語法不得讓衝突晚到」, Q-105 款「它做
@@ -2897,7 +2897,7 @@ impl Universe {
     pub fn late_bottom(
         &self,
         engine: &Ouroboros,
-        before: &std::collections::BTreeSet<String>,
+        before: &BottomsRead,
         fields: &[Field],
     ) -> Option<crate::value::BottomDetail> {
         // `#pin` overwrites the coordinates it pins (SPEC_08 §6.2, SPEC_10
@@ -2928,28 +2928,48 @@ impl Universe {
             written.extend(mine);
         }
         let covers = |p: &str, c: &str| p.is_empty() || c == p || c.starts_with(&format!("{p}."));
-        for c in after.iter().filter(|c| !before.contains(*c)) {
-            if own_rules.iter().any(|p| covers(p, c)) {
-                continue;
+        // A coordinate's prefixes, itself and the root included.
+        fn prefixes(c: &str) -> impl Iterator<Item = &str> {
+            std::iter::once("").chain(c.match_indices('.').map(move |(i, _)| &c[..i])).chain((!c.is_empty()).then_some(c))
+        }
+        let mut times: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for p in &written {
+            *times.entry(p.as_str()).or_default() += 1;
+        }
+        let rules: std::collections::HashSet<&str> = own_rules.iter().map(|p| p.as_str()).collect();
+        // coordinates some written coordinate reaches past
+        let mut inside: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for p in written.iter().chain(own_rules.iter()) {
+            inside.extend(prefixes(p).filter(|q| *q != p.as_str()));
+        }
+        // D132: a cell that reads a bottom it did not read before; the
+        // coordinate it is read at says whose write it is.
+        after.each_fresh(before, |cell, t, u| {
+            // The coordinate starts with the cell's own; it is built only as
+            // far as a written coordinate reaches past it.
+            let c = after.coordinate_within(t, u, |at| inside.contains(at));
+            let c = &c;
+            if prefixes(c).any(|q| rules.contains(q)) {
+                return None;
             }
-            if written.iter().filter(|p| covers(p, c)).count() == 1 {
-                continue;
+            if prefixes(c).map(|q| times.get(q).copied().unwrap_or(0)).sum::<usize>() == 1 {
+                return None;
             }
             // A table's row is the key it matches: a write under a node with
             // a table writes that table's branch (D117 Q2), as before.
             if let Some(i) = c.find("%rules") {
                 let node = c[..i].trim_end_matches('.');
                 if written.iter().any(|p| covers(node, p)) {
-                    continue;
+                    return None;
                 }
             }
-            return Some(crate::value::BottomDetail {
+            let _ = cell;
+            Some(crate::value::BottomDetail {
                 cause: BottomCause::Conflict,
-                path: Some(c.clone()),
+                path: Some(after.coordinate(t, u)),
                 ..Default::default()
-            });
-        }
-        None
+            })
+        })
     }
 
     /// Q-134: whether [`Self::land_root_spreads`] has a row to land.
@@ -3658,7 +3678,7 @@ impl Universe {
         // digest. Never read `message`.
         // Q-122: what a reader reads as ⊥, in every shape — a kept recipe
         // in a record or a list reads ⊥ without being stored as one.
-        let mut reported = read_bottoms_of(engine, &new_root, &self.standard_root);
+        let mut reported = read_bottoms_of(engine, &new_root, &self.standard_root, false).own;
         reported.sort();
         reported.dedup();
         // S9 甲: a store that still declares a past layout must not receive
@@ -4732,66 +4752,396 @@ impl Universe {
     }
 }
 
-/// Q-122: the coordinates of `c` whose reading is ⊥, with their cause. A
-/// thunk is forced one cell at a time on its own budget (Q-120); a thunk
-/// that carries an effect, or waits for a context, is not forced.
-pub(crate) fn read_bottoms_of(engine: &Ouroboros, c: &ComboVal, standard: &ComboVal) -> Vec<(String, String)> {
+/// D132: what each cell reads as ⊥. For each bottom, an array indexed by
+/// cell: the next cell toward that bottom (the shortest way), or none. Two
+/// walks are matched by coordinate: a cell is the first one at its
+/// coordinate, which reaches what every cell there reaches.
+#[derive(Default)]
+pub struct BottomsRead {
+    home: Vec<std::sync::Arc<str>>,
+    /// per cell: (next cell, the segment it adds) for each of its edges
+    succ: Vec<Vec<(u32, std::sync::Arc<str>)>>,
+    /// the first cell at each coordinate
+    first: std::collections::HashMap<std::sync::Arc<str>, u32>,
+    /// the bottoms: their cell, and for each cell the next cell toward it
+    tops: Vec<u32>,
+    next: Vec<Vec<u32>>,
+    /// a bottom by its coordinate
+    top_at: std::collections::HashMap<std::sync::Arc<str>, u32>,
+}
+
+const NO_WAY: u32 = u32::MAX;
+
+impl BottomsRead {
+    fn reads(&self, t: u32, u: u32) -> bool {
+        self.tops[t as usize] == u || self.next[t as usize][u as usize] != NO_WAY
+    }
+
+    /// Each (cell, bottom) pair `self` has and `before` does not, in order of
+    /// (cell, bottom) coordinates, until `f` answers.
+    pub(crate) fn each_fresh<T>(&self, before: &BottomsRead, mut f: impl FnMut(&str, u32, u32) -> Option<T>) -> Option<T> {
+        let mut cells: Vec<(&std::sync::Arc<str>, u32)> = self.first.iter().map(|(h, &u)| (h, u)).filter(|(h, _)| !h.is_empty()).collect();
+        cells.sort();
+        let mut tops: Vec<(&std::sync::Arc<str>, u32)> = self.top_at.iter().map(|(h, &t)| (h, t)).collect();
+        tops.sort();
+        let was: Vec<Option<u32>> = tops.iter().map(|(h, _)| before.top_at.get(*h).copied()).collect();
+        for (cell, u) in cells {
+            let had = before.first.get(cell).copied();
+            for (k, &(_, t)) in tops.iter().enumerate() {
+                if !self.reads(t, u) {
+                    continue;
+                }
+                let old = matches!((had, was[k]), (Some(bu), Some(bt)) if before.reads(bt, bu));
+                if old {
+                    continue;
+                }
+                if let Some(out) = f(cell, t, u) {
+                    return Some(out);
+                }
+            }
+        }
+        None
+    }
+
+    /// The coordinate a cell reads a bottom at, as far as `further` asks for
+    /// another field: past that it only grows, and what a written coordinate
+    /// covers is settled.
+    pub(crate) fn coordinate_within(&self, t: u32, u: u32, further: impl Fn(&str) -> bool) -> String {
+        let next = &self.next[t as usize];
+        let mut at = self.home[u as usize].to_string();
+        let mut w = u;
+        while further(&at) && next[w as usize] != NO_WAY {
+            let v = next[w as usize];
+            let seg = self.succ[w as usize].iter().find(|(x, _)| *x == v).map(|(_, s)| s.clone()).unwrap_or_else(|| std::sync::Arc::from(""));
+            if !seg.is_empty() {
+                at = if at.is_empty() { seg.to_string() } else { format!("{at}.{seg}") };
+            }
+            w = v;
+        }
+        at
+    }
+
+    /// The coordinate a cell reads a bottom at: the cell's own, then the
+    /// fields toward the bottom (the shortest way).
+    pub(crate) fn coordinate(&self, t: u32, u: u32) -> String {
+        self.coordinate_within(t, u, |_| true)
+    }
+}
+
+/// Q-122 / D132: the bottoms of `c`. `pairs`: every cell that reads a bottom,
+/// with that bottom's own cell, read at one coordinate (the shortest). `own`:
+/// each bottom once, at its own cell, with its cause.
+pub(crate) struct BottomReads {
+    pub pairs: BottomsRead,
+    pub own: Vec<(String, String)>,
+}
+
+/// Q-122 / D132: the coordinates of `c` whose reading is ⊥. A thunk is
+/// forced one cell at a time on its own budget (Q-120); a thunk that carries
+/// an effect, or waits for a context, is not forced. A name reads the cell it
+/// names: the walk links it there and does not walk that cell again (Q-135
+/// R-1) — what the walk costs is the cells written, however many ways lead
+/// to them.
+pub(crate) fn read_bottoms_of(engine: &Ouroboros, c: &ComboVal, standard: &ComboVal, pairs: bool) -> BottomReads {
     let mut ctx = EvalContext::new(c.clone()).with_standard_root(standard.clone());
     ctx.memo_enabled = false;
     // A live reference stays one (`<<_.>>` is the universe itself), as in
     // the commit's own observation.
     ctx.preserve_refs = true;
-    let mut out = Vec::new();
     // Q-126: looking for ⊥ is bookkeeping; it does no effect.
-    crate::bookkeeping(|| read_bottoms(engine, &Value::Combo(c.clone()), "", &mut ctx, &mut out));
-    out.sort();
-    out.dedup();
-    out
+    crate::bookkeeping(|| {
+        let mut g = CellGraph::default();
+        g.walk(engine, &Value::Combo(c.clone()), &mut ctx);
+        g.reads(pairs)
+    })
 }
 
-fn read_bottoms(engine: &Ouroboros, v: &Value, path: &str, ctx: &mut EvalContext, out: &mut Vec<(String, String)>) {
-    match v {
-        Value::Bottom(d) => {
-            let coord = if path.is_empty() { d.path.clone().filter(|s| !s.is_empty()).unwrap_or_default() } else { path.to_string() };
-            out.push((coord, format!("#{}", d.cause.as_tag())));
+/// How a thunk's cell comes to what it holds.
+#[derive(Clone, Copy, PartialEq)]
+enum Made {
+    /// A record, list or tuple written there: its own cells.
+    Written,
+    /// A computation: what it makes there is its own, unless it is a record
+    /// a cell already holds.
+    Computed,
+    /// A name: the cell it names.
+    Named,
+}
+
+/// D132: cells, and which cells each reads.
+#[derive(Default)]
+struct CellGraph {
+    home: Vec<String>,
+    cause: Vec<Option<String>>,
+    succ: Vec<Vec<(usize, String)>>,
+    /// What a name or a computation may come to, and the cell holding it.
+    known: std::collections::HashMap<ContentHash, usize>,
+    computed: std::collections::VecDeque<(usize, Value, String, Made, bool)>,
+    /// (cell, value, its coordinate, the name as written and the record it
+    /// is written in, inside a record a call made)
+    named: Vec<(usize, Option<Value>, Option<ContentHash>, String, Option<(Expr, String)>, bool)>,
+    /// The first cell at each coordinate.
+    at: std::collections::HashMap<String, usize>,
+    /// The cell being walked is inside a record a call made.
+    made_now: bool,
+}
+
+/// The fields or elements a record, list or tuple literal writes as a name.
+fn names_written(v: &Value) -> Option<std::collections::HashMap<String, Expr>> {
+    let Value::Thunk { expr, .. } = v else { return None };
+    let is_name = |e: &Expr| matches!(e.kind, ExprKind::Path(_));
+    match &expr.kind {
+        ExprKind::Combo { fields, .. } => Some(
+            fields
+                .iter()
+                .filter(|f| is_name(&f.value))
+                .filter_map(|f| key_path(&f.key).map(|k| (k, f.value.clone())))
+                .filter(|(k, _)| !k.contains('.'))
+                .collect(),
+        ),
+        ExprKind::List(items) | ExprKind::Tuple(items) => {
+            Some(items.iter().enumerate().filter(|(_, e)| is_name(e)).map(|(i, e)| (i.to_string(), e.clone())).collect())
         }
-        Value::Combo(c) => {
-            // D118: a field of a met node is read in the met node; the fields
-            // of one node share its views (one view per field is N²).
-            let mut views = Vec::new();
-            for (prefix, axis) in [("", &c.data), ("@", &c.types), ("/", &c.rules), ("%", &c.meta), ("~", &c.local)] {
-                for (k, val) in axis.iter() {
-                    let child = if path.is_empty() { format!("{prefix}{k}") } else { format!("{path}.{prefix}{k}") };
-                    let val = crate::value::rebind_in(c, val.clone(), &mut views);
-                    read_bottoms(engine, &val, &child, ctx, out);
+        _ => None,
+    }
+}
+
+fn spelled_at(reads: &Option<&std::collections::HashMap<String, Expr>>, k: &str) -> Option<Expr> {
+    reads.and_then(|r| r.get(k).cloned())
+}
+
+/// A made record nested past this many fields is past the horizon.
+const CELL_DEPTH: usize = 256;
+
+impl CellGraph {
+    fn node(&mut self, home: &str) -> usize {
+        self.at.entry(home.to_string()).or_insert(self.home.len());
+        self.home.push(home.to_string());
+        self.cause.push(None);
+        self.succ.push(Vec::new());
+        self.home.len() - 1
+    }
+
+    fn walk(&mut self, engine: &Ouroboros, root: &Value, ctx: &mut EvalContext) {
+        self.cell(engine, root, "", false, None, ctx);
+        loop {
+            while let Some((n, v, path, made, in_made)) = self.computed.pop_front() {
+                self.made_now = in_made || made == Made::Computed;
+                let reads = names_written(&v);
+                let forced = engine.force_cell(v, ctx);
+                if let Some(m) = self.holds(engine, &forced, &path, made, reads.as_ref(), ctx) {
+                    self.succ[n].push((m, String::new()));
+                }
+            }
+            if self.named.is_empty() {
+                break;
+            }
+            for (n, v, id, path, spelled, in_made) in std::mem::take(&mut self.named) {
+                self.made_now = in_made;
+                if let Some(m) = id.as_ref().and_then(|id| self.known.get(id).copied()) {
+                    self.succ[n].push((m, String::new()));
+                    continue;
+                }
+                if v.is_none() {
+                    if let Some(m) = spelled.as_ref().and_then(|(expr, scope)| self.resolve(expr, scope)) {
+                        self.succ[n].push((m, String::new()));
+                    }
+                    continue;
+                }
+                let v = v.expect("kept");
+                let forced = if id.is_some() { v } else { engine.force_cell(v, ctx) };
+                let placed = match (&forced, &spelled) {
+                    (Value::Combo(c), Some((expr, scope))) if !in_made && !self.known.contains_key(&c.cycle_frame_digest()) => self.resolve(expr, scope),
+                    _ => None,
+                };
+                if let Some(m) = placed {
+                    self.succ[n].push((m, String::new()));
+                    continue;
+                }
+                if let Some(m) = self.holds(engine, &forced, &path, Made::Named, None, ctx) {
+                    self.succ[n].push((m, String::new()));
                 }
             }
         }
-        Value::Union(items) => {
-            for item in items {
-                read_bottoms(engine, item, path, ctx, out);
-            }
+    }
+
+    /// What a thunk's cell came to: a cell already known (a name, or a
+    /// computation that came to a record a cell holds), else cells of its own.
+    fn holds(&mut self, engine: &Ouroboros, forced: &Value, path: &str, made: Made, reads: Option<&std::collections::HashMap<String, Expr>>, ctx: &mut EvalContext) -> Option<usize> {
+        let id = match forced {
+            Value::Thunk { .. } => return crate::walk_key(forced).and_then(|k| self.known.get(&k).copied()),
+            Value::Combo(c) if made != Made::Written => Some(c.cycle_frame_digest()),
+            Value::Bottom(_) if made == Made::Named => Some(forced.content_hash()),
+            _ => None,
+        };
+        if let Some(m) = id.and_then(|id| self.known.get(&id).copied()) {
+            return Some(m);
         }
-        Value::Thunk { context: Some(_), .. } => {}
-        Value::Thunk { effect, .. } if !effect.is_pure() => {}
-        // An open term reads its input where it is used, not here.
-        Value::Thunk { expr, .. } if nlang_parser::tier::has_free_dollar(expr) => {}
-        Value::Thunk { .. } => {
-            // Q-135: a thunk this walk is already inside is being looked at by
-            // the visit on the path (`a: { e: x, x: a }`).
-            let at = crate::walk_key(v).expect("a thunk");
-            if crate::walking(&at) {
-                return;
+        self.cell(engine, forced, path, true, reads, ctx)
+    }
+
+    /// `forced`: `v` is what `force_cell` gave. A record written as a value
+    /// is passed through it first, so that a name reading it later (forced
+    /// the same way) is known by the same digest.
+    fn cell(&mut self, engine: &Ouroboros, v: &Value, path: &str, forced: bool, reads: Option<&std::collections::HashMap<String, Expr>>, ctx: &mut EvalContext) -> Option<usize> {
+        if path.matches('.').count() >= CELL_DEPTH {
+            return None;
+        }
+        if !forced && matches!(v, Value::Combo(_)) {
+            let v = engine.force_cell(v.clone(), ctx);
+            return self.cell(engine, &v, path, true, reads, ctx);
+        }
+        match v {
+            Value::Bottom(d) => {
+                let coord = if path.is_empty() { d.path.clone().filter(|s| !s.is_empty()).unwrap_or_default() } else { path.to_string() };
+                let n = self.node(&coord);
+                self.cause[n] = Some(format!("#{}", d.cause.as_tag()));
+                self.known.entry(v.content_hash()).or_insert(n);
+                Some(n)
             }
-            crate::walking_in(at, || {
-                crate::walk_entered();
-                let forced = engine.force_each_cell(v.clone(), ctx);
-                if !matches!(forced, Value::Thunk { .. }) {
-                    read_bottoms(engine, &forced, path, ctx, out);
+            Value::Combo(c) => {
+                let n = self.node(path);
+                self.known.entry(c.cycle_frame_digest()).or_insert(n);
+                // D118: a field of a met node is read in the met node; the fields
+                // of one node share its views (one view per field is N²).
+                let mut views = Vec::new();
+                for (prefix, axis) in [("", &c.data), ("@", &c.types), ("/", &c.rules), ("%", &c.meta), ("~", &c.local)] {
+                    for (k, val) in axis.iter() {
+                        let seg = format!("{prefix}{k}");
+                        let child = if path.is_empty() { seg.clone() } else { format!("{path}.{seg}") };
+                        let val = crate::value::rebind_in(c, val.clone(), &mut views);
+                        // A field written as a name reads that cell, though
+                        // evaluating the literal may have put its value here.
+                        let c_expr_reads = reads;
+                        if prefix.is_empty() && !matches!(val, Value::Thunk { .. }) && reads.is_some_and(|r| r.contains_key(k.as_str())) {
+                            let m = self.node(&child);
+                            let spelled = spelled_at(&c_expr_reads, k).map(|e| (e, path.to_string()));
+                            // Known by its digest now; the value is kept only
+                            // where the walk may have to read it cell by cell.
+                            let as_read = engine.force_cell(val, ctx);
+                            let id = match &as_read {
+                                Value::Combo(c) => Some(c.cycle_frame_digest()),
+                                Value::Bottom(_) => Some(as_read.content_hash()),
+                                _ => None,
+                            };
+                            let keep = if self.made_now || id.is_none() { Some(as_read) } else { None };
+                            self.named.push((m, keep, id, child, spelled, self.made_now));
+                            self.succ[n].push((m, seg));
+                            continue;
+                        }
+                        if let Some(m) = self.cell(engine, &val, &child, false, None, ctx) {
+                            self.succ[n].push((m, seg));
+                        }
+                    }
                 }
-            });
+                Some(n)
+            }
+            Value::Union(items) => {
+                let n = self.node(path);
+                for item in items {
+                    if let Some(m) = self.cell(engine, item, path, false, None, ctx) {
+                        self.succ[n].push((m, String::new()));
+                    }
+                }
+                Some(n)
+            }
+            Value::Thunk { context: Some(_), .. } => None,
+            // Nothing that carries an effect is forced (evolve observes
+            // nothing, D46 ②).
+            Value::Thunk { effect, .. } if !effect.is_pure() => None,
+            // An open term reads its input where it is used, not here.
+            Value::Thunk { expr, .. } if nlang_parser::tier::has_free_dollar(expr) => None,
+            Value::Thunk { expr, .. } => {
+                let n = self.node(path);
+                if let Some(k) = crate::walk_key(v) {
+                    self.known.entry(k).or_insert(n);
+                }
+                let scope = path.rsplit_once('.').map(|(p, _)| p.to_string()).unwrap_or_default();
+                match &expr.kind {
+                    ExprKind::Path(_) => self.named.push((n, Some(v.clone()), None, path.to_string(), Some(((**expr).clone(), scope)), self.made_now)),
+                    ExprKind::Combo { .. } | ExprKind::List(_) | ExprKind::Tuple(_) => {
+                        self.computed.push_back((n, v.clone(), path.to_string(), Made::Written, self.made_now))
+                    }
+                    _ => self.computed.push_back((n, v.clone(), path.to_string(), Made::Computed, self.made_now)),
+                }
+                Some(n)
+            }
+            _ => None,
         }
-        _ => {}
+    }
+
+    /// A name as written in the universe's own records: the nearest
+    /// enclosing record (or the root) that has its first segment, then the
+    /// rest of it, if every step is a cell the walk has.
+    fn resolve(&self, expr: &Expr, scope: &str) -> Option<usize> {
+        let ExprKind::Path(p) = &expr.kind else { return None };
+        let segs: Vec<&str> = p.segments.iter().map(|s| s.trim()).collect();
+        let (first, rest) = segs.split_first()?;
+        let tail = |head: String| rest.iter().fold(head, |a, s| format!("{a}.{s}"));
+        match p.anchor {
+            nlang_parser::ast::PathAnchor::Root => self.at.get(&tail(first.to_string())).copied(),
+            nlang_parser::ast::PathAnchor::Bare => {
+                let mut pre = scope.to_string();
+                loop {
+                    let head = if pre.is_empty() { first.to_string() } else { format!("{pre}.{first}") };
+                    if self.at.contains_key(&head) {
+                        return self.at.get(&tail(head)).copied();
+                    }
+                    if pre.is_empty() {
+                        return None;
+                    }
+                    pre = pre.rsplit_once('.').map(|(p, _)| p.to_string()).unwrap_or_default();
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// For each bottom, the cells that reach it (one reverse walk each),
+    /// read at the shortest coordinate.
+    fn reads(&self, pairs: bool) -> BottomReads {
+        let n = self.home.len();
+        let mut own: Vec<(String, String)> =
+            (0..n).filter_map(|x| self.cause[x].as_ref().map(|c| (self.home[x].clone(), c.clone()))).collect();
+        own.sort();
+        own.dedup();
+        let mut read = BottomsRead::default();
+        if !pairs {
+            return BottomReads { pairs: read, own };
+        }
+        let mut pred: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (u, out) in self.succ.iter().enumerate() {
+            for (v, _) in out {
+                pred[*v].push(u);
+            }
+        }
+        read.home = self.home.iter().map(|h| std::sync::Arc::from(h.as_str())).collect();
+        read.succ = self.succ.iter().map(|out| out.iter().map(|(v, seg)| (*v as u32, std::sync::Arc::from(seg.as_str()))).collect()).collect();
+        for (u, h) in read.home.iter().enumerate() {
+            read.first.entry(h.clone()).or_insert(u as u32);
+        }
+        for x in 0..n {
+            if self.cause[x].is_none() || read.top_at.contains_key(&read.home[x]) {
+                continue;
+            }
+            let t = read.tops.len() as u32;
+            read.tops.push(x as u32);
+            read.top_at.insert(read.home[x].clone(), t);
+            // the next cell from each cell toward x (shortest)
+            let mut next = vec![NO_WAY; n];
+            let mut queue = std::collections::VecDeque::from([x]);
+            while let Some(v) = queue.pop_front() {
+                for &u in &pred[v] {
+                    if u == x || next[u] != NO_WAY {
+                        continue;
+                    }
+                    next[u] = v as u32;
+                    queue.push_back(u);
+                }
+            }
+            read.next.push(next);
+        }
+        BottomReads { pairs: read, own }
     }
 }
 
