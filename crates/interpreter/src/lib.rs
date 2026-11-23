@@ -179,6 +179,8 @@ thread_local! {
     pub(crate) static DEEPEST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// Q-134: cycle re-entries met so far.
     pub(crate) static CYCLES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Q-136: while the bottom walk runs, the pure thunks it has forced.
+    pub(crate) static WALK_KEPT: std::cell::RefCell<Option<HashMap<(ContentHash, u16, bool, u64), WalkKept>>> = const { std::cell::RefCell::new(None) };
     /// Q-134: coordinates of the working set forced in this observation.
     static COORDS: std::cell::RefCell<HashMap<CoordKey, CoordKept>> = std::cell::RefCell::new(HashMap::new());
     /// Q-134: names the working set did not hold, read by each value being kept.
@@ -322,6 +324,22 @@ pub fn record_reads(on: bool) -> HashSet<String> {
         }
         taken
     })
+}
+
+/// Q-136: a thunk the bottom walk forced, kept for the rest of the walk.
+#[derive(Clone)]
+pub(crate) struct WalkKept {
+    value: Value,
+    mbu_cost: u64,
+    depth_span: u32,
+}
+
+/// Q-136: run `f` with the walk's store of forced thunks; it ends with `f`.
+pub(crate) fn with_walk_kept<T>(f: impl FnOnce() -> T) -> T {
+    let outer = WALK_KEPT.with(|k| k.replace(Some(HashMap::new())));
+    let out = f();
+    WALK_KEPT.with(|k| *k.borrow_mut() = outer);
+    out
 }
 
 /// Q-134: the working set changed other than by a new coordinate landing.
@@ -4081,7 +4099,15 @@ impl Ouroboros {
                 // Force each so builtins that pattern-match Atom/Tag without an
                 // internal force (e.g. set_strategy) see solid values. Positional
                 // keys keep Stage-2 Thunk laziness.
-                if let Value::Combo(ref ac) = arg {
+                // Q-136: only a builtin reads this copy; a function with rules
+                // dispatches on `arg` itself. Inside the bottom walk (no effect
+                // is done there) the copy is not made: forcing its fields
+                // walked every record the argument reaches (two ways back:
+                // 2^L). Outside it, forcing them is observable (an effect in
+                // an inline record's field) and stays as it was.
+                let rules_dispatch = matches!(c.get_field("%rules"), Some(Value::Combo(_)))
+                    && WALK_KEPT.with(|k| k.borrow().is_some());
+                if let (Value::Combo(ref ac), false) = (&arg, rules_dispatch) {
                     for (k, v) in &ac.fields() {
                         if k.starts_with('%') {
                             continue;
@@ -4424,7 +4450,49 @@ impl Ouroboros {
         // definition no reader could and refused a write the reader saw as a
         // horizon (`h: { a: (3000 & 3000).k2999 }`, then `h: { a: 7 }`).
         let free = FREE_MEET.with(|c| c.replace(false));
+        // Q-136: inside the bottom walk a pure thunk is one value: forced
+        // once, then served with its fuel and depth span.
+        let walk_key = match &val {
+            Value::Thunk { context: None, effect, .. }
+                if effect.is_pure()
+                    && ctx.context_value.is_none()
+                    && ctx.lexical_frame.is_none()
+                    && WALK_KEPT.with(|k| k.borrow().is_some()) =>
+            {
+                walk_key(&val).map(|k| (k, memo_modes(), ONE_LEVEL.with(|c| c.get()), ctx.fuel_budget))
+            }
+            _ => None,
+        };
+        if let Some(k) = &walk_key {
+            let kept = WALK_KEPT.with(|m| m.borrow().as_ref().and_then(|m| m.get(k).cloned()))
+                .filter(|e| ctx.depth.saturating_add(e.depth_span) <= ctx.max_unification_depth as u32);
+            if let Some(e) = kept {
+                if ctx.check_resources(e.mbu_cost).is_ok() {
+                    DEEPEST.with(|d| d.set(d.get().max(ctx.depth.saturating_add(e.depth_span))));
+                    FREE_MEET.with(|c| c.set(free));
+                    return e.value;
+                }
+            }
+        }
+        let before = walk_key.as_ref().map(|_| {
+            (effects_run(), EFFECTS_SKIPPED.with(|c| c.get()), DOLLAR_READ.with(|c| c.get()), CYCLES.with(|c| c.get()), ctx.fuel, DEEPEST.with(|d| d.replace(ctx.depth)))
+        });
         let out = self.force_once_inner(val, ctx);
+        if let (Some(k), Some((run, skipped, dollars, cycles, fuel, deepest))) = (walk_key, before) {
+            let span_top = DEEPEST.with(|d| d.get());
+            DEEPEST.with(|d| d.set(span_top.max(deepest)));
+            let clean = effects_run() == run
+                && EFFECTS_SKIPPED.with(|c| c.get()) == skipped
+                && DOLLAR_READ.with(|c| c.get()) == dollars
+                && CYCLES.with(|c| c.get()) == cycles
+                && span_top < ctx.max_unification_depth as u32
+                && !out.contains_blur()
+                && !matches!(&out, Value::Thunk { .. } | Value::Ref(_));
+            if clean {
+                let kept = WalkKept { value: out.clone(), mbu_cost: fuel.saturating_sub(ctx.fuel), depth_span: span_top.saturating_sub(ctx.depth) };
+                WALK_KEPT.with(|m| if let Some(m) = m.borrow_mut().as_mut() { m.insert(k, kept); });
+            }
+        }
         FREE_MEET.with(|c| c.set(free));
         match out {
             Value::Bottom(d) if pending_meet => Value::Bottom(Box::new(crate::unify::order_free(*d))),
