@@ -161,6 +161,14 @@ thread_local! {
     /// it, and the records on the path being forced.
     static HOMES: std::cell::RefCell<HashMap<u64, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
     static FORCING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Q-135: the thunks a bookkeeping walk is inside (keyed as L2-17 keys a
+    /// thunk under force), outermost first.
+    static WALKING: std::cell::RefCell<Vec<ContentHash>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Q-135: the walk has just entered this thunk (its key is on `WALKING`).
+    static WALK_ENTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Q-135 R-1 (D132): a cell is forced to its top; the fields of the
+    /// record it comes to stay as written, each a cell of its own.
+    static ONE_LEVEL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Q-127: the answer the next evolved field takes as is (observed against
     /// the whole write).
     pub(crate) static PRESET_ANSWER: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
@@ -4811,8 +4819,20 @@ impl Ouroboros {
     /// even inside a bookkeeping walk.
     fn as_one_definition<T>(f: impl FnOnce() -> T) -> T {
         let outer = CELL_BUDGET.with(|c| c.replace(false));
+        let one = ONE_LEVEL.with(|c| c.replace(false));
         let out = f();
+        ONE_LEVEL.with(|c| c.set(one));
         CELL_BUDGET.with(|c| c.set(outer));
+        out
+    }
+
+    /// Q-135 R-1 (D132): one cell worked out on its own budget (Q-120), to
+    /// its top. A record it comes to keeps its fields as written: the walk
+    /// that asked reads each of them as a cell of its own.
+    pub(crate) fn force_cell(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        let one = ONE_LEVEL.with(|c| c.replace(true));
+        let out = self.force_each_cell(val, ctx);
+        ONE_LEVEL.with(|c| c.set(one));
         out
     }
 
@@ -4952,6 +4972,24 @@ impl Ouroboros {
         // Thunk peel without stacking force_recursive depth: force alone runs
         // eval (cocoon post-seal solidify charges depth once). Nested
         // force_recursive(Thunk) used to add a second/third unit per level.
+        // Q-135 (`SPEC_10` §2.3.1, Q-120): the universe's walk spends a
+        // budget on each cell it passes — each cell as written. A record
+        // that holds a way back to itself (`a: { e: x, x: a }`) is reached
+        // again through the same thunk; what it holds is being walked by the
+        // visit already on the path, not 2^depth new cells.
+        let entered = WALK_ENTERED.with(|c| c.replace(false));
+        let walk_at = if !entered && CELL_BUDGET.with(|c| c.get()) { walk_key(&val) } else { None };
+        if let Some(at) = &walk_at {
+            if walking(at) {
+                return val;
+            }
+        }
+        if let Some(at) = walk_at {
+            return walking_in(at, || {
+                WALK_ENTERED.with(|c| c.set(true));
+                self.force_recursive_metered(val, ctx)
+            });
+        }
         if matches!(val, Value::Thunk { .. }) {
             let mut v = val;
             let mut peel = 0u32;
@@ -5089,6 +5127,8 @@ impl Ouroboros {
                             // the branch. Observing the table does not run it.
                             let is_rule = crate::dispatch::is_rule_cocoon(&c);
                             let has_code = is_rule || c.get_field("%code").is_some();
+                            // Q-135 R-1: one level — the fields stay as written.
+                            let one = ONE_LEVEL.with(|c| c.get());
                             // D118: a met node's fields resolve in it.
                             let met = if c.merged_from.is_empty() { None } else { Some(c.clone()) };
                             let views = std::cell::RefCell::new(crate::value::MetViews::new());
@@ -5100,21 +5140,21 @@ impl Ouroboros {
                             // re-routes a data key named `@t` onto the type
                             // axis (Q1).
                             for (k, v) in std::mem::take(&mut c.data) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.data.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.types) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.types.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.rules) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
@@ -5129,7 +5169,9 @@ impl Ouroboros {
                                 }
                                 // Q-126: what a function closes over is a
                                 // view of the node it was written in.
-                                let forced = if has_code && k == "closure" {
+                                let forced = if one {
+                                    rebind(v)
+                                } else if has_code && k == "closure" {
                                     self.read_closure_on_its_nodes(v, &rebind, ctx)
                                 } else {
                                     self.force_recursive(rebind(v), ctx)
@@ -5140,14 +5182,14 @@ impl Ouroboros {
                                 new_c.meta.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.system) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
                                 new_c.system.insert(k, forced);
                             }
                             for (k, v) in std::mem::take(&mut c.local) {
-                                let forced = self.force_recursive(rebind(v), ctx);
+                                let forced = if one { rebind(v) } else { self.force_recursive(rebind(v), ctx) };
                                 if !closed {
                                     new_c.effect = new_c.effect.union(forced.effect());
                                 }
@@ -6732,4 +6774,30 @@ impl Ouroboros {
 thread_local! {
     pub(crate) static EXPANDING_FRAMES: std::cell::RefCell<Vec<usize>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Q-135: is this thunk one a bookkeeping walk is already inside?
+pub(crate) fn walking(at: &ContentHash) -> bool {
+    WALKING.with(|w| w.borrow().contains(at))
+}
+
+/// Q-135: walk `f` inside the thunk `at` (see `walking`).
+pub(crate) fn walking_in<T>(at: ContentHash, f: impl FnOnce() -> T) -> T {
+    WALKING.with(|w| w.borrow_mut().push(at));
+    let out = f();
+    WALKING.with(|w| w.borrow_mut().pop());
+    out
+}
+
+/// Q-135: the next walk starts on the thunk just put on `WALKING`.
+pub(crate) fn walk_entered() {
+    WALK_ENTERED.with(|c| c.set(true));
+}
+
+/// Q-135: a thunk's walk key (as L2-17 keys a thunk under force).
+pub(crate) fn walk_key(v: &Value) -> Option<ContentHash> {
+    match v {
+        Value::Thunk { expr, closure, context, effect } => Some(thunk_cycle_id(expr, closure, context, *effect)),
+        _ => None,
+    }
 }
