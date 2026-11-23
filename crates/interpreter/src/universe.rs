@@ -4850,9 +4850,11 @@ pub(crate) fn read_bottoms_of(engine: &Ouroboros, c: &ComboVal, standard: &Combo
     ctx.preserve_refs = true;
     // Q-126: looking for ⊥ is bookkeeping; it does no effect.
     crate::bookkeeping(|| {
-        let mut g = CellGraph::default();
-        g.walk(engine, &Value::Combo(c.clone()), &mut ctx);
-        g.reads(pairs)
+        crate::with_walk_kept(|| {
+            let mut g = CellGraph::default();
+            g.walk(engine, &Value::Combo(c.clone()), &mut ctx);
+            g.reads(pairs)
+        })
     })
 }
 
@@ -5000,8 +5002,16 @@ impl CellGraph {
                 Some(n)
             }
             Value::Combo(c) => {
+                // Q-136: inside a value a computation made, a record the
+                // graph already holds is that cell; it is not walked again.
+                let digest = c.cycle_frame_digest();
+                if self.made_now {
+                    if let Some(&m) = self.known.get(&digest) {
+                        return Some(m);
+                    }
+                }
                 let n = self.node(path);
-                self.known.entry(c.cycle_frame_digest()).or_insert(n);
+                self.known.entry(digest).or_insert(n);
                 // D118: a field of a met node is read in the met node; the fields
                 // of one node share its views (one view per field is N²).
                 let mut views = Vec::new();
@@ -5045,7 +5055,6 @@ impl CellGraph {
                 }
                 Some(n)
             }
-            Value::Thunk { context: Some(_), .. } => None,
             // Nothing that carries an effect is forced (evolve observes
             // nothing, D46 ②).
             Value::Thunk { effect, .. } if !effect.is_pure() => None,
