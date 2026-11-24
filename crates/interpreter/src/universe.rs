@@ -4989,9 +4989,13 @@ impl CellGraph {
         if path.matches('.').count() >= CELL_DEPTH {
             return None;
         }
-        if !forced && matches!(v, Value::Combo(_)) {
-            let v = engine.force_cell(v.clone(), ctx);
-            return self.cell(engine, &v, path, true, reads, ctx);
+        // Q-137: a record already worked out is what forcing it gives; it is
+        // read where it is, not copied (a copy is its whole subtree).
+        if let (false, Value::Combo(c)) = (forced, v) {
+            if !crate::solid_record(c) {
+                let v = engine.force_cell(v.clone(), ctx);
+                return self.cell(engine, &v, path, true, reads, ctx);
+            }
         }
         match v {
             Value::Bottom(d) => {
@@ -5019,16 +5023,21 @@ impl CellGraph {
                     for (k, val) in axis.iter() {
                         let seg = format!("{prefix}{k}");
                         let child = if path.is_empty() { seg.clone() } else { format!("{path}.{seg}") };
-                        let val = crate::value::rebind_in(c, val.clone(), &mut views);
+                        // Q-137: only a thunk is rebound; anything else is read in place.
+                        let val: std::borrow::Cow<Value> = if matches!(val, Value::Thunk { .. }) {
+                            std::borrow::Cow::Owned(crate::value::rebind_in(c, val.clone(), &mut views))
+                        } else {
+                            std::borrow::Cow::Borrowed(val)
+                        };
                         // A field written as a name reads that cell, though
                         // evaluating the literal may have put its value here.
                         let c_expr_reads = reads;
-                        if prefix.is_empty() && !matches!(val, Value::Thunk { .. }) && reads.is_some_and(|r| r.contains_key(k.as_str())) {
+                        if prefix.is_empty() && !matches!(*val, Value::Thunk { .. }) && reads.is_some_and(|r| r.contains_key(k.as_str())) {
                             let m = self.node(&child);
                             let spelled = spelled_at(&c_expr_reads, k).map(|e| (e, path.to_string()));
                             // Known by its digest now; the value is kept only
                             // where the walk may have to read it cell by cell.
-                            let as_read = engine.force_cell(val, ctx);
+                            let as_read = engine.force_cell(val.into_owned(), ctx);
                             let id = match &as_read {
                                 Value::Combo(c) => Some(c.cycle_frame_digest()),
                                 Value::Bottom(_) => Some(as_read.content_hash()),

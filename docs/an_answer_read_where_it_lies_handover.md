@@ -130,3 +130,126 @@
     *   Q-136 驗收重量了提交那一側（`I-318`），沒量「存下之後的下一次演化」：那才是每次都付的一筆（N＝100 13.9 秒）。
     *   `I-318` 記的成因是推測，寫進 Inbox 時沒標「原因未查」。
     *   v0.136.0 CHANGELOG「names a bottom once, not again in a copy a call made」沒有對存下答案的形量；g1 只有配方形。
+
+## 8. 交付回報（交付方填；本行以上一字不得動）
+
+工單末尾沒有預開這一節。下面的標題是交付時補上的。補上之前，檔案位元組的 sha256 是 `7cb73d732c5526e3dd7ab59264e8793aca57265ab09e7f7aa5207453f6b7d5e4`，與 `a616f1d` 的這份工單相同。
+
+### 8.1 改了什麼
+
+`crates/interpreter/src/lib.rs`、`crates/interpreter/src/universe.rs` 與 `q137-ref` 的 `d7a16a6` 位元組相同。
+
+| 檔 | blob |
+| :-- | :-- |
+| `lib.rs` | `e3472014f2fc5b9bb0a034f8f4dfc212c0fbfc5e` |
+| `universe.rs` | `7239cb92f31d361d22a9ec8eab6f6642de904ed5` |
+
+相對 v0.136.0 的引擎（`bdef808`）是 `lib.rs` +19／−13、`universe.rs` +15／−6。探針是 `a616f1d` 的那一份，blob `b77d4eec049e03ecd2ba29ba3e7384683665f86e`，與 `b0c8f61` 相同。沒有 `rustfmt`。版本仍是 `oo` 0.136.0、解譯器 0.2.2、剖析器 0.2.2。
+
+抄進來的做法：
+
+*   `solid_combo_expansion_cost`（`lib.rs:1084`）在原處看。待看清單是 `Vec<&Value>`（`1095`）。欄位軸是 data、rules、types、meta、system、local（`1092`）。`pending_spreads` 非空、thunk、參照仍是 `None`。`Union`、`Range`、`Complement` 仍把底下的值推進去。新增 `solid_record`（`1125`）。
+*   找 ⊥ 那一趟遇到還沒強制的記錄（`cell`，`universe.rs:4994`）：算好的就在原處讀；不是算好的才 `force_cell(v.clone())`。
+*   這一趟的欄位（`universe.rs:5027`）：thunk 照舊 `rebind_in`；其他的借用，不複製。
+*   三處呼叫者仍用同一支掃描：`force_recursive_metered` 開頭（`lib.rs:5024`）、重建記錄時（`5157`）、另一處 `is_some()`（`5448`）。
+
+### 8.2 順手改動
+
+沒有。警告留著。Linux：解譯器 17 個（`cargo fix` 可修 13 個），其中 `walk_entered` 沒有人呼叫（`lib.rs:6867`），`unify.rs:241` 的 `reads_world` 也在這 17 個裡。`oo` 1 個：`main.rs:866` 的 `by_reads`。Windows：解譯器 18 個（`cargo fix` 可修 14 個），`oo` 仍是那 1 個。0 error。
+
+### 8.3 基線
+
+`a616f1d`（v0.136.0 的引擎加上本探針），`2026-11-24T14:48:56+08:00`–`14:50:42`，rc 101，1 通過、2 失敗，測試 58.38 秒。g1 過。r1 三步都在上限外：提交 16.3 秒、之後演化 13.9 秒、之後提交 9.2 秒。r2 第一次演化 8.7 秒。斷言在 `probe_test.rs:146`。
+
+v0.136.0 的極：`/home/gali/nlang-baselines/v0.136.0-verify/target/release/oo`，印 `oo v0.136.0`，sha256 `7ecf505e906b5bd7881b4b591ac682deefdce9707b5c5e7bbbedeedfeee040a2`。v0.134.0 的極：`/home/gali/nlang-baselines/v0.134.0-verify/target/release/oo`，印 `oo v0.134.0`，sha256 `c9392b500ad284cd3a8437c680a49963537ca2dd7658a2e5339a0280f2a1f9a2`。
+
+### 8.4 必答
+
+**Q1.** 找 ⊥ 那一趟不再複製三樣東西。算好的記錄在原處讀，不再 `force_cell(v.clone())`。不是 thunk 的欄位借用原值。`solid_combo_expansion_cost` 推進清單時借用每個值。照舊複製的是還沒算好的記錄，以及 thunk 欄位（`rebind_in` 只收到那一個 thunk 的複本）。
+
+格不變，因為強制一筆算好的記錄，`force_recursive_metered` 傳回的就是那筆記錄。`rebind_in` 只改 thunk，其他的值原樣留在原處。
+
+**Q2.** 「算好了沒」改成沿參照看，不再把每個值複製一份推進清單。看到的值與 v0.136.0 是同一組：`pending_spreads` 非空、thunk、參照是 `None`；`Union`、`Range`、`Complement` 仍往下看。計數是經過的值的個數。三處呼叫者拿到的 `Option` 與費用都沒變，所以放行、拒絕、提早返回的結果不變。
+
+**Q3.** 不經強制、直接讀，少掉的是 `force_recursive_metered` 開頭那次 `check_resources`。這一趟在 `CELL_BUDGET` 裡把費用算成 0，所以是 `check_resources(0)`。深度超過 `max_unification_depth`、深度超過實作上限、或時限到了，結果才會不同。費用 0 不扣燃料。這一趟的上下文是 `read_bottoms_of` 新建的（`universe.rs:4846`）：深度 0、沒有時限。所以這一趟不會不同。還沒算好的記錄仍走 `force_cell`。
+
+**Q4.** 兩支腳本都在機器空下來之後跑，`2026-11-24T14:53:27+08:00`–`15:20:53`。秒數是演化／提交。
+
+`acc/q137/cost.sh`：
+
+| 形 | 這一輪 | v0.136.0 | v0.134.0 |
+| :-- | :-- | :-- | :-- |
+| 存下答案的鏈 N＝100，再寫 `x: 1` | 0.76／3.45，然後 1.64／2.71 | 8.52／16.22，然後 14.01／9.00 | 8.57／11.22，然後 2.13／3.13 |
+| 末端 `~%Env.get` 的呼叫鏈 N＝100 | 0.82／3.25 | 0.96／8.28 | 0.99／3.46 |
+| 同上 N＝250 | 54.90／42.04 | 64.63／67.84 | 69.80／52.14 |
+| 呼叫鏈 N＝1000（末端 `7`） | 2.00／6.28 | 3.06／7.52 | 8.06／12.08 |
+| 呼叫造記錄 N＝100 | 1.07／rc 1（10.57 秒） | 1.10／rc 1（10.99 秒） | 8.41／rc 1（17.61 秒） |
+| 每節都有 ⊥ 的鏈 N＝1000 | 2.68／11.57 | 2.65／11.90 | 演化逾 150，rc＝137；提交沒跑 |
+| 經 `id` 兩條路的環 L＝64 | 0.58／rc＝134（47.36 秒中止） | 0.54／rc＝134（53.10 秒中止） | 演化逾 150，rc＝137；提交沒跑 |
+| 2000 個呼叫各讀同一個效應座標 | 4.59／1.30 | 4.47／1.39 | 4.47／1.25 |
+
+`acc/q136/cost.sh`，只量演化：
+
+| 形 | 這一輪 | v0.136.0 | v0.134.0 |
+| :-- | :-- | :-- | :-- |
+| 呼叫鏈 N＝100／250／1000 | 0.55／1.35／1.99 | 0.84／2.32／3.03 | 3.37／7.07／8.88 |
+| 末端 `~%Env.get` N＝100／250 | 0.81／53.10 | 0.98／63.44 | 1.09／71.78 |
+| 呼叫造記錄 N＝100 | 1.10 | 1.14 | 8.81 |
+| 經 `id` 兩條路的環 L＝16／64 | 0.17／0.54 | 0.17／0.54 | 逾 120，rc＝137 |
+| 兩條路的環 L＝64 | 0.51 | 0.51 | rc＝134，58.70 秒，約 2808 MB |
+| 每節都有 ⊥ 的鏈 N＝1000 | 2.58 | 2.67 | 逾 120，rc＝137 |
+
+M1 成立：存下答案那次提交 3.45 秒、之後演化 1.64 秒、之後提交 2.71 秒。M2 成立：第一次演化 0.76 秒。N＝250 的末端效應仍在 §6 的視界帶。兩條路的環，提交仍中止。
+
+### 8.5 探針
+
+探針沒有改，沒有拿掉 `#[ignore]`，沒有 `rustfmt`。
+
+這一輪單獨跑：`14:50:47`–`14:51:26`，3／3，測試 10.90 秒。快照 `/home/gali/tmp/q137/oo`，inode 1283436，大小 12247264，sha256 `b22604a1826f960a1a001ae7b1b9eeb72c389e58a5ade8107acb37dbc8db536c`，印 `oo v0.136.0-1432-ga616f1d+`。版本字串是建置時工作區不乾淨，沒有為了這一行重編。
+
+相關探針，每支單獨跑，跑完 `cmp` 都相同：
+
+| 探針 | 結果 | 測試秒數 | 開始 |
+| :-- | :-- | :-- | :-- |
+| Q-134 | 3／3 | 46.48 | `14:52:06` |
+| Q-135 | 5／5 | 22.46 | `14:52:54` |
+| Q-136 | 4／4 | 7.67 | `14:53:18` |
+
+832 格與 Q-135 的 800 格沒有跑，那是驗收時量。變異沒有重跑。參考留下的那一道（不是算好的記錄仍強制）還在。
+
+### 8.6 閘門、shadow、conformance、Windows、身分
+
+三輪 `cargo test --release --offline --workspace --no-fail-fast`，rc 都是 0。Running_lstrip 327，通過 3040，失敗 0，results 330，running 330，panicked 0，error_prefix 0，BrokenPipe 0。每輪前後快照 `cmp` 相同。樹裡的二進位 inode 1283455，nlink 2，大小相同。
+
+| 輪 | 時間 | bytes | raw | norm |
+| :-- | :-- | :-- | :-- | :-- |
+| 1 | `15:21:30`–`15:42:42` | 321314 | `baeb7efe0f828ec1985f0b9a898c9b09b76087e8ee17d40d22766a74dc3a5f84` | `adc95f1a642662a8f49c5a7da66e72ecd640c10a8829ee32e476b19e5ff557fe` |
+| 2 | `15:42:42`–`16:02:32` | 321160 | `46f5897762300f70b5248160d890e2d8b6564a06e7d2b2d65fb6adbc92a6e9a5` | `efd375592ec912bac84dc411f6677efce751c4b82e6a43fb53d269f6d7123b24` |
+| 3 | `16:02:32`–`16:22:20` | 321159 | `6424386729a80a502f220b8c3da7f04401b0e07c324aaade24b49c9e86e0742f` | `f9ffee2e7b667e44993bcab586632772f232aeb6e3288c65f923a4e027b4d449` |
+
+三輪的 norm 行數都是 4030。
+
+shadow 全樹 rc 101，`16:22:20`–`17:12:37`。bytes 328369，raw `c788910d3bfe25a2b4c4e3c22dbd8e74ced8eab554900627b7451c83ad5ba34e`，norm `6fa3a50d88a0e81cc9a808951f4a3326624b855a8e666cf72b22699b4acf3a2f`，行數 4040，results 330，通過 3034，失敗 6，Running_lstrip 327，running 330，error_prefix 7，panicked 6，BrokenPipe 0。六個失敗都是既有的計時格，panic 是探針自己的斷言：
+
+| 測試 | 整檔秒數 |
+| :-- | :-- |
+| Q-117 `r1_coordinates_are_written_in_their_number` | 375.40 |
+| Q-120 `r4_a_member_head_already_holds_is_named_however_many_fields` | 180.10 |
+| Q-130 `r1_a_horizon_lands_at_the_cost_of_its_write` | 219.11 |
+| Q-129 `r3_a_label_that_goes_on_costs_its_readers` | 220.27 |
+| Q-128 `r1_a_name_written_after_its_readers` | 445.29 |
+| Q-127 `r4_the_order_does_not_change_the_cost` | 480.05 |
+
+這支探針在 shadow 下 3／3、8.72 秒。Q-136 探針 4／4、5.21 秒。Q-134 探針 3／3、32.53 秒。Q-135 探針 5／5、11.40 秒。Q-126 `r8_a_table_is_a_function_too` 過。紀錄裡 `Q-117 shadow` 0 行。命中 119512 行，記號只有 `hit`。快照 `cmp` 相同。
+
+shadow conformance：空目錄 `/home/gali/tmp/q137/conf.d/shadow`，前後都是 0，rc 0，`17:12:37`–`17:13:21`，213／213。命中 2564 行，記號只有 `hit`。panic 0 行。`Q-117 shadow` 0 行。
+
+plain conformance：空目錄 `/home/gali/tmp/q137/conf.d/plain`，前後都是 0，rc 0，`15:21:11`–`15:21:24`，213／213。
+
+Windows：`cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`，rc 0，`15:21:24`–`15:21:30`，0 error。
+
+身分（`acc/q132/r1/red127.sh`）：與 v0.136.0 逐行相同，只有版本那一行不同（這支二進位印 `oo v0.136.0-1432-ga616f1d+`）。`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`，`v: 1 + 1` `df91a8ad239ea8727c3a03a71eb4b0a787312b92306db4d8b124a73faaf40199`，`q: { a: 1 + 1 }` `a3b26d08258e009a474583ee1da1b76935aae0f11cb134ba541eecba7b185945`，`f: (x -> x + 1)` `258a1a08adfd0340cdbe103e4f4851bea107a67e298e72d6679badc0595bfd1f`，`k: { a: 1, _: 9 }` `420a0c9f4592b49ace8c8aacec690fd0a70953b1bd2158260e68c3acce710d9e`。標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`，`layout=9`，`encoding=11`。
+
+### 8.7 工單與規格
+
+工單的量測、定位、校準，這一次沒有對出錯誤。規格沒有要改的地方。

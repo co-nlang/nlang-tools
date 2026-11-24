@@ -1086,11 +1086,13 @@ fn solid_combo_expansion_cost(c: &ComboVal) -> Option<u64> {
         return None;
     }
     let mut cost = mbu::SUBSPACE_EXPANSION;
-    let mut pending: Vec<Value> = c
-        .all_fields_iter()
-        .map(|(_, value)| value)
-        .chain(c.local.values().cloned())
-        .collect();
+    // Q-137: looked at in place. Each value pushed used to be a copy of its
+    // whole subtree, so asking about a record N deep cost N² — and the walk
+    // for bottoms asks about every record it passes.
+    fn fields(c: &ComboVal) -> impl Iterator<Item = &Value> + '_ {
+        c.data.values().chain(c.rules.values()).chain(c.types.values()).chain(c.meta.values()).chain(c.system.values()).chain(c.local.values())
+    }
+    let mut pending: Vec<&Value> = fields(c).collect();
     while let Some(value) = pending.pop() {
         cost = cost.saturating_add(mbu::SUBSPACE_EXPANSION);
         match value {
@@ -1099,25 +1101,29 @@ fn solid_combo_expansion_cost(c: &ComboVal) -> Option<u64> {
                 if !inner.pending_spreads.is_empty() {
                     return None;
                 }
-                pending.extend(inner.all_fields_iter().map(|(_, child)| child));
-                pending.extend(inner.local.values().cloned());
+                pending.extend(fields(inner));
             }
-            Value::Union(branches) => pending.extend(branches),
+            Value::Union(branches) => pending.extend(branches.iter()),
             Value::Range { start, end, step } => {
-                pending.push(*start);
-                pending.push(*end);
+                pending.push(start);
+                pending.push(end);
                 if let Some(step) = step {
-                    pending.push(*step);
+                    pending.push(step);
                 }
             }
             Value::Complement { within, without } => {
-                pending.push(*within);
-                pending.push(*without);
+                pending.push(within);
+                pending.push(without);
             }
             _ => {}
         }
     }
     Some(cost)
+}
+
+/// Q-137: a record that holds nothing to work out; forcing it gives it back.
+pub(crate) fn solid_record(c: &ComboVal) -> bool {
+    solid_combo_expansion_cost(c).is_some()
 }
 
 /// D1/M1: digest of sealed frame **content** for force-memo / in_flight keys.
