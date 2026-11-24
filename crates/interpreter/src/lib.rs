@@ -160,6 +160,10 @@ thread_local! {
     /// Q-131: while a commit projects its root, each record's coordinate in
     /// it, and the records on the path being forced.
     static HOMES: std::cell::RefCell<HashMap<u64, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
+    /// Q-138: while a commit projects a root, a coordinate read is one value.
+    static PROJECTING_ROOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Q-138: the nodes met while one field is asked whether it does an effect.
+    static MET_IN_FIELD: std::cell::RefCell<Option<HashSet<u64>>> = std::cell::RefCell::new(None);
     static FORCING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Q-135: the thunks a bookkeeping walk is inside (keyed as L2-17 keys a
     /// thunk under force), outermost first.
@@ -5120,7 +5124,9 @@ impl Ouroboros {
         if let Value::Combo(c) = &val {
             if c.node_id != 0 {
                 let projecting = PROJECTING.with(|p| p.borrow().iter().find(|(n, _)| *n == c.node_id).map(|(_, at)| at.clone()));
-                let again = projecting.is_some() || FORCING.with(|f| f.borrow().contains(&c.node_id));
+                let again = projecting.is_some()
+                    || FORCING.with(|f| f.borrow().contains(&c.node_id))
+                    || MET_IN_FIELD.with(|m| m.borrow().as_ref().is_some_and(|s| s.contains(&c.node_id)));
                 let home = HOMES.with(|h| h.borrow().get(&c.node_id).cloned());
                 let at = if again { home.or(projecting) } else { None };
                 if let Some(segments) = at.filter(|s| !s.is_empty()) {
@@ -5144,6 +5150,11 @@ impl Ouroboros {
         let forcing = match &val {
             Value::Combo(c) if c.node_id != 0 && HOMES.with(|h| !h.borrow().is_empty()) => {
                 FORCING.with(|f| f.borrow_mut().push(c.node_id));
+                MET_IN_FIELD.with(|m| {
+                    if let Some(s) = m.borrow_mut().as_mut() {
+                        s.insert(c.node_id);
+                    }
+                });
                 true
             }
             _ => false,
@@ -5349,6 +5360,9 @@ impl Ouroboros {
                 walk(c, &mut Vec::new(), &mut homes);
                 HOMES.with(|h| *h.borrow_mut() = homes);
             }
+            // Q-138: what a coordinate reads is kept for this root only.
+            COORDS.with(|m| m.borrow_mut().clear());
+            PROJECTING_ROOT.with(|c| c.set(true));
         }
         if let Some(n) = node {
             let at = PROJ_PATH.with(|p| p.borrow().clone());
@@ -5360,6 +5374,8 @@ impl Ouroboros {
         }
         if top {
             HOMES.with(|h| h.borrow_mut().clear());
+            PROJECTING_ROOT.with(|c| c.set(false));
+            COORDS.with(|m| m.borrow_mut().clear());
         }
         out
     }
@@ -5431,7 +5447,15 @@ impl Ouroboros {
                 let orig = val.clone();
                 let keep = std::mem::replace(&mut ctx.preserve_refs, false);
                 let before = crate::effects_run();
-                let forced = self.force_each_cell(val, ctx);
+                // Q-138: whether working it out does an effect is asked of
+                // the cells it reaches, each once — a node met again in this
+                // field reads as its home, as one on the path does (Q-131).
+                // Only when it did one is it worked out as before: that value
+                // is what is stored.
+                let outer = MET_IN_FIELD.with(|m| m.replace(Some(HashSet::new())));
+                let asked = self.force_each_cell(val.clone(), ctx);
+                MET_IN_FIELD.with(|m| *m.borrow_mut() = outer);
+                let forced = if crate::effects_run() != before { self.force_each_cell(val, ctx) } else { asked };
                 ctx.preserve_refs = keep;
                 // Q-126: a definition predicted pure that did an effect when
                 // forced observed it; its answer is what the commit keeps
@@ -5609,8 +5633,7 @@ impl Ouroboros {
                     // Q-134: a coordinate of the working set is one value in
                     // this observation (Q-126 2); a later reader reads it.
                     let key = (use_coord
-                        && ctx.staged.is_some()
-                        && ctx.memo_enabled
+                        && ((ctx.staged.is_some() && ctx.memo_enabled) || PROJECTING_ROOT.with(|c| c.get()))
                         && ctx.context_value.is_none()
                         && matches!(&val, Value::Thunk { .. })
                         && !ctx.computing.contains(n)
