@@ -142,14 +142,114 @@
 
 ### 8.1 射程逐項對照
 
+引擎是 `q139-ref` `1cb4bb8` 的 `lib.rs`、`universe.rs`（`git checkout 1cb4bb8 --` 這兩份）。探針是訂單 `9960d03` 上的那份，沒有改。
+
+*   **M1**（r1，八形 × 後寫／pin）：本探針 3／3 裡這一支過。基線（訂單引擎，137.81 秒）錯 13／16。後寫五形提交是想要的兩倍（`one` 2、`through id` 2、`two cells` 4、`a list` 4、`a call makes a record, twice` 4），兩次 `status` 都是 0。後寫另三形已經是一次（清單裡同一個記錄、兩路的環、讀欄的記錄：效應在具名欄，第二次讀到存下的答案）。pin 八形：兩次 `status` 就寫了（累計 4、2、2、4、8、8、8、4），提交再翻一倍（8、4、4、8、16、16、16、8）。
+*   **M2**（r2，經呼叫的環 L=64 旁 pin `x: 1`）：基線 `status` 與 pin 提交各在 60.1 秒被殺（rc=−1），`_.x` 仍是 0、`_.n0.c1.v` 是 1（環的那次提交落地了）。本探針這一支過（整支 18.29 秒，界是各 3 秒）。`pinring.sh` 同一形：`status` 0.38 秒、pin 提交 0.54 秒。
+*   **g1**：基線過，這次也過。根與讀數是探針裡 v0.137.0 的期望，含 `I-322` 那三形、各三種寫法。
+*   **問效應**（預測為純的 thunk，`lib.rs:5483`）：照 Q-138 先強制（`MET_IN_FIELD` 開著，5499–5502），同時開這一欄的帳（`EFFECT_LOG`，5500）。`effects_run` 變了才再強制（5503–5509），那一次內建讀帳（3944–3959）。欄結束換回外層的帳（5513）。預測不純的那一支（5447）沒動：一次強制、存那個值。
+*   **`pin_moves`**（`universe.rs:3168`）：兩次觀測（`merged` 3207、`held` 3206）都在 `bookkeeping` 裡投影（3184）。略過了效應就回 `None`（3188），比較不到就當會移動（3209）。呼叫者兩處，都沒改呼叫：`proposals_at`（3072，`load_staged` 3492 用它）、`head_if_it_holds`（3127，`main.rs:2037` `already_in_head`，提交時用）。
+*   **頂層投影**：`project_for_commit` 在清 `COORDS` 之後 `forget_kept_records`（5402–5405）。`Universe::commit` 開頭仍是 `clear_force_memo`（3614），投影在 3677。
+*   **格子、`eg.py`、變異**：這次沒跑。832 格、800 格、三十三格是驗收時量。
+
 ### 8.2 順手改動（逐項指名）
+
+無。相對 `fc9e554`：`lib.rs` +58／−3、`universe.rs` +13／−1。沒有 `rustfmt`。`oo` 0.138.0、interpreter 0.2.2、parser 0.2.2，都沒動。
+
+這次探針編譯：interpreter 17 則警告（`cargo fix` 說 13），含 `walk_entered`（`lib.rs:6945`）、`reads_world`（`unify.rs:241`）；`oo` 1 則，`main.rs:866` 的 `by_reads`。0 error。Windows 交叉編譯：interpreter 18 則（`cargo fix` 14），同一則 `oo` 警告，0 error（5.7 秒，增量）。
 
 ### 8.3 工單哪裡是錯的
 
+校準表把 v0.138.0 的 13／16 寫成「後寫：每個效應兩次」。這次基線是後寫五形兩次、三形一次（效應在具名欄）；pin 八形全錯。合起來仍是 13／16。r2 仍是 3／5。
+
+§3「`load_staged` 的兩處」：`pin_moves` 的兩個呼叫者是 `proposals_at` 與 `head_if_it_holds`。前者由 `load_staged` 呼叫；後者是提交路徑的 `already_in_head`，不在 `load_staged` 裡。這次改的是 `pin_moves` 本身，兩處都走到。
+
 ### 8.4 工單指名要你回答的問題
+
+**Q1。** 預測為純、做了效應的一欄，問的那一次把內建名、引數的 `content_hash`、答案推進 `EFFECT_LOG`（旗標還是假，3965）。存值那次把旗標設成真（5504），`run_builtin` 找到同名同雜湊就取出答案、從帳上拿掉、不呼叫內建（3954–3959）。兩次對的是這一欄這一本帳：同名同引數是同一筆；`l: [g "x", g "x"]` 問的時候推進兩筆，存值時每次拿掉第一筆相符的，第二筆對上下一筆。不同引數雜湊不同，不會拿錯。帳在欄結束換回外層（5513），不跨欄。第二次強制之前 `MET_IN_FIELD` 已換回（5502），所以走的仍是 Q-138 那次完整的強制，只是效應不重做。`EFFECTS_RUN` 在取出答案之前仍加一（3942）；寫檔的是內建，第二次沒有再呼叫，位元組不增加。預測不純的 thunk 不走這本帳。
+
+**Q2。** `observed` 在 `bookkeeping` 裡投影（`NO_EFFECTS` > 0）。效應內建不呼叫，回 `Top`，`EFFECTS_SKIPPED` 加一（3917–3919）。這次投影的計數變了就回 `None`（3186–3189），`(None, _)` 落在 3209，判成會移動，是提議。沒略過效應才照舊比兩個根的雜湊。覆寫會做效應的 pin 因此是提議，效應留到提交那一次。
+
+這樣判，是因為略過效應的那一側是 `_`，HEAD 那一側存的是答案，本來就不會比成同一個根；mF（略過了仍比較）在參考上存活，這道守衛留著。`held.sh` 三形這次與 v0.138.0 相同。A（同一個 append）：pin 演化後紀錄 1 位元組，`status` 仍 1，提交成功，HEAD 動。B（同一個 `~%Env.get`）、C（純的對照）：`status` 0 位元組，提交答 `already in HEAD`，HEAD 不動。提交雜湊含當下時間，兩次建置的雜湊字不相同；答句與 HEAD 動不動相同。
+
+**Q3。** 記的地方是 `return_or_force` 存記錄的那一處（`lib.rs:4449`）。原本 `whole` 只在 `NO_EFFECTS == 0`。這次多一個析取：`JUDGING` 開著，而且這次強制的 `EFFECTS_SKIPPED` 沒有變。條件成立才走原來的 `OBSERVED` 寫入（4451 起），所以記下來的是觀測會記的那一筆。略過了效應的強制不記（那一側是 `_`）。
+
+不在提交投影裡這樣記：參考第一版把「問」整個放進 `bookkeeping`，簿記不記呼叫造的記錄，經呼叫的環提交回到 2^L；讓簿記在投影時也記，Q-126 `r9-stored-beside` 的 `_.q.r.f 1` 讀成 `_`。所以帳只用於提交的問，`JUDGING` 只在 pin 的判斷。這次 Q-126 探針 14／14，含那一格。
+
+**Q4。** 頂層（`PROJECTING` 與 `PROJ_PATH` 都空，5382）在清 `COORDS` 之後呼叫 `forget_kept_records`（579）：`VIEWS_READ` 清掉；`OBSERVED` 只留 `did` 的（做了效應的），語法項裡沒做效應的拿掉，語法空了的框拿掉。巢狀的欄投影不是頂層，走在半途不會忘。
+
+`Universe::commit` 開頭的 `clear_force_memo` 本來就呼叫同一支，所以一般提交在投影前已經忘過；頂層再忘一次不改變那一次的起點。pin 的兩次投影不經過 `clear_force_memo`，各是一次頂層投影，第二次不讀第一次留下的、沒做效應的記錄。演化不呼叫 `project_for_commit`；演化留下的記錄，下一次頂層投影（提交的清除，或 pin 的第一次）會忘。
+
+**Q5。** 安靜時段，`COST_RC 0`。快照 `/home/gali/tmp/q139/oo` 對 v0.138.0 標籤建置（`oo v0.138.0`，sha256 `7fdc3312ff2960c6f138f8f642ea41ba1095e76f9187e1bd64cc3137baf99e19`）。`m1.sh` 是演化／提交。讀已提交的清單環與 `self` 的 `_.a` 兩邊都在約 2.8 GB 中止（`I-320`），下表不把那個讀數當這張卡的成本。
+
+| 形 | 這次 演化／提交 | v0.138.0 |
+| :-- | :-- | :-- |
+| rec N=25 | 0.12／0.13 秒，28／44 MB | 0.17／0.13 秒，27／44 MB |
+| rec N=50 | 0.32／0.35，43／85 | 0.35／0.40，43／85 |
+| rec N=100 | 1.00／1.39，100／246 | 1.04／1.40，100／245 |
+| 寫下的記錄鏈 N=100 | 0.23／0.16，24／45 | 0.22／0.15，23／45 |
+| 兩路 L=8／12／16 | 0.09／0.08；0.12／0.08；0.15／0.10 | 0.09／0.07；0.12／0.08；0.14／0.10 |
+| 一路 L=64 | 0.45／0.22 | 0.46／0.22 |
+| 經呼叫 L=8／16 | 0.10／0.08；0.16／0.10 | 0.10／0.08；0.17／0.10 |
+| 經清單 L=8／16 | 0.09／0.08；0.14／0.10 | 0.09／0.09；0.14／0.15 |
+| 兩路 L=64 直／呼叫／清單 | 0.47／0.37；0.53／0.47；0.48／0.50 | 0.48／0.37；0.55／0.48；0.54／0.51 |
+| rec N=250 | 2.26／3.43，150／554 | 2.11／3.49，149／554 |
+| self | 0.04／0.07 | 0.04／0.06 |
+| fncyc | 0.06／0.06 | 0.05／0.06 |
+
+`fncyc` 的 `_.a` 這次 1.91 秒、374 MB，v0.138.0 1.90 秒、378 MB，兩邊都返回。
+
+`pinring.sh`（演化、提交、pin 演化、`status`、pin 提交）：
+
+| L | 這次 | v0.138.0 |
+| :-- | :-- | :-- |
+| 8 | 0.11／0.09／0.05／0.06／0.10 | 0.11／0.08／0.05／8.79／8.65 |
+| 16 | 0.17／0.11／0.06／0.08／0.13 | 0.16／0.11／0.06／逾 60 rc=137／逾 60 rc=137 |
+| 64 | 0.55／0.45／0.13／0.38／0.54 | 0.54／0.42／0.12／逾 60 rc=137／逾 60 rc=137 |
+
+`lc.sh` 清單鏈提交（腳本自己交替兩輪）：N=300 這次 3.75／3.72 秒，v0.138.0 3.79／3.74；N=1000 這次 16.47／16.32，v0.138.0 16.57／16.53。同一帶（`I-321`，這張卡不動它）。
 
 ### 8.5 探針
 
+探針 blob `b32d8f9a5ce0e26881d5107bf7f01a8ae2372389`，與 `c5e1b51` 相同，沒有改，沒有 `#[ignore]`，沒有 `rustfmt`。
+
+基線：worktree `/home/gali/tmp/q139/base` 於 `9960d03`，`CARGO_TARGET_DIR=/home/gali/tmp/q139/target-base`。`lib.rs` `a21b5091…`、`universe.rs` `7239cb92…`。g1 過；r1 錯 13／16；r2 錯 3／5。`BASE_RC 101`。測試 137.81 秒。
+
+這次：同一支探針 3／3，測試 18.29 秒（編譯 26.57 秒，增量）。通過後才複製快照。`/home/gali/tmp/q139/oo` inode 1335103、nlink 1、12261880 位元組，sha256 `0b81133e51bb94ef1543588572183c2c48b8273ccd12611fa6ad4569f5be95f9`，印 `oo v0.138.0-1442-g9960d03+`（建置時工作樹是髒的，`git describe` 帶 `+`；沒有為了這行字重編）。
+
+相關探針各自己一輪 `cargo`，每輪之後快照 `cmp` 相等：
+
+| 探針 | 結果 |
+| :-- | :-- |
+| Q-126 `a_name_that_was_two_values` | 14／14，13.59 秒 |
+| Q-134 `a_chain_walked_once_per_name` | 3／3，31.30 秒 |
+| Q-135 `a_record_that_comes_back_to_itself` | 5／5，21.40 秒 |
+| Q-136 `a_cell_a_call_made` | 4／4，7.39 秒 |
+| Q-137 `an_answer_read_where_it_lies` | 3／3，10.38 秒 |
+| Q-138 `a_commit_works_each_cell_once` | 3／3，7.92 秒 |
+
+832 格、800 格、`eg.py`、`mut.py` 沒有跑。
+
 ### 8.6 數字
 
+成本在 Q5。`COST_RC 0`。快照在三輪閘門期間與樹上的 `target/release/oo` 逐次 `cmp` 相等（樹上 inode 1335194、nlink 2、同一大小）。
+
+身分（`red127.sh`）兩邊 rc 0。diff 只有第 1 行：`oo v0.138.0` 與 `oo v0.138.0-1442-g9960d03+`。`x: 0` `b74d775816f6b5be6cc152577b7556f6c8fdcc63433b0e31068cc2484a94ae0f`；`dependency`／標準根 `c96c29378c9395936ea4999db37e9b6a28291b57a47d4c016ca3cdf6833fed3b`；`layout=9`；`encoding=11`；`v: 1 + 1` `df91a8ad…`；`q: { a: 1 + 1 }` `a3b26d08…`；`f: (x -> x + 1)` `258a1a08…`；`k: { a: 1, _: 9 }` `420a0c9f…`。
+
+Conformance：新目錄 `/home/gali/tmp/q139/conf.d/plain`，前 0、後 0，rc 0，`17:07:15`–`17:07:27`，213／213。
+
+Windows：`cargo check --release --offline -p oo -p nlang-interpreter -p nlang-parser --target x86_64-pc-windows-gnu`，rc 0，`17:07:27`–`17:07:33`，0 行 `error`。
+
+全樹三輪，每輪 `Running_lstrip` 329、通過 3046、失敗 0、results 332、running 332、panic 0、`error_prefix` 0。工單的 328／3043 是加本探針之前（`1cb4bb8`）；這棵樹多這支探針，329 個目標、多 3 個通過。三輪 norm 不同，快照每輪 `cmp` 相等。
+
+*   第一輪 `17:07:33`–`17:28:27`，322204 位元組，raw `38a43fc3d9afb056410ff82247414cb8672c65137a8372528e60eaf7aae1b39b`，norm `fb681f8f4884beb148a569744fb44f5d804990aaa31073b29bd5041de571c7a3`。
+*   第二輪 `17:28:27`–`17:47:51`，322040 位元組，raw `b00cd72e24e200e9a4fc197573421ac88be3c51660d7628597e98c600895c3b6`，norm `553663162ba60a12d9ba8c39231436685003504c1e054baea5675c0eaa77502b`。
+*   第三輪 `17:47:51`–`18:07:18`，322048 位元組，raw `2ddb3cb24a9f74eea492d25189c1ca0660305c514667c6d1c12fe47eb2538de3`，norm `ce2761095b068fee1b76fbb33f3dcea8e6f0460989a666e090ec9b0e6853f42c`。
+
+Shadow 全樹 rc 101，`18:07:18`–`18:56:57`。329 個目標、3040 通過、6 失敗、6 panic，`error_prefix` 7。六個都是既有計時格自己的斷言：Q-117 `r1_coordinates_are_written_in_their_number` 372.55 秒（`a_coordinate_that_redoes_the_rest`）、Q-120 `r4_a_member_head_already_holds_is_named_however_many_fields` 180.09 秒（`a_field_that_paid_for_its_neighbours`）、Q-130 `r1_a_horizon_lands_at_the_cost_of_its_write` 215.83 秒（`a_horizon_that_paid_for_the_working_set`）、Q-129 `r3_a_label_that_goes_on_costs_its_readers` 219.92 秒（`a_label_that_went_one_reader_deep`）、Q-128 `r1_a_name_written_after_its_readers` 440.15 秒（`a_name_read_before_it_was_written`）、Q-127 `r4_the_order_does_not_change_the_cost` 480.06 秒（`a_write_observed_once_it_was_whole`）。本探針在這面旗子下 3／3，11.38 秒。Q-126 `r9_a_function_observed_reads_its_node` 過。hits 120847，都是 `hit`。紀錄裡 `Q-117 shadow` 0 行。norm `db02e7e298725391f27133f49344d463c301b84631601cb8d7629c1deab05c9d`。
+
+Shadow conformance：新目錄 `/home/gali/tmp/q139/conf.d/shadow`，前 0、後 0，rc 0，`18:56:57`–`18:57:39`，213／213。hits 2564，都是 `hit`。panic 0。`Q-117 shadow` 0 行。
+
 ### 8.7 你認為需要改規格之處
+
+無。預先修訂仍是驗收方寫進 `SPEC_10` §3.1 的那一句，不在這次的 diff 裡。

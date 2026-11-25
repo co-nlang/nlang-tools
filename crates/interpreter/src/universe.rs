@@ -3172,11 +3172,23 @@ impl Universe {
         combo: &ComboVal,
         pin_coords: &std::collections::BTreeSet<String>,
     ) -> bool {
+        // Q-139: judging whether a member is already held is bookkeeping
+        // (Q-126): it does no effect. A pin whose overwrite would do one is
+        // a proposal; the commit observes it, once.
         let observed = |m: ComboVal| -> Option<ContentHash> {
             let mut ctx = crate::EvalContext::new(m.clone()).with_standard_root(standard.clone());
             ctx.memo_enabled = false;
             ctx.preserve_refs = true;
-            match engine.project_for_commit(Value::Combo(m), Some(&Value::Combo(root.clone())), &mut ctx) {
+            let skipped = crate::EFFECTS_SKIPPED.with(|c| c.get());
+            let judging = crate::JUDGING.with(|c| c.replace(true));
+            let out = crate::bookkeeping(|| engine.project_for_commit(Value::Combo(m), Some(&Value::Combo(root.clone())), &mut ctx));
+            crate::JUDGING.with(|c| c.set(judging));
+            let would = crate::EFFECTS_SKIPPED.with(|c| c.get()) != skipped;
+            crate::EFFECTS_SKIPPED.with(|c| c.set(skipped));
+            if would {
+                return None;
+            }
+            match out {
                 Value::Combo(r) => match crate::dispatch::canonical_bodies(Value::Combo(r)) {
                     v @ Value::Combo(_) => Some(v.content_hash()),
                     _ => None,
