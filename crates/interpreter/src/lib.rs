@@ -164,6 +164,11 @@ thread_local! {
     static PROJECTING_ROOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Q-138: the nodes met while one field is asked whether it does an effect.
     static MET_IN_FIELD: std::cell::RefCell<Option<HashSet<u64>>> = std::cell::RefCell::new(None);
+    /// Q-139: a pin is being judged already held (bookkeeping).
+    pub(crate) static JUDGING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Q-139: the effects one field did while it was asked (builtin, argument,
+    /// answer); `true` once it is worked out again and they are read back.
+    static EFFECT_LOG: std::cell::RefCell<Option<(bool, Vec<(String, crate::value::ContentHash, Value)>)>> = std::cell::RefCell::new(None);
     static FORCING: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Q-135: the thunks a bookkeeping walk is inside (keyed as L2-17 keys a
     /// thunk under force), outermost first.
@@ -3936,7 +3941,36 @@ impl Ouroboros {
                 if active {
                     EFFECTS_RUN.with(|c| c.set(c.get() + 1));
                 }
-                func(unified_arg.clone(), self, ctx)
+                // Q-139: the same effect, asked and then worked out, is done once.
+                let logged = active && EFFECT_LOG.with(|l| l.borrow().is_some());
+                let at = logged.then(|| (builtin_id.to_string(), unified_arg.content_hash()));
+                let read_back = at.as_ref().and_then(|(id, h)| {
+                    EFFECT_LOG.with(|l| {
+                        let mut l = l.borrow_mut();
+                        let l = l.as_mut()?;
+                        if !l.0 {
+                            return None;
+                        }
+                        let i = l.1.iter().position(|(i2, h2, _)| i2 == id && h2 == h)?;
+                        Some(l.1.remove(i).2)
+                    })
+                });
+                match read_back {
+                    Some(v) => v,
+                    None => {
+                        let v = func(unified_arg.clone(), self, ctx);
+                        if let Some((id, h)) = at {
+                            EFFECT_LOG.with(|l| {
+                                if let Some(l) = l.borrow_mut().as_mut() {
+                                    if !l.0 {
+                                        l.1.push((id, h, v.clone()));
+                                    }
+                                }
+                            });
+                        }
+                        v
+                    }
+                }
             } else {
                 Value::Top
             };
@@ -4410,7 +4444,11 @@ impl Ouroboros {
             // fields will do when read: reading the name again reads it.
             let did = effects_run() != before;
             // (So is a union that holds a record: it holds that record.)
-            if (did || holds_a_record(&res)) && NO_EFFECTS.with(|c| c.get()) == 0 {
+            // Q-139: judging a pin is bookkeeping; a record that skipped no
+            // effect there is the one an observation gives, kept as one.
+            let whole = NO_EFFECTS.with(|c| c.get()) == 0
+                || (JUDGING.with(|c| c.get()) && EFFECTS_SKIPPED.with(|c| c.get()) == skipped);
+            if (did || holds_a_record(&res)) && whole {
                 // Kept on the node it was written in (the frame a name was
                 // found on, else the frame it closes over).
                 if let Some(f) = frames.first() {
@@ -5362,6 +5400,9 @@ impl Ouroboros {
             }
             // Q-138: what a coordinate reads is kept for this root only.
             COORDS.with(|m| m.borrow_mut().clear());
+            // Q-139: so is a record kept as one value (Q-126); what an
+            // effect gave stays.
+            forget_kept_records();
             PROJECTING_ROOT.with(|c| c.set(true));
         }
         if let Some(n) = node {
@@ -5452,10 +5493,24 @@ impl Ouroboros {
                 // field reads as its home, as one on the path does (Q-131).
                 // Only when it did one is it worked out as before: that value
                 // is what is stored.
+                // Q-139: an effect done while asking is the one the field
+                // does: working it out again reads its answer (the log of
+                // this field), it does not do it again.
                 let outer = MET_IN_FIELD.with(|m| m.replace(Some(HashSet::new())));
+                let outer_log = EFFECT_LOG.with(|l| l.replace(Some((false, Vec::new()))));
                 let asked = self.force_each_cell(val.clone(), ctx);
                 MET_IN_FIELD.with(|m| *m.borrow_mut() = outer);
-                let forced = if crate::effects_run() != before { self.force_each_cell(val, ctx) } else { asked };
+                let forced = if crate::effects_run() != before {
+                    EFFECT_LOG.with(|l| {
+                        if let Some(l) = l.borrow_mut().as_mut() {
+                            l.0 = true;
+                        }
+                    });
+                    self.force_each_cell(val, ctx)
+                } else {
+                    asked
+                };
+                EFFECT_LOG.with(|l| *l.borrow_mut() = outer_log);
                 ctx.preserve_refs = keep;
                 // Q-126: a definition predicted pure that did an effect when
                 // forced observed it; its answer is what the commit keeps
