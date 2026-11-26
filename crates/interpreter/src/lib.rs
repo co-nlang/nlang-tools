@@ -4363,6 +4363,12 @@ impl Ouroboros {
                 {
                     fs.push(f.clone());
                 }
+                // Q-140: a field of a root read back from the store closes
+                // over no frame: the root projected is the node it was
+                // written on.
+                if fs.is_empty() && closure.is_empty() && context.is_none() && PROJECTING_ROOT.with(|c| c.get()) {
+                    fs.push(ctx.root.clone());
+                }
                 (fs, Some(expr.as_ref()))
             }
             _ => (Vec::new(), None),
