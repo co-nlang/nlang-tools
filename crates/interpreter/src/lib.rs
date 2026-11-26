@@ -645,6 +645,23 @@ fn holds_a_record(v: &Value) -> bool {
     }
 }
 
+/// Q-141: does this value hold something not yet read (a thunk, a
+/// reference)? A record with nothing lazy in it is the same value however
+/// often it is read.
+fn holds_a_thunk(v: &Value) -> bool {
+    match v {
+        Value::Thunk { .. } | Value::Ref(_) => true,
+        Value::Combo(c) => [&c.data, &c.rules, &c.types, &c.meta, &c.system, &c.local]
+            .iter()
+            .any(|a| a.values().any(holds_a_thunk)),
+        Value::Union(members) => members.iter().any(holds_a_thunk),
+        Value::Range { start, end, step } => {
+            holds_a_thunk(start) || holds_a_thunk(end) || step.as_ref().is_some_and(|s| holds_a_thunk(s))
+        }
+        _ => false,
+    }
+}
+
 /// Q-126 R-7: could reading this structure read the `$` of whoever reads
 /// it? A thunk it holds that writes `$`, or a name such a thunk reads (found
 /// on the frames it closes over) that could, transitively. One that cannot
@@ -4342,6 +4359,7 @@ impl Ouroboros {
         }
         // Q-126: a field of a written node is one coordinate. Once forcing it
         // did an effect, every later read in this observation reads that.
+        let mut on_root = false;
         let (frames, key) = match &val {
             // A field of a record made in a call carries the call's input
             // and is a field like any other (a branch body given its input
@@ -4368,6 +4386,7 @@ impl Ouroboros {
                 // written on.
                 if fs.is_empty() && closure.is_empty() && context.is_none() && PROJECTING_ROOT.with(|c| c.get()) {
                     fs.push(ctx.root.clone());
+                    on_root = true;
                 }
                 (fs, Some(expr.as_ref()))
             }
@@ -4454,7 +4473,11 @@ impl Ouroboros {
             // effect there is the one an observation gives, kept as one.
             let whole = NO_EFFECTS.with(|c| c.get()) == 0
                 || (JUDGING.with(|c| c.get()) && EFFECTS_SKIPPED.with(|c| c.get()) == skipped);
-            if (did || holds_a_record(&res)) && whole {
+            // Q-141: a commit keeps a record read back on the root only when
+            // it holds something not yet read: one with nothing lazy in it
+            // reads the same again, and a commit would hold every one of
+            // them at once, each in full.
+            if (did || (holds_a_record(&res) && (!on_root || holds_a_thunk(&res)))) && whole {
                 // Kept on the node it was written in (the frame a name was
                 // found on, else the frame it closes over).
                 if let Some(f) = frames.first() {
