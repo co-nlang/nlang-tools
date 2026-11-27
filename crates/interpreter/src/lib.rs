@@ -578,6 +578,7 @@ fn other_recipe(n: &str, val: &Value, force: impl FnOnce() -> Value) -> Value {
 /// they hold it). What an effect gave stays.
 fn forget_kept_records() {
     VIEWS_READ.with(|m| m.borrow_mut().clear());
+    WRITTEN_IN.with(|m| m.borrow_mut().clear());
     OBSERVED.with(|m| {
         let mut m = m.borrow_mut();
         for o in m.values_mut() {
@@ -591,6 +592,47 @@ fn forget_kept_records() {
 }
 thread_local! {
     static OBSERVED: std::cell::RefCell<HashMap<(bool, u64), Observed>> = std::cell::RefCell::new(HashMap::new());
+    /// Q-142: what a frame with no node was found to be, by its address
+    /// (while that frame lives: the address names it), until the records
+    /// kept as one value are forgotten.
+    static WRITTEN_IN: std::cell::RefCell<HashMap<(usize, bool), (std::sync::Weak<ComboVal>, WrittenIn)>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Q-142: a frame with no node, worked out once.
+#[derive(Clone)]
+enum WrittenIn {
+    /// Nothing reads as it, or more than one place does.
+    Nothing,
+    /// The frame of a record on the root.
+    Root(std::sync::Arc<ComboVal>),
+    /// The record its node's field gives: that field, the fields the frame
+    /// holds, and the node and frame of the record it gave last.
+    Field(Value, Vec<(String, String)>, Option<(u64, std::sync::Arc<ComboVal>)>),
+}
+
+fn written_in(f: &std::sync::Arc<ComboVal>, root: bool) -> Option<WrittenIn> {
+    let k = (std::sync::Arc::as_ptr(f) as usize, root);
+    WRITTEN_IN.with(|m| m.borrow().get(&k).filter(|(alive, _)| alive.strong_count() > 0).map(|(_, w)| w.clone()))
+}
+
+fn found_written_in(f: &std::sync::Arc<ComboVal>, root: bool, w: WrittenIn) {
+    let k = (std::sync::Arc::as_ptr(f) as usize, root);
+    WRITTEN_IN.with(|m| m.borrow_mut().insert(k, (std::sync::Arc::downgrade(f), w)));
+}
+
+/// Q-142: a thunk closing over a frame that is no node's (nor a meet's).
+fn closes_over_a_frame_with_no_node(v: &Value) -> bool {
+    matches!(v, Value::Thunk { closure, .. } if closure.iter().any(|f| !crate::value::is_meet_frame(f) && !frame_node(f).0))
+}
+
+/// Q-142: does this value hold the record of node `n`?
+fn holds_node(v: &Value, n: u64) -> bool {
+    match v {
+        Value::Combo(c) => c.node_id == n || [&c.data, &c.rules, &c.types, &c.meta, &c.system, &c.local].iter().any(|a| a.values().any(|x| holds_node(x, n))),
+        Value::Union(members) => members.iter().any(|m| holds_node(m, n)),
+        _ => false,
+    }
 }
 
 /// Q-126: which written node a frame is a view of (D118 `node_id`); a frame
@@ -660,6 +702,120 @@ fn holds_a_thunk(v: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+/// Q-142: a record's fields as written, without the prefix of their axis:
+/// a thunk by its expression, anything else by its value.
+fn written_fields(axes: [&IndexMap<String, Value>; 6]) -> Vec<(String, String)> {
+    let flat = |t: String| t.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut have: Vec<(String, String)> = axes
+        .iter()
+        .flat_map(|ax| ax.iter())
+        .map(|(k, v)| {
+            let t = match v {
+                Value::Thunk { expr, .. } => expr.without_spans().to_nlang(0),
+                o => o.to_nlang(0),
+            };
+            (k.trim_start_matches(['~', '@', '%']).to_string(), flat(t))
+        })
+        .collect();
+    have.sort();
+    have
+}
+
+fn frame_fields(f: &ComboVal) -> Vec<(String, String)> {
+    written_fields([&f.data, &f.rules, &f.types, &f.meta, &f.system, &f.local])
+}
+
+/// Q-142: how many record literals that read as `have` this expression
+/// writes as the field itself or as an element of a list or tuple there. A
+/// record written inside one of those has a frame of its own between (and a
+/// record a call makes is the call's).
+fn literals_reading_as(e: &Expr, have: &[(String, String)]) -> usize {
+    let flat = |t: String| t.split_whitespace().collect::<Vec<_>>().join(" ");
+    match &e.kind {
+        ExprKind::Combo { fields, .. } => {
+            let mut written: Vec<(String, String)> = Vec::new();
+            for fd in fields {
+                let name = match &fd.key {
+                    nlang_parser::ast::FieldKey::Named { name, .. } => name.clone(),
+                    nlang_parser::ast::FieldKey::Path(at) if at.segments.len() == 1 => at.segments[0].to_string(),
+                    _ => {
+                        written.clear();
+                        break;
+                    }
+                };
+                written.push((name.trim_start_matches(['~', '@', '%']).to_string(), flat(fd.value.without_spans().to_nlang(0))));
+            }
+            written.sort();
+            let me = usize::from(written.len() == fields.len() && !written.is_empty() && written == have);
+            me
+        }
+        ExprKind::List(xs) | ExprKind::Tuple(xs) => xs.iter().map(|x| literals_reading_as(x, have)).sum(),
+        _ => 0,
+    }
+}
+
+/// Q-142: the one field of node frame `p` that writes, once, a record that
+/// reads as frame `f` (a record written inside `p`, which a recipe read
+/// back closes over). None when no field, or more than one place, does.
+fn field_written_as(p: &ComboVal, f: &ComboVal) -> Option<Value> {
+    let have = frame_fields(f);
+    if have.is_empty() {
+        return None;
+    }
+    let mut found: Option<Value> = None;
+    let mut places = 0;
+    for axis in [&p.data, &p.rules, &p.types, &p.meta, &p.system, &p.local] {
+        for v in axis.values() {
+            let Value::Thunk { expr, .. } = v else { continue };
+            let n = literals_reading_as(expr, &have);
+            if n > 0 {
+                places += n;
+                found = Some(v.clone());
+            }
+        }
+    }
+    (places == 1).then_some(found).flatten()
+}
+
+/// Q-142: the records in a value a field gave that read as `have`.
+fn records_reading_as<'a>(v: &'a Value, have: &[(String, String)], out: &mut Vec<&'a ComboVal>) {
+    match v {
+        Value::Combo(c) => {
+            if written_fields([&c.data, &c.rules, &c.types, &c.meta, &c.system, &c.local]) == have {
+                out.push(c);
+            }
+            for axis in [&c.data, &c.rules, &c.types, &c.meta, &c.system, &c.local] {
+                for x in axis.values() {
+                    records_reading_as(x, have, out);
+                }
+            }
+        }
+        Value::Union(members) => {
+            for m in members {
+                records_reading_as(m, have, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Q-142: the frame a record's fields close over that is the record itself.
+fn own_frame(c: &ComboVal) -> Option<std::sync::Arc<ComboVal>> {
+    if c.node_id == 0 {
+        return None;
+    }
+    for axis in [&c.data, &c.rules, &c.types, &c.meta, &c.system, &c.local] {
+        for v in axis.values() {
+            if let Value::Thunk { closure, .. } = v {
+                if let Some(f) = closure.iter().rev().find(|f| f.node_id == c.node_id) {
+                    return Some(f.clone());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Q-126 R-7: could reading this structure read the `$` of whoever reads
@@ -4357,6 +4513,12 @@ impl Ouroboros {
         if APPLIED.with(|c| c.replace(false)) {
             return self.force_once_metered(val, ctx);
         }
+        // Q-142: a root read back, while a commit projects it.
+        let val = if PROJECTING_ROOT.with(|c| c.get()) && closes_over_a_frame_with_no_node(&val) {
+            self.read_in_written_records(val, ctx)
+        } else {
+            val
+        };
         // Q-126: a field of a written node is one coordinate. Once forcing it
         // did an effect, every later read in this observation reads that.
         let mut on_root = false;
@@ -4515,6 +4677,91 @@ impl Ouroboros {
             }
         }
         res
+    }
+
+    /// Q-142: a recipe read back closes over the frames it was written in.
+    /// One of them may be a record written inside a node and stored as the
+    /// recipe that makes it: no record read back owns that frame, so it has
+    /// no node. It is the record that node's field gives: read that field
+    /// (once, as Q-126 keeps it) and read in the frame of what it gave.
+    #[inline(never)]
+    fn read_in_written_records(&self, val: Value, ctx: &mut EvalContext) -> Value {
+        let Value::Thunk { expr, mut closure, context, effect } = val else {
+            return val;
+        };
+        // Q-142: a reader written in a later evolve closes over its own copy
+        // of the frame of a record on the root: while a commit projects that
+        // root, it is the one record there that reads as it.
+        if let Some(f) = closure.first().cloned() {
+            if !crate::value::is_meet_frame(&f) && !frame_node(&f).0 && PROJECTING_ROOT.with(|c| c.get()) {
+                let w = written_in(&f, true).unwrap_or_else(|| {
+                    let have = frame_fields(&f);
+                    let r = &ctx.root;
+                    let on_root: Vec<&ComboVal> = [&r.data, &r.rules, &r.types, &r.meta, &r.system, &r.local]
+                        .iter()
+                        .flat_map(|ax| ax.values())
+                        .filter_map(|v| match v {
+                            Value::Combo(c) if !have.is_empty() && written_fields([&c.data, &c.rules, &c.types, &c.meta, &c.system, &c.local]) == have => Some(c),
+                            _ => None,
+                        })
+                        .collect();
+                    let w = match on_root.as_slice() {
+                        [c] => own_frame(c).map(WrittenIn::Root).unwrap_or(WrittenIn::Nothing),
+                        _ => WrittenIn::Nothing,
+                    };
+                    found_written_in(&f, true, w.clone());
+                    w
+                });
+                if let WrittenIn::Root(own) = w {
+                    closure[0] = own;
+                }
+            }
+        }
+        for i in 1..closure.len() {
+            if crate::value::is_meet_frame(&closure[i]) || frame_node(&closure[i]).0 {
+                continue;
+            }
+            let p = &closure[i - 1];
+            if crate::value::is_meet_frame(p) || !frame_node(p).0 {
+                continue;
+            }
+            let f = closure[i].clone();
+            let (field, have, last) = match written_in(&f, false) {
+                Some(WrittenIn::Field(field, have, last)) => (field, have, last),
+                Some(_) => continue,
+                None => match field_written_as(p, &f) {
+                    Some(field) => (field, frame_fields(&f), None),
+                    None => {
+                        found_written_in(&f, false, WrittenIn::Nothing);
+                        continue;
+                    }
+                },
+            };
+            let Value::Thunk { expr: fe, context: fc, effect: ff, .. } = field.clone() else {
+                continue;
+            };
+            let read = Value::Thunk { expr: fe, closure: closure[..i].to_vec(), context: fc, effect: ff };
+            let lex = ctx.lexical_frame.take();
+            let got = self.force_once(read, ctx);
+            ctx.lexical_frame = lex;
+            // The record it gave last, if it gave that one again.
+            let own = match last.filter(|(n, _)| holds_node(&got, *n)) {
+                Some((n, own)) => Some((n, own)),
+                None => {
+                    let mut rs = Vec::new();
+                    records_reading_as(&got, &have, &mut rs);
+                    match rs.as_slice() {
+                        [c] => own_frame(c).map(|own| (c.node_id, own)),
+                        _ => None,
+                    }
+                }
+            };
+            found_written_in(&f, false, WrittenIn::Field(field, have, own.clone()));
+            if let Some((_, own)) = own {
+                closure[i] = own;
+            }
+        }
+        Value::Thunk { expr, closure, context, effect }
     }
 
     fn force_once_metered(&self, val: Value, ctx: &mut EvalContext) -> Value {
