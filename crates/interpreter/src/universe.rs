@@ -260,6 +260,17 @@ fn is_system_axis_lhs_forbidden(key: &FieldKey) -> bool {
     }
 }
 
+/// Q-143: a value that is, or holds at any depth, a lazy field that does an
+/// effect when forced.
+fn holds_an_effect_recipe(v: &Value) -> bool {
+    match v {
+        Value::Thunk { effect, .. } => !effect.is_pure(),
+        Value::Combo(c) => [&c.data, &c.rules, &c.types, &c.meta, &c.system, &c.local].iter().any(|a| a.values().any(holds_an_effect_recipe)),
+        Value::Union(ms) => ms.iter().any(holds_an_effect_recipe),
+        _ => false,
+    }
+}
+
 /// P3: an expression with a free `$` outside the bodies that bind their own
 /// (`->`, a nested `|>`, a table branch: D109, the matched input).
 fn is_open_term(e: &Expr) -> bool {
@@ -1704,7 +1715,23 @@ impl Universe {
                     effect: engine.predict_effect(&field.value, &ctx),
                 }
             } else {
-                engine.eval(&field.value, &mut ctx)
+                match engine.eval(&field.value, &mut ctx) {
+                    // Q-143 (D129): what it read is a lazy field that does an
+                    // effect when forced (or its value holds one); the
+                    // definition stays its own recipe, not that field's.
+                    v if crate::DEFER_LAZY.with(|c| c.get())
+                        && !matches!(field.value.kind, ExprKind::Combo { .. })
+                        && holds_an_effect_recipe(&v) =>
+                    {
+                        Value::Thunk {
+                        expr: Box::new(field.value.clone()),
+                        closure: ctx.scopes.clone(),
+                        context: ctx.context_value.clone().map(Box::new),
+                        effect: engine.predict_effect(&field.value, &ctx),
+                        }
+                    }
+                    v => v,
+                }
             };
             // Q-127: in the scratch write (effects answered `_`) one evaluation
             // is its own try: one that reached an effect becomes its recipe.
