@@ -45,6 +45,7 @@ const ONCE: &[(&str, &str, usize)] = &[
     ("two alike on the root", "q1: { r: { a: g \"x\" } }\nq2: { r: { a: g \"x\" } }\nk: q1.r.a", 2),
     ("two alike, a function reading one, applied twice", "q: { r1: { a: g \"x\" }, r2: { a: g \"x\" } }\nf: (x -> q.r1.a)\nk: [f 1, f 2]", 2),
     ("two alike a call makes", "mk: (s -> { a: g s })\nq: { r1: mk \"x\", r2: mk \"x\" }\nk: q.r1.a", 2),
+    ("one record a call makes, a reader", "mk: (s -> { a: g s })\nq: { r: mk \"x\" }\nk: q.r.a", 1),
     ("two alike, the reader in a record", "q: { r1: { a: g \"x\" }, r2: { a: g \"x\" } }\ns: { k: q.r1.a }", 2),
     ("two alike, the reader in a list", "q: { r1: { a: g \"x\" }, r2: { a: g \"x\" } }\nk: [q.r1.a, q.r1.a]", 2),
     ("two alike, a call returns a union holding one", "q: { r1: { a: g \"x\" }, r2: { a: g \"x\" } }\nf: (x -> q.r1 | 5)\nk: f 1\nm: k.a", 2),
